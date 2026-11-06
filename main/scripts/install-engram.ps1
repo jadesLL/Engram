@@ -66,6 +66,32 @@ $nodeUrls = @(
 )
 if ($env:ENGRAM_MINGIT_URL) { $mingitUrls = @($env:ENGRAM_MINGIT_URL) }
 if ($env:ENGRAM_NODE_URL) { $nodeUrls = @($env:ENGRAM_NODE_URL) }
+
+# 引擎版本：GUI 用它和克隆目录里的旧引擎比较取高者，避免旧克隆脚本盖掉安装器 exe 里的新修复。
+# ENGINE_VERSION: 2
+$engineVersion = 2
+# pnpm 精确版本：仓库仅在 10.20.0 上构建验证过（CI Dockerfile 与 packageManager 同值）。
+$pnpmVer = '10.20.0'
+
+# ---------- 内置运行时（安装器 exe 自带 Node/pnpm，有就离线优先） ----------
+# 打包前由 installer/scripts/prepare-runtime.js 生成 resources\runtime\：
+#   node-v22.20.0-win-x64.zip                 官方便携 Node（解压即用，不再联网下载）
+#   pnpm\pnpm.cjs + pnpm.cmd + pnpm.ps1      pnpm 10.20.0 bundled 发行版（node 直接跑，无需 npm）
+# 脚本随安装器放在 resources 根时 runtime 与脚本同级；从仓库 main\scripts 直接跑则找 ..\installer\resources\runtime。
+# ENGRAM_RUNTIME_DIR 可显式指定（测试/离线镜像场景）。
+$runtimeDir = ''
+if ($env:ENGRAM_RUNTIME_DIR) {
+  if (Test-Path $env:ENGRAM_RUNTIME_DIR) { $runtimeDir = (Resolve-Path $env:ENGRAM_RUNTIME_DIR).Path }
+} else {
+  foreach ($candidate in @(
+      (Join-Path $PSScriptRoot 'runtime'),
+      (Join-Path $PSScriptRoot '..\installer\resources\runtime'))) {
+    if ((Test-Path (Join-Path $candidate $nodeZip)) -or (Test-Path (Join-Path $candidate 'pnpm\pnpm.cjs'))) {
+      $runtimeDir = (Resolve-Path $candidate).Path
+      break
+    }
+  }
+}
 # 子进程（node/pnpm）输出是 UTF-8，而 PS5.1 默认按 OEM 代码页（中文机 936）解码，转发进日志的
 # 报错上下文会整片乱码，客户与我们都看不出真正原因。设成 UTF-8 后解码正确（实测「失败：测试」）。
 # 必须 try/catch：--windowsHide 无控制台句柄时赋值会抛异常，捕获掉照常继续，与老行为一致。
@@ -100,6 +126,12 @@ function Resolve-NpmCmd {
   $cmd = Get-Command 'npm.cmd' -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd -and $cmd.Source) { return $cmd.Source }
   return ''
+}
+# 读取便携目录里 node.exe 的版本（不依赖 PATH，避免解析到系统 Node）；不存在返回空串。
+function Get-PortableNodeVersion([string]$dir) {
+  $exe = Join-Path $dir 'node.exe'
+  if (-not (Test-Path $exe)) { return '' }
+  try { return ((& $exe -v) -replace '^v', '').Trim() } catch { return '' }
 }
 # 合并式刷新 PATH（不能整体覆盖）：便携 Node/MinGit 与 pnpm 私有前缀的目录只存在于本进程
 # PATH 里（刻意不写系统环境变量），覆盖式刷新会把它们抹掉——客户机（本机无 Node）实测就是这样
@@ -399,6 +431,7 @@ if ($bundleZip) { Out-Line '##STEPS:bundle=解压预构建环境;shortcut=创建
 Out-Line '=============================='
 Out-Line ' Engram 源码版安装器'
 Out-Line " 安装位置：$InstallDir"
+Out-Line " 安装引擎 v$engineVersion$(if ($runtimeDir) { "（内置运行时：Node v$nodeVer + pnpm $pnpmVer）" })"
 if ($bundleZip) { Out-Line ' 模式：预构建环境包（免联网、免构建）' }
 Out-Line '=============================='
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -432,86 +465,119 @@ if (-not $gitExe) {
 if (-not (Test-Command 'git')) { StepFail 'git' 'Git 不可用（系统与便携均未就绪）' }
 StepDone 'git' "git $((git --version) -replace '^git version ', '')"
 
-# ---------- 2) Node.js >= 20 ----------
+# ---------- 2) Node.js（安装器内置固定版本优先，缺失才下载/用系统） ----------
 Step 'node' '准备便携 Node.js'
-$nodeOk = $false
-if (Test-Command 'node') {
-  $nodeOk = [int]((node -v) -replace '^v(\d+)\..*$', '$1') -ge 20
-}
-if ($nodeOk) { StepDone 'node' "使用系统 Node $(node -v)" }
-if (-not $nodeOk) {
-  $portableNodeDir = Join-Path $InstallDir 'node'
-  if (-not (Test-Path (Join-Path $portableNodeDir 'node.exe'))) {
-    $current = if (Test-Command 'node') { node -v } else { '未安装' }
-    StepLog "本机 Node 缺失或低于 20（当前 $current），下载便携 Node v$nodeVer（约 35MB，装在 $portableNodeDir）"
-    $script:fallback = @($nodeUrls | Select-Object -Skip 1)
-    Get-RemoteFile $nodeUrls[0] (Join-Path $InstallDir $nodeZip)
+$portableNodeDir = Join-Path $InstallDir 'node'
+$bundledNodeZip = if ($runtimeDir) { Join-Path $runtimeDir $nodeZip } else { '' }
+if ($bundledNodeZip -and (Test-Path $bundledNodeZip)) {
+  # 内置版：固定 v$nodeVer，客户机有没有系统 Node 都用它，避免系统 Node 版本漂移成为新的失败原因。
+  $currentVer = Get-PortableNodeVersion $portableNodeDir
+  if ($currentVer -ne $nodeVer) {
+    StepLog "安装器已内置 Node v$nodeVer，离线解压到 $portableNodeDir（不联网）"
     # 残骸清理必须在解压之前：zip 解出来就是 node-v<版本>-win-x64，解压后再「清理残骸」等于把刚
     # 解出来的整套 Node 删掉（实测报 npx.ps1 被占用、随后 Move-Item 找不到源目录）。
     # Defender 实时扫描会在解压后短暂锁住文件，清不掉就忽略，交给 Expand-Archive -Force 覆盖。
     $extracted = Join-Path $InstallDir "node-v$nodeVer-win-x64"
     if (Test-Path $extracted) { Remove-Item $extracted -Recurse -Force -ErrorAction SilentlyContinue }
-    Expand-Archive (Join-Path $InstallDir $nodeZip) $InstallDir -Force
+    Expand-Archive $bundledNodeZip $InstallDir -Force
+    if (-not (Test-Path (Join-Path $extracted 'node.exe'))) { StepFail 'node' "内置 Node 压缩包解压失败：$bundledNodeZip" }
     if (Test-Path $portableNodeDir) { Remove-Item $portableNodeDir -Recurse -Force -ErrorAction SilentlyContinue }
     Move-Item $extracted $portableNodeDir
-    Remove-Item (Join-Path $InstallDir $nodeZip) -Force
   }
   $env:Path = "$portableNodeDir;$env:Path"
-  StepDone 'node' "便携 Node $(node -v)"
+  $gotVer = Get-PortableNodeVersion $portableNodeDir
+  if ($gotVer -ne $nodeVer) { StepFail 'node' "内置 Node 版本不符：期望 v$nodeVer，实际 v$gotVer" }
+  StepDone 'node' "内置便携 Node v$gotVer"
+} else {
+  $nodeOk = $false
+  if (Test-Command 'node') {
+    $nodeOk = [int]((node -v) -replace '^v(\d+)\..*$', '$1') -ge 20
+  }
+  if ($nodeOk) { StepDone 'node' "使用系统 Node $(node -v)" }
+  if (-not $nodeOk) {
+    if (-not (Test-Path (Join-Path $portableNodeDir 'node.exe'))) {
+      $current = if (Test-Command 'node') { node -v } else { '未安装' }
+      StepLog "本机 Node 缺失或低于 20（当前 $current），下载便携 Node v$nodeVer（约 35MB，装在 $portableNodeDir）"
+      $script:fallback = @($nodeUrls | Select-Object -Skip 1)
+      Get-RemoteFile $nodeUrls[0] (Join-Path $InstallDir $nodeZip)
+      $extracted = Join-Path $InstallDir "node-v$nodeVer-win-x64"
+      if (Test-Path $extracted) { Remove-Item $extracted -Recurse -Force -ErrorAction SilentlyContinue }
+      Expand-Archive (Join-Path $InstallDir $nodeZip) $InstallDir -Force
+      if (Test-Path $portableNodeDir) { Remove-Item $portableNodeDir -Recurse -Force -ErrorAction SilentlyContinue }
+      Move-Item $extracted $portableNodeDir
+      Remove-Item (Join-Path $InstallDir $nodeZip) -Force
+    }
+    $env:Path = "$portableNodeDir;$env:Path"
+    StepDone 'node' "便携 Node $(node -v)"
+  }
 }
 
-# ---------- 3) pnpm ----------
-# 本仓库仅在 pnpm 10 上构建验证过（CI Dockerfile 固定 pnpm@10.20.0）。pnpm 11 改了依赖构建
-# 策略（allowBuilds 取代 onlyBuiltDependencies）并新增 lockfile tarball 校验，在本仓库会直接
-# 拒绝安装；故锁定主版本 10，已装其他大版本（如 11）时改装，避免把「装到未验证的大版本」
-# 变成安装失败的根因。
-Step 'pnpm' '安装 pnpm'
-$pnpmMajor = 10
-function Get-PnpmMajor {
-  if (-not (Test-Command 'pnpm')) { return $null }
+# ---------- 3) pnpm（安装器内置 10.20.0 优先，正常路径完全不经过 npm） ----------
+# 仓库仅在 pnpm 10.20.0 上构建验证过（CI Dockerfile 与 packageManager 固定该版本）。pnpm 11 会直接
+# 拒绝本仓库的依赖安装；故这里固定精确版本，客户机全局 pnpm 是几都无所谓——内置版会前置 PATH。
+# Node 22 的 npm.ps1 shim 会吞掉 & 调用参数（Unknown command: "file"），内置版用 node 直接跑 pnpm.cjs，
+# 从根上绕开 npm；只有安装器没带运行时的开发/旧包场景才退回 npm（且必须走 npm.cmd）。
+Step 'pnpm' '准备 pnpm'
+function Get-PnpmVersion {
+  if (-not (Test-Command 'pnpm')) { return '' }
   $v = (pnpm -v 2>$null | Select-Object -First 1)
-  if ("$v" -match '^\s*(\d+)\.') { return [int]$Matches[1] }
-  return $null
+  return "$v".Trim()
 }
-# pnpm 是后面每一步的前提（装依赖、构建都靠它），单一路径失败不能直接判死。三条退路依次试：
-#   ① npm install -g            常规路径（Node MSI 装的机器走这条）
-#   ② 安装目录内私有前缀        系统 Node 装在 Program Files 时 -g 可能无写权限；也不污染系统
-#   ③ 换 registry 重试          镜像 5xx/限流（①②各自再配 npmmirror → 华为云两个源）
-# 私有前缀目录要显式进 PATH：它不在系统环境变量里，靠 Refresh-Path 是刷不出来的。
-$pnpmHome = Join-Path $InstallDir 'pnpm-home'
-$pnpmBin = Join-Path $pnpmHome 'node_modules\.bin'
-# 真正调用的必须是 npm.cmd（Resolve-NpmCmd）：裸 'npm' 会命中 npm.ps1，参数被吞成 "file"。
-$npmCmd = Resolve-NpmCmd
-function Install-Pnpm([int]$major) {
-  $attempts = @(
-    @{ label = 'npm install -g'; args = @('install', '-g', "pnpm@$major") },
-    @{ label = "私有前缀（$pnpmHome）"; args = @('install', '--prefix', $pnpmHome, "pnpm@$major") }
-  )
-  foreach ($attempt in $attempts) {
-    foreach ($registry in @($npmmirror, $npmRegistryFallback)) {
-      StepLog "$($attempt.label)：npm $($attempt.args -join ' ')（registry $registry）"
-      $env:npm_config_registry = $registry
-      $code = Invoke-Logged $npmCmd @($attempt.args)
-      Refresh-Path
-      if (Test-Path $pnpmBin) { $env:Path = "$pnpmBin;$env:Path" }
-      if ((Get-PnpmMajor) -eq $major) { return $true }
-      StepLog "   未生效（npm 退出码 $code）：$(Hint 'npm 无错误输出')"
+$pnpmDir = Join-Path $InstallDir 'pnpm'
+$bundledPnpmDir = if ($runtimeDir) { Join-Path $runtimeDir 'pnpm' } else { '' }
+if ($bundledPnpmDir -and (Test-Path (Join-Path $bundledPnpmDir 'pnpm.cjs'))) {
+  # 内置版：拷贝到安装目录并前置 PATH；pinned 精确版本，不碰系统/全局 pnpm，也不执行 npm install。
+  $env:Path = "$pnpmDir;$env:Path"
+  $installed = Get-PnpmVersion
+  if ($installed -ne $pnpmVer) {
+    StepLog "安装器已内置 pnpm $pnpmVer，离线安装到 $pnpmDir（不联网、不经过 npm）"
+    if (Test-Path $pnpmDir) { Remove-Item $pnpmDir -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path $pnpmDir | Out-Null
+    Copy-Item (Join-Path $bundledPnpmDir '*') $pnpmDir -Recurse -Force
+    $env:Path = "$pnpmDir;$env:Path"
+    $installed = Get-PnpmVersion
+  }
+  if ($installed -ne $pnpmVer) {
+    $resolved = Get-Command 'pnpm' -ErrorAction SilentlyContinue | Select-Object -First 1
+    StepFail 'pnpm' "内置 pnpm $pnpmVer 无法运行（解析到：$($resolved.Source)；版本：$installed）"
+  }
+  StepDone 'pnpm' "内置 pnpm $installed（$pnpmDir）"
+} else {
+  # 兜底（安装器未内置运行时的开发/旧包场景）：沿用 npm 安装，锁精确版本；npm 必须走 npm.cmd。
+  $pnpmHome = Join-Path $InstallDir 'pnpm-home'
+  $pnpmBin = Join-Path $pnpmHome 'node_modules\.bin'
+  $npmCmd = Resolve-NpmCmd
+  function Install-Pnpm([string]$version) {
+    $attempts = @(
+      @{ label = 'npm install -g'; args = @('install', '-g', "pnpm@$version") },
+      @{ label = "私有前缀（$pnpmHome）"; args = @('install', '--prefix', $pnpmHome, "pnpm@$version") }
+    )
+    foreach ($attempt in $attempts) {
+      foreach ($registry in @($npmmirror, $npmRegistryFallback)) {
+        StepLog "$($attempt.label)：npm $($attempt.args -join ' ')（registry $registry）"
+        $env:npm_config_registry = $registry
+        $code = Invoke-Logged $npmCmd @($attempt.args)
+        Refresh-Path
+        if (Test-Path $pnpmBin) { $env:Path = "$pnpmBin;$env:Path" }
+        if ((Get-PnpmVersion) -eq $version) { return $true }
+        StepLog "   未生效（npm 退出码 $code）：$(Hint 'npm 无错误输出')"
+      }
     }
+    return $false
   }
-  return $false
+  $detected = Get-PnpmVersion
+  if ($detected -ne $pnpmVer) {
+    if ($detected) { StepLog "检测到 pnpm $detected，与本仓库验证版本（pnpm $pnpmVer）不符，改装 pnpm@$pnpmVer" }
+    if (-not $npmCmd) {
+      StepFail 'pnpm' "需要 pnpm $pnpmVer，但安装器未内置运行时、本机也没有可用的 npm.cmd。请使用官方安装器（自带运行时），或装好 Node.js 后手动执行：npm install -g pnpm@$pnpmVer"
+    }
+    if (-not (Install-Pnpm $pnpmVer)) {
+      StepFail 'pnpm' "安装 pnpm@$pnpmVer 失败（已试全局/私有前缀 × npmmirror/华为云 四个组合）：$(Hint 'npm 无错误输出')"
+    }
+    StepLog "pnpm 来自 $(if (Test-Path $pnpmBin) { $pnpmBin } else { '系统全局目录' })"
+  }
+  StepDone 'pnpm' "pnpm $(pnpm -v)"
 }
-$detected = Get-PnpmMajor
-if ($detected -ne $pnpmMajor) {
-  if ($detected) { StepLog "检测到 pnpm 主版本 $detected，与本仓库验证版本（pnpm $pnpmMajor）不符，改装 pnpm@$pnpmMajor" }
-  if (-not $npmCmd) {
-    StepFail 'pnpm' "需要 pnpm $pnpmMajor，但本机没有可用的 npm.cmd 来安装它。请安装 Node.js（自带 npm）后重试，或手动执行：npm install -g pnpm@$pnpmMajor"
-  }
-  if (-not (Install-Pnpm $pnpmMajor)) {
-    StepFail 'pnpm' "安装 pnpm@$pnpmMajor 失败（已试全局/私有前缀 × npmmirror/华为云 四个组合）：$(Hint 'npm 无错误输出')"
-  }
-  StepLog "pnpm 来自 $(if (Test-Path $pnpmBin) { $pnpmBin } else { '系统全局目录' })"
-}
-StepDone 'pnpm' "pnpm $(pnpm -v)"
 
 # ---------- 4) 克隆 / 更新源码 ----------
 $repoDir = Join-Path $InstallDir 'Engram'

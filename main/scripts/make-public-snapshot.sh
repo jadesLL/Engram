@@ -410,9 +410,13 @@ if [ -n "${SNAPSHOT_EXPORT_INSTALLER:-}" ]; then
   mkdir -p "$SNAPSHOT_EXPORT_INSTALLER/scripts/lib"
   export_one() { g show "HEAD:$1" > "$SNAPSHOT_EXPORT_INSTALLER/$2"; }
   export_one "main/installer/main.js" "main.js"
+  export_one "main/installer/preload.js" "preload.js"
   export_one "main/installer/ui.html" "ui.html"
   export_one "main/installer/scripts/lib/repo-url.js" "scripts/lib/repo-url.js"
   export_one "main/installer/scripts/lib/repo-probe.js" "scripts/lib/repo-probe.js"
+  export_one "main/installer/scripts/lib/bundle-zip.js" "scripts/lib/bundle-zip.js"
+  export_one "main/installer/scripts/lib/engine.js" "scripts/lib/engine.js"
+  export_one "main/installer/prepare-runtime.js" "scripts/prepare-runtime.js"
   export_one "main/scripts/install-engram.ps1" "install-engram.ps1"
   echo ">> 已导出脱敏后的安装器源码: $SNAPSHOT_EXPORT_INSTALLER"
 fi

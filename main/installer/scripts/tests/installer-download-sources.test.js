@@ -88,7 +88,7 @@ check('支持 ENGRAM_NODE_URL 覆盖', srcBlock.includes('ENGRAM_NODE_URL'));
 // ---------- 1b) 解压顺序：Node 残骸清理必须在 Expand-Archive 之前 ----------
 // zip 解出来就是 node-v<版本>-win-x64，解压后再清「残骸」等于把刚解出来的整套 Node 删掉，
 // 接着 Move-Item 找不到源目录——真机验证时踩到过（npx.ps1 被占用 + 安装目录里没有 node.exe）。
-const nodeStep = text.slice(text.indexOf('# ---------- 2) Node.js >= 20 ----------'),
+const nodeStep = text.slice(text.indexOf('# ---------- 2) Node.js'),
   text.indexOf('# ---------- 3) pnpm ----------'));
 const iCleanup = nodeStep.indexOf('if (Test-Path $extracted)');
 // 用完整命令行而不是 'Expand-Archive'：注释里也提到过这个词，按词找会命中注释

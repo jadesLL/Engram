@@ -50,16 +50,23 @@
 ## 源码版安装器发布（generic 包，独立于发版）
 
 源码版安装器 `Engram-source-setup.exe` 是**引导器**：它的行为全在内嵌的
-`install-engram.ps1` 里（clone 地址、便携 Node/Git/pnpm 下载、依赖安装、构建桌面端），
+`install-engram.ps1` 里（clone 地址、内置 Node/pnpm 解压、依赖安装、构建桌面端），
 需要在**发版之外**单独更新。因此它不挂 Release，而是发布到 Gitea generic 包的固定版本
 `latest`——下载链接永不变，每次发布覆盖同名文件。
+
+安装器 exe 现在**内置 Node 22.20.0（便携 zip）与 pnpm 10.20.0**（`resources\runtime\`，由
+`installer/scripts/prepare-runtime.js` 在打包前生成）：客户机安装不联网下载 Node、也不执行
+`npm install`，避开 Node 22 的 npm.ps1 吞参数（`Unknown command: "file"`）与 pnpm 版本漂移。
+内置运行时约 43MB，安装器 exe 因此增大约 40MB；从仓库直接跑脚本（无内置运行时）才退回旧下载路径。
+引擎脚本头部的 `# ENGINE_VERSION` 会被 GUI 用来和克隆里的旧引擎比大小：**旧克隆引擎不能盖掉
+新 exe 里的修复**（2026-11-06 客户机事故：换了引擎仍跑旧克隆脚本，继续报同一条错）。
 
 ```bash
 # 本地构建并发布（需 package 写权限的 Gitea 令牌）
 # 在**主检出目录**做：打包依赖主检出的 node_modules 与 desktop 的 electron 运行时，
 # worktree 内没有依赖、无法打包（同 Windows 桌面端打包，属宿主机原生任务）。
 cd main
-node node_modules/pnpm/bin/pnpm.cjs -C installer dist    # 构建
+node node_modules/pnpm/bin/pnpm.cjs -C installer dist    # 构建（dist 会先跑 prepare-runtime.js 准备内置 Node/pnpm）
 ENGRAM_GITEA_TOKEN=<令牌> node installer/scripts/publish-installer.js
 ```
 

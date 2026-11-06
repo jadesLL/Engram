@@ -5,7 +5,8 @@
   "description": "Engram 源码版安装器 GUI",
   "main": "main.js",
   "scripts": {
-    "dist": "electron-builder --win portable",
+    "prepare-runtime": "node scripts/prepare-runtime.js",
+    "dist": "node scripts/prepare-runtime.js && electron-builder --win portable",
     "pack-prebuilt": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/pack-prebuilt-bundle.ps1",
     "publish": "node scripts/publish-installer.js"
   },
@@ -33,13 +34,19 @@
       {
         "from": "resources/prebuilt",
         "to": "prebuilt"
+      },
+      {
+        "from": "resources/runtime",
+        "to": "runtime"
       }
     ],
     "win": {
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "../desktop/build/icon.png"

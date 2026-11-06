@@ -81,6 +81,14 @@ try {
 
 $ps1 = Join-Path $srcDir 'install-engram.ps1'
 Require-Path $ps1 'exported install-engram.ps1'
+
+# ---- 1b. 准备内置运行时（Node 便携版 + pnpm 固定版），客户机安装时不再联网装 npm/pnpm ----
+Write-Host "==> preparing bundled runtime (Node + pnpm)"
+$runtimeDir = Join-Path $srcDir 'runtime'
+$prepareRuntime = Join-Path $mainDir 'installer\scripts\prepare-runtime.js'
+Require-Path $prepareRuntime 'prepare-runtime.js'
+node $prepareRuntime --ps1 $ps1 --out $runtimeDir
+if ($LASTEXITCODE -ne 0) { throw "prepare-runtime failed (exit $LASTEXITCODE)" }
 $defaultUrl = (Select-String -Path $ps1 -Pattern '^\s*\[string\]\$RepoUrl\s*=\s*''([^'']+)''' |
   Select-Object -First 1).Matches[0].Groups[1].Value
 Write-Host "    bundled RepoUrl default: $defaultUrl"
@@ -99,8 +107,11 @@ $buildConfig = [ordered]@{
   electronDist    = $electronDist
   asar            = $false
   directories     = @{ output = 'dist' }
-  files           = @('main.js', 'ui.html', 'scripts/lib/**/*.js')
-  extraResources  = @(@{ from = 'install-engram.ps1'; to = 'install-engram.ps1' })
+  files           = @('main.js', 'preload.js', 'ui.html', 'scripts/lib/**/*.js')
+  extraResources  = @(
+    @{ from = 'install-engram.ps1'; to = 'install-engram.ps1' },
+    @{ from = 'runtime'; to = 'runtime' }
+  )
   win             = @{
     target = @(@{ target = 'portable'; arch = @('x64') })
     icon   = $icon
@@ -155,6 +166,13 @@ if ($sevenZip) {
   New-Item -ItemType Directory -Force -Path $peek | Out-Null
   & $sevenZip x $exePath "-o$peek" -y | Out-Null
   $bundled = Join-Path $peek 'resources\install-engram.ps1'
+  $runtimePs1 = Join-Path $peek 'resources\runtime\pnpm\pnpm.ps1'
+  $runtimeNodeZip = Get-ChildItem (Join-Path $peek 'resources\runtime') -Filter 'node-v*-win-x64.zip' -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if (-not (Test-Path $runtimePs1) -or -not $runtimeNodeZip) {
+    throw "内置运行时没有打进 exe（resources\runtime 缺少 pnpm 或 node zip）"
+  }
+  Write-Host ("    verified: bundled runtime = " + (Split-Path $runtimeNodeZip -Leaf) + " + pnpm")
   if (Test-Path $bundled) {
     $got = (Select-String -Path $bundled -Pattern '^\s*\[string\]\$RepoUrl\s*=\s*''([^'']+)''' |
       Select-Object -First 1).Matches[0].Groups[1].Value

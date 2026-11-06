@@ -6,6 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { probeRepo } = require('./scripts/lib/repo-probe.js');
 const { findBundleZip, bundleInfo: bundleInfoOf } = require('./scripts/lib/bundle-zip.js');
+const { pickEngine } = require('./scripts/lib/engine.js');
 
 let win = null;
 let child = null;
@@ -37,21 +38,21 @@ function insideInstallRoot(...segments) {
 }
 
 function scriptPath() {
-  // 已装过的机器优先用克隆里的引擎脚本：它随 git pull 更新，引擎侧的修复（如日志编码）
-  // 因此不必重打安装器 exe 就能到客户机——2026-09-18 就因为 exe 里是打包时的旧脚本，
-  // 客户机的 GUI 日志一直是乱码。
+  // 已装过的机器可能有一份克隆里的引擎脚本（随 git pull 更新），安装器 exe 里也自带一份。
+  // 按 ENGINE_VERSION 取高者：旧克隆不能再盖掉 exe 里的新修复（2026-11-06 客户机实测就是
+  // 换了引擎仍跑旧克隆脚本、继续报 Unknown command: "file"）。版本相同优先克隆，保留热更新。
+  let cloned = '';
   try {
-    const cloned = insideInstallRoot('main', 'scripts', 'install-engram.ps1');
-    if (fs.existsSync(cloned)) return cloned;
+    const p = insideInstallRoot('main', 'scripts', 'install-engram.ps1');
+    if (fs.existsSync(p)) cloned = p;
   } catch {
     /* 路径异常就继续往下找 */
   }
+  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'install-engram.ps1') : '';
+  const picked = pickEngine(bundled, cloned);
+  if (picked) return picked;
   // 打包后 ps1 在 resources 根（extraResources 不进 asar）；文件不在就退回仓库脚本，
   // 免得开发态（或被改名的 electron 让 isPackaged=true）拿着不存在的路径去 -File 报错
-  if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, 'install-engram.ps1');
-    if (fs.existsSync(bundled)) return bundled;
-  }
   return path.join(__dirname, '..', 'scripts', 'install-engram.ps1');
 }
 
