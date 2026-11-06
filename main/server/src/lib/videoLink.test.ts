@@ -5,13 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   buildVideoLinkMarkdown,
+  captureDouyinPost,
   detectVideoLink,
+  fetchBilibiliSubtitle,
   findLocalBrowser,
   parseVideoLinkMarkdown,
   prepareBilibiliMedia,
   resolveVideoLink,
+  subtitleBodyToSrt,
+  subtitleBodyToText,
   type VideoLinkInfo,
 } from './videoLink.js';
+import { resetDouyinIdentityCache } from './douyin.js';
 
 /**
  * 视频链接模块：识别/归一化、占位稿 frontmatter 往返、B站元数据、清晰度降档与下载。
@@ -316,6 +321,183 @@ test('prepareBilibiliMedia：缺少 cid 时给出可操作中文原因', async (
       ),
     /缺少 B站 cid/
   );
+});
+
+
+
+test('subtitleBodyToSrt / subtitleBodyToText：B站字幕 JSON 转标准 SRT 与带时间轴的文本', () => {
+  const body = [
+    { from: 1.5, to: 3.2, content: '第一句' },
+    { from: 65, to: 67.25, content: '第二句' },
+    { from: 3, to: 4, content: '   ' },
+  ];
+  const srt = subtitleBodyToSrt(body);
+  assert.match(srt, /^1\n00:00:01,500 --> 00:00:03,200\n第一句\n\n2\n/);
+  assert.match(srt, /00:01:05,000 --> 00:01:07,250\n第二句\n$/);
+
+  const text = subtitleBodyToText(body);
+  assert.equal(text, '[00:01] 第一句\n[01:05] 第二句');
+  assert.equal(subtitleBodyToSrt([]), '');
+  assert.equal(subtitleBodyToText([]), '');
+});
+
+test('fetchBilibiliSubtitle：wbi/v2 取字幕列表并按 cid 校验后转文本；无字幕返回 null', async () => {
+  const calls: string[] = [];
+  const fetchImpl = (async (input: any, init: any) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('/x/player/wbi/v2')) {
+      assert.match(url, /bvid=BV1GJ411x7h7/);
+      assert.match(url, /cid=137649199/);
+      assert.equal(init.headers.referer, 'https://www.bilibili.com/video/BV1GJ411x7h7');
+      return jsonResponse({
+        code: 0,
+        data: { subtitle: { subtitles: [{ lan: 'zh-CN', subtitle_url: '//sub.example/137649199.json' }] } },
+      });
+    }
+    if (url === 'https://sub.example/137649199.json') {
+      return jsonResponse({ body: [{ from: 1, to: 2.5, content: '字幕第一句' }] });
+    }
+    throw new Error('不该请求：' + url);
+  }) as unknown as typeof fetch;
+
+  const info: VideoLinkInfo = {
+    platform: 'bilibili',
+    link: 'https://www.bilibili.com/video/BV1GJ411x7h7',
+    title: '有字幕的视频',
+    durationSec: 60,
+    author: 'UP',
+    bvid: 'BV1GJ411x7h7',
+    cid: 137649199,
+  };
+  const subtitle = await fetchBilibiliSubtitle(info, { fetchImpl });
+  assert.equal(subtitle?.lang, 'zh-CN');
+  assert.match(subtitle?.text || '', /\[00:01\] 字幕第一句/);
+  assert.match(subtitle?.srt || '', /00:00:01,000 --> 00:00:02,500/);
+  assert.equal(calls.length, 2, '一次字幕列表 + 一次字幕正文');
+
+  // 字幕 URL 里没有本 cid（接口串片）时视为拿不到字幕
+  const mismatched = (async (input: any) => {
+    const url = String(input);
+    if (url.includes('/x/player/wbi/v2') || url.includes('/x/player/v2')) {
+      return jsonResponse({
+        code: 0,
+        data: { subtitle: { subtitles: [{ lan: 'zh-CN', subtitle_url: '//sub.example/999.json' }] } },
+      });
+    }
+    throw new Error('不该请求：' + url);
+  }) as unknown as typeof fetch;
+  assert.equal(await fetchBilibiliSubtitle(info, { fetchImpl: mismatched }), null);
+
+  // 没有字幕列表：返回 null 而不是抛错（上层回退下载视频）
+  const empty = (async () => jsonResponse({ code: 0, data: { subtitle: { subtitles: [] } } })) as unknown as typeof fetch;
+  assert.equal(await fetchBilibiliSubtitle(info, { fetchImpl: empty }), null);
+
+  // 缺 cid 的视频直接返回 null（不联网）
+  assert.equal(
+    await fetchBilibiliSubtitle({ ...info, cid: undefined }, { fetchImpl: (async () => { throw new Error('不该联网'); }) as unknown as typeof fetch }),
+    null
+  );
+});
+
+test('prepareBilibiliMedia：下载前通过 onPlan 报清晰度与体积（预检）', async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-video-plan-'));
+  const destPath = path.join(temp, 'plan.mp4');
+  const media = Buffer.from('fake-mp4-plan');
+  const plans: { quality: number; size: number }[] = [];
+  const fetchImpl = (async (input: any) => {
+    const url = String(input);
+    if (url.includes('/x/player/playurl')) {
+      return jsonResponse({ code: 0, data: { durl: [{ url: 'https://cdn.example/plan.mp4', size: 1234 }] } });
+    }
+    if (url === 'https://cdn.example/plan.mp4') return binaryResponse(media);
+    throw new Error('不该请求：' + url);
+  }) as unknown as typeof fetch;
+  try {
+    await prepareBilibiliMedia(
+      {
+        platform: 'bilibili',
+        link: 'https://www.bilibili.com/video/BV1GJ411x7h7',
+        title: '预检',
+        durationSec: 1,
+        author: '',
+        bvid: 'BV1GJ411x7h7',
+        cid: 2,
+      },
+      { quality: 64, destPath, fetchImpl, onPlan: (plan) => plans.push(plan) }
+    );
+    assert.deepEqual(plans, [{ quality: 64, size: 1234 }]);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+function douyinIdentityResponse(): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'set-cookie': 'ttwid=ttwid-test; Path=/; Domain=douyin.com' }),
+    text: async () => '{}',
+  } as unknown as Response;
+}
+
+function douyinHomeResponse(): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'x-tt-trace-host': 'uifid-test' }),
+    text: async () => '<html></html>',
+  } as unknown as Response;
+}
+
+test('captureDouyinPost：图文笔记按多图下载，视频作品走视频下载（不依赖浏览器）', async () => {
+  resetDouyinIdentityCache();
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-douyin-post-'));
+  const imagesDir = path.join(temp, 'images');
+  const destPath = path.join(temp, 'post.mp4');
+  const imageBytes = Buffer.from('fake-image-bytes');
+  const fetchImpl = (async (input: any, init: any) => {
+    const url = String(input);
+    if (url.includes('/ttwid/register')) {
+      assert.equal(init.method, 'POST');
+      return douyinIdentityResponse();
+    }
+    if (url === 'https://www.douyin.com/') return douyinHomeResponse();
+    if (url.includes('/aweme/v1/web/aweme/detail/')) {
+      assert.match(url, /aweme_id=7298145681699622182/);
+      return jsonResponse({
+        status_code: 0,
+        aweme_detail: {
+          aweme_id: '7298145681699622182',
+          desc: '一条图文笔记',
+          author: { nickname: '笔记作者' },
+          images: [{ url_list: ['https://img.example/1.jpg'] }, { url_list: ['https://img.example/2.jpg'] }],
+        },
+      });
+    }
+    if (url === 'https://img.example/1.jpg' || url === 'https://img.example/2.jpg') return binaryResponse(imageBytes);
+    throw new Error('不该请求：' + url);
+  }) as unknown as typeof fetch;
+  try {
+    const post = await captureDouyinPost('7298145681699622182', {
+      destPath,
+      imagesDir,
+      fetchImpl,
+      onProgress: () => undefined,
+    });
+    assert.equal(post.kind, 'images');
+    if (post.kind !== 'images') throw new Error('应该是图文');
+    assert.equal(post.images.length, 2);
+    assert.equal(post.title, '一条图文笔记');
+    assert.equal(post.author, '笔记作者');
+    for (const image of post.images) {
+      assert.equal(fs.existsSync(image.path), true);
+      assert.equal(image.bytes, imageBytes.length);
+      assert.equal(image.mime, 'image/jpeg');
+    }
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test('findLocalBrowser：返回本机浏览器路径或 null（不抛错）', () => {

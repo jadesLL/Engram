@@ -422,6 +422,23 @@ export interface InboxConvertOptions {
   config?: AgentConfig;
 }
 
+/** 把调用方给的额外元数据拼成 frontmatter 行；键限中文/字母开头，值压成单行并截断，避免注入坏 YAML */
+function frontmatterExtras(input: Record<string, string> | undefined): string[] {
+  if (!input) return [];
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (!/^[\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9_]{0,19}$/.test(key)) continue;
+    const text = String(value ?? '')
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+    if (!text) continue;
+    lines.push(key + ': ' + text);
+  }
+  return lines;
+}
+
 /** 单独请模型从成稿提炼文件名，避免直接沿用上传时的名称或第一段标题。 */
 export async function suggestCoreTitle(
   name: string,
@@ -526,7 +543,13 @@ export function writeInboxMarkdown(
   relPath: string,
   markdown: string,
   note?: string,
-  extras: { model?: string; truncated?: boolean; title?: string } = {}
+  extras: {
+    model?: string;
+    truncated?: boolean;
+    title?: string;
+    /** 额外 frontmatter（视频平台/作者/时长/链接/提炼依据等）；键值都做单行清洗，非法键直接丢弃 */
+    extraFrontmatter?: Record<string, string>;
+  } = {}
 ): { derivedPath: string; chars: number } {
   if (!isInboxPath(relPath)) throw new InboxConvertError('只能写收集箱原件的转换产物');
   const title = coreTitle(markdown, extras.title, stemOf(relPath));
@@ -539,6 +562,7 @@ export function writeInboxMarkdown(
     `转换日期: ${stamp}`,
     ...(extras.model ? [`转换模型: ${extras.model}`] : []),
     `转换版本: ${INBOX_CONVERT_VERSION}`,
+    ...frontmatterExtras(extras.extraFrontmatter),
     ...(extras.truncated ? ['转换范围: 部分（原件过长）'] : []),
     '---',
     '',

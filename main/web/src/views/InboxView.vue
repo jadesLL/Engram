@@ -47,10 +47,10 @@
           v-model="pageUrl"
           type="url"
           required
-          placeholder="粘贴网页链接，或 B站 / 抖音视频链接"
+          placeholder="粘贴网页链接，或 B站 / 抖音视频、图文链接"
           :disabled="fetchingUrl"
         />
-        <span class="tip-wrap" v-tooltip="'网页保存 HTML 原文；B站 / 抖音视频链接保存为占位稿，保存后在这条上点「提炼视频」；登录、验证码和依赖脚本的内容可能无法完整保存'">
+        <span class="tip-wrap" v-tooltip="'网页保存 HTML 原文；B站 / 抖音链接保存为占位稿，保存后点「提炼视频」——B站有 CC 字幕时优先按字幕提炼（不下载整段视频，更快更省流量），拿不到字幕再下载视频；抖音图文 / 实况笔记按多图理解；登录、验证码和依赖脚本的内容可能无法完整保存'">
           <button class="btn sm url-save" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
             <AppSpinner v-if="fetchingUrl" :size="14" />
             <template v-else>保存</template>
@@ -78,7 +78,7 @@
     <div v-if="showVideoSetupHint" class="video-hint">
       <Icon name="ai" :size="13" />
       <span>
-        <b>{{ videoSetupTitle }}</b>：视频链接仍可保存，点「提炼视频」前请先到
+        <b>{{ videoSetupTitle }}</b>：视频 / 图文链接仍可保存，点「提炼视频」前请先到
         <a href="#" @click.prevent="openVideoSettings">设置 → 视频理解模型</a> 填好 Base URL、API Key 与模型名<template v-if="videoStatus && !videoStatus.enabled">，并打开「启用视频理解」</template>。
       </span>
     </div>
@@ -166,7 +166,7 @@
               <Icon name="ai" :size="13" />{{ inboxPrimaryLabel(item.capability) }}
             </button>
           </span>
-          <span v-else-if="primaryKind(item) === 'process'" class="tip-wrap" v-tooltip="item.capability === 'video' ? '正在提炼视频，完成后自动刷新' : '正在按内容语义转换，完成后自动刷新'">
+          <span v-else-if="primaryKind(item) === 'process'" class="tip-wrap" v-tooltip="item.capability === 'video' ? '正在提炼，完成后自动刷新' : '正在按内容语义转换，完成后自动刷新'">
             <button
               class="primary-act"
               type="button"
@@ -510,7 +510,7 @@ function statusChip(item: InboxItem): string {
 function statusTip(item: InboxItem): string {
   if (item.status === 'failed') return item.error || '转换失败，可以重试';
   if (item.status === 'converting') {
-    return item.capability === 'video' ? '正在提炼视频，完成后自动刷新' : '正在按内容语义转换，完成后自动刷新';
+    return item.capability === 'video' ? '正在提炼，完成后自动刷新' : '正在按内容语义转换，完成后自动刷新';
   }
   return '';
 }
@@ -520,9 +520,9 @@ function convertTip(item: InboxItem): string {
   if (!isServerConvertible(item.capability)) return item.hint || '这个格式暂时不能转换';
   // 视频不是格式转换，而是发给视频理解模型生成纪要：文案要说清楚，别让人以为只是换封装
   if (item.capability === 'video') {
-    if (item.derivedPath) return '重新提炼成功后会替换这条视频纪要的旧产物；已入库的副本不会自动改动';
-    if (item.status === 'failed') return '重新提炼：再调用一次视频理解模型生成 Markdown 纪要';
-    return '调用视频理解模型，把这条视频提炼成 Markdown 纪要；产物仍在收集箱，确认后入库';
+    if (item.derivedPath) return '重新提炼成功后会替换这条纪要的旧产物；已入库的副本不会自动改动';
+    if (item.status === 'failed') return '重新提炼：再跑一次提炼，B站有 CC 字幕时仍优先按字幕';
+    return '调用视频理解模型，把视频 / 图文笔记提炼成 Markdown 纪要：B站有 CC 字幕时优先按字幕（不下载整段视频），抖音图文 / 实况笔记按多图理解；产物仍在收集箱，确认后入库';
   }
   if (item.derivedPath) return '重新转换成功后会替换这份原件的旧产物；已入库的副本不会自动改动';
   if (item.status === 'failed') return '重新转换';
@@ -928,7 +928,7 @@ async function submitUrl() {
     const saved = await inbox.fetchUrl(url);
     pageUrl.value = '';
     if (saved.capability === 'video') {
-      notify.success(`已保存视频链接：${saved.name}，点「提炼视频」开始提炼`);
+      notify.success(`已保存视频 / 图文链接：${saved.name}，点「提炼视频」开始提炼`);
     } else {
       notify.success(`已保存网页：${saved.name}`);
     }
