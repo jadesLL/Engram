@@ -22,6 +22,11 @@ export interface GitIdentity {
    * 品牌启动器 Engram.exe（electron.exe 的改名副本）会被误判成打包形态。
    */
   packaged?: boolean;
+  /**
+   * 主进程判定为预构建环境包安装（安装器 bundle 模式）：没有 .git、也不带 Git，
+   * 应用内 git 更新不可用，提交号来自包清单 .engram-prebuilt.json。
+   */
+  prebuilt?: boolean;
 }
 
 /** 源码模式「检查更新」结果中与提交号相关的字段 */
@@ -67,6 +72,8 @@ export function formatSourceCheckLabel(result: SourceCheckResult): string {
 export interface VersionHintInput {
   /** 桌面端非打包形态（源码模式）；浏览器访问与安装包形态为 false */
   sourceMode?: boolean;
+  /** 预构建环境包安装（无 .git / 无 Git）：更新方式是重跑新版安装器 */
+  prebuilt?: boolean;
   /** 已拿到的提交号（桌面主进程 IPC 或服务端 /api/update/state） */
   commit?: string;
   /** 提交号来自服务端而非桌面主进程（Docker 镜像 / 浏览器访问） */
@@ -81,6 +88,13 @@ export interface VersionHintInput {
  * 时，设置页给的是安装包形态的兜底文案「当前安装的 Engram 版本。」，无从下手）。
  */
 export function formatVersionHint(input: VersionHintInput = {}): string {
+  // 预构建安装：没有 git 检出，提交号来自安装包清单；不能照搬「源码模式」文案，
+  // 否则用户会以为应用内还能增量拉源码更新（实际要靠重跑新版安装器）。
+  if (input.prebuilt) {
+    return input.commit
+      ? '预构建安装：提交号来自安装包清单；应用内更新请用新版安装器覆盖安装。'
+      : '预构建安装（不含 Git 与 .git）：应用内更新请用新版安装器覆盖安装。';
+  }
   const commit = (input.commit || '').trim();
   if (commit) {
     return input.fromServer

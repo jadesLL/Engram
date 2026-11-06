@@ -47,6 +47,7 @@ const versionLabel = computed(() => formatVersionLabel(APP_VERSION, identity.val
 const versionHint = computed(() =>
   formatVersionHint({
     sourceMode: desktopEnv.value?.packaged === false,
+    prebuilt: desktopEnv.value?.prebuilt === true,
     commit: identity.value.commit,
     fromServer: !desktopEnv.value?.commit && Boolean(serverCommit.value),
   }),

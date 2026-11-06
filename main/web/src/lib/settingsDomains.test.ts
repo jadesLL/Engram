@@ -348,6 +348,16 @@ test('卸载与开机自启不再留在「桌面端更新」分组里（防回�
   assert.match(danger, /\/api\/settings\/wipe'/, '危险操作应保留清库');
 });
 
+test('桌面端更新：预构建安装不能落进 git 更新入口（防回归）', () => {
+  // 2026-11-06 客户端实例：预构建环境包安装没有 .git / Git，旧版仍按源码模式跑 git 检查，
+  // 设置页永远挂着「自动检查失败: spawn git ENOENT」。这条锁住三类安装入口的分流。
+  const updatePanel = fs.readFileSync(path.join(settingsDir, 'UpdatePanel.vue'), 'utf8');
+  assert.match(updatePanel, /prebuiltMode/, 'UpdatePanel 必须识别预构建安装（desktop-get-env.prebuilt）');
+  assert.match(updatePanel, /installerMode/, '安装包入口必须与源码模式/预构建模式分开判定');
+  assert.match(updatePanel, /预构建安装/, '预构建安装必须给用户可读的更新方式说明');
+  assert.match(updatePanel, /!env\.prebuilt/, 'sourceMode 必须排除预构建安装，否则又会跑 git 检查');
+});
+
 test('锚点 → 大类：设置页内跳转不再靠调用方写死大类', () => {
   const domains = visibleSettingsDomains(FULL);
   assert.equal(domainOfAnchor('panel-update-desktop', domains), 'update');
