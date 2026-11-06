@@ -20,7 +20,7 @@
 #   逐个回退，产物按 ZIP 头校验，可用 ENGRAM_MINGIT_URL / ENGRAM_NODE_URL 覆盖为单一地址）
 #   → 克隆/更新 Engram 源码到 %LOCALAPPDATA%\engram\Engram
 #   → 安装依赖、构建桌面端、创建桌面快捷方式、启动
-# 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载走应用内 设置→数据与存储→危险操作→「卸载 Engram」，或运行 uninstall-engram.ps1。
+# 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载走应用内 设置→本机应用→「卸载 Engram」，或运行 uninstall-engram.ps1。
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'engram'),
   [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
@@ -703,5 +703,5 @@ if ($bundleZip) {
     StepFail 'launch' '启动失败：实例立即退出。最常见原因是单实例锁——打包版 Engram.exe 正在运行（两者共用数据目录，同时只能跑一个），请先退出它再试'
   }
 }
-StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载走应用内 设置→数据与存储→危险操作→「卸载 Engram」'
+StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载走应用内 设置→本机应用→「卸载 Engram」'
 Out-Line '##ALLDONE'
