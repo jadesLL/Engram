@@ -83,8 +83,12 @@ check('prepare-runtime 校验 pnpm.cjs 版本', prepText.includes('pnpmVersionOf
 check('prepare-runtime 提供 --check 自检', prepText.includes("'--check'"));
 check('prepare-runtime 写 manifest.json', prepText.includes('manifest.json'));
 
-const gitignore = fs.readFileSync(path.join(mainDir, '..', '.gitignore'), 'utf8');
-check('runtime 产物被 .gitignore 排除', gitignore.includes('main/installer/resources/runtime/'));
+// .gitignore 可能在仓库根（main/..）也可能被 verify/子检出按 main/ 复制——两处任一排除即可
+const gitignoreTexts = [path.join(mainDir, '.gitignore'), path.join(mainDir, '..', '.gitignore')]
+  .filter((p) => fs.existsSync(p))
+  .map((p) => fs.readFileSync(p, 'utf8'));
+check('runtime 产物被 .gitignore 排除',
+  gitignoreTexts.some((s) => s.includes('installer/resources/runtime/'))) ;
 
 // ---------- 5) 引擎选择接线（旧克隆不能盖新 exe） ----------
 const engineLib = require(path.join(installerDir, 'scripts', 'lib', 'engine.js'));
