@@ -119,6 +119,71 @@ async function waitFor(label: string, fn: () => Promise<boolean>, timeoutMs = 60
   }
 }
 
+interface SseFrame {
+  event: string;
+  data: Record<string, any>;
+}
+
+/**
+ * 订阅实例的浏览器 SSE（`/api/events`），把事件攒进数组。
+ *
+ * 数据落盘只是同步的一半：前端靠服务端推的 file-changed / page-changed 才知道重读列表。
+ * 同步链路此前只在页面写盘时发事件，文件（收集箱、原始资料附件、图片资产）一条都不发，
+ * 表现就是「文件已经同步到磁盘了，界面一直不出现」——这里用真实 SSE 连接锁住这条链路：
+ * 中枢侧（成员推文件落盘）与成员侧（拉取/删除落盘）都必须推 file-changed。
+ */
+function watchSse(inst: Instance): {
+  frames: SseFrame[];
+  waitFor: (event: string, pred: (data: SseFrame['data']) => boolean, label: string, timeoutMs?: number) => Promise<void>;
+  close: () => void;
+} {
+  const frames: SseFrame[] = [];
+  const ctrl = new AbortController();
+  const stream = (async () => {
+    const res = await fetch(`http://127.0.0.1:${inst.port}/api/events`, {
+      headers: { authorization: `Bearer ${inst.token}` },
+      signal: ctrl.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`SSE 打开失败: ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+        let event = 'message';
+        const dataLines: string[] = [];
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event: ')) event = line.slice(7).trim();
+          else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+        }
+        if (!dataLines.length) continue;
+        try {
+          frames.push({ event, data: JSON.parse(dataLines.join('\n')) as Record<string, any> });
+        } catch { /* 只处理 JSON 帧 */ }
+      }
+    }
+  })();
+  // close() 主动 abort 属测试收尾的正常路径：不能变成未处理的 Promise 拒绝
+  void stream.catch(() => { /* 连接已关闭 */ });
+  return {
+    frames,
+    async waitFor(event, pred, label, timeoutMs = 60_000) {
+      await waitFor(label, async () => frames.some((item) => item.event === event && pred(item.data)), timeoutMs,
+        async () => `SSE 最近帧：${JSON.stringify(frames.slice(-8))}`);
+    },
+    close() {
+      ctrl.abort();
+    },
+  };
+}
+
 async function createPage(inst: Instance, title: string, content: string): Promise<string> {
   const res = await api(inst, 'POST', '/api/pages', { title, type: 'note' });
   assert.ok(res.ok, `建页失败: ${title}`);
@@ -351,6 +416,11 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     // ---------- 场景 3b：收集箱文件同样跨端同步，但哪一端都不许变成知识库页面 ----------
     // 收集箱是「待纳入资产」的暂存区：同步层必须把箱内文件（包括 .md）当普通文件传字节，
     // 一旦某端把它登记成 pages 行，检索/引用会立刻绕过用户确认，需求里的隔离就破了。
+    // 另外盯住「落盘后有没有推刷新事件」：文件到了磁盘但界面不重读，用户看到的就是「没同步」。
+    const hubSse = watchSse(hub);
+    const bSse = watchSse(nodeB);
+    // SSE 的订阅在响应头之后才注册：给握手一拍时间，避免「上传快于订阅」的假阴性
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const inboxForm = new FormData();
     inboxForm.append('files', new Blob([Buffer.from('# 收集箱里的随手记\n不该出现在知识库')], { type: 'text/markdown' }), '随手记.md');
     inboxForm.append('files', new Blob([Buffer.from('原始附件内容')], { type: 'application/octet-stream' }), '附件.bin');
@@ -375,6 +445,27 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
       true,
       '非文本文件也要真的传过去（走字节通道，不是只传指纹）'
     );
+
+    // 文件落地事件：中枢侧来自 /api/sync/file（成员推文件落盘），B 侧来自拉取落盘（client.pullFile）。
+    // 没有这条事件，开着的收集箱列表 / 角标不会重读——数据同步了、界面还是旧的。
+    await hubSse.waitFor('file-changed', (data) => data.path === '收集箱/随手记.md', '中枢推文件落地事件');
+    await bSse.waitFor('file-changed', (data) => data.path === '收集箱/随手记.md', 'B 推文件落地事件');
+
+    // 成员删掉收集箱条目 → 中枢与另一台成员都要收到删除刷新事件（同一路径第 2 条 file-changed，
+    // 第 1 条是落地），界面才会把条目移走；页面删除走 page-deleted，不重复推文件事件。
+    const inboxDel = await api(nodeC, 'DELETE', '/api/inbox/items', { path: '收集箱/随手记.md' });
+    assert.ok(inboxDel.ok, `收集箱删除失败: ${await inboxDel.text()}`);
+    const fileEventCount = (watcher: ReturnType<typeof watchSse>, relPath: string) =>
+      watcher.frames.filter((frame) => frame.event === 'file-changed' && String(frame.data.path || '') === relPath).length;
+    await waitFor('中枢推文件删除事件', async () => fileEventCount(hubSse, '收集箱/随手记.md') >= 2);
+    await waitFor('B 推文件删除事件', async () => fileEventCount(bSse, '收集箱/随手记.md') >= 2);
+    await waitFor('B 收集箱条目已删', async () => {
+      const res = await api(nodeB, 'GET', '/api/inbox/items');
+      const body = (await res.json()) as { items: { path: string }[] };
+      return !body.items.some((item) => item.path === '收集箱/随手记.md');
+    });
+    hubSse.close();
+    bSse.close();
 
     // hub 删除页面 → 两节点消失（入回收站）
     const pageDel = await createPage(hub, '同步验证删除', '待删除');

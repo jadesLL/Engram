@@ -10,6 +10,7 @@ import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { safeJoin, syncPageFile, movePage, markPageDeleted, notifySyncChange, PagePathTakenError } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
+import { classifyBrainEntry } from '../lib/brainPaths.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { merge3 } from './merge.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -479,6 +480,9 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     // 文件内容经 /api/sync/file 已落盘，这里只发号广播
     const target = String(push.target || '');
     const result = commit('file', target, actorId);
+    // 成员推送的变更广播只发给其他成员、不发中枢本机 SSE：中枢自己的网页端（Docker/NAS）
+    // 不补这一拍就会停在旧列表（收集箱、原始资料附件、图片资产都走文件通道）。
+    emit('file-changed', { path: target });
     return {
       ok: true,
       seq: Number(result.seq),
@@ -500,6 +504,9 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
       return { ok: true, seq: 0, revision: getPageSyncRevision(target), merge: 'direct' };
     }
     const result = commit('delete', target, actorId);
+    // 页面删除由 moveToTrash 推 page-deleted；文件类（收集箱 .md 也算文件）没有页面行，
+    // 中枢本机网页端同样要刷新，否则成员删掉的文件还挂在界面上。
+    if (classifyBrainEntry(target) === 'file') emit('file-changed', { path: target });
     return {
       ok: true,
       seq: Number(result.seq),
@@ -525,6 +532,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         markPageDeleted(oldRel);
       }
       const removed = commit('delete', oldRel, actorId);
+      if (classifyBrainEntry(oldRel) === 'file') emit('file-changed', { path: oldRel });
       return {
         ok: true,
         seq: Number(removed.seq),
@@ -535,6 +543,9 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
       };
     }
     const result = commit('move', newRel, actorId, { oldPath: oldRel });
+    // 页面改名由 movePage 推 page-moved；非页面文件（收集箱、原始资料附件、图片资产）没有
+    // 对应事件，中枢本机网页端也要刷新。
+    if (classifyBrainEntry(newRel) === 'file') emit('file-changed', { path: newRel, oldPath: oldRel });
     return {
       ok: true,
       seq: Number(result.seq),

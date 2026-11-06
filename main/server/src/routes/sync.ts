@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../lib/db.js';
 import { sse } from '../lib/sse.js';
+import { emit } from '../lib/events.js';
 import { requireAuth } from './auth.js';
 import { safeJoin } from '../lib/vault.js';
 import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
@@ -553,6 +554,9 @@ export async function syncRoutes(app: FastifyInstance) {
     const actorId = req.syncPeer?.id || 'owner';
     const result = commitFileChange(relPath, actorId);
     if (req.syncPeer) touchPeer(req.syncPeer.id, { seq: Number(result.seq) || 0 });
+    // 成员推来的文件在中枢落盘后，中枢自己的网页端（Docker/桌面浏览器）也要刷新文件列表：
+    // 成员广播只发给其他成员、不发中枢本机 SSE，缺这一拍收集箱/附件要等手动刷新才出现。
+    emit('file-changed', { path: relPath });
     let bytes = 0;
     try {
       bytes = fs.statSync(safeJoin(relPath)).size;
