@@ -30,6 +30,9 @@ export interface SyncOp {
   revision: number;
   node_id: string;
   ts: string;
+  /** file op 的内容 hash（其它 kind 为空）：成员端按它判断是否需要拉文件。
+   *  旧 oplog 行没有这一列，读出来是空串，成员端走兼容路径。 */
+  hash?: string;
 }
 
 export function nextRevision(): number {
@@ -52,12 +55,19 @@ export function currentNodeId(): string {
   return id;
 }
 
-export function appendOplog(kind: SyncKind, target: string, revision: number, nodeId: string, oldPath = ''): number {
+export function appendOplog(
+  kind: SyncKind,
+  target: string,
+  revision: number,
+  nodeId: string,
+  oldPath = '',
+  hash = '',
+): number {
   const result = db
     .prepare(
-      `INSERT INTO sync_oplog(kind, target, old_path, revision, node_id, ts) VALUES(?,?,?,?,?,?)`
+      `INSERT INTO sync_oplog(kind, target, old_path, revision, node_id, ts, hash) VALUES(?,?,?,?,?,?,?)`
     )
-    .run(kind, target, oldPath, revision, nodeId, now());
+    .run(kind, target, oldPath, revision, nodeId, now(), hash);
   const seq = Number(result.lastInsertRowid);
   // 逢 256 裁剪一次，避免每次写入都做 COUNT
   if (seq % 256 === 0) trimOplog();

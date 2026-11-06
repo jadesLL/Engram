@@ -775,8 +775,14 @@ export function migrate() {
     old_path TEXT NOT NULL DEFAULT '',
     revision INTEGER NOT NULL DEFAULT 0,
     node_id TEXT NOT NULL DEFAULT '',
-    ts TEXT NOT NULL
+    ts TEXT NOT NULL,
+    -- file op 的内容 hash：成员重连/补拉时按它判断要不要拉文件。旧实现不存 hash，
+    -- 回放出来的 file op 缺 hash 会被成员端静默跳过，离线期间的文件更新永远不落地。
+    hash TEXT NOT NULL DEFAULT ''
   )`).run();
+  // 旧库增量加列（CREATE TABLE IF NOT EXISTS 不会给既有表补列）；旧行 hash 为空，
+  // 成员端走「无条件拉一次」的兼容路径。
+  ensureColumn('sync_oplog', 'hash', `TEXT NOT NULL DEFAULT ''`);
   // 每页版本快照（保留最近 10 版）：三方合并的祖先来源
   db.prepare(`CREATE TABLE IF NOT EXISTS page_revisions (
     path TEXT NOT NULL,

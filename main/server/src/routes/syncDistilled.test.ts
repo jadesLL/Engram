@@ -23,9 +23,13 @@ process.env.DATA_DIR = temp;
 
 const DISTILLED = '原始资料/文档/已提炼.md';
 const PENDING = '原始资料/文档/未提炼.md';
+/** 提炼过、但文件随后被删除/改名的来源：账本行还在（isDistilledPath=true），文件已不在 brain */
+const STALE = '原始资料/文档/孤儿账本.md';
+const STALE_QUOTE = '孤儿账本来源在提炼后被删除';
 
 let app: ReturnType<typeof Fastify>;
 let ownerToken = '';
+let setSetting: (key: string, value: string) => void;
 const memberToken = `lsync_${'a'.repeat(48)}`;
 
 before(async () => {
@@ -35,6 +39,7 @@ before(async () => {
   const { writePage } = await import('../lib/vault.js');
   const { agentWritePage } = await import('../pipeline/agentWrite.js');
   const { createPeer } = await import('../sync/store.js');
+  setSetting = dbModule.setSetting;
 
   app = Fastify();
   await app.register(jwt, { secret: 'sync-distilled-route-test-secret' });
@@ -55,6 +60,20 @@ before(async () => {
       { path: DISTILLED, quote: 'Q4 交付三条产线' },
     ],
   });
+  // 孤儿账本：文件删除后 source_versions/page_contributions 仍留着（真实中枢 156 条
+  // distilled 路径里 31 条是这种），清单不能把它们下发给成员端。
+  writePage(STALE, `# ${STALE}\n\n${STALE_QUOTE}。`, { title: '孤儿账本' });
+  agentWritePage({
+    path: 'Wiki/概念/孤儿验收页.md',
+    title: '孤儿验收页',
+    type: 'concept',
+    content: '# 孤儿验收页\n\n## 当前理解\n\n孤儿账本来源。\n',
+    evidence: [
+      { path: STALE, quote: STALE_QUOTE },
+      { path: STALE, quote: '提炼后被删除' },
+    ],
+  });
+  fs.rmSync(path.join(temp, 'brain', STALE), { force: true });
   createPeer('验收手机', memberToken);
 });
 
@@ -98,4 +117,36 @@ test('owner 通道（浏览器 / 中枢自己）同样能读', async () => {
   assert.equal(res.statusCode, 200);
   const body = res.json() as { paths: string[] };
   assert.ok(body.paths.includes(DISTILLED));
+});
+
+test('已删除文件的孤儿账本路径不再下发（历史 31 条不再灌回成员端）', async () => {
+  const { isDistilledPath } = await import('../pipeline/sourceLedger.js');
+  assert.equal(isDistilledPath(STALE), true, '账本行还在：isDistilledPath 仍是 true');
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/sync/distilled',
+    headers: { authorization: `Bearer ${ownerToken}` },
+  });
+  assert.equal(res.statusCode, 200);
+  const body = res.json() as { paths: string[] };
+  assert.equal(body.paths.includes(STALE), false, '文件已不存在 → 不下发，避免成员端给不存在路径打标');
+  assert.ok(body.paths.includes(DISTILLED), '仍存在的已提炼来源必须照常下发');
+});
+
+test('中枢不按本地同步分类过滤（分类开关是各端自己的偏好，成员端自行采纳）', async () => {
+  // 中关闭「原始资料」分类同步：旧口径会把 paths 全部过滤掉，导致成员端（自己开着该分类）
+  // 收到空清单、把本地标记误清。
+  setSetting('sync_categories', JSON.stringify({ materials: false }));
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/sync/distilled',
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as { paths: string[] };
+    assert.ok(body.paths.includes(DISTILLED), '中枢关闭该分类时清单仍应返回，由成员端自行决定是否采纳');
+  } finally {
+    setSetting('sync_categories', '{}');
+  }
 });

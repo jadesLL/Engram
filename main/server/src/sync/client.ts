@@ -25,6 +25,8 @@ import {
 } from './link.js';
 import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
 import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
+import { isRawPath } from '../lib/rawSections.js';
+import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -145,8 +147,10 @@ let pushing = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 /** 推送失败重试退避（3s 起、倍增、30s 封顶；任一推送成功即复位） */
 let pushRetryMs = 3000;
-/** 拉取失败待补拉文件（path → 远端 hash），成功后移除 */
-const pendingFilePulls = new Map<string, string>();
+/** 拉取失败待补拉文件（path → 远端 hash + mtime），成功后移除。
+ *  mtime 用于补拉成功后把本地文件时间对齐中枢：对账用 mtime 判断「谁更新」，
+ *  不随身对齐会让刚拉下来的内容看起来是「本端刚改的」，下一轮又把旧内容推回去。 */
+const pendingFilePulls = new Map<string, { hash: string; mtime: number }>();
 /** 会话快照待补拉（远端 hash + 来源端），成功后移除（会话正文比文件大，失败必须留待重试；
  *  来源端一并留着——补拉同样要能标出「来自哪台设备」，不能因为是重试就把来源丢了） */
 const pendingSessionPulls = new Map<string, { hash: string; nodeId: string; nodeLabel: string }>();
@@ -684,7 +688,7 @@ function applyRemotePage(relPath: string, raw: string, revision: number): void {
   setPageSyncRevision(relPath, revision);
 }
 
-async function pullFile(relPath: string): Promise<number> {
+async function pullFile(relPath: string, mtimeMs?: number): Promise<number> {
   if (!syncAllowed('file', relPath)) return 0;
   const startedAt = Date.now();
   const res = await hubRequest(`/api/sync/file?path=${encodeURIComponent(relPath)}`, {
@@ -704,6 +708,14 @@ async function pullFile(relPath: string): Promise<number> {
     }
     if (!syncAllowed('file', relPath)) { fs.rmSync(temp, { force: true }); return 0; }
     fs.renameSync(temp, abs);
+    // 写入时间对齐中枢的 mtime：对账判断「谁更新」用的是文件 mtime，若落地就变成 now，
+    // 下一次对账会误认为本端更新，把刚拉到的内容又推回中枢（真实的文件覆盖回环）。
+    if (mtimeMs && mtimeMs > 0) {
+      try {
+        const stamp = new Date(mtimeMs);
+        fs.utimesSync(abs, stamp, stamp);
+      } catch { /* 时间对齐失败不影响内容正确性 */ }
+    }
   } catch (error) {
     fs.rmSync(temp, { force: true });
     throw error;
@@ -748,7 +760,10 @@ async function pullFile(relPath: string): Promise<number> {
 function applyRemoteMove(oldPath: string, target: string, revision: number): void {
   if (!oldPath || oldPath === target) return;
   try {
-    movePage(oldPath, target, 'sync');
+    const moved = movePage(oldPath, target, 'sync');
+    // 与中枢同口径：原始资料改名/换分类时，按路径存的账本（已提炼标记、证据来源）
+    // 必须一起搬到新路径，否则本端会在新路径上显示「未提炼」。
+    if (moved && isRawPath(oldPath)) remapRawSourcePaths(oldPath, target);
   } catch (error: any) {
     if (!(error instanceof PagePathTakenError)) {
       // 源不存在（本端从没拉到）等：后续内容同步会补齐新路径
@@ -836,14 +851,35 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
     } else if (op.kind === 'file') {
       // 文件不进内存队列：hash 不同才拉取；失败记入待补拉集合周期重试（水位照常推进）
       // 单个文件拉取的记录由 pullFile 自己写（≥512 KB），这里不计入批次
-      void pullFileIfChanged(target, String(op.hash || '')).catch((error: any) => {
-        pendingFilePulls.set(target, String(op.hash || ''));
-        logEvent('warn', 'file-pull-deferred', `文件「${target}」没能从中枢取回：${error?.message || error}；已加入待补拉队列，每分钟自动重试`, {
-          path: target,
-          error: error?.message || String(error),
-          pending: pendingFilePulls.size,
+      const remoteHash = String(op.hash || '');
+      const remoteMtime = Number(op.mtime || 0) || 0;
+      const localPending = pendingTargets.has(target)
+        || queue.some((item) => item.kind === 'file' && item.target === target);
+      // 没有 hash 分三种情况：
+      //  - live 广播（新中枢一定带 hash）：读到空说明文件已不存在/读取失败，按旧行为跳过，
+      //    否则会对已删文件每分钟 404 重试；
+      //  - replay 且本端同文件有待推送改动：等推送收口（ack 后以中枢裁决为准）；
+      //  - replay 的旧行（旧中枢/旧 oplog 没有 hash 列）：无条件拉一次，内容不同才落盘，
+      //    这是「离线期间文件更新永久丢失」的修复点。
+      const shouldPull = remoteHash
+        ? true
+        : source === 'replay' && !localPending;
+      if (shouldPull) {
+        void pullFileIfChanged(target, remoteHash, remoteMtime || undefined).catch((error: any) => {
+          const message = String(error?.message || error);
+          if (/拉取文件失败 404/.test(message)) {
+            // 中枢已经没有这个文件（op 之后被删）：不是失败，不必每分钟重试。
+            logEvent('info', 'file-pull-missing', `文件「${target}」在中枢已不存在，跳过补拉`, { path: target });
+            return;
+          }
+          pendingFilePulls.set(target, { hash: remoteHash, mtime: remoteMtime });
+          logEvent('warn', 'file-pull-deferred', `文件「${target}」没能从中枢取回：${message}；已加入待补拉队列，每分钟自动重试`, {
+            path: target,
+            error: message,
+            pending: pendingFilePulls.size,
+          });
         });
-      });
+      }
     } else if (op.kind === 'delete') {
       const bytes = (() => {
         try { return fs.statSync(safeJoin(target)).size; } catch { return 0; }
@@ -926,15 +962,16 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
   if (applied && appliedSummary && source === 'live') noteAppliedOp(appliedSummary);
 }
 
-async function pullFileIfChanged(relPath: string, remoteHash: string): Promise<number> {
+async function pullFileIfChanged(relPath: string, remoteHash: string, mtimeMs?: number): Promise<number> {
   try {
     const buf = fs.readFileSync(safeJoin(relPath));
     if (remoteHash && sha256Buf(buf) === remoteHash) return 0;
   } catch {
     // 本端没有该文件 → 拉取
   }
-  if (!remoteHash) return 0;
-  return pullFile(relPath);
+  // 旧中枢/旧 oplog 行的 file op 没有 hash：不能像旧实现那样直接 return 0（等于静默丢更新）。
+  // 无条件拉一次，由内容比对兜底；失败由调用方记入待补拉队列。
+  return pullFile(relPath, mtimeMs);
 }
 
 /** 推送在途结束后的收尾：应用暂存的同页广播（仅当其版本比 ack 结果新） */
@@ -1115,6 +1152,22 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
   }
 }
 
+/**
+ * 推送永久失败判定：中枢明确拒绝（4xx）且不是临时状态时，重试毫无意义——旧实现把所有
+ * 错误都塞回队首指数退避，一条永久失败的条目（如 >200MB 文件被 413 拒绝、路径非法 400）
+ * 会永远堵在队首，它后面的所有本端改动都推不上去（用户看到某客户端一直不同步）。
+ * 401/403（令牌/权限可能重新配对恢复）与 408/429（临时/限流）仍按可重试处理。
+ */
+export function isPermanentPushError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error || '');
+  // postJson 抛「hub 返回 400: …」；文件上传抛「文件推送失败 413: …」
+  const match = /(?:hub 返回|文件推送失败)\s*(\d{3})/.exec(text);
+  if (!match) return false;
+  const status = Number(match[1]);
+  if (!Number.isFinite(status) || status < 400 || status >= 500) return false;
+  return status !== 401 && status !== 403 && status !== 408 && status !== 429;
+}
+
 async function pushLoop(): Promise<void> {
   if (pushing) return;
   pushing = true;
@@ -1175,6 +1228,23 @@ async function pushLoop(): Promise<void> {
           continue;
         }
         if (item.kind === 'file' && !fs.existsSync(safeJoin(item.target))) {
+          continue;
+        }
+        if (isPermanentPushError(error)) {
+          // 中枢明确拒绝且不会自愈：丢弃这一条、继续推后面的改动，不让毒条目永久阻塞队列。
+          // 内容仍在本端磁盘上，只是无法跨端同步；日志写明「为什么被跳过」。
+          lastError = String(error?.message || error);
+          const statusMatch = /(?:hub 返回|文件推送失败)\s*(\d{3})/.exec(lastError);
+          const status = statusMatch ? Number(statusMatch[1]) : 0;
+          logEvent('error', 'push-dropped', status === 413
+            ? `「${item.target}」文件超过同步上限，无法同步（${lastError}）；已跳过该条，继续推送其余改动`
+            : `「${item.target}」被中枢拒绝且不会自动恢复（${lastError}）；已跳过该条，继续推送其余改动`, {
+            kind: item.kind,
+            path: item.target,
+            status,
+            error: lastError,
+            queued: queue.length,
+          });
           continue;
         }
         // 网络/hub 错误：塞回队首保序，指数退避后自动重试（3s→30s，成功复位）
@@ -1327,6 +1397,8 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       revision: number;
       /** 中枢端该路径是否已提炼（旧中枢不带此字段 → 视为未知，跳过账本补齐） */
       distilled?: boolean;
+      /** 中枢端文件/页面 mtime（ms）；旧中枢不带 → 0（文件冲突退回旧行为） */
+      mtime?: number;
     }[] = snap?.entries || [];
     const hubTargets = new Set(entries.map((e) => e.path));
     /**
@@ -1381,14 +1453,35 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
             pendingFilePulls.delete(entry.path);
             continue;
           }
+          const hubMtime = Number(entry.mtime || 0);
+          const localPending = pendingTargets.has(entry.path)
+            || queue.some((item) => item.kind === 'file' && item.target === entry.path);
           if (localHash) {
-            // 两端文件不同 → 本端为准推送（文件不可合并，按到达先后覆盖）
+            // 两端文件内容不同：文件不可合并，按「较新者胜」裁决，而不是无条件本端优先。
+            // 旧实现只要本端有文件就推，离线成员的旧副本会覆盖中枢新文件（真实回环：
+            // 三个节点依次把同一对文件推来推去，最后谁跑对账谁赢）。
+            // 本端已有待推送改动、或中枢没给 mtime（旧中枢）时保留旧行为。
+            if (localPending) {
+              queued++;
+              pushSample(queuedSamples, entry.path);
+              enqueueLocalChange('file', entry.path);
+              continue;
+            }
+            const localMtime = mtimeMsOf(entry.path);
+            if (hubMtime > 0 && localMtime <= hubMtime) {
+              // 中枢那份更新（或同时刻）→ 拉中枢，别把旧内容推回去
+              pulledBytes += await pullFile(entry.path, hubMtime);
+              pendingFilePulls.delete(entry.path);
+              pulled++;
+              pushSample(pulledSamples, entry.path);
+              continue;
+            }
             queued++;
             pushSample(queuedSamples, entry.path);
             enqueueLocalChange('file', entry.path);
             continue;
           }
-          pulledBytes += await pullFile(entry.path);
+          pulledBytes += await pullFile(entry.path, hubMtime || undefined);
           pendingFilePulls.delete(entry.path);
           pulled++;
           pushSample(pulledSamples, entry.path);
@@ -1695,9 +1788,9 @@ async function pullResearchIfChanged(taskId: string, remoteHash: string): Promis
 /** 重试此前拉取失败的文件、会话与客户调研（成功移出集合；失败留待下一轮） */
 async function retryPendingFilePulls(): Promise<void> {
   if (pendingFilePulls.size === 0 && pendingSessionPulls.size === 0 && pendingResearchPulls.size === 0) return;
-  for (const [relPath, hash] of Array.from(pendingFilePulls)) {
+  for (const [relPath, pending] of Array.from(pendingFilePulls)) {
     try {
-      const bytes = await pullFileIfChanged(relPath, hash);
+      const bytes = await pullFileIfChanged(relPath, pending.hash, pending.mtime || undefined);
       pendingFilePulls.delete(relPath);
       logEvent('info', 'file-pull-retry-ok', `补拉文件成功 ${relPath}${bytes ? `（${formatBytes(bytes)}）` : ''}`, {
         path: relPath,
@@ -1705,9 +1798,16 @@ async function retryPendingFilePulls(): Promise<void> {
         pending: pendingFilePulls.size,
       });
     } catch (error: any) {
-      logEvent('warn', 'file-pull-retry-failed', `补拉文件仍失败 ${relPath}：${error?.message || error}`, {
+      const message = String(error?.message || error);
+      if (/拉取文件失败 404/.test(message)) {
+        // 中枢已经没有这个文件（等待期间被删）：移出队列，避免每分钟 404 重试。
+        pendingFilePulls.delete(relPath);
+        logEvent('info', 'file-pull-missing', `补拉文件「${relPath}」时中枢已不存在，移出待补拉队列`, { path: relPath });
+        continue;
+      }
+      logEvent('warn', 'file-pull-retry-failed', `补拉文件仍失败 ${relPath}：${message}`, {
         path: relPath,
-        error: error?.message || String(error),
+        error: message,
         pending: pendingFilePulls.size,
       });
     }

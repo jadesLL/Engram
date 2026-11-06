@@ -69,6 +69,19 @@ class SyncEngine(
     @Volatile private var retryFuture: ScheduledFuture<*>? = null
     @Volatile private var retryAttempt = 0
     /**
+     * 前台周期心跳（2026-11 用户报障「有的客户端不同步」）：安卓没有后台调度，原先只有
+     * 回前台 / 本机写入 / 手动 / 换网 / 失败重试这些事件才会拉一轮——App 停在前台不动时，
+     * 中枢侧的改动（包括只在轮末对齐的「已提炼」标记）永远不会下来。这里按
+     * [SyncSchedulePolicy] 每 30 秒检查一次、距上次成功同步满 90 秒就轻量补一轮；
+     * 退后台立即取消，不改变「无常驻后台同步」的形态。
+     */
+    private val heartbeatScheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "engram-sync-heartbeat").apply { isDaemon = true }
+    }
+    @Volatile private var heartbeatFuture: ScheduledFuture<*>? = null
+    /** 上次心跳真正发起 request 的时刻：网络持续失败/中枢长时间不可达时也不会每 30 秒重试一次 */
+    @Volatile private var lastHeartbeatRequestAt = 0L
+    /**
      * 退到后台后继续完成同步的宽限截止时刻（0 = 没有宽限）：从 onBackground 起算，最多
      * [BackgroundSyncPolicy.GRACE_MS]（5 分钟）。宽限只用来把已经在跑 / 已排队的工作跑完，
      * 不接受前台 UI 的新触发；到期立即取消在途请求，回到「待回前台继续」。
@@ -94,12 +107,20 @@ class SyncEngine(
      * 手机上一直停在旧路径；日志里反复出现「中枢已无此内容」）。
      */
     private val healAtSetting = "sync_heal_at"
+    /** 上次因「本轮有缺口」排补轮的时刻（节流用，见 [scheduleGapRetry]） */
+    private val gapRetryAtSetting = "sync_gap_retry_at"
     /** 本轮已因「中枢已无此内容」记过日志的路径：改名后旧 op 会连片回放，同一路径只记一条 */
     private val missingLogged = mutableSetOf<String>()
     /** 本轮因「中枢已无此内容」跳过的条数：结尾汇总一条，别逐条刷屏 */
     private var missingSkipped = 0
     /** 本轮有推送项失败（逐项容错后的标记）：结束时走退避重试，不因它空转重开整轮 */
     @Volatile private var pushDeferred = false
+    /**
+     * 本轮有「拉取/对账缺口」：单条 op 应用失败、对账单项没落地等被跳过的情况。
+     * 这类缺口原来只把 sync_heal_at 置 0 就结束（整轮仍算成功），要等下一次自然事件才补；
+     * 收尾时由 [scheduleGapRetry] 在前台补一轮，缩短「内容缺了但不自愈」的窗口。
+     */
+    @Volatile private var gapDetected = false
 
     /**
      * ── 连接通道择优：局域网 → IPv6 → IPv4（都不通即「已断开」）────────────────────
@@ -153,6 +174,8 @@ class SyncEngine(
         foreground = true
         cancelled = false
         request(false)
+        // 前台周期心跳：App 停在前台不动时也能周期拉中枢改动（退后台立刻取消，见 onBackground）
+        ensureHeartbeat()
     }
 
     /**
@@ -161,6 +184,8 @@ class SyncEngine(
      * 宽限内不新增失败重试；窗口到期（或这一轮收敛完 / 失败）立即收尾，待推队列留在 SQLite。
      */
     fun onBackground() {
+        // 前台心跳随生命周期停止：后台不排新的同步轮（与「无后台常驻同步」的形态一致）
+        stopHeartbeat()
         foreground = false
         connected = false
         val syncReady = db.setting("sync_role") == "member" && db.setting("sync_enabled") == "1"
@@ -243,6 +268,82 @@ class SyncEngine(
     /** 允许同步工作继续：前台，或退到后台后的有限宽限窗口内 */
     private fun workAllowed(): Boolean = foreground || inBackgroundGrace()
 
+    /**
+     * 挂上前台周期心跳（幂等）：每 [SyncSchedulePolicy.HEARTBEAT_CHECK_MS] 检查一次，
+     * 距上次成功同步满 [SyncSchedulePolicy.HEARTBEAT_INTERVAL_MS] 且满足
+     * 「前台 + 成员 + 已启用 + 没有在跑」时触发一轮轻量同步。
+     *
+     * 不使用固定 rate：心跳只做"是否到期"的判断，真正的同步仍走 request() 的排队/去重逻辑，
+     * 不会与 15 分钟 heal（[SyncHealPolicy]）抢节奏——heal 由 request 内部按自己的节流决定。
+     */
+    private fun ensureHeartbeat() {
+        if (heartbeatFuture != null) return
+        heartbeatFuture = try {
+            heartbeatScheduler.scheduleWithFixedDelay({
+                try {
+                    val now = System.currentTimeMillis()
+                    // 两次真正发起之间同样隔 90 秒：网络坏时 request 会失败，只在"成功过才计时"会每 30 秒重撞一次
+                    val attemptDue = lastHeartbeatRequestAt == 0L ||
+                        now - lastHeartbeatRequestAt >= SyncSchedulePolicy.HEARTBEAT_INTERVAL_MS
+                    if (attemptDue && SyncSchedulePolicy.due(
+                            nowMs = now,
+                            lastSyncAtMs = lastSyncAtMs(),
+                            foreground = foreground,
+                            role = db.setting("sync_role"),
+                            enabled = db.setting("sync_enabled") == "1",
+                            running = running.get(),
+                        )
+                    ) {
+                        lastHeartbeatRequestAt = now
+                        request(false)
+                    }
+                } catch (_: Throwable) {
+                    // 心跳线程里的任何异常都不能把调度器打死：下一拍继续
+                }
+            }, SyncSchedulePolicy.HEARTBEAT_CHECK_MS, SyncSchedulePolicy.HEARTBEAT_CHECK_MS, TimeUnit.MILLISECONDS)
+        } catch (_: RejectedExecutionException) {
+            null // 调度器已关闭（进程收尾）：等下次前台事件
+        }
+    }
+
+    /** 停掉前台心跳（退后台 / 生命周期收尾）；回前台由 [onForeground] 重新挂上 */
+    private fun stopHeartbeat() {
+        heartbeatFuture?.cancel(false)
+        heartbeatFuture = null
+    }
+
+    /** 上次成功同步的时刻（毫秒）：解析失败/从未同步返回 0，心跳会立刻补一轮 */
+    private fun lastSyncAtMs(): Long = db.setting("sync_last_at")
+        ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
+
+    /** 本轮是否有需要补轮的内容缺口（拉取失败被跳过 / 旧路径 404 / 对账单项没落地） */
+    private fun hasContentGap(): Boolean = gapDetected || missingSkipped > 0
+
+    /**
+     * 本轮有内容没补齐：前台 30 秒后补一轮。
+     *
+     * 原来这类缺口只把 healAt 置 0 就结束（整轮仍算成功），要等下一次「自然事件」——
+     * 手机停在前台不动时就永远不补。这里补一次，并用 [SyncSchedulePolicy.gapRetryDue]
+     * 做 5 分钟节流，坏网/中枢持续 404 时不会每轮都排、不会刷日志。
+     */
+    private fun scheduleGapRetry() {
+        val now = System.currentTimeMillis()
+        val last = db.setting(gapRetryAtSetting)?.toLongOrNull() ?: 0L
+        if (!SyncSchedulePolicy.gapRetryDue(now, last, foreground = foreground)) return
+        db.setSetting(gapRetryAtSetting, now.toString())
+        syncProgress = "有内容未补齐，30 秒后自动补一轮"
+        db.log(
+            "info",
+            "sync-gap-retry",
+            "本轮有内容未补齐（旧路径跳过 " + missingSkipped + " 项" +
+                (if (gapDetected) "，另有拉取/对账失败" else "") +
+                "）：30 秒后自动补一轮对账",
+        )
+        runCatching {
+            retryScheduler.schedule({ request(false) }, SyncSchedulePolicy.GAP_RETRY_DELAY_MS, TimeUnit.MILLISECONDS)
+        }
+    }
+
     fun request(full: Boolean) {
         if (!workAllowed() || db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
         // 已经要开跑了：撤掉排队中的重试，免得这一轮刚成功又被上一次的退避再拉起来一轮
@@ -258,6 +359,7 @@ class SyncEngine(
             missingLogged.clear()
             missingSkipped = 0
             pushDeferred = false
+            gapDetected = false
             try {
                 db.log("info", "start", if (full) "手动全量对账" else "事件触发同步")
                 syncProgress = "正在连接中枢"
@@ -313,6 +415,9 @@ class SyncEngine(
             } finally {
                 pendingPulls = 0
                 running.set(false)
+                // 只要这一轮跑完时仍在前台，就确保心跳挂着（覆盖 onForeground 之外的启动路径，如
+                // 冷启动页面就绪回调、分享落袋触发的首轮；幂等，重复调用无副作用）
+                if (foreground) ensureHeartbeat()
                 val rerun = requestWhileRunning.getAndSet(false)
                 val rerunFull = fullRequestWhileRunning.getAndSet(false)
                 // 失败后保留持久化 outbox，等退避重试或下次前台事件。
@@ -331,6 +436,9 @@ class SyncEngine(
                     // 后台/离线的重试没有意义——省电，也让「同步中断」保持诚实。
                     // 具体原因已在 catch 里记进 lastError 与同步日志，这里不重复传。
                     if (foreground) scheduleRetry() else failBackgroundGrace()
+                } else if (completed && active && foreground && !rerun && !remaining && hasContentGap()) {
+                    // 本轮有拉取/对账缺口：前台排一次补轮（A4），别让缺失内容等到下一次用户操作
+                    scheduleGapRetry()
                 } else if (completed && !foreground && !cancelled && inBackgroundGrace() &&
                     !rerun && !remaining
                 ) {
@@ -447,6 +555,20 @@ class SyncEngine(
         val raw = response.optJSONArray("paths") ?: return
         val hub = LinkedHashSet<String>()
         for (i in 0 until raw.length()) raw.optString(i).takeIf { it.isNotBlank() }?.let(hub::add)
+        // 防护（A5）：中枢返回空清单而本机有标记时不清空。
+        // 空响应更可能来自中枢异常/旧版接口/分类过滤；若直接按差集执行 plan.clear，
+        // 用户会看到「已提炼」整片变成「未提炼」（同类事故已报障过）。宁可下一轮再核对。
+        if (hub.isEmpty()) {
+            val localMarks = db.distilledPaths()
+            if (localMarks.isNotEmpty()) {
+                db.log(
+                    "warn",
+                    "ledger-marks-guard",
+                    "中枢返回空的已提炼清单，本机有 " + localMarks.size + " 项标记：本轮跳过取消（防止误清，下一轮再核对）",
+                )
+                return
+            }
+        }
         val plan = LedgerMarks.plan(hub, db.distilledPaths())
         if (!plan.changed) return
         for (path in plan.add) {
@@ -663,6 +785,8 @@ class SyncEngine(
                         } catch (error: Exception) {
                             // 单条变更应用失败（路径被占用、写盘异常等）不能卡住整轮：记一条、
                             // 推进水位，内容交给下一次全量对账再核（与桌面 client 的 itemFailed 同口径）。
+                            // 同时标记"本轮有缺口"：收尾会安排一次补轮（A4），别等到下一次用户操作。
+                            gapDetected = true
                             db.log(
                                 "warn",
                                 "pull-op-failed",
@@ -814,6 +938,8 @@ class SyncEngine(
                     } catch (error: Exception) {
                         // 对账逐项容错：单项落地失败不中止整轮（否则 advanceCursor 永远执行不到，
                         // 每轮都从同一处重来，进度永远不前进）。内容交给下一次对账再试。
+                        // 标记缺口，让本轮收尾排一次补轮（A4），缩短"缺了但不自愈"的窗口。
+                        gapDetected = true
                         db.setSetting(healAtSetting, "0")
                         db.log(
                             "warn",

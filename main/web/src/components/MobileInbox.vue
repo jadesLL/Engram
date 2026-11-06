@@ -632,6 +632,7 @@ import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
 import { useInboxStore, type InboxItem } from '../stores/inbox';
+import { useSyncStore } from '../stores/sync';
 import { registerBackHandler } from '../lib/androidBack';
 import { confirmDialog } from '../lib/confirm';
 import { haptic } from '../lib/haptics';
@@ -661,6 +662,14 @@ import AppSpinner from './ui/AppSpinner.vue';
 const inbox = useInboxStore();
 const chat = useChatStore();
 const app = useAppStore();
+/**
+ * 同步状态：收集箱条目的「已转换 / 已入库」不只来自磁盘（本机推导），还会被同步轮从中枢带回来。
+ * 订阅后按 indexRevision（同步落地/状态变化时自增）自动重读列表：
+ * 否则用户停在收集箱页面时，中枢刚转换/入库的条目要等手动刷新才翻面——那正是用户报障
+ * 「已整理变回待整理/停在旧状态」的场景之一。
+ */
+const sync = useSyncStore();
+let stopSyncIndexWatch: (() => void) | undefined;
 const route = useRoute();
 const router = useRouter();
 
@@ -2247,10 +2256,20 @@ onMounted(async () => {
   syncPolling();
   syncShellInset();
   if (captureQueryOn()) await openCaptureReceipt(false);
+  // 同步轮落地/状态翻面后自动重读收集箱（与 Sidebar 的 indexRevision 订阅同款）：
+  // 条目状态有一部分来自中枢（转换中/失败/已入库），停留在本页时也要能自动翻面。
+  sync.subscribe();
+  stopSyncIndexWatch = watch(
+    () => sync.indexRevision,
+    () => { if (!inbox.loading) void inbox.load(); },
+  );
 });
 
 onBeforeUnmount(() => {
   disposed = true;
+  sync.unsubscribe();
+  stopSyncIndexWatch?.();
+  stopSyncIndexWatch = undefined;
   cancelLongPress();
   selectGuardCleanup?.();
   selectGuardCleanup = null;

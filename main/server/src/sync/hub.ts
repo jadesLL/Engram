@@ -11,6 +11,8 @@ import { noteAppWrite } from '../lib/appWrites.js';
 import { safeJoin, syncPageFile, movePage, markPageDeleted, notifySyncChange, PagePathTakenError } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { classifyBrainEntry } from '../lib/brainPaths.js';
+import { isRawPath } from '../lib/rawSections.js';
+import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { merge3 } from './merge.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -284,8 +286,20 @@ export const HUB_ACTOR = 'hub';
 
 /** 中枢变更统一提交：发号 → 页面快照 → oplog → 广播 */
 function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOptions = {}): Record<string, unknown> {
+  // 文件类变更先把内容 hash 算出来（一次读取，供三处复用）：广播载荷要带（成员据此判断
+  // 要不要拉），oplog 也要存（重连补拉拿到的是 oplog 行，缺 hash 会静默跳过更新），
+  // 同时记录 mtime 供成员端对账「较新者胜」裁决。
+  let fileMeta: { hash: string; size: number } | null = null;
+  if (kind === 'file') {
+    try {
+      const buf = fs.readFileSync(safeJoin(target));
+      fileMeta = { hash: sha256(buf), size: buf.length };
+    } catch {
+      fileMeta = { hash: '', size: 0 };
+    }
+  }
   const revision = nextRevision();
-  const seq = appendOplog(kind, target, revision, actorId, opts.oldPath || '');
+  const seq = appendOplog(kind, target, revision, actorId, opts.oldPath || '', fileMeta?.hash || '');
   const payload: Record<string, unknown> = {
     seq,
     kind,
@@ -307,14 +321,11 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     const evidence = opts.evidence !== undefined ? opts.evidence : collectEvidenceForPage(target);
     if (evidence) payload.evidence = evidence;
   } else if (kind === 'file') {
-    try {
-      const buf = fs.readFileSync(safeJoin(target));
-      payload.hash = sha256(buf);
-      payload.size = buf.length;
-    } catch {
-      payload.hash = '';
-      payload.size = 0;
-    }
+    payload.hash = fileMeta?.hash || '';
+    payload.size = fileMeta?.size || 0;
+    // 修改时间随 op/广播下发：成员端对账时用它和本地 mtime 比较，较新者胜；
+    // 旧中枢不带该字段 → 成员端退回旧的「本端优先推送」行为。
+    payload.mtime = mtimeMsOf(target);
   } else if (kind === 'session') {
     // 会话/看板都不在 brain 目录里，载荷只带 hash 等元信息；正文与看板内容由成员按需拉取
     stampSessionOrigin(target);
@@ -520,7 +531,11 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     const oldRel = String(push.old_path || '');
     const newRel = String(push.target || '');
     try {
-      movePage(oldRel, newRel, 'sync');
+      const moved = movePage(oldRel, newRel, 'sync');
+      // 原始资料改名/换分类：账本按路径存（source_versions 等），必须随文件一起搬家。
+      // 漏这一步会让「已提炼」标记与证据来源停在旧路径——改名方显示已提炼，其余端
+      // 看到的新路径账本为空、显示未提炼（用户报障：已整理了在其他端变成未整理的）。
+      if (moved && isRawPath(oldRel)) remapRawSourcePaths(oldRel, newRel);
     } catch (error: any) {
       if (!(error instanceof PagePathTakenError)) throw error;
       // 目标路径已被占用（两端各自建了同名页）：绝不覆盖目标正文。把来源路径按删除广播，
