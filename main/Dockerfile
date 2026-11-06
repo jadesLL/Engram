@@ -14,6 +14,9 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY .npmrc ./
 # 安装镜像配置回归测试读取 Dockerfile，放在依赖层之后，避免重新安装依赖。
 COPY Dockerfile ./
+# 安装器内置运行时的 .gitignore 忽略规则由 installer-runtime-bundle.test.js 断言；CI 这条链按目录
+# 显式 COPY（不像本地 verify 用 COPY .），不带上 .gitignore 会让该断言在 CI 误红（2026-11-06 实测）。
+COPY .gitignore ./
 COPY server server
 COPY web web
 # desktop/scripts：依赖同步（sync-deps.js）与桌面端脚本的单测，随 verify 目标一起跑
