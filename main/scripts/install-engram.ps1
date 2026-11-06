@@ -74,7 +74,9 @@ try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catc
 # 进度日志：GUI 轮询此文件取实时进度（PS5.1 管道输出块缓冲，stdout 不可靠）
 $logFile = if ($env:ENGRAM_INSTALL_LOG) { $env:ENGRAM_INSTALL_LOG } else { Join-Path $env:TEMP 'engram-install.log' }
 function Out-Line([string]$s) {
-  try { Add-Content -Path $logFile -Value $s -Encoding UTF8 } catch { }
+  # -ErrorAction Stop：Invoke-Logged 会把 $ErrorActionPreference 临时降为 Continue，此时日志文件
+  # 被另一进程短暂占用产生的非终止错误会直接刷进 stderr，把真正的失败原因淹掉（客户机日志实测）。
+  try { Add-Content -Path $logFile -Value $s -Encoding UTF8 -ErrorAction Stop } catch { }
   try { [Console]::Out.WriteLine($s) } catch { }
 }
 # 进度标记协议（GUI 端解析见 installer/main.js 的 handleLine，两处格式必须一致）：
@@ -89,6 +91,16 @@ function StepDone([string]$id, [string]$note = '') { Out-Line "##DONE:$id"; if (
 function StepFail([string]$id, [string]$msg) { Out-Line "##FAIL:$id|$msg"; throw $msg }
 function StepLog([string]$msg) { Out-Line "   $msg" }
 function Test-Command([string]$name) { [Boolean](Get-Command $name -ErrorAction SilentlyContinue) }
+# npm 必须显式走 npm.cmd，不能裸调 'npm'：Node 22 的 Windows 分发同时带 npm.cmd 与 npm.ps1，
+# PowerShell 会优先执行 .ps1；而 npm 10.9.x 的 npm.ps1 在「-Command」路径下按调用行原文重建参数，
+# 从脚本里用 & $file @arguments 调用时重建结果是字面量 "file @arguments"，npm 于是报
+# Unknown command: "file"——2026-11-06 客户机实测（pnpm 四个安装组合全失败），本地复现一致；
+# 上游记录见 npm/cli#8176、#8528（Node 22 起 & npm 的参数会被 npm.ps1 吞掉）。
+function Resolve-NpmCmd {
+  $cmd = Get-Command 'npm.cmd' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($cmd -and $cmd.Source) { return $cmd.Source }
+  return ''
+}
 # 合并式刷新 PATH（不能整体覆盖）：便携 Node/MinGit 与 pnpm 私有前缀的目录只存在于本进程
 # PATH 里（刻意不写系统环境变量），覆盖式刷新会把它们抹掉——客户机（本机无 Node）实测就是这样
 # 挂的：便携 Node 下好了、pnpm 也装上了，紧跟的 pnpm 校验却找不到命令，报「安装 pnpm 失败」。
@@ -292,6 +304,14 @@ function Stop-EngramInstances([string]$installDir) {
   return $stopped
 }
 
+# 克隆失败时把让位的旧安装目录放回去（见克隆步骤）：清掉半成品新目录，旧目录改名回原位，
+# 避免「装到一半连原来能用的版本也没了」。
+function Restore-OldRepo([string]$repoDir, [string]$oldRepo) {
+  if (-not $oldRepo -or -not (Test-Path -LiteralPath $oldRepo)) { return }
+  if (Test-Path -LiteralPath $repoDir) { Remove-Item -LiteralPath $repoDir -Recurse -Force -ErrorAction SilentlyContinue }
+  Move-Item -LiteralPath $oldRepo -Destination $repoDir -ErrorAction SilentlyContinue
+}
+
 # 预构建安装：解压 → 覆盖 main/ → 补 electron.exe → 写安装标记。数据目录（%APPDATA%\@engram\desktop）
 # 与安装根下的便携 Git/Node/pnpm 一律不动。
 function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repoDir, [string]$mainDir) {
@@ -460,6 +480,8 @@ function Get-PnpmMajor {
 # 私有前缀目录要显式进 PATH：它不在系统环境变量里，靠 Refresh-Path 是刷不出来的。
 $pnpmHome = Join-Path $InstallDir 'pnpm-home'
 $pnpmBin = Join-Path $pnpmHome 'node_modules\.bin'
+# 真正调用的必须是 npm.cmd（Resolve-NpmCmd）：裸 'npm' 会命中 npm.ps1，参数被吞成 "file"。
+$npmCmd = Resolve-NpmCmd
 function Install-Pnpm([int]$major) {
   $attempts = @(
     @{ label = 'npm install -g'; args = @('install', '-g', "pnpm@$major") },
@@ -469,7 +491,7 @@ function Install-Pnpm([int]$major) {
     foreach ($registry in @($npmmirror, $npmRegistryFallback)) {
       StepLog "$($attempt.label)：npm $($attempt.args -join ' ')（registry $registry）"
       $env:npm_config_registry = $registry
-      $code = Invoke-Logged 'npm' @($attempt.args)
+      $code = Invoke-Logged $npmCmd @($attempt.args)
       Refresh-Path
       if (Test-Path $pnpmBin) { $env:Path = "$pnpmBin;$env:Path" }
       if ((Get-PnpmMajor) -eq $major) { return $true }
@@ -481,8 +503,8 @@ function Install-Pnpm([int]$major) {
 $detected = Get-PnpmMajor
 if ($detected -ne $pnpmMajor) {
   if ($detected) { StepLog "检测到 pnpm 主版本 $detected，与本仓库验证版本（pnpm $pnpmMajor）不符，改装 pnpm@$pnpmMajor" }
-  if (-not (Test-Command 'npm')) {
-    StepFail 'pnpm' "需要 pnpm $pnpmMajor，但本机没有 npm 可用来安装它。请安装 Node.js 自带 npm 后重试，或手动执行：npm install -g pnpm@$pnpmMajor"
+  if (-not $npmCmd) {
+    StepFail 'pnpm' "需要 pnpm $pnpmMajor，但本机没有可用的 npm.cmd 来安装它。请安装 Node.js（自带 npm）后重试，或手动执行：npm install -g pnpm@$pnpmMajor"
   }
   if (-not (Install-Pnpm $pnpmMajor)) {
     StepFail 'pnpm' "安装 pnpm@$pnpmMajor 失败（已试全局/私有前缀 × npmmirror/华为云 四个组合）：$(Hint 'npm 无错误输出')"
@@ -499,6 +521,21 @@ if (Test-Path (Join-Path $repoDir '.git')) {
   if ($code -ne 0) { StepLog "增量更新失败（git 退出码 $code）：$(Hint 'git 无错误输出')；继续用本地已有代码构建" }
   StepDone 'clone' '源码已就位（增量更新）'
 } else {
+  # 目标目录已存在但不是 git 仓库：典型是先前用「预构建环境包」装的（它按设计移除了 .git），
+  # 直接 clone 会因目录非空失败、安装卡在克隆。先把旧目录整体改名让位，克隆成功后再删；
+  # 克隆失败则恢复原样，不破坏已经能用的旧安装。
+  $oldRepo = $null
+  if (Test-Path -LiteralPath $repoDir) {
+    $stopped = Stop-EngramInstances $InstallDir
+    if ($stopped -gt 0) { StepLog "已停止 $stopped 个 Engram 进程（替换旧安装目录前先让出文件）" }
+    $oldRepo = $repoDir + '.old-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    StepLog "安装目录已存在但不是 git 仓库（多为预构建包安装），先移走旧目录再克隆：$(Split-Path $oldRepo -Leaf)"
+    try {
+      Move-Item -LiteralPath $repoDir -Destination $oldRepo -ErrorAction Stop
+    } catch {
+      StepFail 'clone' "旧安装目录无法让位（$(Redact "$($_.Exception.Message)")）。请先退出 Engram 后重试，或手动改名/删除 $repoDir"
+    }
+  }
   # 有凭据就带着克隆（安装器一律要求填写凭据）；只有命令行没给凭据时才先试匿名，
   # 失败且像认证问题再按需补——公开仓库的 CLI 安装因此不必白填账号。
   $authPattern = '(?i)authentication|could not read username|terminal prompts|invalid username|permission denied|403|401|not found|repository not found'
@@ -510,6 +547,7 @@ if (Test-Path (Join-Path $repoDir '.git')) {
     if ($code -ne 0 -and (Hint '') -match $authPattern) {
       if ($NoPrompt) {
         Out-Line '##AUTH:clone'
+        Restore-OldRepo $repoDir $oldRepo
         StepFail 'clone' '需要仓库凭据：这是私有仓库（或地址不存在）。请在安装器里填写账号与密码/访问令牌后重试'
       }
       # 交互式：问一次凭据再试（失败的首克隆可能留下半个目录，先清掉）
@@ -523,7 +561,14 @@ if (Test-Path (Join-Path $repoDir '.git')) {
       $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $authUrl, $repoDir)
     }
   }
-  if ($code -ne 0) { StepFail 'clone' "克隆失败（git 退出码 $code）：$(Hint 'git 无错误输出')" }
+  if ($code -ne 0) {
+    Restore-OldRepo $repoDir $oldRepo
+    StepFail 'clone' "克隆失败（git 退出码 $code）：$(Hint 'git 无错误输出')"
+  }
+  # 克隆成功：让位的旧安装目录可以删了（删不掉只影响磁盘占用，不影响本次安装）
+  if ($oldRepo -and (Test-Path -LiteralPath $oldRepo)) {
+    Remove-Item -LiteralPath $oldRepo -Recurse -Force -ErrorAction SilentlyContinue
+  }
   if ($GiteaUser) {
     StepDone 'clone' '凭据已保存在本机 .git\config，用于后续静默更新'
   } else {
