@@ -781,8 +781,16 @@ app.whenReady().then(() => {
       autoState.enabled = readConfig().autoUpdate !== false;
       scheduleAutoUpdateCheck(updateCadence.STARTUP_DELAY_MS);
     } else {
-      sourceAutoState.enabled = readConfig().autoUpdate !== false;
-      scheduleSourceCheck(updateCadence.STARTUP_DELAY_MS);
+      const unavailable = sourceUpdateUnavailableReason();
+      if (unavailable) {
+        // 预构建安装 / 非 git 检出：源码更新根本无法执行，别让自动检查每轮都报 git 错误
+        sourceAutoState.enabled = false;
+        setSourceAutoState({ phase: 'unsupported', error: unavailable, checkedAt: null });
+        log('[source] 应用内源码更新不可用：' + unavailable);
+      } else {
+        sourceAutoState.enabled = readConfig().autoUpdate !== false;
+        scheduleSourceCheck(updateCadence.STARTUP_DELAY_MS);
+      }
     }
     // 休眠唤醒、解锁屏后立刻补查一次（内部 20 秒去抖）
     try {
@@ -1635,6 +1643,7 @@ function pokeUpdateChecks(reason) {
     autoBackoffIndex = 0;
     scheduleAutoUpdateCheck(600);
   } else {
+    if (sourceUpdateUnavailableReason()) return; // 预构建安装 / 非 git 检出：没有可检查的更新
     if (sourceAutoBusy || sourceUpdating) return;
     sourceBackoffIndex = 0;
     scheduleSourceCheck(600);
@@ -1741,6 +1750,39 @@ const syncDepsEntry = () => path.join(appRootDir, 'desktop', 'scripts', 'sync-de
 let sourceUpdating = false;
 
 /**
+ * 预构建环境包安装（安装器 bundle 模式）：安装目录里没有 .git、也不带 Git，
+ * 应用内「检查更新 / 更新并重启」根本无法工作，更新方式是重跑新版安装器覆盖安装。
+ * 标记由 pack-prebuilt-bundle.ps1 打进包里、install-engram.ps1 覆盖安装时也会写一份
+ * （见 desktop/scripts/lib/runtime-mode.js 的 readPrebuiltManifest）。
+ * 缓存一次：安装形态在一次进程生命周期内不会变。
+ */
+let prebuiltManifestCache;
+function prebuiltInstall() {
+  if (prebuiltManifestCache === undefined) {
+    prebuiltManifestCache = runtimeMode.readPrebuiltManifest(appRootDir);
+  }
+  return prebuiltManifestCache;
+}
+
+/** 预构建安装的更新说明：设置页直接展示，避免用户对着一句 spawn git ENOENT 无从下手 */
+const PREBUILT_UPDATE_HINT =
+  '当前为预构建安装（安装包不含 Git 与 .git）：应用内更新不可用，请用新版安装器覆盖安装（数据保留），或改用打包版 exe。';
+
+/**
+ * 应用内源码更新不可用的原因（空串 = 可用）。两类安装注定无法 git 更新：
+ *  - 预构建环境包安装：安装器删掉了 .git、也不装 Git（见 installer/resources/prebuilt/README.md）；
+ *  - 非 git 检出（只拷了 main/ 或手工删了 .git）：本机可能装了 Git，但没有仓库可比对远端。
+ * 这类安装不该按「失败」反复重试，而应明确告诉用户更新方式。
+ */
+function sourceUpdateUnavailableReason() {
+  if (prebuiltInstall()) return PREBUILT_UPDATE_HINT;
+  if (!runtimeMode.isGitCheckout(appRootDir)) {
+    return '当前安装不是 git 检出（缺少 .git）：应用内源码更新不可用，请用安装器覆盖安装，或重跑安装器修复安装。';
+  }
+  return '';
+}
+
+/**
  * 本次更新是否需要更换正在运行的 Electron 运行时。换版本时 pnpm 会剪枝掉旧版的 store 目录，
  * 而 Windows 不允许删应用正在使用的 electron.exe 与被映射的 dll，只能删一半（package.json 没了、
  * 只剩 dist），残骸不是可加载的应用 —— 之后任何解析到该目录的启动方式都会弹
@@ -1776,6 +1818,25 @@ function gitArgs(args) {
   return { cmd: runtimeMode.resolveGitCommand(), args: ['-C', appRootDir, ...args] };
 }
 
+/**
+ * git 进程起不来时的中文说明。Windows 上没有 Git 时 spawn 只回 ENOENT，日志与界面上就是
+ * 一句「spawn git ENOENT」——用户既看不出这代表「本机没有 Git」，也不知道该做什么
+ * （2026-11-06 客户端实例：预构建安装连 .git 都没有，永远报这一句）。
+ */
+function explainGitSpawnError(error) {
+  if (!error || error.code !== 'ENOENT') return error;
+  let searched = [];
+  try {
+    searched = runtimeMode.resolveGit(process.env, fs.existsSync).searched || [];
+  } catch {
+    /* 诊断信息取不到不影响主错误 */
+  }
+  const hint = searched.length ? `（已查找：${searched.slice(0, 4).join('；')}）` : '';
+  return new Error(
+    `未找到 Git：源码模式更新需要 Git${hint}。请重跑安装器修复环境；如果没有 Git，也可安装 Git for Windows 后重启应用。`,
+  );
+}
+
 function runGit(args, timeoutMs = 120_000) {
   const { cmd, args: full } = gitArgs(args);
   return new Promise((resolve, reject) => {
@@ -1787,7 +1848,7 @@ function runGit(args, timeoutMs = 120_000) {
     child.stderr.on('data', (d) => (err += d.toString()));
     child.on('error', (e) => {
       clearTimeout(timer);
-      reject(e);
+      reject(explainGitSpawnError(e));
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
@@ -1809,6 +1870,23 @@ async function gitIdentity() {
   const unknown = { commit: '', commitDate: '', dirty: false };
   if (PACKAGED) {
     gitIdentityCache = unknown; // 安装包形态没有 .git，显示退回纯版本号
+    return gitIdentityCache;
+  }
+  // 预构建安装没有 .git（安装器故意删掉）也不带 Git：提交身份取自包清单 .engram-prebuilt.json，
+  // 版本行仍能显示「装的是哪次打包」，而不是一句「未读到提交号（Git 不可用）」。
+  const prebuilt = prebuiltInstall();
+  if (prebuilt) {
+    gitIdentityCache = {
+      commit: (prebuilt.commit || '').slice(0, 7),
+      commitDate: (prebuilt.builtAt || '').slice(0, 10),
+      dirty: false,
+      prebuilt: true,
+    };
+    log(
+      '[identity] 预构建安装（' +
+        (prebuilt.bundle || '.engram-prebuilt.json') +
+        '）：不使用 git，更新请重跑新版安装器',
+    );
     return gitIdentityCache;
   }
   try {
@@ -1834,6 +1912,8 @@ async function gitIdentity() {
 
 ipcMain.handle('desktop-get-env', async () => ({
   packaged: PACKAGED,
+  // 预构建环境包安装（无 .git / 无 Git）：Web 侧据此隐藏 git 更新入口并显示「用安装器更新」说明
+  prebuilt: Boolean(prebuiltInstall()),
   platform: process.platform,
   version: app.getVersion(),
   ...(PACKAGED ? {} : await gitIdentity()),
@@ -1868,7 +1948,7 @@ function scheduleSourceCheck(delayMs) {
 
 /** 一轮结束后排下一轮：这轮发现落后 → 保持最短间隔（用户可能正在等这次更新），否则逐级拉长 */
 function scheduleNextSourceCheck(hasUpdate) {
-  if (PACKAGED || process.platform !== 'win32') return;
+  if (PACKAGED || sourceUpdateUnavailableReason() || process.platform !== 'win32') return;
   if (readConfig().autoUpdate === false) return;
   sourceBackoffIndex = updateCadence.nextBackoffIndex(sourceBackoffIndex, hasUpdate);
   scheduleSourceCheck(updateCadence.backoffDelay(sourceBackoffIndex));
@@ -1884,6 +1964,8 @@ function setSourceAutoState(patch) {
  *  2) 只有它和本地 origin/<branch> 不一致才 fetch 增量对象；behind / 提交列表全在本地算。 */
 async function sourceCheckCore() {
   if (PACKAGED) return { ok: false, error: '安装包形态不使用源码更新' };
+  const unavailable = sourceUpdateUnavailableReason();
+  if (unavailable) return { ok: false, prebuilt: Boolean(prebuiltInstall()), error: unavailable };
   try {
     // branch --show-current 而非 rev-parse --abbrev-ref：仓库里有与分支同名的 tag（如游离 tag main）时
     // abbrev-ref 会消歧成 heads/main，拼 origin/heads/main 直接报 128
@@ -1953,6 +2035,13 @@ function applySourceCheckResult(r) {
 }
 
 async function sourceAutoTick() {
+  if (PACKAGED) return;
+  const unavailable = sourceUpdateUnavailableReason();
+  if (unavailable) {
+    // 没有 git / 不是检出：检查永远不可能成功，只标状态、不再排下一轮
+    setSourceAutoState({ phase: 'unsupported', enabled: false, error: unavailable, checkedAt: null });
+    return;
+  }
   if (PACKAGED || sourceAutoBusy || sourceUpdating) {
     // 检查/更新正忙：一分钟后重试，别把自动检查这条线彻底停掉
     if (!PACKAGED && process.platform === 'win32') scheduleSourceCheck(updateCadence.BACKOFF_MS[0]);
@@ -1985,6 +2074,12 @@ ipcMain.handle('desktop-source-update-check', async () => {
 ipcMain.handle('desktop-source-auto-state', () => ({ ...sourceAutoState }));
 
 ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
+  const unavailable = sourceUpdateUnavailableReason();
+  if (unavailable) {
+    // 预构建安装 / 非检出没有自动检查可言：保持「不支持」状态，也别把开关写进配置
+    setSourceAutoState({ phase: 'unsupported', enabled: false, error: unavailable });
+    return { ...sourceAutoState };
+  }
   const c = readConfig();
   c.autoUpdate = Boolean(enabled);
   writeConfig(c);
@@ -2138,6 +2233,8 @@ function resolveToolEntry(relCandidates) {
 
 ipcMain.handle('desktop-source-update', async () => {
   if (PACKAGED) return { ok: false, error: '安装包形态不使用源码更新' };
+  const unavailable = sourceUpdateUnavailableReason();
+  if (unavailable) return { ok: false, prebuilt: Boolean(prebuiltInstall()), error: unavailable };
   if (sourceUpdating) return { ok: false, error: '更新已在进行中，请等待当前更新完成' };
   sourceUpdating = true;
   try {

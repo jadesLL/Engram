@@ -172,7 +172,7 @@
         <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">桌面端更新</span>
-          <span class="group-hint">Windows 桌面端的版本：安装包自动或手动下载安装，源码模式增量拉取提交并重新构建（开机自启与桌面快捷方式见「本机应用 → 桌面端应用」，卸载见「本机应用 → 卸载 Engram」）</span>
+          <span class="group-hint">Windows 桌面端的版本：安装包自动或手动下载安装，源码模式增量拉取提交并重新构建，预构建安装用新版安装器覆盖安装（开机自启与桌面快捷方式见「本机应用 → 桌面端应用」，卸载见「本机应用 → 卸载 Engram」）</span>
         </span>
         <span v-if="desktopVersionBadge" class="group-badge tone-muted">{{ desktopVersionBadge }}</span>
         <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
@@ -196,8 +196,11 @@
         <div v-if="sourceMode" class="integration-note">
           当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。依赖清单真变化时会<strong>在应用内自动装依赖</strong>（pnpm install），不需要再去终端跑脚本；构建约需 1 分钟，期间弹出置顶进度窗口，完成后应用自动重启，数据不受影响。版本号仅随发版变化，<strong>提交号随每次更新变化</strong>，用它判断是否已更新到最新代码。
         </div>
+        <div v-if="prebuiltMode" class="integration-note">
+          当前为<strong>预构建安装</strong>：安装器把「源码 + 运行依赖 + 已构建产物」直接解压到本机，<strong>不带 Git 与 .git</strong>，所以应用内不能增量拉源码更新。更新方式是用<strong>新版安装器覆盖安装</strong>（知识库数据保留）；需要长期在应用内自动更新时，可改用打包版 exe。
+        </div>
 
-        <div v-if="autoSupported && !sourceMode" class="setting-row">
+        <div v-if="autoSupported && installerMode" class="setting-row">
           <div class="setting-copy">
             <strong>自动更新</strong>
             <span>启动后自动检查（之后每 8 小时复查），发现新版本自动在后台下载并静默安装；安装前应用内会提示，装完自动重启，全程无需手动操作。</span>
@@ -208,15 +211,15 @@
             <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
           </label>
         </div>
-        <p v-if="autoSupported && !sourceMode && autoState.installError" class="setting-message err">{{ autoState.installError }}</p>
-        <p v-if="autoSupported && !sourceMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
+        <p v-if="autoSupported && installerMode && autoState.installError" class="setting-message err">{{ autoState.installError }}</p>
+        <p v-if="autoSupported && installerMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
           {{ autoStatus }}
         </p>
-        <div v-if="autoSupported && !sourceMode && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
+        <div v-if="autoSupported && installerMode && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
           <div class="update-progress-bar" :style="{ width: autoState.percent + '%' }" />
         </div>
 
-        <div v-if="!sourceMode" class="setting-row">
+        <div v-if="installerMode" class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
             <span>手动从远端仓库 Release 比对桌面端版本。</span>
@@ -231,15 +234,15 @@
             </button>
           </div>
         </div>
-        <p v-if="!sourceMode && desktopUnsupported" class="setting-message warn">
+        <p v-if="installerMode && desktopUnsupported" class="setting-message warn">
           当前桌面端版本过旧，不支持应用内更新。请到仓库 Release 页手动下载最新安装包覆盖安装一次，之后即可在应用内更新。
         </p>
-        <p v-if="!sourceMode && desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
+        <p v-if="installerMode && desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
           尚未配置远端仓库更新源（见下方「更新源配置」）。
         </p>
-        <p v-else-if="!sourceMode && desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
+        <p v-else-if="installerMode && desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
 
-        <div v-if="!sourceMode && desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
+        <div v-if="installerMode && desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
           <div class="setting-copy">
             <strong>下载并安装</strong>
             <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装，全程无需操作。</span>
@@ -248,11 +251,11 @@
             {{ installing ? '安装中…' : downloading ? `下载中 ${downloadPercent ?? ''}${downloadPercent !== null ? '%' : ''}` : '下载并安装' }}
           </button>
         </div>
-        <div v-if="!sourceMode && downloading && downloadPercent !== null" class="update-progress">
+        <div v-if="installerMode && downloading && downloadPercent !== null" class="update-progress">
           <div class="update-progress-bar" :style="{ width: downloadPercent + '%' }" />
         </div>
-        <p v-if="!sourceMode && downloadError" class="setting-message err">{{ downloadError }}</p>
-        <p v-else-if="!sourceMode && installing" class="setting-message warn">正在静默安装更新，应用将自动重启，请勿关闭。</p>
+        <p v-if="installerMode && downloadError" class="setting-message err">{{ downloadError }}</p>
+        <p v-else-if="installerMode && installing" class="setting-message warn">正在静默安装更新，应用将自动重启，请勿关闭。</p>
 
         <!-- 源码模式：增量拉源码 + 重新构建 -->
         <template v-if="sourceMode">
@@ -514,6 +517,10 @@ const channelOptions: Array<{ value: string; label: string }> = [
 
 // 源码模式（非打包形态）：更新 = 增量拉源码 + 重新构建，不使用安装包
 const sourceMode = ref(false);
+// 预构建环境包安装：没有 .git / Git，应用内更新只能靠重跑新版安装器（见主进程 desktop-get-env.prebuilt）
+const prebuiltMode = ref(false);
+/** 安装包形态（打包版 exe）：自动更新与「下载并安装」入口只对它成立 */
+const installerMode = computed(() => !sourceMode.value && !prebuiltMode.value);
 /** 源码模式的 git 身份（提交号/日期/是否脏），打包形态与浏览器访问时为空 */
 const desktopEnv = ref<GitIdentity | null>(null);
 const srcChecking = ref(false);
@@ -565,6 +572,7 @@ const serverBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>(()
   return { text: '', tone: 'muted' };
 });
 const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>(() => {
+  if (prebuiltMode.value) return { text: '预构建', tone: 'muted' };
   if (sourceAuto.value?.phase === 'behind') {
     return { text: `${sourceAuto.value.behind ?? 0} 个新提交`, tone: 'warn' };
   }
@@ -774,6 +782,8 @@ const sourceAutoStatus = computed(() => {
     }
     case 'failed':
       return `自动检查失败：${s.error}。不影响使用，可手动点「检查更新」重试。`;
+    case 'unsupported':
+      return s.error || '当前安装不支持应用内源码更新。';
     default:
       return s.enabled ? '' : '自动检查已关闭';
   }
@@ -1026,7 +1036,9 @@ onMounted(() => {
   if (wd?.getDesktopEnv) {
     wd.getDesktopEnv().then((env: any) => {
       desktopEnv.value = env;
-      sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32');
+      prebuiltMode.value = Boolean(env?.prebuilt);
+      // 预构建安装同属「非打包形态」，但没有 git 检出：不能走源码更新分支
+      sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32' && !env.prebuilt);
     });
   }
   if (wd?.onUpdateProgress) {

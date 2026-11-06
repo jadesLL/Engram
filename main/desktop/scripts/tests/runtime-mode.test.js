@@ -6,6 +6,8 @@
 // isPackaged 就从 false 变 true。于是从桌面快捷方式启动的源码版把自己当安装包形态：
 // 版本号只显示 1.2.7（没有提交号）、设置里丢掉源码模式区块与卸载入口。
 // 这里锁住替代判据（resources/app.asar 是否存在）与便携 MinGit 回退（全新机没有系统 Git）。
+// 2026-11-06 起还锁两件事：预构建环境包安装（.engram-prebuilt.json，没有 .git / Git）必须被识别，
+// 主进程不能对这类安装跑 git 检查（客户端实例一直报「自动检查失败: spawn git ENOENT」）。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -82,6 +84,116 @@ test('便携目录探测抛错不影响退回系统 git', () => {
     }),
     'git',
   );
+});
+
+/* ---------- 预构建安装识别（installer bundle 模式没有 .git / Git） ---------- */
+
+test('预构建安装标记：读到提交号与打包时间，缺失时返回 null', () => {
+  const root = tmpdir('prebuilt');
+  fs.writeFileSync(
+    path.join(root, '.engram-prebuilt.json'),
+    JSON.stringify({
+      mode: 'prebuilt',
+      commit: '1fc4327c1d608f12dc38322db71b74157dc2b772',
+      builtAt: '2026-10-08T10:00:00+08:00',
+      bundle: 'engram-prebuilt-win-x64.zip',
+    }),
+  );
+  const info = runtimeMode.readPrebuiltManifest(root);
+  assert.equal(info.commit, '1fc4327c1d608f12dc38322db71b74157dc2b772');
+  assert.equal(info.builtAt, '2026-10-08T10:00:00+08:00');
+  assert.equal(info.mode, 'prebuilt');
+  assert.equal(info.bundle, 'engram-prebuilt-win-x64.zip');
+  assert.equal(runtimeMode.readPrebuiltManifest(tmpdir('prebuilt-none')), null);
+  assert.equal(runtimeMode.readPrebuiltManifest(''), null);
+});
+
+test('预构建标记内容损坏时仍按预构建处理（没有 .git 的事实不会因 JSON 坏而改变）', () => {
+  const root = tmpdir('prebuilt-bad');
+  fs.writeFileSync(path.join(root, '.engram-prebuilt.json'), '{ not json');
+  const info = runtimeMode.readPrebuiltManifest(root);
+  assert.ok(info, '标记存在就必须认出来，否则又会按源码模式跑 git 报错');
+  assert.equal(info.mode, 'prebuilt');
+  assert.equal(info.commit, '');
+});
+
+test('isGitCheckout：main/.git 与上一级 .git 都算检出（源码版仓库根在 main 上一级）', () => {
+  const outer = tmpdir('checkout');
+  const root = path.join(outer, 'Engram', 'main');
+  fs.mkdirSync(root, { recursive: true });
+  assert.equal(runtimeMode.isGitCheckout(root), false, '没有 .git 就是非检出');
+  fs.mkdirSync(path.dirname(root), { recursive: true });
+  fs.writeFileSync(path.join(path.dirname(root), '.git'), 'gitdir: /x/.git/worktrees/engram');
+  assert.equal(runtimeMode.isGitCheckout(root), true, 'worktree 的 .git 是文件也算检出');
+
+  const inner = tmpdir('checkout-inner');
+  fs.mkdirSync(path.join(inner, '.git'), { recursive: true });
+  assert.equal(runtimeMode.isGitCheckout(inner), true);
+  assert.equal(runtimeMode.isGitCheckout(''), false);
+});
+
+/* ---------- git 定位：PATH 与常见安装目录 ---------- */
+
+test('PATH 里有 git 时返回绝对路径（不再依赖 spawn 自己搜 PATH）', () => {
+  const bin = path.resolve('/fake/git/bin');
+  const picked = runtimeMode.resolveGit(
+    { PATH: [bin].join(path.delimiter) },
+    existsOnly([path.join(bin, 'git.exe')]),
+    'win32',
+  );
+  assert.equal(picked.source, 'path');
+  assert.equal(picked.command, path.join(bin, 'git.exe'));
+});
+
+test('PATH 没继承到 Git 时兜底常见安装目录（Program Files\\Git\\cmd）', () => {
+  const programFiles = path.resolve('/fake/Program Files');
+  const gitExe = path.join(programFiles, 'Git', 'cmd', 'git.exe');
+  const picked = runtimeMode.resolveGit(
+    { ProgramFiles: programFiles, PATH: path.resolve('/fake/empty') },
+    existsOnly([gitExe]),
+    'win32',
+  );
+  assert.equal(picked.source, 'common');
+  assert.equal(picked.command, gitExe);
+  assert.ok(picked.searched.includes(gitExe), '错误提示要能说出查找过的路径');
+});
+
+test('都没有时退回 git（交给系统解析），非 Windows 平台同样是 git', () => {
+  const win = runtimeMode.resolveGit({ PATH: '' }, () => false, 'win32');
+  assert.equal(win.command, 'git');
+  assert.equal(win.source, 'fallback');
+  assert.equal(runtimeMode.resolveGit({ PATH: '' }, () => false, 'linux').command, 'git');
+  assert.equal(runtimeMode.resolveGitCommand({ PATH: '' }, () => false, 'win32'), 'git');
+});
+
+/* ---------- main.js 接线：预构建安装不跑 git 更新 ---------- */
+
+const MAIN_JS = path.join(__dirname, '..', '..', 'main.js');
+
+test('main.js：读预构建标记、检查入口先判不可用、ENOENT 翻成中文说明', () => {
+  const text = fs.readFileSync(MAIN_JS, 'utf8');
+  assert.ok(
+    text.includes('runtimeMode.readPrebuiltManifest(appRootDir)'),
+    '主进程必须读取 main/.engram-prebuilt.json 识别预构建安装',
+  );
+  assert.ok(text.includes('function sourceUpdateUnavailableReason()'), '源码更新可用性判定缺失');
+
+  const checkStart = text.indexOf('async function sourceCheckCore()');
+  const checkBody = text.slice(checkStart, checkStart + 1200);
+  assert.ok(checkBody.includes('sourceUpdateUnavailableReason()'), '手动检查没有先判不可用：预构建安装仍会跑 git');
+
+  const handlerStart = text.indexOf("ipcMain.handle('desktop-source-update'");
+  const handlerBody = text.slice(handlerStart, handlerStart + 800);
+  assert.ok(handlerBody.includes('sourceUpdateUnavailableReason()'), '「更新并重启」入口没有先判不可用');
+
+  const readyStart = text.indexOf('app.whenReady()');
+  const readyBody = text.slice(readyStart, readyStart + 3200);
+  assert.ok(
+    readyBody.includes("phase: 'unsupported'"),
+    '预构建安装启动时必须标成不支持，否则自动检查会每轮报 git 错误',
+  );
+  assert.ok(text.includes('未找到 Git：源码模式更新需要 Git'), 'spawn ENOENT 必须翻成用户能执行的中文说明');
+  assert.ok(text.includes('prebuilt: Boolean(prebuiltInstall())'), 'desktop-get-env 必须把预构建标记交给渲染层');
 });
 
 /* ---------- 内置 Agent 的真实 Node 解析 ---------- */

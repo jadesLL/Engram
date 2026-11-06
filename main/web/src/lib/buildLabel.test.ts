@@ -58,6 +58,17 @@ test('formatVersionHint 在源码模式缺提交号时点明原因', () => {
   );
 });
 
+test('formatVersionHint 预构建安装：说明用新版安装器覆盖更新，不冒充源码模式', () => {
+  assert.equal(
+    formatVersionHint({ prebuilt: true, sourceMode: true, commit: '1fc4327' }),
+    '预构建安装：提交号来自安装包清单；应用内更新请用新版安装器覆盖安装。',
+  );
+  assert.equal(
+    formatVersionHint({ prebuilt: true, sourceMode: true }),
+    '预构建安装（不含 Git 与 .git）：应用内更新请用新版安装器覆盖安装。',
+  );
+});
+
 test('formatVersionHint 安装包形态与浏览器访问保留兜底文案', () => {
   assert.equal(formatVersionHint(), '当前安装的 Engram 版本。');
   assert.equal(formatVersionHint({ sourceMode: false, commit: '' }), '当前安装的 Engram 版本。');

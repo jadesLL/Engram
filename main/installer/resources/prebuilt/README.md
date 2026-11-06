@@ -40,6 +40,8 @@ pnpm -C installer dist        # → installer/dist/Engram-source-setup.exe（体
 
 * 包与提交绑定：换了 main 的代码就要重新打一次包，否则客户机装到的是旧代码。
 * 预构建安装**不使用 git**：安装器会把旧 `.git` 删掉，应用内「检查更新」不再能拉源码，
-  更新方式是重新跑新安装器（或换用打包版 exe）。
+  更新方式是重新跑新安装器（或换用打包版 exe）。应用主进程会读 `main/.engram-prebuilt.json`
+  识别这种安装：设置页直接说明「请用新版安装器覆盖安装」，不再按源码模式跑 git 检查
+  （旧版会一直报 `spawn git ENOENT`），版本行提交号取自包清单。
 * `-RuntimeSource` 指向一台已跑通的源码模式安装目录（默认 `%LOCALAPPDATA%\engram\Engram\main`）：
   Electron 运行时与服务端运行时依赖取自那里，故打包机必须是「装过、跑过」的机器。

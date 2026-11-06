@@ -67,8 +67,9 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     return () => ipcRenderer.removeListener('desktop-update-state', listener);
   },
   // ---------- 源码模式自更新（非打包形态；安装包形态主进程会拒绝） ----------
-  // 查询运行形态：{ packaged, platform, version }，源码模式额外带 git 身份
-  // { commit, commitDate, dirty }（版本号仅随发版变化，提交号随每次更新变化）
+  // 查询运行形态：{ packaged, prebuilt, platform, version }，非安装包形态额外带 git 身份
+  // { commit, commitDate, dirty }（版本号仅随发版变化，提交号随每次更新变化）；
+  // prebuilt=安装器预构建环境包安装（没有 .git / Git，更新方式是用新版安装器覆盖安装）
   getDesktopEnv: () => ipcRenderer.invoke('desktop-get-env'),
   // 检查源码更新：fetch 远端并比对当前分支落后多少提交
   // { ok, branch, behind, upToDate, localCommit, localDate, dirty, remoteCommit, remoteDate, changes }
