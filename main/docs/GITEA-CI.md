@@ -70,6 +70,7 @@ ENGRAM_GITEA_TOKEN=<令牌> node installer/scripts/publish-installer.js
   克隆仓库时一并拿到，无需任何打包期注入。全新机器装失败第一步先查这里：
   `grep RepoUrl` 包内 ps1 应显示真实域名。
 - **覆盖发布后无需改 README**（链接固定）；只有包名/版本槽位改动才动链接。
+- **发布后验证按下一节「大产物下载与验证」执行**（默认 IPv6 优先，禁止 `curl -4`）。
 
 ### 两个必须记住的坑（都有回归测试锁死）
 
@@ -81,6 +82,34 @@ ENGRAM_GITEA_TOKEN=<令牌> node installer/scripts/publish-installer.js
    首行 stderr 当终止性异常，导致 git clone 失败只留下 `Cloning into ...`、真正的 `fatal:`
    行与退出码全丢，用户看到的报错被误导成「请检查账号密码」。`Invoke-Logged` 已在函数内
    临时降级为 `Continue`，并用 `Pick-ErrorLine` 取 `fatal:`/`ERR_PNPM_*` 关键行（不取末行）。
+
+## 大产物下载与验证（IPv6 优先，不要写 `curl -4`）
+
+发布后验证、回填产物、给客户机取安装包都要从 Gitea 下 100MB 级文件。同一域名两族的实测差距极大（2026-11-06，开发机）：
+
+| 协议族 | 单流速度 | 130MB 安装器耗时 |
+| --- | --- | --- |
+| IPv4 | 0.56–0.80 MB/s（4 并发合计约 1.4 MB/s） | 约 8 分钟 |
+| IPv6 | 46–61 MB/s | 约 3 秒 |
+
+统一用 `main/scripts/download-artifact.cjs`：默认 **IPv6 优先 → 失败回退 IPv4**，每个协议族可重试，证书校验不变；**不要再写 `curl -4` / `-6` 或任何固定地址族的命令**。
+
+```bash
+# 发布后验证（sha256 不符会保留 .part 并以退出码 3 失败）
+node main/scripts/download-artifact.cjs \
+  --url https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe \
+  --out "$TEMP/Engram-source-setup.exe" --sha256 <sha256>
+
+# 先看会走哪一族、解析到什么地址（不发请求）
+node main/scripts/download-artifact.cjs --url <URL> --out <文件> --dry-run
+```
+
+- 成功最后一行固定格式，可直接 grep 断言：`DONE family=IPv6 remote=<IP> bytes=<n> time=<s> speed=<MB/s> sha256=<hex>`。
+- 没有 IPv6 出口的机器（客户机、纯 IPv4 网络）自动回退 IPv4，行为与以前一致；排查时才用 `--family ipv6|ipv4`，DNS 不可用或要固定地址用 `--resolve 主机=地址`（可重复）。
+- 私有 Release 附件用 `--header "Authorization: token <令牌>"`；令牌别留在 shell 历史里。
+- 退出码：`0` 成功 / `1` 下载失败 / `2` 参数错误 / `3` sha256 不匹配 / `4` 输出已存在（加 `--force`）。
+- **反面案例**：2026-11-06 19:20 的安装器发布验证脚本把每个 curl 都写成 `-4`，130MB 下了约 8 分钟（约 270 KB/s）；同一个文件换 IPv6 后 3 秒。**这不是网络问题，是命令写死了地址族。**
+- 回归测试：`node --test main/scripts/download-artifact.test.cjs`（已挂在 `pnpm test` 链上，离线可跑）。
 
 ## 镜像地址（重要）
 
