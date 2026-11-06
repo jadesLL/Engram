@@ -41,3 +41,5 @@ desktop/dist/
 desktop/node/
 .mimosa/
 main/.mimosa/
+# 安装器内置运行时（prepare-runtime.js 生成，打包前临时产物不入库）
+installer/resources/runtime/

@@ -187,10 +187,11 @@ function serverInstallState(appRoot) {
 /**
  * 找 pnpm 的 JS 入口（用当前 node 直接跑，不经过任何 shell）。
  *
- * 仓库自己不带 pnpm（不是依赖），客户机上的 pnpm 是安装器 `npm i -g pnpm@10` 装的 —— 这时
- * 只有 PATH 上的 pnpm.cmd，用它就得 `shell: true`（node → cmd.exe → pnpm.cmd → node）。客户机
- * 实测（2026-09-18）：同一条 install 命令手动在 PowerShell 里跑 17 秒成功，经我们这条 shell 链
- * 却是"零输出 + 非零退出"，所以这里也去找全局安装的 pnpm JS 入口，能绕开 cmd.exe 那层。
+ * 仓库自己不带 pnpm（不是依赖）。客户机上的 pnpm 有两个来源：
+ *   - 新版安装器内置运行时：`%LOCALAPPDATA%\engram\pnpm\pnpm.cjs`（Node 直接跑，无 shell）；
+ *   - 旧版安装器 `npm i -g pnpm@10`：全局目录或便携 Node 目录下的 node_modules/pnpm。
+ * 实测（2026-09-18）：同一条 install 命令手动在 PowerShell 里跑 17 秒成功，经 shell 链
+ * 却是"零输出 + 非零退出"，所以优先找 pnpm 的 JS 入口，绕开 cmd.exe 那层。
  */
 function resolvePnpmEntry(appRoot) {
   const candidates = [path.join(appRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')];
@@ -201,6 +202,14 @@ function resolvePnpmEntry(appRoot) {
     }
   } catch {
     /* 无 .pnpm 存储 */
+  }
+  // 安装器内置/落盘位置（新版 resources\runtime\pnpm 安装到 %LOCALAPPDATA%\engram\pnpm；
+  // 旧版 npm -g 可能落在便携 Node 目录或 pnpm-home 私有前缀）。放在全局目录之前：客户机以安装器自带为准。
+  if (process.env.LOCALAPPDATA) {
+    const engramRoot = path.join(process.env.LOCALAPPDATA, 'engram');
+    candidates.push(path.join(engramRoot, 'pnpm', 'pnpm.cjs'));
+    candidates.push(path.join(engramRoot, 'pnpm-home', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'));
+    candidates.push(path.join(engramRoot, 'node', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'));
   }
   // 全局安装（npm i -g pnpm）：Windows 的 npm 全局目录在 %APPDATA%\npm
   const globalRoots = [

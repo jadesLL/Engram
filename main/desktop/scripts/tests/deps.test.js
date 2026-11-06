@@ -168,6 +168,23 @@ test('resolvePnpmEntry：优先用仓库内副本，否则回退全局安装（�
   assert.equal(deps.resolvePnpmEntry(root), entry); // 仓库内副本优先
 });
 
+test('resolvePnpmEntry：识别安装器内置 pnpm（%LOCALAPPDATA%\\engram\\pnpm\\pnpm.cjs）', () => {
+  const root = makeApp();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-pnpm-'));
+  const saved = process.env.LOCALAPPDATA;
+  try {
+    process.env.LOCALAPPDATA = tmp;
+    const entry = path.join(tmp, 'engram', 'pnpm', 'pnpm.cjs');
+    fs.mkdirSync(path.dirname(entry), { recursive: true });
+    fs.writeFileSync(entry, '');
+    assert.equal(deps.resolvePnpmEntry(root), entry);
+  } finally {
+    if (saved === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = saved;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('lockfileRegistry：按 lockfile 里 tarball URL 的唯一 host 推断 registry', () => {
   const root = makeApp();
   assert.equal(deps.lockfileRegistry(root), null); // 无 tarball URL
