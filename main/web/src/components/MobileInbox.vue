@@ -616,7 +616,7 @@
           </form>
           <p class="mi-intake-note">
             <Icon name="info" :size="12" />
-            网页保存 HTML 原件；B站 / 抖音链接保存为视频链接占位稿，提炼时再取视频。转换与入库仍由中枢执行。
+            网页保存 HTML 原件；B站 / 抖音链接保存为占位稿，提炼时再取内容——B站有 CC 字幕时优先按字幕，拿不到字幕再取视频；抖音图文 / 实况笔记按多图理解。转换与入库仍由中枢执行。
           </p>
         </section>
       </template>
@@ -1197,7 +1197,7 @@ function cardNote(item: InboxItem | null): string {
   if (!item) return '';
   if (item.status === 'failed') return item.error || '转换失败，可以重试';
   if (item.status === 'converting') {
-    return item.capability === 'video' ? '中枢正在提炼视频，完成后自动刷新' : '中枢正在转换，完成后自动刷新';
+    return item.capability === 'video' ? '中枢正在提炼，完成后自动刷新' : '中枢正在转换，完成后自动刷新';
   }
   if (item.status === 'converted') {
     return item.derivedPath ? '产物：' + fileName(item.derivedPath) : '已生成 Markdown 产物，可入库';
@@ -1208,7 +1208,7 @@ function cardNote(item: InboxItem | null): string {
   if (isServerConvertible(item.capability)) {
     if (item.hint) return item.hint;
     return item.capability === 'video'
-      ? '由中枢提炼成带时间戳的 Markdown 纪要'
+      ? '由中枢提炼成 Markdown 纪要：B站优先用 CC 字幕，抖音图文按多图理解'
       : '由中枢按语义转成 Markdown，产物仍留在收集箱';
   }
   if (item.capability === 'agent-only') return item.hint || '服务端不能直接转换，交给 Agent 读原件';

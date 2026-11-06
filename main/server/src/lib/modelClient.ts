@@ -26,7 +26,8 @@ const OFFICIAL_MODEL = 'deepseek-v4-flash';
  */
 export type ChatContentPart =
   | { type: 'text'; text: string }
-  | { type: 'video_url'; video_url: { url: string } };
+  | { type: 'video_url'; video_url: { url: string } }
+  | { type: 'image_url'; image_url: { url: string } };
 
 export interface ChatMessage {
   role: 'system' | 'user';
@@ -93,8 +94,10 @@ function userContentParts(messages: ChatMessage[]): ChatContentPart[] | null {
         parts.push({ type: 'text', text: part.text });
       } else if (part && part.type === 'video_url' && part.video_url && typeof part.video_url.url === 'string') {
         parts.push({ type: 'video_url', video_url: { url: part.video_url.url } });
+      } else if (part && part.type === 'image_url' && part.image_url && typeof part.image_url.url === 'string') {
+        parts.push({ type: 'image_url', image_url: { url: part.image_url.url } });
       } else {
-        throw new ModelCapabilityError('内容块格式不支持：目前只支持文本与 video_url 两种');
+        throw new ModelCapabilityError('内容块格式不支持：目前只支持文本、video_url 与 image_url 三种');
       }
     }
   }
@@ -204,10 +207,10 @@ export function modelRequest(
   // 视频/音频内容块是厂商扩展：官方路由与另外两种线协议都没有承载位置，明确失败而不是丢掉媒体
   if (mediaParts) {
     if (!route) {
-      throw new ModelCapabilityError('视频输入需要自定义的 OpenAI 兼容网关：官方 DeepSeek 路由不支持视频/音频输入');
+      throw new ModelCapabilityError('视频/图片输入需要自定义的 OpenAI 兼容网关：官方 DeepSeek 路由不支持视频/音频/图片输入');
     }
     if (route.api !== 'openai-completions') {
-      throw new ModelCapabilityError('当前接口协议不支持视频输入：请把视频模型配置成 OpenAI 兼容接口（video_url 扩展）');
+      throw new ModelCapabilityError('当前接口协议不支持视频/图片输入：请把视频模型配置成 OpenAI 兼容接口（video_url / image_url 扩展）');
     }
   }
   const userContent: unknown = mediaParts && mediaParts.length ? mediaParts : user;

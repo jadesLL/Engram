@@ -199,13 +199,14 @@ test('普通 400 不因 token 关键词之外的原因重试', async () => {
   assert.equal(calls.length, 1);
 });
 
-/** 视频内容块：只允许自定义 OpenAI 兼容网关，其余路由/协议必须明确失败而不是丢媒体 */
+/** 视频/图片内容块：只允许自定义 OpenAI 兼容网关，其余路由/协议必须明确失败而不是丢媒体 */
 test('多模态：OpenAI 兼容网关的内容块原样进入请求体', () => {
   const request = modelRequest(
     { apiKey: 'k', baseUrl: 'https://gw.example/v1', model: 'omni', api: 'openai-completions' } as any,
     [{ role: 'user', content: [
       { type: 'text', text: '看这个视频' },
       { type: 'video_url', video_url: { url: 'data:video/mp4;base64,AAAA' } },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,BBBB' } },
     ] }] as any,
   );
   const parts = (request.body as any).messages[0].content;
@@ -213,12 +214,14 @@ test('多模态：OpenAI 兼容网关的内容块原样进入请求体', () => {
   assert.deepEqual(parts[0], { type: 'text', text: '看这个视频' });
   assert.equal(parts[1].type, 'video_url');
   assert.equal(parts[1].video_url.url, 'data:video/mp4;base64,AAAA');
+  assert.equal(parts[2].type, 'image_url');
+  assert.equal(parts[2].image_url.url, 'data:image/jpeg;base64,BBBB');
 });
 
 test('多模态：官方路由（未配置自定义网关）明确拒绝视频输入', () => {
   assert.throws(
     () => modelRequest({ apiKey: 'k' } as any, [{ role: 'user', content: [{ type: 'video_url', video_url: { url: 'data:video/mp4;base64,AA' } }] }] as any),
-    (error: any) => error instanceof ModelCapabilityError && /视频输入需要自定义/.test(error.message),
+    (error: any) => error instanceof ModelCapabilityError && /视频\/图片输入需要自定义/.test(error.message),
   );
 });
 
@@ -228,7 +231,7 @@ test('多模态：anthropic / responses 协议明确拒绝视频输入', () => {
       () => modelRequest({ apiKey: 'k', baseUrl: 'https://gw.example', model: 'm', api } as any, [
         { role: 'user', content: [{ type: 'video_url', video_url: { url: 'data:video/mp4;base64,AA' } }] },
       ] as any),
-      (error: any) => error instanceof ModelCapabilityError && /不支持视频输入/.test(error.message),
+      (error: any) => error instanceof ModelCapabilityError && /不支持视频\/图片输入/.test(error.message),
       api,
     );
   }

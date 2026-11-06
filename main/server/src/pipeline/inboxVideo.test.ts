@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildVideoLinkMarkdown } from '../lib/videoLink.js';
+import { resetDouyinIdentityCache } from '../lib/douyin.js';
 
 /**
  * 视频提炼管线：提示词结构、data URL MIME、内联上限文案、配置/占位稿的前置报错。
@@ -17,6 +18,8 @@ let BRAIN_DIR = '';
 let db: any;
 let convertVideoInboxItem: typeof import('./inboxVideo.js').convertVideoInboxItem;
 let buildVideoMessages: typeof import('./inboxVideo.js').buildVideoMessages;
+let buildSubtitleMessages: typeof import('./inboxVideo.js').buildSubtitleMessages;
+let buildImageMessages: typeof import('./inboxVideo.js').buildImageMessages;
 let videoMime: typeof import('./inboxVideo.js').videoMime;
 let assertVideoInlineable: typeof import('./inboxVideo.js').assertVideoInlineable;
 let videoInlineLimitBytes: typeof import('./inboxVideo.js').videoInlineLimitBytes;
@@ -47,6 +50,8 @@ before(async () => {
   ({
     convertVideoInboxItem,
     buildVideoMessages,
+    buildSubtitleMessages,
+    buildImageMessages,
     videoMime,
     assertVideoInlineable,
     videoInlineLimitBytes,
@@ -227,6 +232,203 @@ test('占位稿损坏（平台不认识）：给出重新粘贴链接的提示�
     () => convertVideoInboxItem(rel, { config: readyConfig, fetchImpl: noNetwork }),
     /占位稿已损坏/
   );
+});
+
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    text: async () => JSON.stringify(body),
+  } as unknown as Response;
+}
+
+test('buildSubtitleMessages：system 是纪要结构，user 带元信息与字幕全文（纯文本，无 media 块）', () => {
+  const messages = buildSubtitleMessages(
+    {
+      title: '有字幕的视频',
+      author: '测试UP',
+      durationSec: 213,
+      platform: 'bilibili',
+      link: 'https://www.bilibili.com/video/BV1GJ411x7h7',
+    },
+    { text: '[00:01] 第一句\n[00:05] 第二句', lang: 'zh-CN' }
+  );
+  assert.equal(messages.length, 2);
+  const system = String(messages[0].content);
+  for (const heading of ['## 一句话总结', '## 内容脉络', '## 关键要点', '## 不确定或听不清']) {
+    assert.ok(system.includes(heading), '字幕通道提示词缺少结构：' + heading);
+  }
+  assert.match(system, /不要描述画面/, '字幕通道要明说看不到画面');
+  assert.equal(messages[1].role, 'user');
+  const userText = String(messages[1].content);
+  assert.equal(typeof messages[1].content, 'string', '字幕通道是纯文本消息');
+  assert.match(userText, /标题：有字幕的视频/);
+  assert.match(userText, /- 字幕语言：zh-CN/);
+  assert.match(userText, /字幕全文/);
+  assert.match(userText, /\[00:01\] 第一句/);
+});
+
+test('buildImageMessages：多图按序成为 image_url 内容块（data URL），文案与元信息在前', () => {
+  const messages = buildImageMessages(
+    { title: '图文笔记', author: '作者', platform: 'douyin', link: 'https://www.douyin.com/video/1' },
+    [
+      { mime: 'image/jpeg', base64: 'QUJD' },
+      { mime: 'image/png', base64: 'REVG' },
+    ]
+  );
+  assert.equal(messages.length, 2);
+  assert.match(String(messages[0].content), /图文\/实况笔记/);
+  const parts = messages[1].content as any[];
+  assert.equal(parts.length, 3);
+  assert.equal(parts[0].type, 'text');
+  assert.match(String(parts[0].text), /共 2 张图片/);
+  assert.equal(parts[1].type, 'image_url');
+  assert.equal(parts[1].image_url.url, 'data:image/jpeg;base64,QUJD');
+  assert.equal(parts[2].image_url.url, 'data:image/png;base64,REVG');
+});
+
+test('B站有 CC 字幕：走字幕通道，不下载整段视频，产物 frontmatter 记录依据', async () => {
+  const planted = plant(
+    '收集箱/B站字幕测试.md',
+    buildVideoLinkMarkdown({
+      platform: 'bilibili',
+      link: 'https://www.bilibili.com/video/BV1GJ411x7h7',
+      title: 'B站字幕测试',
+    })
+  );
+  const calls: string[] = [];
+  const modelBodies: any[] = [];
+  const fetchImpl = (async (input: any, init: any) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('api.bilibili.com/x/web-interface/view')) {
+      return jsonResponse({
+        code: 0,
+        data: {
+          bvid: 'BV1GJ411x7h7',
+          cid: 137649199,
+          duration: 60,
+          title: '有字幕的视频',
+          owner: { name: '测试UP' },
+          pic: '//i0.example/cover.jpg',
+        },
+      });
+    }
+    if (url.includes('/x/player/wbi/v2')) {
+      return jsonResponse({
+        code: 0,
+        data: { subtitle: { subtitles: [{ lan: 'zh-CN', subtitle_url: '//sub.example/137649199.json' }] } },
+      });
+    }
+    if (url === 'https://sub.example/137649199.json') {
+      const body = Array.from({ length: 20 }, (_, index) => ({
+        from: index * 3,
+        to: index * 3 + 2.5,
+        content: '第 ' + (index + 1) + ' 句字幕内容，讲了一些真实存在的要点',
+      }));
+      return jsonResponse({ body });
+    }
+    if (url === 'https://video.example.com/v1/chat/completions') {
+      modelBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        choices: [{ message: { content: '# 测试纪要\n\n## 一句话总结\n字幕测试' }, finish_reason: 'stop' }],
+        usage: {},
+      });
+    }
+    throw new Error('不该请求：' + url);
+  }) as unknown as typeof fetch;
+
+  const result = await convertVideoInboxItem(planted, { config: readyConfig, fetchImpl });
+  assert.equal(result.source, 'subtitle');
+  assert.equal(result.media.platform, 'bilibili');
+  assert.equal(
+    calls.some((url) => url.includes('/x/player/playurl')),
+    false,
+    '有字幕时不应再去取视频播放地址'
+  );
+  assert.equal(modelBodies.length, 1);
+  const content = modelBodies[0].messages[0].content;
+  assert.ok(Array.isArray(content), '字幕通道仍以内容块数组发请求');
+  const hasVideo = content.some((part: any) => part.type === 'video_url');
+  assert.equal(hasVideo, false, '字幕通道不应内联视频');
+
+  const derived = fs.readFileSync(path.join(BRAIN_DIR, ...result.derivedPath.split('/')), 'utf8');
+  assert.match(derived, /提炼依据: B站CC字幕/);
+  assert.match(derived, /视频平台: bilibili/);
+  assert.match(derived, /视频作者: 测试UP/);
+  assert.match(derived, /视频时长: 1 分 0 秒/);
+  assert.match(derived, /封面链接: https:\/\/i0\.example\/cover\.jpg/);
+  assert.match(derived, /## 一句话总结/);
+});
+
+test('抖音图文笔记：多图送 image_url 通道，产物 frontmatter 记录图片数量与依据', async () => {
+  resetDouyinIdentityCache();
+  const planted = plant(
+    '收集箱/抖音图文测试.md',
+    buildVideoLinkMarkdown({
+      platform: 'douyin',
+      link: 'https://www.douyin.com/video/7298145681699622182',
+      title: '抖音图文测试',
+    })
+  );
+  const imageBytes = Buffer.from('fake-image');
+  const modelBodies: any[] = [];
+  const fetchImpl = (async (input: any, init: any) => {
+    const url = String(input);
+    if (url.includes('/ttwid/register')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'set-cookie': 'ttwid=ttwid-test; Path=/' }),
+        text: async () => '{}',
+      } as unknown as Response;
+    }
+    if (url === 'https://www.douyin.com/') {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'x-tt-trace-host': 'uifid-test' }),
+        text: async () => '<html></html>',
+      } as unknown as Response;
+    }
+    if (url.includes('/aweme/v1/web/aweme/detail/')) {
+      return jsonResponse({
+        status_code: 0,
+        aweme_detail: {
+          desc: '一条图文笔记',
+          author: { nickname: '笔记作者' },
+          images: [{ url_list: ['https://img.example/1.jpg'] }, { url_list: ['https://img.example/2.jpg'] }],
+        },
+      });
+    }
+    if (url === 'https://img.example/1.jpg' || url === 'https://img.example/2.jpg') {
+      return new Response(imageBytes as any, { status: 200, headers: { 'content-type': 'image/jpeg' } });
+    }
+    if (url === 'https://video.example.com/v1/chat/completions') {
+      modelBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        choices: [{ message: { content: '# 图文纪要\n\n## 一句话总结\n图文测试' }, finish_reason: 'stop' }],
+        usage: {},
+      });
+    }
+    throw new Error('不该请求：' + url);
+  }) as unknown as typeof fetch;
+
+  const result = await convertVideoInboxItem(planted, { config: readyConfig, fetchImpl });
+  assert.equal(result.source, 'images');
+  assert.equal(result.media.images, 2);
+  assert.equal(modelBodies.length, 1);
+  const content = modelBodies[0].messages[0].content as any[];
+  assert.equal(content.filter((part: any) => part.type === 'image_url').length, 2);
+  assert.equal(content.some((part: any) => part.type === 'video_url'), false);
+
+  const derived = fs.readFileSync(path.join(BRAIN_DIR, ...result.derivedPath.split('/')), 'utf8');
+  assert.match(derived, /提炼依据: 图文多图/);
+  assert.match(derived, /视频平台: douyin/);
+  assert.match(derived, /图片数量: 2/);
+  assert.match(derived, /# 图文纪要/);
 });
 
 test('只允许收集箱内的路径：越界直接拒绝', async () => {

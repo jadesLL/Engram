@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { DouyinApiError, prepareDouyinApiMedia } from './douyin.js';
+import { DouyinApiError, chooseDouyinMedia, fetchDouyinDetail, type DouyinVideoDetail } from './douyin.js';
 
 /**
  * 视频链接解析 / 媒体获取（收集箱「视频链接 → 提炼」的第一段）。
@@ -24,11 +24,24 @@ const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const BILIBILI_REFERER = 'https://www.bilibili.com';
 const DEFAULT_MAX_MEDIA_BYTES = 150 * 1024 * 1024;
+/** 抖音图文笔记最多抓几张图：够模型看完整条笔记，不把内联配额花在原图归档上 */
+const MAX_IMAGE_COUNT = 12;
+/** 单张图上限：图文理解不需要原图，超过就跳过而不是把请求撑爆 */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+/** 字幕送模型的正文上限：超长只取前 N 字，纪要不需要逐字全文 */
+const SUBTITLE_TEXT_LIMIT = 40_000;
 const BVID_PATTERN = /BV[0-9A-Za-z]{10}/;
 const BVID_STRICT = /^BV[0-9A-Za-z]{10}$/;
 const AVID_STRICT = /^av(\d+)$/i;
 
 export type VideoPlatform = 'bilibili' | 'douyin';
+
+/** B站 CC 字幕：srt 用于归档，text 用于「字幕优先」提炼（带 [mm:ss] 时间轴） */
+export interface BilibiliSubtitle {
+  lang: string;
+  srt: string;
+  text: string;
+}
 
 export interface VideoLinkInfo {
   platform: VideoPlatform;
@@ -39,6 +52,8 @@ export interface VideoLinkInfo {
   bvid?: string;
   cid?: number;
   awemeId?: string;
+  /** 封面地址（B站 view 接口的 pic），写进产物元数据 */
+  coverUrl?: string;
 }
 
 /** 已落到本地磁盘、可直接内联给视频模型的一份媒体 */
@@ -53,6 +68,41 @@ export interface PreparedVideo {
   platform: VideoPlatform | 'upload';
   link: string;
   note?: string;
+  /** 封面地址（抖音 origin_cover / B站 pic） */
+  coverUrl?: string;
+  /** 实际清晰度标签（720P/480P/360P），写进产物元数据 */
+  qualityLabel?: string;
+  /** 抓取路径说明（接口直取 / 网页播放流 / 本机浏览器兜底） */
+  fetchVia?: string;
+}
+
+/** 抖音图文/实况笔记：多图下载后交给多模态模型按图片理解 */
+export interface PreparedImagePost {
+  title: string;
+  author: string;
+  description: string;
+  link: string;
+  coverUrl?: string;
+  note?: string;
+  images: { path: string; mime: string; bytes: number }[];
+}
+
+/** 抖音一次抓取的结果：视频或图文笔记（由上层决定怎么送模型） */
+export type CapturedDouyinPost =
+  | ({ kind: 'video' } & PreparedVideo)
+  | ({ kind: 'images' } & PreparedImagePost);
+
+/** B站抓取的失败分类：上层据此给不同提示（与 DouyinApiError 同构） */
+export type BilibiliFailureKind = 'not-found' | 'no-stream' | 'too-large' | 'network';
+
+export class BilibiliError extends Error {
+  readonly kind: BilibiliFailureKind;
+
+  constructor(message: string, kind: BilibiliFailureKind) {
+    super(message);
+    this.name = 'BilibiliError';
+    this.kind = kind;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -280,6 +330,8 @@ async function resolveBilibiliLink(
   const cid = Number(page?.cid ?? data.cid);
   const resolvedBvid = typeof data.bvid === 'string' && data.bvid ? data.bvid : bvid || '';
   const title = typeof data.title === 'string' && data.title.trim() ? data.title.trim() : 'B站视频';
+  const rawCover = typeof data.pic === 'string' ? data.pic.trim() : '';
+  const coverUrl = rawCover ? (rawCover.startsWith('//') ? 'https:' + rawCover : rawCover) : '';
   return {
     platform: 'bilibili',
     link: 'https://www.bilibili.com/video/' + (resolvedBvid || link),
@@ -288,6 +340,7 @@ async function resolveBilibiliLink(
     author: data.owner && typeof data.owner.name === 'string' ? data.owner.name : '',
     ...(resolvedBvid ? { bvid: resolvedBvid } : {}),
     ...(Number.isFinite(cid) && cid > 0 ? { cid } : {}),
+    ...(coverUrl ? { coverUrl } : {}),
   };
 }
 
@@ -426,6 +479,122 @@ async function downloadMedia(
   return { bytes: received, total };
 }
 
+// ---------- B站 CC 字幕 ----------
+
+function formatSubtitleTime(seconds: number): string {
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const hours = Math.floor(totalMs / 3600000);
+  const restMs = totalMs % 3600000;
+  const minutes = Math.floor(restMs / 60000);
+  const secs = Math.floor((restMs % 60000) / 1000);
+  const millis = restMs % 1000;
+  return (
+    String(hours).padStart(2, '0') + ':' +
+    String(minutes).padStart(2, '0') + ':' +
+    String(secs).padStart(2, '0') + ',' +
+    String(millis).padStart(3, '0')
+  );
+}
+
+function subtitleItemsOf(body: unknown): { from: number; to: number; content: string }[] {
+  const items = Array.isArray(body) ? body : [];
+  const result: { from: number; to: number; content: string }[] = [];
+  for (const item of items) {
+    const content = typeof (item as any)?.content === 'string' ? String((item as any).content).trim() : '';
+    const from = Number((item as any)?.from);
+    const to = Number((item as any)?.to);
+    if (!content || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) continue;
+    result.push({ from, to, content });
+  }
+  return result;
+}
+
+/** B站字幕 JSON → 标准 SRT（归档用，也能直接给人类看） */
+export function subtitleBodyToSrt(body: unknown): string {
+  const items = subtitleItemsOf(body);
+  const blocks = items.map((item, index) =>
+    [index + 1, formatSubtitleTime(item.from) + ' --> ' + formatSubtitleTime(item.to), item.content].join('\n')
+  );
+  return blocks.length ? blocks.join('\n\n') + '\n' : '';
+}
+
+/** B站字幕 JSON → 带 [mm:ss] 时间轴的纯文本（送模型做「字幕优先」提炼） */
+export function subtitleBodyToText(body: unknown): string {
+  const lines = subtitleItemsOf(body).map((item) => {
+    const minutes = Math.floor(item.from / 60);
+    const seconds = Math.floor(item.from % 60);
+    const stamp = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    return '[' + stamp + '] ' + item.content;
+  });
+  const text = lines.join('\n');
+  return text.length > SUBTITLE_TEXT_LIMIT ? text.slice(0, SUBTITLE_TEXT_LIMIT) : text;
+}
+
+function subtitleUrl(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '';
+  return raw.startsWith('//') ? 'https:' + raw : raw;
+}
+
+/**
+ * 抓 B站 CC 字幕（无字幕 / 未登录拿不到时返回 null，**不抛错**）：
+ * 有字幕时上层优先按字幕转文本提炼，省掉整段视频下载与内联。
+ *
+ * 注意：B站 AI 字幕常要求登录态（SESSDATA），匿名请求经常拿不到——这里只做尽力而为，
+ * 拿不到就走原视频路径，绝不把「没有字幕」当失败。
+ */
+export async function fetchBilibiliSubtitle(
+  info: VideoLinkInfo,
+  options: { fetchImpl?: typeof fetch; signal?: AbortSignal } = {}
+): Promise<BilibiliSubtitle | null> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const bvid = info.bvid || bvidOf(info.link);
+  const cid = Number(info.cid);
+  if (!bvid || !Number.isFinite(cid) || cid <= 0) return null;
+  const referer = 'https://www.bilibili.com/video/' + bvid;
+  const endpoints = [
+    'https://api.bilibili.com/x/player/wbi/v2?bvid=' + encodeURIComponent(bvid) + '&cid=' + cid,
+    'https://api.bilibili.com/x/player/v2?bvid=' + encodeURIComponent(bvid) + '&cid=' + cid,
+  ];
+  for (const endpoint of endpoints) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      options.signal?.throwIfAborted();
+      let json: any;
+      try {
+        json = await fetchJson(fetchImpl, endpoint, { referer }, options.signal, 'B站字幕接口');
+      } catch {
+        break;
+      }
+      if (json?.code !== 0) break;
+      const list = Array.isArray(json?.data?.subtitle?.subtitles) ? json.data.subtitle.subtitles : [];
+      // 只认 URL 里带本 cid 的字幕：player 接口偶尔会串到别的视频
+      const candidate = list.find((item: any) => subtitleUrl(item?.subtitle_url).includes(String(cid)));
+      const url = subtitleUrl(candidate?.subtitle_url);
+      if (!candidate || !url) break;
+      try {
+        const response = await fetchImpl(url, { headers: { 'user-agent': BROWSER_UA, referer }, signal: options.signal });
+        if (!response.ok) continue;
+        // 用 text 解析而不是 response.json()：单测的假 Response 只实现了 text，且线上字幕接口本来就是 JSON 文本
+        let body: any = null;
+        try {
+          const raw = await response.text();
+          body = raw ? JSON.parse(raw) : null;
+        } catch {
+          continue;
+        }
+        const srt = subtitleBodyToSrt(body?.body);
+        const text = subtitleBodyToText(body?.body);
+        if (!srt || !text) continue;
+        const lang = typeof candidate.lan === 'string' ? candidate.lan : '';
+        return { lang, srt, text };
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
 // ---------- B站媒体 ----------
 
 /**
@@ -442,14 +611,18 @@ export async function prepareBilibiliMedia(
     signal?: AbortSignal;
     fetchImpl?: typeof fetch;
     onProgress?: (received: number, total: number) => void;
+    /** 下载前把选中的清晰度与体积报给上层（「预检」进度用，避免下到一半才发现超限） */
+    onPlan?: (plan: { quality: number; size: number }) => void;
     maxBytes?: number;
   }
 ): Promise<PreparedVideo> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const bvid = info.bvid || bvidOf(info.link);
   const cid = Number(info.cid);
-  if (!bvid) throw new Error('缺少 B站 BV 号：请重新粘贴 B站视频链接后再试');
-  if (!Number.isFinite(cid) || cid <= 0) throw new Error('缺少 B站 cid（分 P 信息）：请重新粘贴 B站视频链接后再试');
+  if (!bvid) throw new BilibiliError('缺少 B站 BV 号：请重新粘贴 B站视频链接后再试', 'not-found');
+  if (!Number.isFinite(cid) || cid <= 0) {
+    throw new BilibiliError('缺少 B站 cid（分 P 信息）：请重新粘贴 B站视频链接后再试', 'not-found');
+  }
   const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : DEFAULT_MAX_MEDIA_BYTES;
   const order = qualityOrder(Number(options.quality));
   const referer = 'https://www.bilibili.com/video/' + bvid;
@@ -480,13 +653,16 @@ export async function prepareBilibiliMedia(
       continue;
     }
     chosen = { url: String(durl.url), size, quality };
+    options.onPlan?.({ quality, size });
     break;
   }
 
   if (!chosen) {
-    throw new Error(
+    const kind: BilibiliFailureKind = /超过下载上限/.test(lastError) ? 'too-large' : 'no-stream';
+    throw new BilibiliError(
       (lastError || '取 B站播放地址失败') +
-        '。建议把「B站清晰度」调到 360P（设置 → Agent 与自动化 → 视频理解模型），或换一个更短的视频'
+        '。建议把「B站清晰度」调到 360P（设置 → Agent 与自动化 → 视频理解模型），或换一个更短的视频',
+      kind
     );
   }
 
@@ -502,11 +678,12 @@ export async function prepareBilibiliMedia(
     bytes = result.bytes;
   } catch (error) {
     fs.rmSync(options.destPath, { force: true });
-    throw error;
+    const message = (error as any)?.message || String(error);
+    throw new BilibiliError(message, /超过下载上限/.test(message) ? 'too-large' : 'network');
   }
   if (bytes <= 0) {
     fs.rmSync(options.destPath, { force: true });
-    throw new Error('B站媒体下载结果为空：请重试，或换一个视频');
+    throw new BilibiliError('B站媒体下载结果为空：请重试，或换一个视频', 'network');
   }
 
   const notes = ['B站清晰度：' + qualityLabel(chosen.quality)];
@@ -521,6 +698,9 @@ export async function prepareBilibiliMedia(
     platform: 'bilibili',
     link: info.link || 'https://www.bilibili.com/video/' + bvid,
     note: notes.join('；'),
+    ...(info.coverUrl ? { coverUrl: info.coverUrl } : {}),
+    qualityLabel: qualityLabel(chosen.quality),
+    fetchVia: 'B站网页播放流（合并 mp4）',
   };
 }
 
@@ -821,6 +1001,10 @@ export interface CaptureDouyinOptions {
   quality?: 64 | 32 | 16;
   /** 选清晰度与下载的体积上限（字节） */
   maxBytes?: number;
+  /** 图文笔记的图片保存目录（调用方给临时目录；视频路径不用） */
+  imagesDir?: string;
+  /** 图文笔记最多抓几张（默认 12 张，够模型看完整条笔记） */
+  maxImages?: number;
   /** 接口失败时是否允许用本机浏览器兜底（设置里的「抖音抓取」开关） */
   allowBrowserFallback?: boolean;
   /** 测试注入 */
@@ -833,22 +1017,31 @@ function shortReason(error: any): string {
 }
 
 /**
- * 抖音视频下载入口：先走接口（无需浏览器），失败再按配置降级到本机浏览器。
- * 这是收集箱「抖音链接 → 提炼」的实际取视频路径。
+ * 抖音抓取入口：先走接口（无需浏览器），失败再按配置降级到本机浏览器。
+ * 一次详情请求同时覆盖视频与图文/实况笔记：图文返回多图，视频返回落盘 mp4。
+ * 这是收集箱「抖音链接 → 提炼」的实际取内容路径。
  */
-export async function captureDouyinMedia(awemeId: string, options: CaptureDouyinOptions): Promise<PreparedVideo> {
+export async function captureDouyinPost(
+  awemeId: string,
+  options: CaptureDouyinOptions
+): Promise<CapturedDouyinPost> {
   const id = String(awemeId || '').trim();
   if (!/^\d{6,}$/.test(id)) throw new Error('抖音视频 id 不合法：请重新粘贴抖音视频链接后再试');
 
   let apiError: any = null;
   try {
-    return await captureDouyinMediaByApi(id, options);
+    const detail = await fetchDouyinDetail(id, {
+      fetchImpl: options.fetchImpl,
+      signal: options.signal,
+    });
+    if (detail.images.length) return await captureDouyinImages(detail, id, options);
+    return { kind: 'video', ...(await downloadDouyinVideo(detail, id, options)) };
   } catch (error: any) {
     if (options.signal?.aborted) throw error;
     apiError = error;
   }
 
-  // 「体积超限 / 作品不可见」不是换浏览器能解决的：原样把可操作原因给用户
+  // 「体积超限 / 作品不可见 / 图文无图」不是换浏览器能解决的：原样把可操作原因给用户
   if (apiError instanceof DouyinApiError && (apiError.kind === 'too-large' || apiError.kind === 'not-found')) {
     throw apiError;
   }
@@ -858,7 +1051,7 @@ export async function captureDouyinMedia(awemeId: string, options: CaptureDouyin
   if (options.allowBrowserFallback && browser) {
     options.onProgress?.('获取视频', '接口抓取失败（' + reason + '），改用本机浏览器兜底');
     try {
-      return await captureDouyinMediaByBrowser(id, options);
+      return { kind: 'video', ...(await captureDouyinMediaByBrowser(id, options)) };
     } catch (fallbackError: any) {
       if (options.signal?.aborted) throw fallbackError;
       throw new Error('抖音接口抓取失败（' + reason + '）；本机浏览器兜底也失败：' + shortReason(fallbackError));
@@ -874,18 +1067,40 @@ export async function captureDouyinMedia(awemeId: string, options: CaptureDouyin
   throw new Error('抖音接口抓取失败（' + reason + '）。' + hints.join('；'));
 }
 
-/** 接口路径：详情接口 → 选清晰度 → 下载（不需要任何浏览器） */
-async function captureDouyinMediaByApi(id: string, options: CaptureDouyinOptions): Promise<PreparedVideo> {
+/** 只要视频的旧入口（图文笔记会给出可操作提示）：保留给只处理视频的调用方 */
+export async function captureDouyinMedia(awemeId: string, options: CaptureDouyinOptions): Promise<PreparedVideo> {
+  const post = await captureDouyinPost(awemeId, options);
+  if (post.kind === 'images') {
+    throw new Error('这是抖音图文笔记：请在收集箱里按图文提炼，或改用视频链接/上传本地视频');
+  }
+  const video: PreparedVideo = post;
+  return video;
+}
+
+/** 接口路径的视频下载：详情已拿到时选清晰度 → 下载（不需要任何浏览器） */
+async function downloadDouyinVideo(
+  detail: DouyinVideoDetail,
+  id: string,
+  options: CaptureDouyinOptions
+): Promise<PreparedVideo> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : DEFAULT_MAX_MEDIA_BYTES;
-  const media = await prepareDouyinApiMedia(id, {
+  options.onProgress?.('获取视频', '解析抖音接口（无需浏览器）');
+  options.onProgress?.(
+    '预检',
+    '已解析「' + detail.title + '」' + (detail.durationSec > 0 ? '（' + Math.round(detail.durationSec) + ' 秒）' : '')
+  );
+  const media = await chooseDouyinMedia(detail, {
     fetchImpl,
     signal: options.signal,
     quality: options.quality,
     maxBytes,
-    onProgress: options.onProgress,
   });
   options.signal?.throwIfAborted();
+  options.onProgress?.(
+    '预检',
+    '已选择 ' + (media.qualityLabel || '默认清晰度') + (media.bytes > 0 ? '（约 ' + formatBytes(media.bytes) + '）' : '')
+  );
   options.onProgress?.(
     '获取视频',
     '下载抖音视频（' + (media.qualityLabel || '默认清晰度') + (media.bytes > 0 ? ' · 约 ' + formatBytes(media.bytes) : '') + '）'
@@ -906,12 +1121,15 @@ async function captureDouyinMediaByApi(id: string, options: CaptureDouyinOptions
       path: options.destPath,
       bytes: download.bytes,
       mime: 'video/mp4',
-      title: media.title,
-      author: media.author,
-      durationSec: media.durationSec,
+      title: detail.title,
+      author: detail.author,
+      durationSec: detail.durationSec,
       platform: 'douyin',
       link: 'https://www.douyin.com/video/' + id,
       note: media.note,
+      ...(detail.coverUrl ? { coverUrl: detail.coverUrl } : {}),
+      ...(media.qualityLabel ? { qualityLabel: media.qualityLabel } : {}),
+      fetchVia: '抖音接口直取（匿名签名）',
     };
   } catch (error) {
     try {
@@ -921,6 +1139,76 @@ async function captureDouyinMediaByApi(id: string, options: CaptureDouyinOptions
     }
     throw error;
   }
+}
+
+function imageMimeOf(url: string): { mime: string; ext: string } {
+  let pathname = '';
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    pathname = '';
+  }
+  const ext = (pathname.split('.').pop() || '').toLowerCase();
+  if (ext === 'png') return { mime: 'image/png', ext: 'png' };
+  if (ext === 'webp') return { mime: 'image/webp', ext: 'webp' };
+  if (ext === 'gif') return { mime: 'image/gif', ext: 'gif' };
+  if (ext === 'heic') return { mime: 'image/heic', ext: 'heic' };
+  return { mime: 'image/jpeg', ext: 'jpg' };
+}
+
+/** 图文/实况笔记：按顺序下载前若干张图（静图足够模型理解；单张超限就跳过，一张都没拿到才失败） */
+async function captureDouyinImages(
+  detail: DouyinVideoDetail,
+  id: string,
+  options: CaptureDouyinOptions
+): Promise<{ kind: 'images' } & PreparedImagePost> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : DEFAULT_MAX_MEDIA_BYTES;
+  const maxImages = Math.max(1, Math.min(Number(options.maxImages) || MAX_IMAGE_COUNT, MAX_IMAGE_COUNT));
+  options.onProgress?.('获取视频', '这是抖音图文笔记：开始下载图片（最多 ' + maxImages + ' 张）');
+  const dir = options.imagesDir || path.join(path.dirname(options.destPath), 'images-' + Date.now());
+  fs.mkdirSync(dir, { recursive: true });
+  const images: { path: string; mime: string; bytes: number }[] = [];
+  let totalBytes = 0;
+  const urls = detail.images.slice(0, maxImages);
+  for (let index = 0; index < urls.length; index += 1) {
+    options.signal?.throwIfAborted();
+    const remaining = maxBytes - totalBytes;
+    if (remaining <= 0) break;
+    const { mime, ext } = imageMimeOf(urls[index]);
+    const destPath = path.join(dir, 'image_' + String(index + 1).padStart(2, '0') + '.' + ext);
+    try {
+      const download = await downloadMedia(fetchImpl, urls[index], destPath, {
+        headers: { referer: 'https://www.douyin.com/' },
+        signal: options.signal,
+        maxBytes: Math.min(MAX_IMAGE_BYTES, remaining),
+      });
+      totalBytes += download.bytes;
+      images.push({ path: destPath, mime, bytes: download.bytes });
+      options.onProgress?.('获取视频', '已下载图片 ' + (index + 1) + '/' + urls.length);
+    } catch (error: any) {
+      if (options.signal?.aborted) throw error;
+      const message = (error as any)?.message || String(error);
+      // 单张超限就跳过；其它错误留到循环结束统一判断
+      if (/超过下载上限/.test(message)) continue;
+      if (index === urls.length - 1 && images.length === 0) throw error;
+    }
+  }
+  if (!images.length) {
+    throw new Error('抖音图文笔记没有拿到可用图片：请稍后重试，或改用上传本地图片');
+  }
+  const noteParts = ['抖音图文笔记：' + images.length + ' 张'];
+  if (detail.images.length > images.length) noteParts.push('只取前 ' + images.length + ' 张');
+  return {
+    kind: 'images',
+    title: detail.title,
+    author: detail.author,
+    description: detail.title,
+    link: 'https://www.douyin.com/video/' + id,
+    ...(detail.coverUrl ? { coverUrl: detail.coverUrl } : {}),
+    note: noteParts.join('；'),
+    images,
+  };
 }
 
 /**

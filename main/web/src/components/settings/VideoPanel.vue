@@ -4,8 +4,8 @@
       <div>
         <h3>视频理解模型</h3>
         <p>
-          收集箱里的 B站 / 抖音视频链接与本地音视频，用这个 OpenAI 兼容的多模态模型提炼成 Markdown 纪要；
-          只在收集箱里用，不影响内置 Agent 的文本模型。
+          收集箱里的 B站 / 抖音视频与图文笔记链接、本地音视频，用这个 OpenAI 兼容的多模态模型提炼成 Markdown 纪要；
+          B站有 CC 字幕时优先按字幕文本提炼、不下载整段视频；只在收集箱里用，不影响内置 Agent 的文本模型。
         </p>
       </div>
     </div>
@@ -15,7 +15,7 @@
       :badge="badge"
       :badge-tone="badgeTone"
       title="视频理解模型"
-      hint="配置一个支持视频输入的 OpenAI 兼容网关：收集箱视频条目的「提炼视频」用它生成纪要，产物仍在收集箱、确认后入库"
+      hint="配置一个支持视频（图文笔记则为图片）输入的 OpenAI 兼容网关：收集箱视频 / 图文条目的「提炼视频」用它生成纪要，产物仍在收集箱、确认后入库"
     >
       <!-- 状态条：真实生效的是服务端保存的那份配置（本机表单改动保存后才生效）
            「始终可见的状态」按 settings.css 的约定走 .state-strip，而不是灰色说明文字 -->
@@ -118,10 +118,13 @@
       </p>
 
       <p class="faint small video-note">
-        视频会发送给你填写的 Base URL 所在的模型服务（OpenAI 兼容 chat/completions，视频以 video_url 内容块传递），
+        素材会发送给你填写的 Base URL 所在的模型服务（OpenAI 兼容 chat/completions，视频以 video_url、图文笔记的图片以 image_url 内容块传递），
         不会发到别处；只支持这类兼容接口，厂商私有的文件上传协议不支持。模型给出的时间戳 / 章节是估计值，纪要需人工复核。
-        视频清晰度越高下载越慢、体积越大（抖音按这个目标档位选清晰度）；抖音链接默认走服务端接口抓取（匿名身份 + secsdk 签名，不需要浏览器，
-        NAS / Docker / 手机端都可用），只有接口失败时才用上面的「本机浏览器兜底」（实验，仅装有 Edge / Chrome 的本机可用）。
+        视频清晰度只影响需要下载视频的提炼（没有 CC 字幕的 B站视频、抖音视频）：档位越高画质越好，但下载更慢、体积更大；
+        B站有 CC 字幕时优先按字幕文本提炼、不下载整段视频，抖音图文 / 实况笔记按多图理解，两者都不受这个档位影响。
+        字幕抓取是尽力而为，不保证每条视频都能拿到；平台素材也不承诺无水印。
+        抖音链接默认走服务端接口抓取（匿名身份 + secsdk 签名，不需要浏览器，
+        NAS / Docker / 手机端都可用），只有接口失败时才用上面的「本机浏览器兜底」（实验，仅装有 Edge / Chrome 的本机可用，且只覆盖视频作品）。
         <template v-if="isAndroidLocal">Key 存在已绑定的中枢、页面不回显；</template>
         <template v-else>Key 只存本机数据库、页面不回显；</template>音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
       </p>
@@ -274,7 +277,7 @@ const douyinSwitchLabel = computed(() => {
 
 const browserNote = computed(() => {
   if (browserAvailable.value) {
-    return '抖音链接默认走服务端接口抓取（不需要浏览器）；接口失败时才用本机浏览器打开视频页兜底（实验）';
+    return '抖音链接默认走服务端接口抓取（不需要浏览器，图文 / 实况笔记也走这里）；接口失败时才用本机浏览器打开视频页兜底（实验，只覆盖视频作品）';
   }
   const os = platform.value === 'win32'
     ? 'Windows'
@@ -283,7 +286,7 @@ const browserNote = computed(() => {
       : platform.value === 'linux'
         ? 'Linux'
         : '本机';
-  return `${os} 上没有检测到 Edge / Chrome：抖音链接仍走服务端接口抓取（不需要浏览器），只是无法浏览器兜底`;
+  return `${os} 上没有检测到 Edge / Chrome：抖音链接仍走服务端接口抓取（不需要浏览器，图文 / 实况笔记同样可用），只是无法浏览器兜底`;
 });
 
 function qualityLabel(value?: number): string {
