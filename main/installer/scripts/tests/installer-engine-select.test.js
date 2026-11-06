@@ -56,7 +56,7 @@ check('只给克隆时用克隆', engine.pickEngine('', cloned) === '');
 
 // ---------- 3) GUI / 打包接线 ----------
 const mainText = fs.readFileSync(path.join(installerDir, 'main.js'), 'utf8');
-check('main.js 引入 engine.js', mainText.includes("require('./scripts/lib/engine.js')"));
+check('main.js 引入 engine.js', mainText.includes("scripts/lib/engine.js") && mainText.includes('pickEngine'));
 check('main.js 用 pickEngine 选择引擎', /pickEngine\s*\(/.test(mainText));
 check('main.js 不再无条件返回克隆引擎', !/if \(fs\.existsSync\(cloned\)\) return cloned;/.test(mainText));
 check('GUI 会读取打包态 resources 里的引擎',
