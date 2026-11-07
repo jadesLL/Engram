@@ -101,6 +101,10 @@ test('版本比较逐段取数字（v 前缀、长短不一都不误判）', () 
   assert.ok(chain.compareVersions('1.3', '1.3.1') < 0);
 });
 
+// 下载进度的纯逻辑（lib/update-progress.js）单独成文件，主 test 链只列了本文件，
+// 这里串起来一起跑（node:test 的用例与上面的 cases 在同一个进程内各自执行）。
+require('./update-progress.test.js');
+
 (async () => {
   let failed = 0;
   for (const c of cases) {
