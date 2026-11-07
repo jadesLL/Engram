@@ -558,8 +558,8 @@ class EngramLocalServer private constructor(private val context: Context) {
             call.proxyAgent("GET", "/api/agent-console/settings/${encoded(call.parameters["ns"].orEmpty())}")
         }
         // 视频理解模型配置（v1.5.1 从通用 /api/settings 拆出的窄接口，见 server routes/videoConfig.ts）：
-        // GET → { settings: { video_config } }（apiKey 已脱敏）；PUT 写回中枢，apiKey 空串 = 保留原 Key、
-        // null = 显式清除，其余字段浅合并，避免手机留空保存把中枢的 Key 冲掉。
+        // GET → { settings: { video_config }, status }，纯 JSON 透传（status 含 configured / model / missing 等，不含 API Key）；
+        // PUT 只认 enabled（模型与 Key 在中枢的「内置 Agent 控制台 → 模型」里配，手机只读状态、改开关）。
         get("/api/settings/video-config") { call.proxyHub("GET", "/api/settings/video-config") }
         put("/api/settings/video-config") { call.proxyHub("PUT", "/api/settings/video-config", call.receiveText()) }
         // 自动整理（梦境思考）：状态 / 计划 / 立即运行 / 停止都由中枢的 dsh 执行，手机只转发操作。

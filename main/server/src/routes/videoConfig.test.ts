@@ -7,13 +7,13 @@ import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 
 /**
- * v1.5.1：视频理解模型配置的独立读写口。
+ * 视频理解配置的独立读写口（2026-11 起只维护总开关）。
  *
- * 手机（Android 本地服务）只有同步成员令牌，设置页要把「视频理解模型」经中枢窄代理
- * 读写到中枢那一份配置；这个文件锁住三件事：
+ * 锁住：
  *  1) 成员令牌能读写，未知令牌 401，owner 登录态照旧可用；
- *  2) 读接口永远不返回 apiKey；
- *  3) 留空 apiKey = 保留原 Key，apiKey:null = 显式清除（不能让手机端空表单冲掉中枢 Key）。
+ *  2) GET 同时返回脱敏 settings.video_config 与解析到的模型状态（status），且不含任何 Key；
+ *  3) PUT 只认 enabled，旧客户端的 baseUrl/apiKey/model 字段被忽略；
+ *  4) 默认提供商播种已办结时不再启动 dsh 控制台（避免每次打开设置页都拉控制台）。
  */
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-video-config-route-'));
 process.env.DATA_DIR = temp;
@@ -27,6 +27,8 @@ before(async () => {
   const dbModule = await import('../lib/db.js');
   db = dbModule.db;
   dbModule.migrate();
+  // 播种标记置 1：本文件只测读写语义，不让 GET 去拉起 dsh 控制台
+  dbModule.setSetting('video_provider_seeded', '1');
   const { createPeer } = await import('../sync/store.js');
   createPeer('Android 视频配置验收', memberToken);
   const { videoConfigRoutes } = await import('./videoConfig.js');
@@ -44,71 +46,48 @@ after(async () => {
 });
 
 function memberHeaders() {
-  return { authorization: `Bearer ${memberToken}` };
+  return { authorization: 'Bearer ' + memberToken };
 }
 
-async function getConfig(): Promise<Record<string, unknown>> {
+test('成员令牌可读：未保存过时 video_config 为空串，status 带默认模型与缺失项', async () => {
   const res = await app.inject({ method: 'GET', url: '/api/settings/video-config', headers: memberHeaders() });
   assert.equal(res.statusCode, 200);
-  const text = res.json().settings?.video_config || '{}';
-  return JSON.parse(text) as Record<string, unknown>;
-}
+  const body = res.json();
+  assert.equal(body.settings.video_config, '', '未保存过时保持空串（与 /api/settings 同口径）');
+  assert.equal(body.status.enabled, true, '默认开启');
+  assert.equal(body.status.configured, false);
+  assert.equal(body.status.model, 'qwen3.8-omni-flash');
+  assert.equal(body.status.provider, 'dashscope');
+  assert.equal(body.status.hasKey, false);
+  assert.deepEqual(body.status.missing, ['视频模型提供商']);
+});
 
-test('成员令牌可保存视频配置，读接口不回显 apiKey', async () => {
-  const empty = await app.inject({ method: 'GET', url: '/api/settings/video-config', headers: memberHeaders() });
-  assert.equal(empty.statusCode, 200);
-  assert.equal(empty.json().settings.video_config, '', '未配置时应返回空串（与 /api/settings 同口径）');
-
+test('成员令牌保存开关：只认 enabled，旧字段不落库、不回显', async () => {
   const saved = await app.inject({
     method: 'PUT',
     url: '/api/settings/video-config',
     headers: memberHeaders(),
     payload: {
       video_config: {
-        enabled: true,
-        baseUrl: 'https://gw.example.com/v1',
-        apiKey: 'sk-video-secret',
-        model: 'qwen3.8-omni-flash',
-        maxTokens: 8192,
+        enabled: false,
+        baseUrl: 'https://legacy.example/v1',
+        apiKey: 'sk-legacy-secret',
+        model: 'omni-old',
         quality: 32,
-        douyinBrowser: true,
       },
     },
   });
   assert.equal(saved.statusCode, 200);
   assert.equal(saved.json().ok, true);
 
-  const masked = await getConfig();
-  assert.equal(masked.enabled, true);
-  assert.equal(masked.baseUrl, 'https://gw.example.com/v1');
-  assert.equal(masked.model, 'qwen3.8-omni-flash');
-  assert.equal(masked.quality, 32);
-  assert.equal(masked.apiKey, undefined, 'GET 不能把视频模型 API Key 回显给前端');
-
   const { getVideoConfig } = await import('../lib/videoConfig.js');
-  assert.equal(getVideoConfig().apiKey, 'sk-video-secret', 'Key 应真正写进中枢设置');
-});
+  assert.deepEqual(getVideoConfig(), { enabled: false }, '旧字段不应写进 Engram 设置');
 
-test('留空 apiKey 保留原 Key，apiKey:null 才是显式清除', async () => {
-  const keep = await app.inject({
-    method: 'PUT',
-    url: '/api/settings/video-config',
-    headers: memberHeaders(),
-    payload: { video_config: { apiKey: '', model: 'omni-2' } },
-  });
-  assert.equal(keep.statusCode, 200);
-  const { getVideoConfig } = await import('../lib/videoConfig.js');
-  assert.equal(getVideoConfig().apiKey, 'sk-video-secret', '留空提交把中枢已有的 Key 冲掉了');
-  assert.equal(getVideoConfig().model, 'omni-2');
-
-  const clear = await app.inject({
-    method: 'PUT',
-    url: '/api/settings/video-config',
-    headers: memberHeaders(),
-    payload: { video_config: { apiKey: null } },
-  });
-  assert.equal(clear.statusCode, 200);
-  assert.equal(getVideoConfig().apiKey, '', 'apiKey:null 应清除 Key');
+  const readBack = await app.inject({ method: 'GET', url: '/api/settings/video-config', headers: memberHeaders() });
+  const json = readBack.json();
+  assert.deepEqual(JSON.parse(json.settings.video_config), { enabled: false });
+  assert.equal(json.settings.video_config.includes('sk-legacy-secret'), false);
+  assert.equal(json.status.enabled, false);
 });
 
 test('未认证 401；owner 登录态仍可读写', async () => {
@@ -117,14 +96,16 @@ test('未认证 401；owner 登录态仍可读写', async () => {
   const deniedPut = await app.inject({ method: 'PUT', url: '/api/settings/video-config', payload: { video_config: {} } });
   assert.equal(deniedPut.statusCode, 401);
 
-  const ownerHeaders = { authorization: `Bearer ${token}` };
+  const ownerHeaders = { authorization: 'Bearer ' + token };
   const ownerGet = await app.inject({ method: 'GET', url: '/api/settings/video-config', headers: ownerHeaders });
   assert.equal(ownerGet.statusCode, 200);
   const ownerPut = await app.inject({
     method: 'PUT',
     url: '/api/settings/video-config',
     headers: ownerHeaders,
-    payload: { video_config: { enabled: false } },
+    payload: { video_config: { enabled: true } },
   });
   assert.equal(ownerPut.statusCode, 200);
+  const afterPut = await app.inject({ method: 'GET', url: '/api/settings/video-config', headers: ownerHeaders });
+  assert.equal(afterPut.json().status.enabled, true);
 });

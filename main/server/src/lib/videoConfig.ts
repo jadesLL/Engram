@@ -1,77 +1,53 @@
 import { getSetting, setSetting } from './db.js';
+import { bundledDshHome } from '../assistant/config.js';
+import {
+  missingVideoModelFields,
+  resolveVideoModel,
+  type ResolvedVideoModel,
+  type VideoModelResolution,
+} from './videoModel.js';
 
 /**
- * 视频理解模型的配置（收集箱「视频链接 → 提炼」用）。
+ * 视频理解模型的总开关 + 状态（2026-11 起）。
  *
- * 为什么单独一个 settings 键，而不是复用内置 Agent 的 agent_config：
- *  - agent_config 是 dsh 的**文本**路由，改它会接管聊天并让 dsh 运行时按新配置重启；
- *  - 视频输入是厂商扩展（OpenAI 官方没有 video 内容块），需要单独表达
- *    「OpenAI 兼容网关 + video_url 块」这一种形状；
- *  - 用户可能用文本模型写纪要、另一个多模态模型看视频，两者本来就该分开。
+ * 模型本身（提供商 / 地址 / 模型名 / API Key）不再存在这里：它们复用 dsh 的模型配置
+ * （设置 → Agent 与自动化 → 内置 Agent 控制台 → 模型，见 lib/videoModel.ts）。
+ * Engram 只保留「是否启用视频理解」这一个开关，避免同一份模型凭据维护两遍。
  *
- * 只支持 OpenAI 兼容的 chat/completions（请求体见 lib/videoModelClient.ts）。
+ * 历史兼容：v1.5.x 的 video_config 里还有 baseUrl/apiKey/model/maxTokens/quality/douyinBrowser，
+ * 旧客户端（手机 APK 里的旧 Web 包）仍会 POST 这些字段进来：这里一律忽略、只认 enabled，
+ * 返回给前端的脱敏 JSON 也只带 enabled（不会再回显旧 Key）。
  */
-
-export type VideoQuality = 64 | 32 | 16;
-
-export interface VideoConfig {
-  /** 总开关：关掉后收集箱视频条目不再可提炼（给「先配模型再用」的明确提示） */
-  enabled: boolean;
-  /** OpenAI 兼容网关地址，通常以 /v1 结尾 */
-  baseUrl: string;
-  /** 网关凭据（明文存 settings，与本机数据目录同保护级别，与 agent_config 一致） */
-  apiKey: string;
-  model: string;
-  maxTokens: number;
-  /** 视频清晰度（B站下载档位 / 抖音选清晰度的目标档位）：64=720P / 32=480P / 16=360P */
-  quality: VideoQuality;
-  /** 抖音：接口抓取失败时，是否允许用本机浏览器兜底（实验；接口路径本身不需要浏览器） */
-  douyinBrowser: boolean;
-}
 
 export const VIDEO_CONFIG_KEY = 'video_config';
 
+/** 单次纪要请求的输出上限（旧面板字段，现固定；改这里即可） */
+export const VIDEO_MAX_TOKENS = 4096;
+/** B站 / 抖音的下载清晰度：64=720P / 32=480P / 16=360P（旧面板字段，现固定 720P） */
+export const VIDEO_QUALITY = 64;
+/** 抖音接口抓取失败时是否用本机浏览器兜底（旧面板字段，现固定关闭） */
+export const VIDEO_DOUYIN_BROWSER = false;
+
+export interface VideoConfig {
+  /** 总开关：关掉后收集箱视频条目不再可提炼（给「先开开关」的明确提示） */
+  enabled: boolean;
+}
+
 const DEFAULTS: VideoConfig = {
-  enabled: false,
-  baseUrl: '',
-  apiKey: '',
-  model: '',
-  maxTokens: 4096,
-  quality: 64,
-  douyinBrowser: false,
+  // 「内置 Agent 与视频理解都默认上」：默认开启，用户只需要去控制台填一个 API Key
+  enabled: true,
 };
 
-export const VIDEO_QUALITIES: VideoQuality[] = [64, 32, 16];
-
-function clampQuality(value: unknown): VideoQuality {
-  const n = Number(value);
-  return (VIDEO_QUALITIES as number[]).includes(n) ? (n as VideoQuality) : DEFAULTS.quality;
-}
-
-function clampTokens(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return DEFAULTS.maxTokens;
-  return Math.max(256, Math.min(65_536, Math.round(n)));
-}
-
-function normalize(raw: Partial<VideoConfig> | null | undefined): VideoConfig {
-  const source = raw && typeof raw === 'object' ? raw : {};
-  return {
-    enabled: source.enabled === true,
-    baseUrl: typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '',
-    apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim() : '',
-    model: typeof source.model === 'string' ? source.model.trim() : '',
-    maxTokens: clampTokens(source.maxTokens),
-    quality: clampQuality(source.quality),
-    douyinBrowser: source.douyinBrowser === true,
-  };
+function normalize(raw: unknown): VideoConfig {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return { enabled: source.enabled !== false };
 }
 
 export function getVideoConfig(): VideoConfig {
   const text = getSetting(VIDEO_CONFIG_KEY);
   if (!text) return { ...DEFAULTS };
   try {
-    return normalize(JSON.parse(text) as Partial<VideoConfig>);
+    return normalize(JSON.parse(text));
   } catch {
     return { ...DEFAULTS };
   }
@@ -85,27 +61,25 @@ export function setVideoConfig(patch: Partial<VideoConfig>): VideoConfig {
 }
 
 /**
- * 读给前端的脱敏 JSON：与 GET /api/settings 的 video_config 同口径——删掉 apiKey 再序列化。
- * 原始文本不是合法 JSON 时原样返回（与旧 /api/settings 行为一致，不让坏配置把设置页打挂）。
+ * 读给前端的脱敏 JSON：只带 enabled（这里根本没有 Key 可回显）。
+ * 旧的「删掉 apiKey 再序列化」口径保留兼容：坏 JSON 按默认值返回，不让设置页被损坏配置打挂。
  */
 export function videoConfigForClient(): string {
   const raw = getSetting(VIDEO_CONFIG_KEY) || '';
   if (!raw) return '';
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    delete parsed.apiKey;
-    return JSON.stringify(parsed);
+    JSON.parse(raw);
   } catch {
-    return raw;
+    return JSON.stringify(DEFAULTS);
   }
+  return JSON.stringify({ enabled: getVideoConfig().enabled });
 }
 
 /**
  * 解析写入口径（GET/PUT /api/settings 与 /api/settings/video-config 共用）：
  *  - 对象或 JSON 字符串都接受；
- *  - 空字符串 apiKey = 「保留原 Key」（面板不回显，留空提交不能被当成清除）；
- *  - apiKey: null 表示显式清除（normalize 会归一成空串）；
- *  - 其余字段原样交给 setVideoConfig 浅合并。
+ *  - 只认 enabled（布尔），旧字段（baseUrl/apiKey/model/…）一律忽略；
+ *  - enabled 缺省时不改（保持原值）。
  */
 export function parseVideoConfigInput(input: unknown): Partial<VideoConfig> {
   let incoming: Record<string, unknown> = {};
@@ -118,52 +92,67 @@ export function parseVideoConfigInput(input: unknown): Partial<VideoConfig> {
   } else if (input && typeof input === 'object') {
     incoming = { ...(input as Record<string, unknown>) };
   }
-  if (!incoming || typeof incoming !== 'object') incoming = {};
-  if (typeof incoming.apiKey === 'string' && !incoming.apiKey.trim()) delete incoming.apiKey;
-  return incoming as Partial<VideoConfig>;
+  const patch: Partial<VideoConfig> = {};
+  if (typeof incoming.enabled === 'boolean') patch.enabled = incoming.enabled;
+  return patch;
 }
 
-/** 保存入口（含「Key 留空保留」语义），返回是否真的变了 + 合并后的完整配置 */
+/** 保存入口，返回是否真的变了 + 合并后的完整配置 */
 export function applyVideoConfigInput(input: unknown): { changed: boolean; next: VideoConfig } {
   const before = getSetting(VIDEO_CONFIG_KEY) || '';
   const next = setVideoConfig(parseVideoConfigInput(input));
   return { changed: JSON.stringify(next) !== before, next };
 }
 
-/** 缺哪一项就点哪一项：面板与错误文案共用这一个判定 */
-export function videoConfigMissing(config: VideoConfig = getVideoConfig()): string[] {
-  const missing: string[] = [];
-  if (!config.baseUrl) missing.push('Base URL');
-  if (!config.apiKey) missing.push('API Key');
-  if (!config.model) missing.push('模型名');
-  return missing;
+/** 当前解析到的视频模型（每次实时读 dsh 配置；文件很小，读盘成本可忽略） */
+export function videoModelConfig(): VideoModelResolution {
+  return resolveVideoModel(bundledDshHome());
 }
 
-/** 能不能直接提炼：开关打开且三项齐全 */
-export function videoConfigReady(config: VideoConfig = getVideoConfig()): boolean {
-  return config.enabled && videoConfigMissing(config).length === 0;
+/** 缺哪一项就点哪一项：面板与错误文案共用这一个判定 */
+export function videoConfigMissing(model?: ResolvedVideoModel): string[] {
+  return missingVideoModelFields(model ?? videoModelConfig().provider);
+}
+
+/** 能不能直接提炼：开关打开且 dsh 里模型与 Key 齐全 */
+export function videoConfigReady(config: VideoConfig = getVideoConfig(), model?: ResolvedVideoModel): boolean {
+  if (!config.enabled) return false;
+  if (model) return missingVideoModelFields(model).length === 0;
+  return videoModelConfig().configured;
 }
 
 /** 不可用时的可读中文原因（界面 hint 与任务错误共用） */
-export function videoConfigHint(config: VideoConfig = getVideoConfig()): string {
-  if (!config.enabled) return '视频理解未启用：请到 设置 → Agent 与自动化 → 视频理解模型 打开开关并填写网关';
-  const missing = videoConfigMissing(config);
-  if (missing.length) return '视频理解模型还缺：' + missing.join('、') + '（设置 → Agent 与自动化 → 视频理解模型）';
-  return '';
+export function videoConfigHint(config: VideoConfig = getVideoConfig(), model?: ResolvedVideoModel): string {
+  if (!config.enabled) return '视频理解未启用：请到 设置 → Agent 与自动化 → 视频理解模型 打开开关';
+  const where = '（设置 → Agent 与自动化 → 视频理解模型 → 去配置，在内置 Agent 控制台的「模型」里填 DashScope API Key）';
+  if (model) {
+    const missing = missingVideoModelFields(model);
+    return missing.length ? '视频理解模型还缺：' + missing.join('、') + where : '';
+  }
+  const resolution = videoModelConfig();
+  if (!resolution.providerFound) {
+    return '视频理解模型还没有初始化：打开 设置 → Agent 与自动化 → 视频理解模型 会自动预置 DashScope 提供商' + where;
+  }
+  return resolution.missing.length ? '视频理解模型还缺：' + resolution.missing.join('、') + where : '';
 }
 
-/** 给前端的状态摘要：永远不回显 apiKey，只给 hasKey */
+/** 给前端的状态摘要：永远不返回 API Key，只给 hasKey */
 export function videoConfigStatus() {
   const config = getVideoConfig();
+  const resolution = videoModelConfig();
+  const model = resolution.provider;
   return {
-    configured: videoConfigReady(config),
+    configured: config.enabled && resolution.configured,
     enabled: config.enabled,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    hasKey: Boolean(config.apiKey),
-    maxTokens: config.maxTokens,
-    quality: config.quality,
-    douyinBrowser: config.douyinBrowser,
-    missing: videoConfigMissing(config),
+    provider: model.providerId,
+    providerName: model.providerName,
+    baseUrl: model.baseUrl,
+    model: model.model,
+    hasKey: Boolean(model.apiKey),
+    missing: config.enabled ? resolution.missing : [],
+    // 旧面板字段：固定值，保持旧客户端能正常渲染（v1.5.x APK 里的旧 Web 包）
+    maxTokens: VIDEO_MAX_TOKENS,
+    quality: VIDEO_QUALITY,
+    douyinBrowser: VIDEO_DOUYIN_BROWSER,
   };
 }

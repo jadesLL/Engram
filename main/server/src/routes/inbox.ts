@@ -5,6 +5,7 @@ import { pipeline as streamPipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
 import { requireAssistantAccess } from '../assistant/access.js';
+import { ensureVideoProviderSeeded } from '../assistant/videoModelDefaults.js';
 import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { emit } from '../lib/events.js';
@@ -22,6 +23,7 @@ import {
 } from '../lib/inboxWebFetch.js';
 import { buildVideoLinkMarkdown, detectVideoLink, findLocalBrowser, resolveVideoLink } from '../lib/videoLink.js';
 import { videoConfigStatus } from '../lib/videoConfig.js';
+import { requestOrigin } from '../lib/requestOrigin.js';
 import {
   INBOX_DIR,
   INBOX_DERIVED_DIR,
@@ -72,24 +74,24 @@ export async function inboxRoutes(app: FastifyInstance) {
    * 放在收集箱路由（requireAssistantAccess）而不是 /api/settings（owner）：
    * 安卓本地服务只会把收集箱与本类接口按成员令牌代理到中枢，手机端点「测试连通性」
    * 也要能用；这两个接口都不返回任何密钥。
+   *
+   * 2026-11 起模型来自内置 Agent 控制台的 dsh 模型配置：状态接口首次打开会幂等播种默认
+   * DashScope 提供商（用户只需去控制台填 API Key），不再接受请求体里的 baseUrl/apiKey 覆盖。
    */
-  app.get('/api/inbox/video-status', async () => {
+  app.get('/api/inbox/video-status', async (req) => {
+    const seed = await ensureVideoProviderSeeded(requestOrigin(req));
     return {
       ...videoConfigStatus(),
       browserAvailable: Boolean(findLocalBrowser()),
       platform: process.platform,
+      ...(seed.ok ? {} : { seedError: seed.error || '默认提供商未就绪' }),
     };
   });
 
-  app.post('/api/inbox/video-test', async (req) => {
-    const body = (req.body || {}) as { baseUrl?: unknown; model?: unknown; apiKey?: unknown };
-    // 视频理解模型客户端按需加载：不测连通性 / 不跑视频转换就永远不加载
+  app.post('/api/inbox/video-test', async () => {
+    // 视频模型客户端按需加载：不测连通性 / 不跑视频转换就永远不加载
     const { probeVideoModel } = await import('../lib/videoModelClient.js');
-    return probeVideoModel({
-      baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : '',
-      model: typeof body.model === 'string' ? body.model : '',
-      apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
-    });
+    return probeVideoModel();
   });
 
   /** 收集箱列表：目录实时扫描（同步落地、外部拷入都会立刻反映），不额外维护状态表 */

@@ -79,7 +79,7 @@
       <Icon name="ai" :size="13" />
       <span>
         <b>{{ videoSetupTitle }}</b>：视频 / 图文链接仍可保存，点「提炼视频」前请先到
-        <a href="#" @click.prevent="openVideoSettings">设置 → 视频理解模型</a> 填好 Base URL、API Key 与模型名<template v-if="videoStatus && !videoStatus.enabled">，并打开「启用视频理解」</template>。
+        <a href="#" @click.prevent="openVideoSettings">设置 → 视频理解模型</a> 打开开关，并在「内置 Agent 控制台 → 模型」里填好 DashScope API Key<template v-if="videoStatus && !videoStatus.enabled">（当前未启用）</template>。
       </span>
     </div>
 
@@ -396,7 +396,7 @@ const showVideoSetupHint = computed(() => (
   Boolean(videoStatus.value) && videoStatus.value!.configured === false && hasVideoItems.value
 ));
 const videoSetupTitle = computed(() => (
-  videoStatus.value?.enabled ? '视频理解模型还没配齐' : '视频理解模型未启用'
+  videoStatus.value?.enabled ? '视频理解模型还缺 API Key' : '视频理解模型未启用'
 ));
 
 /**
