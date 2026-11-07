@@ -30,7 +30,7 @@
 
 | 使用方式 | 入口 |
 |---|---|
-| Windows 安装包 | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`，双击安装 |
+| Windows 安装包 | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`，双击安装；固定装到当前用户目录（`%LOCALAPPDATA%\Programs\Engram`），应用内自动更新无需管理员权限、不弹 UAC |
 | Windows 源码版 | 下载 [源码版安装器](https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe)（内置 Node 22.20.0 + pnpm 10.20.0，裸机离线可装），日常通过应用内「检查更新」更新（预构建环境包安装会直接提示用新版安装器覆盖更新） |
 | Android | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 APK；可离线使用，也可连接同步中枢，详见 [Android 指南](./main/docs/ANDROID.md) |
 | Docker / NAS | 按下面的命令从源码启动，或参考 [部署指南](./main/docs/BUILDING.md) 使用 Registry 镜像 / NAS Compose |

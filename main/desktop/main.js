@@ -1512,7 +1512,9 @@ function cleanupOldInstallers(keepPath) {
 
 /** 推断当前安装作用域：Program Files 下视为所有用户安装（NSIS /allusers，静默时会触发 UAC），
  *  其余（用户目录）为当前用户安装（/currentuser，无提权）。不传模式参数时 NSIS 会继承上次
- *  安装记住的模式，可能与本次实际位置不符导致静默参数失效。 */
+ *  安装记住的模式，可能与本次实际位置不符导致静默参数失效。
+ *  新版安装器已固定「仅当前用户」（build/installer.nsh 的 customInstallMode），/allusers 只用于
+ *  兼容旧版装在 Program Files 的机器——它们必须先卸载重装才能摆脱每次更新的 UAC。 */
 function installerScopeFlag() {
   const exe = app.getPath('exe').toLowerCase();
   const pf = (process.env.ProgramFiles || 'C:\\Program Files').toLowerCase();
