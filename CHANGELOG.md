@@ -9,6 +9,49 @@
 - **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（推完 `v*` 标签后必须 dispatch `binaries` 补产 APK/exe）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.5.9（2026-11-08）
+
+**本版主线是更新链：覆盖升级不再卡在「卸载旧版本」，安装包固定「仅当前用户」、应用内自动更新不再触发 UAC；服务器更新补上成功反馈与「更新中」连接状态，自动更新失败一次后暂停本版本并提示重试，更新状态区固定高度不再上下跳、自动与手动下载彻底分道。另含公开仓库产物补传的 CI 容错修复。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
+
+**覆盖升级与安装器：不再卡「卸载旧版本」、固定仅当前用户**
+
+- 修掉覆盖安装报 `Failed to uninstall old application files. Please try running the installer again.: 2`：主进程退出时用 taskkill /T /F 收整棵进程树（内置 Agent 的 node.exe 是 server 的孙进程，会继续握着 app.asar.unpacked 里的文件），并轮询等文件句柄释放后再启动安装器；before-quit 与 stopLocalChild 超时同样收整棵子树。
+- installer.nsh 兜底：旧卸载器返回非 0 不再中止升级，清空旧安装目录后继续覆盖安装；卸载改为「尽量删除」，个别文件被占用不再整次 Abort，下次升级不再复发同一报错。
+- 安装器固定「仅当前用户」：关闭「为所有用户安装」选择页，默认装到 %LOCALAPPDATA%\Programs\Engram，应用内自动更新不再触发 UAC；检测到旧版 Program Files 安装时提示先卸载（静默升级不拦，旧的所有用户安装仍可覆盖升级）。
+- 新增 process-tree / installer-hardening / installer-scope 回归测试并接入 test 链；desktop/README 与根 README 更新安装位置与覆盖升级说明。
+
+**更新体验：成功反馈、更新中状态、失败暂停、状态区不跳**
+
+- 服务器更新完成、页面随新容器刷新回来后弹「服务器更新成功（vX · 提交号）」；按版本号/提交号是否真的变化判定，switcher 回滚时提示「版本未变化（可能已回滚）」而不谎报升级。已是最新时再点「立即更新」直接提示「已是最新版本」，设置页、右上角更新入口与桌面端远程更新三处同一口径。
+- 服务器更新期间连接状态统一显示「服务器更新中」（琥珀色）：侧栏连接胶囊、首页同步状态条、设置页同步摘要、连接详情与同步日志不再挂过期的「已连接」或红色「连接中断」。
+- 自动更新失败一次后暂停该版本：桌面安装包形态记入 config.json，本版本不再自动下载/安装，弹系统通知、设置页显示暂停横幅与「重试自动更新」；发布新版本、手动安装成功或重新打开自动更新开关后恢复。Android OTA 同步实现（失败版本持久化 + 系统通知 + 重试接口），Web 的 AppUpdateInfo 统一归一化暂停状态并弹失败 toast。
+- 设置页「桌面端更新」状态行与进度轨改为常驻固定高度槽位，检查→下载→安装阶段切换不再让卡片和按钮上下跳；自动下载与手动下载彻底分道（进度事件带 source），自动/手动互斥，旧百分比不再顶在界面上。
+- 新增 serverUpdateFeedback / updatePanelState / updatePanelLayout / update-progress / appUpdate 等单测；USER-GUIDE、ANDROID、README 补行为说明。
+
+**发布与 CI（内部）**
+
+- 公开仓库产物补传修复：sync-public-release-assets.py 按 GitHub 规整后的附件名判重（空格→点），修回填时把已存在附件当缺失、重复上传撞 422；上传遇网络错误（含 ssl.SSLEOFError）自动重试 3 次，4xx 不重试。
+- 新增 Actions「Repair Public Release」工作流：按标签从 Gitea Release 补传缺失附件到公开仓库，不构建产物、不碰 Release 正文；self-test 16/16；GITEA-CI.md 补产物补传与判重说明。
+
+**测试与回归**
+
+- `bash main/scripts/platform-parity-check.sh --since v1.5.8 --strict` 通过：三端契约 9/9、区间提交平台影响声明齐全、滞后清单无待办。
+- 桌面安装包形态：用同版 electron-builder + 同一份 nsis/installer.nsh 配置构建验收（首屏无「为所有用户安装」、默认用户目录、静默安装与覆盖更新无 UAC、仅 HKCU 卸载项、卸载干净）；覆盖升级按用户实例复现路径验证。
+- Web 单测新增/补齐：serverUpdateFeedback（90 行）、updatePanelState、updatePanelLayout、update-progress、appUpdate、syncStatus / syncChannel、applyUpdate；Android 新增 AppUpdatePolicyTest 等 Kotlin 单测。
+- 本机无 Android SDK，未在本地编译 APK；本次 APK 由 CI 基于发版标签构建。
+
+**安卓端：自 v1.5.8 以来的累计更新**
+
+- 本区间安卓原生改动集中在 c90df566（OTA 失败暂停）：新增 AppUpdatePolicy.kt（失败版本归一化/持久化/新版本清理）、AppUpdater.kt（暂停与重试、自动下载门禁）、MainActivity.java、UpdateNotifier.java（新通知渠道 engram-app-update-failed 与重试入口）及 AppUpdatePolicyTest.kt；其余 Web 侧更新界面随同一份构建同源生效。
+- 手机侧行为：自动后台下载失败一次后把该版本持久化到 settings 表，本版本不再自动下载，发系统通知并在设置页显示暂停横幅与「重试自动更新」（PUT /api/app-update/config 接受 retryAutoUpdate）；手动下载/安装不受限，发布新版本或下载成功后自动清理暂停记录。
+- 服务器更新相关反馈按能力位在手机端隐藏（serverUpdate=false），Android 继续走 APK OTA 更新通道，行为与 v1.5.8 一致。
+- APK 基于本次标签重新构建并签名，versionName 1.5.8→1.5.9、versionCode 由 main/desktop/package.json 推导；从 v1.5.8 覆盖安装即可，本机知识库数据不受影响。
+
+**Windows exe、Docker 与发布交付**
+
+- Docker 镜像 1.5.9 + latest 用同一标签源码构建；Windows exe 与已签名 APK 由同一标签产出。
+- exe、APK 与 sha256 挂 Gitea Release 并同步公开仓库同名 Release，归档至 releases/1.5.9/。
+
 ## v1.5.8（2026-11-07）
 
 **本版主线是同步可靠性：改名/移动后的「已提炼」不再丢在旧路径，多端同步不再把「已整理」回退成「未整理」，同步落地的文件变更即时推送到界面。视频理解模型改为复用内置 Agent 控制台里的 DSH 模型配置（设置页只留一个开关），视频提炼新增 B 站 CC 字幕优先与抖音图文/实况；内置 Agent 默认完全访问、模型目录可勾选图片输入。安装与更新链整段补齐：安装器内置 Node 22.20.0 + pnpm 10.20.0、不再依赖 npm 引导，修掉客户机「Unknown command: file」，预构建包安装不再跑 git 检查，应用内卸载不再「假卸载」，大产物下载改 IPv6 优先。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
