@@ -221,6 +221,24 @@ test('没有 link 时（Android 本地端）按中枢地址推断通道', () => 
   assert.equal(domain?.host, 'hub.xxx.com');
 });
 
+test('服务器更新中：连接状态说「服务器更新中」，不报红色「已断开」', () => {
+  // 更新期间必然断链：这是可预期的中断，不能拿红色「连接中断」吓用户
+  const member = syncChannelView(
+    { role: 'member', enabled: true, connected: false, lastError: 'fetch failed' },
+    { updating: true, now: NOW },
+  );
+  assert.equal(member?.key, 'updating');
+  assert.equal(member?.label, '服务器更新中');
+  assert.equal(member?.fullLabel, '服务器更新中');
+  assert.match(String(member?.detail), /重建容器/);
+  assert.match(String(member?.hint), /无需/);
+
+  // 中枢端同样覆盖：更新本机服务器时成员看到的「中枢 x/y」也要变成更新中
+  const hub = syncChannelView({ role: 'hub', peers: [{ online: true }] }, { updating: true });
+  assert.equal(hub?.key, 'updating');
+  assert.equal(hub?.label, '服务器更新中');
+});
+
 test('inferChannelFromUrl 只认字面量能定死的地址', () => {
   assert.equal(inferChannelFromUrl('http://192.168.1.101:18080'), 'lan');
   assert.equal(inferChannelFromUrl('http://127.0.0.1:18080'), 'lan');

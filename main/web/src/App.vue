@@ -34,16 +34,54 @@ import { loadRuntimeCapabilities } from './lib/capabilities';
 import { registerGlobalBackLayers } from './lib/globalBackLayers';
 import { installJoinLinkReceiver } from './lib/joinLink';
 import { installShareInboxReceiver } from './lib/shareInbox';
+import { api } from './api';
+import { notify } from './lib/notify';
+import {
+  clearServerUpdatePending,
+  evaluateServerUpdateOutcome,
+  readServerUpdatePending,
+  serverUpdateOutcomeText,
+} from './lib/serverUpdateFeedback';
 
 const app = useAppStore();
 // 桌面端壳（有 wikiDesktop 桥）：启用标题栏融合条（logo + 应用名 + 系统窗口按钮）；
 // Docker/Android 无此桥，不渲染也不加偏移
 const isDesktop = Boolean((window as any).wikiDesktop);
+
+/**
+ * 服务器更新成功提示：更新前落的 pending 标记在这里结算。
+ *
+ * 容器重建会把页面刷新掉，成功证据只能跨页面保存（见 lib/serverUpdateFeedback）。
+ * 刷新回来后比对版本号/提交号是否真的变了：变了弹绿条，没变提示「可能已回滚」，
+ * 绝不把回滚报成成功。拿不到服务端状态（服务还没起来）时保留标记，下次加载再结算。
+ */
+async function settleServerUpdateFeedback(): Promise<void> {
+  const pending = readServerUpdatePending();
+  if (!pending) return;
+  let state: { currentVersion?: string; commit?: string } | null = null;
+  try {
+    const { data } = pending.source === 'hub'
+      ? await api.get('/api/sync/hub-update/state')
+      : await api.get('/api/update/state');
+    state = data;
+  } catch {
+    return;
+  }
+  const outcome = evaluateServerUpdateOutcome(pending, state);
+  if (outcome.status === 'unresolved' || outcome.status === 'none') return;
+  clearServerUpdatePending();
+  const text = serverUpdateOutcomeText(outcome, pending.source, pending.hubHost);
+  if (!text) return;
+  if (outcome.status === 'success') notify.success(text);
+  else notify.info(text);
+}
 /** 安卓返回键接管层（全局浮层）的注销函数 */
 let stopBackLayers: (() => void) | null = null;
 let stopShareInbox: (() => void) | null = null;
 onMounted(() => {
   loadRuntimeCapabilities().catch(() => {});
+  // 上一次服务器更新是否成功（跨页面刷新结算，成功/回滚都在这里给提示）
+  void settleServerUpdateFeedback();
   // 安卓：点别人发来的邀请链接（engram://join?…）打开应用时，把链接交给设置页的同步表单
   installJoinLinkReceiver();
   stopShareInbox = installShareInboxReceiver();

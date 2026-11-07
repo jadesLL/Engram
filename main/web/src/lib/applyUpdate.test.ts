@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyServerUpdate } from './applyUpdate.ts';
+import { applyServerUpdate, isServerAlreadyLatest } from './applyUpdate.ts';
 
 function stubFetch(impl: () => Promise<unknown>): () => void {
   const original = globalThis.fetch;
@@ -49,4 +49,17 @@ test('流真的断了才提示「可能仍在服务端执行」，避免重复�
   } finally {
     restore();
   }
+});
+
+test('「已是最新」只认「版本没落后 + 镜像 digest 一致」，未知一律不谎报', () => {
+  // 真正能确定不需要更新的组合
+  assert.equal(isServerAlreadyLatest({ hasUpdate: false, digestMatch: true }), true);
+  // main 通道：版本号与本地相同（hasUpdate=false），但镜像 digest 变了 —— 仍要更新
+  assert.equal(isServerAlreadyLatest({ hasUpdate: false, digestMatch: false }), false);
+  // digest 未知（Registry 没查成）时不能断言「已是最新」
+  assert.equal(isServerAlreadyLatest({ hasUpdate: false, digestMatch: null }), false);
+  assert.equal(isServerAlreadyLatest({ hasUpdate: false }), false);
+  assert.equal(isServerAlreadyLatest({ hasUpdate: true, digestMatch: true }), false);
+  assert.equal(isServerAlreadyLatest(null), false);
+  assert.equal(isServerAlreadyLatest(undefined), false);
 });

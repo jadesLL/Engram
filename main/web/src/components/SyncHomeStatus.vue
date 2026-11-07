@@ -25,21 +25,24 @@
 import { computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSyncStore } from '../stores/sync';
+import { useServerUpdateStore } from '../stores/serverUpdate';
 import { syncStatusView } from '../lib/syncStatus';
 import { syncChannelView } from '../lib/syncChannel';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 
 const router = useRouter();
 const sync = useSyncStore();
+const serverUpdate = useServerUpdateStore();
 const { capabilities } = useRuntimeCapabilities();
 
 const view = computed(() =>
   syncStatusView(sync.status, {
     androidLocal: capabilities.value.runtime === 'android-local',
+    updating: serverUpdate.updating,
   })
 );
 
-const channel = computed(() => syncChannelView(sync.status));
+const channel = computed(() => syncChannelView(sync.status, { updating: serverUpdate.updating }));
 
 /**
  * 两个模型合成一颗胶囊：通道给颜色与名字，状态条给「同步到哪一步了」。

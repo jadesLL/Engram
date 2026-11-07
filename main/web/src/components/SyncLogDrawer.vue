@@ -238,6 +238,7 @@ import AppEmptyState from './ui/AppEmptyState.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
+import { useServerUpdateStore } from '../stores/serverUpdate';
 import {
   OUTCOME_HINTS,
   OUTCOME_LABELS,
@@ -283,6 +284,7 @@ import {
  */
 
 const app = useAppStore();
+const serverUpdate = useServerUpdateStore();
 /** 空闲时 5 秒一跳；同步进行中收到 2 秒——用户正盯着「这轮又改了什么」，5 秒太钝 */
 const AUTO_REFRESH_MS = 5000;
 const AUTO_REFRESH_BUSY_MS = 2000;
@@ -386,6 +388,7 @@ function setContent(content: SyncLogContent | 'all'): void {
 /** 顶部状态：与设置页摘要同一口径，避免两处说法不一致 */
 const stateText = computed(() => {
   const status = state.status;
+  if (serverUpdate.updating) return serverUpdate.target === 'hub' ? '同步服务器更新中' : '服务器更新中';
   if (!status) return '读取中…';
   if (status.role === 'none') return '未参与同步';
   const peers = status.peers || [];
@@ -401,6 +404,7 @@ const stateText = computed(() => {
 });
 
 const stateTone = computed<'ok' | 'warn' | 'bad'>(() => {
+  if (serverUpdate.updating) return 'warn';
   const status = state.status;
   if (!status || status.role === 'none') return 'warn';
   if (status.role === 'hub') return 'ok';

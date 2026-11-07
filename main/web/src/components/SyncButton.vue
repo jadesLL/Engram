@@ -70,6 +70,7 @@ import { notify } from '../lib/notify';
 import { openSyncLogDrawer } from '../lib/syncLog';
 import { syncChannelView } from '../lib/syncChannel';
 import { useSyncStore, type SyncLogEntry } from '../stores/sync';
+import { useServerUpdateStore } from '../stores/serverUpdate';
 import Icon from './Icon.vue';
 import SyncChannelPopover from './SyncChannelPopover.vue';
 
@@ -79,6 +80,8 @@ const props = withDefaults(defineProps<{ variant?: 'pill' | 'strip' }>(), { vari
 const isStrip = computed(() => props.variant === 'strip');
 
 const sync = useSyncStore();
+// 服务器更新中：连接状态必须说「服务器更新中」，不能继续显示过期的「已连接」或红色「连接中断」
+const serverUpdate = useServerUpdateStore();
 const syncing = ref(false);
 const popoverOpen = ref(false);
 
@@ -107,7 +110,9 @@ function labelMinWidth(): number {
 }
 
 /** 只在成员端显示：中枢没有「连出去」的通道，未配置则整块不出现（与今天一致） */
-const view = computed(() => (sync.role === 'member' ? syncChannelView(sync.status) : null));
+const view = computed(() => (sync.role === 'member'
+  ? syncChannelView(sync.status, { updating: serverUpdate.updating })
+  : null));
 
 const chipTip = computed(() => {
   const current = view.value;

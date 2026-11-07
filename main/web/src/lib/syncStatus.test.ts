@@ -133,6 +133,25 @@ test('Android 本地端按最近一轮是否跑完判定', () => {
   assert.equal(never?.label, '尚未同步');
 });
 
+test('服务器更新中：状态条说「服务器更新中」，不报同步中断', () => {
+  // 更新期间成员端连不上中枢是必然的，但这是可预期中断，不能挂红色「同步中断」
+  const member = syncStatusView(
+    { role: 'member', enabled: true, connected: false, lastError: 'fetch failed' },
+    { updating: true, now: NOW },
+  );
+  assert.equal(member?.phase, 'syncing');
+  assert.equal(member?.tone, 'busy');
+  assert.equal(member?.label, '服务器更新中');
+  assert.match(String(member?.detail), /重建容器/);
+
+  // 中枢端同样说更新中：更新本机服务器时中枢自己的状态不能还是「中枢运行中」
+  const hub = syncStatusView({ role: 'hub', peers: [{ online: true }] }, { updating: true, now: NOW });
+  assert.equal(hub?.label, '服务器更新中');
+
+  // 未配置同步时仍然整块不渲染（不凭空多一个状态）
+  assert.equal(syncStatusView({ role: 'none' }, { updating: true }), null);
+});
+
 test('formatSyncTime 覆盖各时间档位', () => {
   assert.equal(formatSyncTime(null, NOW), '');
   assert.equal(formatSyncTime('', NOW), '');

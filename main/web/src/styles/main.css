@@ -429,6 +429,8 @@ select option {
 .link-ipv6 { --channel: var(--link-v6); --channel-soft: var(--link-v6-soft); }
 .link-ipv4 { --channel: var(--link-v4); --channel-soft: var(--link-v4-soft); }
 .link-offline { --channel: var(--link-off); --channel-soft: var(--link-off-soft); }
+/* 服务器更新中：可预期的中断，用琥珀色提醒而不是红色故障色（与 --warn 同一套令牌） */
+.link-updating { --channel: var(--warn); --channel-soft: var(--warn-soft); }
 .link-hub,
 .link-connected { --channel: var(--text-secondary); --channel-soft: var(--bg-tertiary); }
 .link-muted { --channel: var(--text-faint); --channel-soft: var(--bg-tertiary); }

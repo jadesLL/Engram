@@ -35,7 +35,7 @@
               </span>
             </div>
             <div class="check-controls">
-              <span v-if="hubState?.busy" class="check-status">服务器更新中…</span>
+              <span v-if="hubState?.busy || hubUpdating" class="check-status">服务器更新中…</span>
               <button class="btn primary" type="button" :disabled="hubUpdating || !hubState?.supported || hubState?.busy" @click="confirmHubApply">
                 立即更新
               </button>
@@ -418,8 +418,11 @@ import {
   applyServerUpdate,
   applySourceUpdate,
   friendlyApplyError,
+  isServerAlreadyLatest,
   type UpdateSourceCfg,
 } from '../../lib/applyUpdate';
+import { markServerUpdatePending, shortCommit } from '../../lib/serverUpdateFeedback';
+import { useServerUpdateStore } from '../../stores/serverUpdate';
 
 interface UpdateStateInfo {
   supported: boolean;
@@ -488,6 +491,42 @@ const updating = ref(false);
 const healthWaiting = ref(false);
 const healthTimeout = ref(false);
 const updateLog = ref<string[]>([]);
+/**
+ * 更新进行中的全局状态：容器重建期间同步必然断，连接状态（侧栏胶囊 / 首页状态条 /
+ * 设置页同步摘要）据此统一显示「服务器更新中」，而不是过期的「已连接」或红色「连接中断」。
+ */
+const serverUpdate = useServerUpdateStore();
+
+/** 版本 + 提交号的可读后缀：版本号仅随发版变化，提交号才说明「构建到哪一次」 */
+function identityText(version: string, commit: string): string {
+  const commitPart = commit ? ' · ' + shortCommit(commit) : '';
+  return version ? '（v' + version + commitPart + '）' : '';
+}
+
+/** 「已是最新」提示里的版本与提交号：优先用检查结果，退回面板已加载的 state */
+function currentIdentity(check?: any): string {
+  return identityText(
+    String(check?.currentVersion || state.value.currentVersion || ''),
+    String(state.value.commit || ''),
+  );
+}
+
+/**
+ * 点「立即更新」前先确认是否已经是最新：已是最新就不再重建容器，直接弹成功提示
+ * （用户 2026-11 明确要求：更新成功后再次点击要给成功提示，而不是重复跑一遍重建）。
+ * 检查失败（远端不可达 / 未配置更新源）不拦着更新，日志里写清原因后按原流程继续。
+ */
+async function checkAlreadyLatest(log: (line: string) => void) {
+  try {
+    const { data } = await api.post('/api/update/check', {});
+    checkResult.value = data;
+    return { latest: isServerAlreadyLatest(data), data };
+  } catch (e: any) {
+    const reason = e.response?.data?.error || e.response?.data?.warning || e?.message || '未知错误';
+    log('无法确认是否已是最新（' + reason + '），继续按原流程更新');
+    return { latest: false, data: null as any };
+  }
+}
 
 const desktopChecking = ref(false);
 const desktopCheck = ref<any>(null);
@@ -641,6 +680,26 @@ async function confirmHubApply() {
   hubUpdating.value = true;
   hubTimeout.value = false;
   hubLog.value = [];
+  // ① 已是最新就不再远程重建：直接给成功提示（更新成功后再次点击走这条）
+  hubLog.value.push('正在确认同步服务器是否已是最新版本…');
+  try {
+    const { data } = await api.post('/api/sync/hub-update/check', {});
+    hubCheckResult.value = data;
+    if (isServerAlreadyLatest(data)) {
+      hubUpdating.value = false;
+      hubLog.value.push('同步服务器已是最新版本，无需重复更新。');
+      notify.success('同步服务器已是最新版本' + identityText(
+        String(data.currentVersion || hubState.value?.currentVersion || ''),
+        String(hubState.value?.commit || ''),
+      ) + '，无需重复更新');
+      return;
+    }
+  } catch (e: any) {
+    const reason = e.response?.data?.error || e?.message || '未知错误';
+    hubLog.value.push('无法确认同步服务器是否已是最新（' + reason + '），继续按原流程更新');
+  }
+  // ② 远程更新期间连接状态统一显示「服务器更新中」（中枢服务会被重建）
+  serverUpdate.begin({ target: 'hub', hubHost: syncHubHost.value });
   try {
     await ssePost('/api/sync/hub-update/apply', {}, {
       onEvent: (event, data) => {
@@ -649,6 +708,7 @@ async function confirmHubApply() {
         else if (event === 'error') {
           hubLog.value.push(`更新失败: ${data?.error || '未知错误'}`);
           hubUpdating.value = false;
+          serverUpdate.finish();
         } else if (event === 'recovered') {
           // 对比恢复前后的提交号/版本号：没变化说明更新已回滚或远端镜像与本地一致，
           // 不能再报「更新完成」误导用户以为已升级
@@ -660,14 +720,20 @@ async function confirmHubApply() {
             hubLog.value.push('服务器已恢复，远程更新完成');
             hubUpdating.value = false;
             hubCheckResult.value = null;
-            notify.success('同步服务器更新完成');
+            serverUpdate.finish();
+            notify.success('同步服务器更新完成' + identityText(
+              String(st?.currentVersion || ''),
+              String(st?.commit || ''),
+            ));
           } else {
             hubLog.value.push('服务器已恢复，但版本未变化——更新可能已自动回滚，或远端镜像与本地一致；可稍后点「检查更新」复核');
             hubUpdating.value = false;
+            serverUpdate.finish();
           }
         } else if (event === 'timeout') {
           hubTimeout.value = true;
           hubUpdating.value = false;
+          serverUpdate.finish();
         }
       },
     });
@@ -675,10 +741,12 @@ async function confirmHubApply() {
     if (hubUpdating.value) {
       hubLog.value.push('与本地服务的连接中断，更新可能仍在服务器端执行；稍后点「检查更新」确认版本。');
       hubUpdating.value = false;
+      serverUpdate.finish();
     }
   } catch (e: any) {
     hubLog.value.push(`连接中断: ${e?.message || e}`);
     hubUpdating.value = false;
+    serverUpdate.finish();
   }
 }
 
@@ -882,16 +950,34 @@ async function confirmApply() {
   healthWaiting.value = false;
   healthTimeout.value = false;
   updateLog.value = [];
+  const log = (line: string) => updateLog.value.push(line);
+  // ① 是否已经是最新：是就弹成功提示、不再重建容器（更新成功后再次点击也走这条）
+  log('正在确认是否已是最新版本…');
+  const check = await checkAlreadyLatest(log);
+  if (check.latest) {
+    updating.value = false;
+    log('已是最新版本，无需重复更新。');
+    notify.success('已是最新版本' + currentIdentity(check.data) + '，无需重复更新');
+    return;
+  }
+  // ② 落一条跨刷新标记：页面在新容器起来后自动刷新，刷新回来据此弹「更新成功」
+  markServerUpdatePending({
+    fromVersion: state.value.currentVersion,
+    fromCommit: state.value.commit,
+    source: 'settings',
+  });
+  serverUpdate.begin({ target: 'local' });
   // 更新流程本体在 lib/applyUpdate.ts（与首页更新图标展开的面板共用一份实现）：
   // SSE 执行 → 等旧容器下线 → 等新容器 /health 恢复 → 自动刷新页面
   const r = await applyServerUpdate({
-    log: (line) => updateLog.value.push(line),
+    log,
     onWaiting: () => { healthWaiting.value = true; },
     onTimeout: () => { healthTimeout.value = true; },
   });
   if (!r.ok) {
     updating.value = false;
     healthWaiting.value = false;
+    serverUpdate.finish();
     // 超时由 healthTimeout 单独给提示；其余失败把原因写进日志
     if (!r.timeout) updateLog.value.push(friendlyApplyError(r.error));
   }

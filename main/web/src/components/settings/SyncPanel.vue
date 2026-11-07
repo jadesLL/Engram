@@ -462,6 +462,7 @@ import { pendingJoinLink, takePendingJoinLink } from '../../lib/joinLink';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSyncStore } from '../../stores/sync';
+import { useServerUpdateStore } from '../../stores/serverUpdate';
 
 interface PeerView {
   id: string;
@@ -771,7 +772,12 @@ function formatTime(iso: string): string {
   }
 }
 
+/** 服务器更新中：本机服务器（Docker）或远程同步中枢在重建时，连接摘要统一说「服务器更新中」 */
+const serverUpdate = useServerUpdateStore();
+
 const connectionLabel = computed(() => {
+  // 服务器更新中：先于各角色回答「为什么现在连不上/在更新」，避免显示过期的「已连接」
+  if (serverUpdate.updating) return serverUpdate.target === 'hub' ? '同步服务器更新中' : '服务器更新中';
   // 中枢不主动连别人（members 连它），connected 恒为 false：这里按角色说话，
   // 否则中枢设置页会顶着一行红字「未连接」，与「中枢运行中」的徽标自相矛盾
   if (status.value?.role === 'hub') return '中枢运行中';
@@ -787,6 +793,8 @@ const connectionLabel = computed(() => {
 
 /** 摘要行的绿/红点：中枢只要在跑就是正常；成员看连接状态（对账中不算异常） */
 const summaryHealthy = computed(() => {
+  // 更新是主动动作：这段中断不算异常，摘要行的点不该变红
+  if (serverUpdate.updating) return true;
   const current = status.value;
   if (!current) return false;
   if (current.role === 'hub') return true;

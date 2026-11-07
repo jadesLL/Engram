@@ -358,6 +358,7 @@ import { useAppUpdateStore } from '../stores/appUpdate';
 import { useHomeBoardStore, flushHomeBoardWrite } from '../stores/homeBoard';
 import { useTasksStore } from '../stores/tasks';
 import { useSyncStore } from '../stores/sync';
+import { useServerUpdateStore } from '../stores/serverUpdate';
 import {
   UPDATE_CHECK_POKE_DEBOUNCE_MS,
   UPDATE_CHECK_STARTUP_MS,
@@ -399,6 +400,7 @@ const inbox = useInboxStore();
 const homeBoard = useHomeBoardStore();
 const homeTasks = useTasksStore();
 const sync = useSyncStore();
+const serverUpdate = useServerUpdateStore();
 
 /** 退到后台 / 关页面前把去抖中的布局写补上（同步 store 的 flush，见 stores/homeBoard.ts） */
 function flushHomeBoardOnHide() {
@@ -852,6 +854,7 @@ const accountInitial = computed(() => Array.from(accountName.value)[0] || 'E');
 const accountSyncLine = computed(() => {
   const state = syncStatusView(sync.status, {
     androidLocal: capabilities.value.runtime === 'android-local',
+    updating: serverUpdate.updating,
   });
   if (!state) return '本机知识库 · 未配置多端同步';
   return state.detail ? `${state.label} · ${state.detail}` : state.label;
@@ -904,7 +907,7 @@ const pullAvailable = computed(() =>
 const pullProgress = computed(() => Math.min(1, pullOffset.value / PULL_THRESHOLD));
 /** 进度环取连接通道色（与同步状态同一套令牌），没配置同步时退回强调色 */
 const pullIndicatorClass = computed(() => {
-  const view = syncChannelView(sync.status);
+  const view = syncChannelView(sync.status, { updating: serverUpdate.updating });
   return view ? `link-${view.key}` : '';
 });
 
