@@ -212,7 +212,22 @@
           </label>
         </div>
         <p v-if="autoSupported && installerMode && autoState.installError" class="setting-message err">{{ autoState.installError }}</p>
-        <p v-if="autoSupported && installerMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
+        <!-- 自动更新失败一次后的暂停态：本版本不再自动重试，只提示用户并可手动重试（用户 2026-11-08 要求） -->
+        <div v-if="autoSupported && installerMode && autoState.blockedVersion" class="setting-row">
+          <div class="setting-copy">
+            <strong>自动更新已暂停</strong>
+            <span>
+              v{{ autoState.blockedVersion }} 自动更新失败过一次，为避免反复失败重试，<strong>本版本不再自动下载安装</strong>。
+              {{ autoState.blockedReason ? `失败原因：${autoState.blockedReason}。` : '' }}
+              可以点右侧「重试自动更新」，或用下方「检查更新 / 下载并安装」手动更新；发布新版本后自动恢复。
+            </span>
+          </div>
+          <button class="btn" type="button" :disabled="retryingAuto" @click="retryAuto">
+            <AppSpinner v-if="retryingAuto" :size="11" />
+            <template v-else>重试自动更新</template>
+          </button>
+        </div>
+        <p v-if="autoSupported && installerMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'paused' ? 'warn' : autoState.phase === 'installing' ? 'warn' : ''">
           {{ autoStatus }}
         </p>
         <div v-if="autoSupported && installerMode && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
@@ -501,8 +516,20 @@ let offProgress: (() => void) | null = null;
 
 // 自动更新（主进程状态机）：旧版壳无 desktopUpdateGetState API 时隐藏该节
 const autoSupported = ref(false);
-const autoState = ref<any>({ enabled: true, phase: 'idle', latestVersion: null, percent: null, error: '', installError: '' });
+const autoState = ref<any>({
+  enabled: true,
+  phase: 'idle',
+  latestVersion: null,
+  percent: null,
+  error: '',
+  installError: '',
+  // 自动更新失败暂停（主进程 lib/update-failure.js）：有值表示该版本失败过一次、本版本不再自动重试
+  blockedVersion: null,
+  blockedReason: '',
+});
 let offAutoState: (() => void) | null = null;
+/** 「重试自动更新」请求进行中（按钮转圈，避免连点） */
+const retryingAuto = ref(false);
 
 const savingConfig = ref(false);
 /** 更新通道单独即时保存（顶部常规行，不随「保存配置」按钮） */
@@ -802,7 +829,12 @@ const autoStatus = computed(() => {
     case 'installing':
       return s.latestVersion ? `正在安装 v${s.latestVersion}，应用即将自动重启…` : '正在安装更新，应用即将自动重启…';
     case 'failed':
-      return `自动更新失败：${s.error}。可关闭后重开自动更新，或用下方「下载并安装」手动更新。`;
+      return s.blockedVersion
+        ? `自动更新失败：${s.error}。已暂停 v${s.blockedVersion} 的自动更新，可点「重试自动更新」或手动更新。`
+        : `自动更新失败：${s.error}。可关闭后重开自动更新，或用下方「下载并安装」手动更新。`;
+    // paused 由上方「自动更新已暂停」整行说明（含原因与重试按钮），这里不再重复一句话
+    case 'paused':
+      return '';
     case 'unconfigured':
       return '尚未配置更新源，自动更新未生效（见下方「更新源配置」）。';
     default:
@@ -819,6 +851,24 @@ async function toggleAuto(e: Event) {
     notify.success(enabled ? '自动更新已开启' : '自动更新已关闭');
   } catch {
     notify.error('设置失败，请重试');
+  }
+}
+
+/**
+ * 清掉「本版本自动更新已暂停」并立即重新检查：用户修好网络/权限或被拦截原因后不必等下一个版本，
+ * 也不用去翻 config.json（旧版壳没有这个 API 时按钮不渲染）。
+ */
+async function retryAuto() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopUpdateRetryAuto) return;
+  retryingAuto.value = true;
+  try {
+    autoState.value = await wd.desktopUpdateRetryAuto();
+    notify.success('已清除暂停记录，正在重新检查更新');
+  } catch {
+    notify.error('重试自动更新失败，请稍后再试');
+  } finally {
+    retryingAuto.value = false;
   }
 }
 

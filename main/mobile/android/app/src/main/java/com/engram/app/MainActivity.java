@@ -245,7 +245,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 在线更新的宿主实现：把需要 Activity 的三件事接起来——系统安装器、授权页、下载完成通知。
+     * 在线更新的宿主实现：把需要 Activity 的动作接起来——系统安装器、授权页、下载完成/失败通知。
      * 这些动作都由本地服务（后台线程）发起，所以统一切回主线程再做。
      */
     private final class UpdateHost implements AppUpdater.Host {
@@ -297,6 +297,13 @@ public class MainActivity extends BridgeActivity {
             // 前台有绿色更新图标与设置页提示，不重复发系统通知；退到后台才用通知兜住
             if (activityForeground) return;
             UpdateNotifier.notifyReady(MainActivity.this, version, apk);
+        }
+
+        @Override
+        public void notifyAutoUpdateFailure(String version, String reason) {
+            // 自动下载失败后本版本不再自动更新：这是用户必须知道的状态变化（否则会一直以为还在自动更新），
+            // 所以前台也发，通知中心留档；没有通知权限 / Activity 已销毁时 UpdateNotifier 静默降级。
+            UpdateNotifier.notifyAutoUpdateFailure(MainActivity.this, version, reason);
         }
 
         @Override

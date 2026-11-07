@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   appUpdateActionLabel,
+  appUpdateAutoPaused,
+  appUpdateAutoPausedHint,
   appUpdateBlockedHint,
   appUpdateCheckedLabel,
   appUpdateCredentialProblem,
@@ -164,6 +166,31 @@ test('状态行讲清「授权页等着你」与「点安装会自动去授权�
 test('状态归一化带出 awaitingInstallPermission（授权页等待态）', () => {
   assert.equal(normalizeAppUpdateInfo({ awaitingInstallPermission: true }).awaitingInstallPermission, true);
   assert.equal(normalizeAppUpdateInfo({}).awaitingInstallPermission, false);
+});
+
+test('自动更新失败暂停：状态归一化带出 paused 字段，提示文案说明本版本不再自动重试', () => {
+  const paused = normalizeAppUpdateInfo({
+    configured: true,
+    hasUpdate: true,
+    latestVersion: '1.5.9',
+    autoPausedVersion: '1.5.9',
+    autoPausedReason: '下载失败 HTTP 404',
+    autoPausedAt: '2026-11-08T00:00:00.000Z',
+  });
+  assert.equal(paused.autoPausedVersion, '1.5.9');
+  assert.equal(paused.autoPausedReason, '下载失败 HTTP 404');
+  assert.equal(paused.autoPausedAt, '2026-11-08T00:00:00.000Z');
+  assert.equal(appUpdateAutoPaused(paused), true);
+  const hint = appUpdateAutoPausedHint(paused);
+  assert.match(hint, /v1\.5\.9/);
+  assert.match(hint, /下载失败 HTTP 404/);
+  assert.match(hint, /不再自动后台下载/);
+  // 未暂停：不渲染整行，也不出现 undefined
+  const normal = normalizeAppUpdateInfo({ configured: true });
+  assert.equal(appUpdateAutoPaused(normal), false);
+  assert.equal(appUpdateAutoPausedHint(normal), '');
+  // 旧版本地服务返回体没有这三个字段：按未暂停处理
+  assert.equal(normalizeAppUpdateInfo({ autoPausedVersion: null }).autoPausedVersion, '');
 });
 
 test('通知权限只在「已下载完成 + 未授权」时提示申请', () => {

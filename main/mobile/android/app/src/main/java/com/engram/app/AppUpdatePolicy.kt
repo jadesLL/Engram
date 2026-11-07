@@ -47,6 +47,10 @@ data class AppUpdateConfig(
         const val KEY_HUB_URL = "app_update_hub_url"
         const val KEY_HUB_REPO = "app_update_hub_repo"
         const val KEY_AUTO = "app_update_auto"
+        /** 自动更新暂停记录：某版本自动下载失败过一次 → 本版本不再自动下载（手动下载不受限） */
+        const val KEY_AUTO_FAILED_VERSION = "app_update_auto_failed_version"
+        const val KEY_AUTO_FAILED_REASON = "app_update_auto_failed_reason"
+        const val KEY_AUTO_FAILED_AT = "app_update_auto_failed_at"
         /** 凭据方式与用户名：本机私有库配置，不随同步下发 */
         const val KEY_AUTH_TYPE = "app_update_gitea_auth_type"
         const val KEY_USERNAME = "app_update_gitea_username"
@@ -75,6 +79,32 @@ data class AppUpdateConfig(
                 fromHub = !hasLocal && hasHub,
             )
         }
+    }
+}
+
+/**
+ * 自动更新暂停记录：某个目标版本「自动下载」失败过一次就记下来，本版本不再自动下载。
+ *
+ * 为什么持久化：失败常发生在后台（用户没在看界面），进程重启后如果忘了这件事，
+ * 下次回前台又会拿同一个坏包重试、白耗流量；记在本机 settings 表里，换版本号才自动恢复。
+ * 手动下载/安装始终不受这条记录影响（用户明确要下载就下载）。
+ */
+data class AutoUpdatePause(
+    /** 失败的目标版本号；空串表示当前没有暂停记录 */
+    val version: String = "",
+    /** 失败原因（给界面/通知用的一句话） */
+    val reason: String = "",
+    /** 记录时间 ISO-8601 */
+    val at: String = "",
+) {
+    val recorded: Boolean get() = version.isNotBlank()
+
+    companion object {
+        fun fromSettings(read: (String) -> String?): AutoUpdatePause = AutoUpdatePause(
+            version = (read(AppUpdateConfig.KEY_AUTO_FAILED_VERSION) ?: "").trim(),
+            reason = (read(AppUpdateConfig.KEY_AUTO_FAILED_REASON) ?: "").trim(),
+            at = (read(AppUpdateConfig.KEY_AUTO_FAILED_AT) ?: "").trim(),
+        )
     }
 }
 
@@ -136,6 +166,38 @@ object AppUpdatePolicy {
      */
     fun shouldResumeInstall(pendingInstall: Boolean, canInstall: Boolean, ready: Boolean): Boolean =
         pendingInstall && canInstall && ready
+
+    /**
+     * 自动更新暂停判定（纯逻辑）：暂停记录的版本与当前目标版本「版本号相等」才算暂停。
+     * 发布更新的版本号后两者不同 → 自动恢复；`1.3` 与 `1.3.0` 这种补零写法仍算同一版本。
+     */
+    fun isAutoPaused(pausedVersion: String?, latestVersion: String?): Boolean {
+        val paused = normalizeVersion(pausedVersion) ?: return false
+        val target = normalizeVersion(latestVersion) ?: return false
+        return compare(paused, target) == 0
+    }
+
+    /** 暂停记录是否该清掉：目标版本换成另一个版本号（发新版）时旧记录不再成立；目标未知时保守保留 */
+    fun shouldClearAutoPause(pausedVersion: String?, latestVersion: String?): Boolean {
+        val paused = normalizeVersion(pausedVersion) ?: return false
+        val target = normalizeVersion(latestVersion) ?: return false
+        return compare(paused, target) != 0
+    }
+
+    /**
+     * 下载入口判定：`manual = true`（用户点「下载」）永远放行——暂停记录只拦自动行为；
+     * 自动入口（检查完自动下 / 回前台自动续下）还要求自动更新开着、确实有新版、且本版本没被暂停过。
+     */
+    fun shouldStartDownload(
+        manual: Boolean,
+        autoUpdate: Boolean,
+        hasUpdate: Boolean,
+        pausedVersion: String?,
+        latestVersion: String?,
+    ): Boolean {
+        if (manual) return true
+        return autoUpdate && hasUpdate && !isAutoPaused(pausedVersion, latestVersion)
+    }
 
     /**
      * 私有仓库的 Authorization 头，与 server/src/lib/giteaRelease.ts 的 `repoAuthHeaders` 同一口径：
