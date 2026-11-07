@@ -9,6 +9,7 @@ import {
   inventoryStatusLabel,
   normalizeAdvanced,
   normalizeConsoleState,
+  normalizeInputModalities,
   normalizeModels,
   normalizePlugins,
   normalizePresets,
@@ -96,6 +97,58 @@ test('normalizeModels：脏数据丢弃空 id/空选项，revision 归一到非�
   assert.equal(models.customProviders[0].displayName, 'my-gw');
   assert.deepEqual(models.customProviders[0].models, [{ id: 'm1', name: 'm1' }]);
   assert.deepEqual(models.apiProtocols, ['openai-completions', '3']);
+});
+
+test('normalizeModels：模型输入类型只留 text/image、去重，缺省不塞默认值', () => {
+  const models = normalizeModels({
+    official: {
+      providerId: 'deepseek-official',
+      models: [
+        { id: 'deepseek-flash', name: 'Flash', inputModalities: ['text', 'image', 'text', 'audio', ''] },
+        { id: 'text-only', name: 'Text', inputModalities: ['text'] },
+        { id: 'legacy', name: 'Legacy' },
+        { id: 'broken', name: 'Broken', inputModalities: 'image' },
+      ],
+    },
+    customProviders: [
+      {
+        id: 'my-gw',
+        models: [
+          { id: 'm1', name: 'M1', input: ['image', 'text', 'IMAGE', 'audio'] },
+          { id: 'm2', name: 'M2', input: ['text'] },
+          { id: 'm3', name: 'M3' },
+          { id: 'm4', name: 'M4', input: [] },
+        ],
+      },
+    ],
+  });
+  const officialModels = models.official?.models ?? [];
+  // 只留 text / image 并按出现顺序去重；大写 IMAGE、audio、空串、非数组都丢弃
+  assert.deepEqual(officialModels.map((model) => model.inputModalities), [
+    ['text', 'image'],
+    ['text'],
+    undefined,
+    undefined,
+  ]);
+  // 缺省不塞默认值：字段整个不存在，由界面按文本+图片回填
+  assert.equal('inputModalities' in officialModels[2], false);
+  assert.equal('inputModalities' in officialModels[3], false);
+
+  const customModels = models.customProviders[0]?.models ?? [];
+  assert.deepEqual(customModels.map((model) => model.input), [
+    ['image', 'text'],
+    ['text'],
+    undefined,
+    undefined,
+  ]);
+  assert.equal('input' in customModels[2], false);
+  // 空数组等于未声明：不落成 input: []
+  assert.equal('input' in customModels[3], false);
+
+  // 归一化函数本身也守住同一口径
+  assert.deepEqual(normalizeInputModalities(['image', 'image', 'audio', 'text', null]), ['image', 'text']);
+  assert.deepEqual(normalizeInputModalities('image'), []);
+  assert.deepEqual(normalizeInputModalities(undefined), []);
 });
 
 test('normalizePlugins：空响应 + 脏卡片/清单的容错', () => {

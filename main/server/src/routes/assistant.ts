@@ -6,7 +6,19 @@ import { subscribeRun } from '../assistant/events.js';
 import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submitMessage } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
-import { bundledDshBin, bundledDshVersion, bundledSdkClientVersion, getAgentConfig } from '../assistant/config.js';
+import {
+  agentPermissionMode,
+  bundledDshBin,
+  bundledDshVersion,
+  bundledSdkClientVersion,
+  getAgentConfig,
+  setAgentConfig,
+} from '../assistant/config.js';
+import {
+  AGENT_PERMISSION_MODES,
+  agentPermissionOptions,
+  type AgentPermissionMode,
+} from '../assistant/permissionMode.js';
 import {
   consoleStatus,
   ensureConsole,
@@ -49,6 +61,11 @@ export async function assistantRoutes(app: FastifyInstance) {
     const consoleInfo = consoleStatus();
     return {
       ...agentRuntimeStatus(),
+      // 权限模式：设置页「内置 Agent」里的选择项（owner 可改，见 PUT /api/assistant/permission）
+      permission: {
+        mode: agentPermissionMode(),
+        options: agentPermissionOptions(),
+      },
       bundled: Boolean(bundledDshBin()),
       dshPath: config.dshPath || '',
       dshVersion: bundledDshVersion(),
@@ -97,6 +114,44 @@ export async function assistantRoutes(app: FastifyInstance) {
   app.post('/api/assistant/console/stop', { preHandler: requireAuth }, async () => {
     stopConsole();
     return consoleStatus();
+  });
+
+  // ---------- 内置 Agent 权限 ----------
+
+  /**
+   * 保存内置 Agent 的权限模式（owner-only）。
+   *
+   * 权限靠 dsh 进程环境变量 DSH_PERMISSION_MODE 生效，只在启动时读一次，所以改完要：
+   *  1. 控制台在跑就用当前访问 origin 重启（没跑就不为改一个环境变量把它拉起来）；
+   *  2. 聊天运行时不用在这里强制回收：权限已算进运行时配置指纹（见 dshRuntime.runtimeConfigKey），
+   *     下一轮 acquireRuntime 发现指纹变化会自然重开——不能在这里 closeAllRuntimes，
+   *     否则正在跑的一轮会被无辜中断。
+   * 返回 owner 之外的人拿不到写入口——权限是中枢级配置，手机端不改（requireAuth 拦住成员令牌）。
+   */
+  app.put('/api/assistant/permission', { preHandler: requireAuth }, async (req, reply) => {
+    const body = (req.body || {}) as { mode?: unknown };
+    const raw = typeof body.mode === 'string' ? body.mode.trim() : '';
+    if (!(AGENT_PERMISSION_MODES as readonly string[]).includes(raw)) {
+      return reply.code(400).send({ error: '不支持的权限模式' });
+    }
+    const mode = raw as AgentPermissionMode;
+    setAgentConfig({ permissionMode: mode });
+    let consoleInfo = consoleStatus();
+    if (consoleInfo.running) {
+      const origin = requestOrigin(req);
+      if (origin) {
+        consoleInfo = await restartConsole(origin);
+      } else {
+        // 拿不到访问地址就没法给控制台重新生成 public-url：先停掉，下次打开按新权限启动
+        stopConsole();
+        consoleInfo = consoleStatus();
+      }
+    }
+    return {
+      ok: true,
+      permission: { mode: agentPermissionMode(), options: agentPermissionOptions() },
+      console: { running: consoleInfo.running, error: consoleInfo.error },
+    };
   });
 
   // ---------- 梦境思考（按计划自动整理 + 纠错） ----------

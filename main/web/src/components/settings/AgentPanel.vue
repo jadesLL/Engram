@@ -46,6 +46,25 @@
           <strong class="warn">检测到旧版模型 Key：已继续作为官方 Provider 凭据；建议到控制台里重新配置</strong>
         </div>
       </div>
+
+      <!-- 权限模式：旧服务端没有 status.permission 就不渲染（向后兼容）；
+           写入口是 owner-only（requireAuth），手机成员拿不到，所以按管理面能力位隐藏。 -->
+      <div v-if="permission && capabilities.features.agentAdmin" class="builtin-permission">
+        <div class="builtin-permission-row">
+          <label class="builtin-permission-label" for="agent-permission-select">权限</label>
+          <AppSelect
+            id="agent-permission-select"
+            v-model="permissionMode"
+            class="builtin-permission-select"
+            aria-label="内置 Agent 权限"
+            :options="permissionOptions"
+            :placeholder="permissionLabel"
+            :disabled="savingPermission"
+            @change="savePermission"
+          />
+        </div>
+        <p class="builtin-permission-hint">{{ permissionHint }}</p>
+      </div>
     </SettingsGroup>
 
     <!-- 内置 Agent 控制台：Engram 原生整页（模型 / 插件 / Agent 预设 / 高级），入口卡只保留状态条与打开按钮。
@@ -135,8 +154,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api } from '../../api';
+import { errorMessage } from '../../lib/agentConsoleApi';
 import { notify } from '../../lib/notify';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
 import { agentRuntimeSummary } from '../../lib/agentConsole';
@@ -211,6 +231,93 @@ async function loadBuiltin() {
 }
 
 onMounted(loadBuiltin);
+
+/* ===== 内置 Agent 权限 ===== */
+
+/** GET /api/assistant/status 的 permission（服务端给出可选模式；旧服务端没有该字段） */
+interface AssistantPermissionOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+interface AssistantPermission {
+  mode: string;
+  options: AssistantPermissionOption[];
+}
+
+/** 兼容旧服务端 / 脏数据：没有 permission 或形状不对时返回 null，界面就不渲染权限块 */
+function normalizePermission(raw: unknown): AssistantPermission | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const mode = typeof source.mode === 'string' ? source.mode.trim() : '';
+  const options: AssistantPermissionOption[] = Array.isArray(source.options)
+    ? source.options
+      .map((item: any) => {
+        const value = typeof item?.value === 'string' ? item.value.trim() : '';
+        if (!value) return null;
+        return {
+          value,
+          label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : value,
+          ...(typeof item.description === 'string' && item.description.trim()
+            ? { description: item.description.trim() }
+            : {}),
+        };
+      })
+      .filter((item: AssistantPermissionOption | null): item is AssistantPermissionOption => item != null)
+    : [];
+  if (!mode && !options.length) return null;
+  return { mode: mode || options[0].value, options };
+}
+
+const permission = computed<AssistantPermission | null>(() => normalizePermission(status.value?.permission));
+const permissionMode = ref('');
+const savingPermission = ref(false);
+
+const permissionOptions = computed<Array<{ value: string; label: string }>>(
+  () => (permission.value?.options ?? []).map((item) => ({ value: item.value, label: item.label })),
+);
+/** 当前模式文案：优先服务端 label；服务端没给时退回模式值/默认「完全访问」 */
+const permissionLabel = computed(() => {
+  const current = permission.value;
+  if (!current) return '';
+  const selected = current.options.find((item) => item.value === permissionMode.value);
+  return selected?.label || permissionMode.value || current.mode || '完全访问';
+});
+const permissionHint = computed(() => {
+  const selected = permission.value?.options.find((item) => item.value === permissionMode.value);
+  const lead = selected?.description ? `${selected.description}。` : '';
+  return `${lead}默认完全访问；调整后控制台与聊天运行时自动重启，对新会话生效。`;
+});
+
+/** 状态到达/保存成功后把下拉同步到服务端的权威值 */
+watch(permission, (next) => {
+  permissionMode.value = next?.mode ?? '';
+}, { immediate: true });
+
+/** 切换权限：PUT 成功更新状态；失败回滚显示（不要留下一个没生效的值） */
+async function savePermission(mode: string): Promise<void> {
+  const current = permission.value;
+  if (!current || !mode || mode === current.mode || savingPermission.value) return;
+  savingPermission.value = true;
+  try {
+    const { data } = await api.put('/api/assistant/permission', { mode });
+    const next = data && typeof data === 'object' ? (data as Record<string, any>) : {};
+    // 服务端返回权威 permission（mode 可能被归一化）；返回体里还有 console 部分，
+    // 这里只更新 permission，避免把状态里其他字段覆盖成残缺对象
+    if (next.permission && typeof next.permission === 'object') {
+      status.value = { ...status.value, permission: next.permission };
+    } else {
+      status.value = { ...status.value, permission: { ...current, mode } };
+    }
+    notify.success('已切换内置 Agent 权限，新会话生效');
+  } catch (error) {
+    permissionMode.value = current.mode;
+    notify.error(errorMessage(error, '权限切换失败'));
+  } finally {
+    savingPermission.value = false;
+  }
+}
 
 /** 一键接入区只接受 zcode / codex / dsh（选「其他」时不渲染该组件） */
 const harnessTarget = computed<'zcode' | 'codex' | 'dsh'>(() => (
@@ -303,6 +410,39 @@ async function copy(text: string) {
   font-weight: 500;
   overflow-wrap: anywhere;
   text-align: right;
+}
+/* 权限模式：与 builtin-rows 同款浅底块，一行下拉 + 一行说明 */
+.builtin-permission {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.builtin-permission-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.builtin-permission-label {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.builtin-permission-select {
+  width: 220px;
+  max-width: 100%;
+  font-size: 12px;
+}
+.builtin-permission-hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.6;
 }
 .builtin-form {
   display: flex;
@@ -441,6 +581,14 @@ async function copy(text: string) {
     align-items: flex-start;
   }
   .harness-picker .app-select {
+    width: 100%;
+  }
+  .builtin-permission-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .builtin-permission-select {
     width: 100%;
   }
   .tool-meta > div {

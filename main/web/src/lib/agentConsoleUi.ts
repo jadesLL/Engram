@@ -1,8 +1,10 @@
 import type {
   AdvancedPayload,
   ConsoleStatusPayload,
+  CustomProviderModelEntry,
   DeclaredProviderPayload,
   ExperimentalPluginPayload,
+  ModelInputModality,
   ModelsPayload,
   OfficialModelEntry,
   OfficialProviderPayload,
@@ -71,6 +73,22 @@ function optionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** 输入类型只认 text / image；去重按首次出现顺序，缺省/脏数据返回空数组（界面再决定是否回填默认值） */
+const MODEL_INPUT_MODALITIES: ReadonlySet<string> = new Set(['text', 'image']);
+
+export function normalizeInputModalities(value: unknown): ModelInputModality[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const list: ModelInputModality[] = [];
+  for (const item of value) {
+    const modality = trimmed(item);
+    if (!MODEL_INPUT_MODALITIES.has(modality) || seen.has(modality)) continue;
+    seen.add(modality);
+    list.push(modality as ModelInputModality);
+  }
+  return list;
+}
+
 function options(value: unknown): SelectOption[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -115,10 +133,12 @@ function normalizeOfficialModel(value: unknown): OfficialModelEntry | null {
   const id = trimmed(source.id);
   if (!id) return null;
   const contextWindow = optionalNumber(source.contextWindow);
+  const inputModalities = normalizeInputModalities(source.inputModalities);
   return {
     id,
     name: trimmed(source.name) || id,
     ...(contextWindow != null && contextWindow > 0 ? { contextWindow: Math.trunc(contextWindow) } : {}),
+    ...(inputModalities.length ? { inputModalities } : {}),
   };
 }
 
@@ -156,13 +176,18 @@ function normalizeCustomProvider(value: unknown) {
   if (!id) return null;
   const models = Array.isArray(source.models)
     ? source.models
-      .map((item) => {
+      .map((item): CustomProviderModelEntry | null => {
         const model = record(item);
         const modelId = trimmed(model.id);
         if (!modelId) return null;
-        return { id: modelId, name: trimmed(model.name) || modelId };
+        const input = normalizeInputModalities(model.input);
+        return {
+          id: modelId,
+          name: trimmed(model.name) || modelId,
+          ...(input.length ? { input } : {}),
+        };
       })
-      .filter((item): item is { id: string; name: string } => item != null)
+      .filter((item): item is CustomProviderModelEntry => item != null)
     : [];
   return {
     id,

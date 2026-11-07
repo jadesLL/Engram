@@ -11,6 +11,7 @@ import {
 } from '../assistant/agentConsole.js';
 import { ConsoleRpcError, createConsoleRpc } from '../assistant/agentConsoleRpc.js';
 import { bundledDshHome, bundledDshVersion } from '../assistant/config.js';
+import { DEFAULT_OFFICIAL_INPUT_MODALITIES, normalizeInputModalities } from '../assistant/modelCapabilities.js';
 
 /**
  * 内置 Agent 控制台的 BFF（原生控制台专用）。
@@ -132,7 +133,7 @@ const WEB_PROVIDERS = {
  * 模型
  * ------------------------------------------------------------------ */
 
-function officialModels(view: any): Array<{ id: string; name: string; contextWindow?: number }> {
+function officialModels(view: any): Array<{ id: string; name: string; contextWindow?: number; inputModalities: string[] }> {
   const models = Array.isArray(viewValue(view).models) ? viewValue(view).models : [];
   return models
     .filter((item: any) => item && typeof item.id === 'string')
@@ -140,6 +141,8 @@ function officialModels(view: any): Array<{ id: string; name: string; contextWin
       id: item.id,
       name: typeof item.name === 'string' && item.name ? item.name : item.id,
       ...(typeof item.contextWindow === 'number' ? { contextWindow: item.contextWindow } : {}),
+      // 输入能力：保留条目上的有效值；未声明/脏值的官方模型按只读文本回填（图片能力需显式声明）
+      inputModalities: normalizeInputModalities(item.inputModalities, ['text']),
     }));
 }
 
@@ -181,7 +184,12 @@ async function modelsPayload(origin: string): Promise<any> {
       apiKeyEnv: profileRef(raw, id),
       models: models
         .filter((item: any) => item && typeof item.id === 'string')
-        .map((item: any) => ({ id: item.id, name: typeof item.name === 'string' && item.name ? item.name : item.id })),
+        .map((item: any) => ({
+          id: item.id,
+          name: typeof item.name === 'string' && item.name ? item.name : item.id,
+          // pi-ai 的字段名是 input；缺省表示继承提供商默认能力，不要凭空补成 ['text']
+          ...(Array.isArray(item.input) ? { input: normalizeInputModalities(item.input, ['text']) } : {}),
+        })),
     };
   });
   const credentials = await describeCredentials(origin, [
@@ -298,13 +306,20 @@ async function saveOfficialModel(origin: string, body: any): Promise<any> {
       .filter((item: any) => item && typeof item.id === 'string' && item.id.trim())
       .map((item: any) => {
         const id = item.id.trim();
-        // 合并原条目：inputModalities / toolUpdate 等 dsh 字段不能因为界面只改名字/窗口就丢掉
+        // 合并原条目：toolUpdate 等 dsh 字段不能因为界面只改名字/窗口就丢掉
         const base = existingModels.find((entry) => entry && entry.id === id) ?? {};
+        // 输入能力：显式传了就规范化后覆盖；没传保留原条目（新建条目按官方默认文本+图片）
+        const inputModalities = item.inputModalities !== undefined
+          ? normalizeInputModalities(item.inputModalities, DEFAULT_OFFICIAL_INPUT_MODALITIES)
+          : Array.isArray(base.inputModalities)
+            ? normalizeInputModalities(base.inputModalities, DEFAULT_OFFICIAL_INPUT_MODALITIES)
+            : [...DEFAULT_OFFICIAL_INPUT_MODALITIES];
         return {
           ...base,
           id,
           name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : id,
           ...(typeof item.contextWindow === 'number' ? { contextWindow: item.contextWindow } : {}),
+          inputModalities,
         };
       });
     if (models.length === 0) throw new ConsoleRpcError('模型目录至少保留一个模型', { status: 400, code: 'bad-request' });
@@ -351,13 +366,17 @@ async function saveProvider(origin: string, providerId: string, body: any): Prom
       .filter((item: any) => item && typeof item.id === 'string' && item.id.trim())
       .map((item: any) => {
         const id = item.id.trim();
+        // 合并原条目：pi-ai 的其它模型字段（reasoning、toolUpdate 等）不能因为界面只改名字/窗口就丢掉
         const base = existingModels.find((entry) => entry && entry.id === id) ?? {};
-        return {
+        const model: Record<string, unknown> = {
           ...base,
           id,
           name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : id,
           ...(typeof item.contextWindow === 'number' ? { contextWindow: item.contextWindow } : {}),
         };
+        // 输入能力字段名是 input：传了就规范化写入；没传保留原条目，原本没有就不加（表示继承提供商默认）
+        if (item.input !== undefined) model.input = normalizeInputModalities(item.input, ['text']);
+        return model;
       });
     if (models.length === 0) throw new ConsoleRpcError('至少填一个模型', { status: 400, code: 'bad-request' });
     profile.models = models;
