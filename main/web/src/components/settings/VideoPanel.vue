@@ -4,8 +4,8 @@
       <div>
         <h3>视频理解模型</h3>
         <p>
-          收集箱里的 B站 / 抖音视频与图文笔记链接、本地音视频，用这个 OpenAI 兼容的多模态模型提炼成 Markdown 纪要；
-          B站有 CC 字幕时优先按字幕文本提炼、不下载整段视频；只在收集箱里用，不影响内置 Agent 的文本模型。
+          收集箱里的 B站 / 抖音视频与图文笔记链接、本地音视频，用内置 Agent 的多模态模型提炼成 Markdown 纪要；
+          模型与 API Key 都在「内置 Agent 控制台 → 模型」里配置，这里只控制开关。
         </p>
       </div>
     </div>
@@ -15,10 +15,10 @@
       :badge="badge"
       :badge-tone="badgeTone"
       title="视频理解模型"
-      hint="配置一个支持视频（图文笔记则为图片）输入的 OpenAI 兼容网关：收集箱视频 / 图文条目的「提炼视频」用它生成纪要，产物仍在收集箱、确认后入库"
+      hint="复用「内置 Agent 控制台 → 模型」里的 DSH 模型配置（已预置 DashScope 与 qwen3.8-omni-flash，只需填 API Key）；这里只控制收集箱的「提炼视频」用不用模型"
     >
-      <!-- 状态条：真实生效的是服务端保存的那份配置（本机表单改动保存后才生效）
-           「始终可见的状态」按 settings.css 的约定走 .state-strip，而不是灰色说明文字 -->
+      <!-- 状态条（settings.css 约定：会变的状态走 .state-strip + state-dot，不用灰说明文字）：
+           未启用 / 待配置（缺 API Key）/ 已启用（当前模型） -->
       <div v-if="loaded" class="state-strip video-state" :class="stateTone">
         <span class="state-dot" aria-hidden="true" />
         <div class="video-state-text">
@@ -26,424 +26,249 @@
           <span>{{ stateDetail }}</span>
         </div>
       </div>
-      <p v-else-if="loading" class="faint small video-loading">正在读取视频模型配置…</p>
-      <p v-else class="faint small video-loading">读取失败：可以继续填写并保存，或刷新设置页重试。</p>
-      <!-- 手机（android-local）不跑 dsh、也不存这份配置：读写经成员令牌窄代理到已绑定的中枢 -->
-      <p v-if="isAndroidLocal" class="faint small video-hub-note">
-        配置保存在已绑定的中枢；API Key 存中枢、页面不回显。
-      </p>
+      <p v-else-if="loading" class="faint small video-loading">正在读取视频理解模型配置…</p>
+      <p v-else class="faint small video-loading">读取失败：刷新设置页重试（开关在读到当前状态前不可切换）。</p>
 
-      <div class="video-form">
-        <div class="video-switch-row">
-          <label class="switch-control">
-            <input v-model="form.enabled" type="checkbox" />
-            <span aria-hidden="true"></span>
-            <em>{{ form.enabled ? '已启用' : '未启用' }}</em>
-          </label>
-          <span class="video-field-note">
-            关闭后视频条目仍可保存，但「提炼视频」会提示先启用并填好网关
-          </span>
-        </div>
-
-        <label class="video-field">
-          <span>Base URL</span>
+      <!-- 开关：变化即保存（不再有单独的保存按钮） -->
+      <div class="video-switch-row">
+        <label class="switch-control">
           <input
-            v-model="form.baseUrl"
-            type="url"
-            placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-            spellcheck="false"
-            @keyup.enter="save"
+            :checked="enabled"
+            type="checkbox"
+            :disabled="saving || !loaded"
+            @change="onToggle"
           />
+          <span aria-hidden="true"></span>
+          <em>{{ saving ? '保存中…' : enabled ? '已启用' : '未启用' }}</em>
         </label>
-
-        <div class="video-field">
-          <span>API Key</span>
-          <div class="video-key">
-            <SecretField
-              id="video-api-key"
-              v-model="apiKey"
-              :stored="hasKey ? '已保存（服务端不回显）' : ''"
-              :placeholder="hasKey ? '留空保持现有 Key' : '该网关的 API Key'"
-            />
-            <button v-if="hasKey" class="btn small" type="button" :disabled="clearing" @click="clearKey">
-              {{ clearing ? '清除中…' : '清除 Key' }}
-            </button>
-          </div>
-        </div>
-
-        <label class="video-field">
-          <span>模型名</span>
-          <input v-model="form.model" placeholder="qwen3.8-omni-flash" spellcheck="false" @keyup.enter="save" />
-        </label>
-
-        <label class="video-field">
-          <span>maxTokens</span>
-          <input v-model.number="form.maxTokens" type="number" min="256" max="65536" step="256" />
-        </label>
-
-        <label class="video-field">
-          <span>视频清晰度</span>
-          <AppSelect v-model="form.quality" aria-label="视频清晰度" :options="qualityOptions" />
-        </label>
-
-        <div class="video-field">
-          <span>抖音兜底</span>
-          <div class="video-browser">
-            <label class="switch-control">
-              <input v-model="form.douyinBrowser" type="checkbox" :disabled="!browserAvailable" />
-              <span aria-hidden="true"></span>
-              <em>{{ douyinSwitchLabel }}</em>
-            </label>
-            <span class="video-field-note">{{ browserNote }}</span>
-          </div>
-        </div>
+        <span class="video-field-note">关闭后视频条目仍可保存，但「提炼视频」会提示先启用。</span>
       </div>
 
+      <!-- 入口：模型与密钥都在内置 Agent 控制台的「模型」页，不再在设置页填写 -->
       <div class="video-actions">
-        <button class="btn primary small" type="button" :disabled="saving" @click="save">
-          {{ saving ? '保存中…' : '保存' }}
+        <button class="btn primary small" type="button" @click="openConsole">
+          去控制台配置模型与 API Key
         </button>
-        <button class="btn small" type="button" :disabled="testing" @click="test">
-          {{ testing ? '测试中…' : '测试连通性' }}
-        </button>
-        <span class="video-field-note">测试只发一次最小文本请求，不消耗视频额度；API Key 留空表示用已保存的</span>
+        <span class="video-field-note">已预置 DashScope（阿里云百炼）与 qwen3.8-omni-flash，只需要填一个 DashScope API Key。</span>
       </div>
 
-      <p v-if="saveMessage" class="video-result" :class="saveTone">{{ saveMessage }}</p>
-      <p v-if="testResult" class="video-result" :class="testResult.ok ? 'ok' : 'err'">
-        <template v-if="testResult.ok">
-          ✓ 连通成功 · 延迟 {{ testResult.latencyMs }}ms<template v-if="testResult.model"> · 模型 {{ testResult.model }}</template><template v-if="testResult.sample"> · 样例「{{ testResult.sample }}」</template>
-        </template>
-        <template v-else>✗ 连通失败：{{ testResult.error || '未知原因' }}</template>
+      <!-- 当前配置的模型：读服务端状态，页面不回显 API Key -->
+      <div class="video-model">
+        <span class="video-model-label">当前模型</span>
+        <strong v-if="modelLabel" class="video-model-name">{{ modelLabel }}</strong>
+        <span v-else class="video-model-name faint">尚未配置（去控制台选择模型并填 Key）</span>
+      </div>
+
+      <!-- 手机（android-local）不跑模型：开关与配置都落在已绑定的中枢 -->
+      <p v-if="isAndroidLocal" class="faint small video-hub-note">
+        配置保存在已绑定的中枢：手机不运行模型，这里只是远程读写中枢的开关；API Key 由中枢保存、页面不回显。
       </p>
 
       <p class="faint small video-note">
-        素材会发送给你填写的 Base URL 所在的模型服务（OpenAI 兼容 chat/completions，视频以 video_url、图文笔记的图片以 image_url 内容块传递），
-        不会发到别处；只支持这类兼容接口，厂商私有的文件上传协议不支持。模型给出的时间戳 / 章节是估计值，纪要需人工复核。
-        视频清晰度只影响需要下载视频的提炼（没有 CC 字幕的 B站视频、抖音视频）：档位越高画质越好，但下载更慢、体积更大；
-        B站有 CC 字幕时优先按字幕文本提炼、不下载整段视频，抖音图文 / 实况笔记按多图理解，两者都不受这个档位影响。
-        字幕抓取是尽力而为，不保证每条视频都能拿到；平台素材也不承诺无水印。
-        抖音链接默认走服务端接口抓取（匿名身份 + secsdk 签名，不需要浏览器，
-        NAS / Docker / 手机端都可用），只有接口失败时才用上面的「本机浏览器兜底」（实验，仅装有 Edge / Chrome 的本机可用，且只覆盖视频作品）。
-        <template v-if="isAndroidLocal">Key 存在已绑定的中枢、页面不回显；</template>
-        <template v-else>Key 只存本机数据库、页面不回显；</template>音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
+        模型与 API Key 都在内置 Agent 控制台的「模型」页配置：已预置 DashScope（阿里云百炼，OpenAI 兼容地址），
+        只需要填 DashScope API Key；API Key 不回显。这份配置保存在中枢、多端同步（桌面端 / Docker / 手机读写同一份）。
+        素材会发送给你在控制台配置的模型服务（OpenAI 兼容 chat/completions，视频以 video_url、图文笔记的图片以 image_url 内容块传递）；
+        模型给出的时间戳 / 章节是估计值，纪要需人工复核。音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
       </p>
     </SettingsGroup>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
-import { confirmDialog } from '../../lib/confirm';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import SettingsGroup from './SettingsGroup.vue';
-import SecretField from '../SecretField.vue';
-import AppSelect from '../ui/AppSelect.vue';
 
 /**
  * 「视频理解模型」设置面板（收集箱「视频链接 → 提炼」用）。
  *
- * 配置读写走窄接口 GET/PUT /api/settings/video-config（响应形状与 /api/settings 的 video_config
- * 一致：{ settings: { video_config: "<脱敏 JSON 字符串>" } }，GET 不含 apiKey）；
- * v1.5.1 起该路由用 requireAssistantAccess，手机（只有同步成员令牌）经本地服务窄代理读写中枢的配置，
- * 所以手机绑定中枢后也能在这里配置（「配置保存在已绑定的中枢」文案见模板）。
- * 状态与连通性测试仍走收集箱路由 GET /api/inbox/video-status、POST /api/inbox/video-test
- * （安卓本地服务同样按成员令牌把收集箱接口代理到中枢）。
+ * 2026-11 起不再在这里填 Base URL / API Key / 模型名：视频模型复用「内置 Agent 控制台 → 模型」
+ * 里的 DSH 模型配置（服务端已预置 DashScope / qwen3.8-omni-flash，用户只需填一个 API Key），
+ * 本面板只保留：是否开启的开关、去控制台配置的入口、当前配置的模型展示。
  *
- * Key 的处理沿用 SecretField 约定：输入框留空 = 保留原 Key（服务端不回显）；
- * 显式清除发 apiKey: null（服务端 normalize 会归一成空串）——注意空串在服务端表示「保留原 Key」。
+ * 读写走窄接口 GET/PUT /api/settings/video-config：
+ *  - GET 返回 { settings: { video_config: "<脱敏 JSON 字符串>" }, status }——status 由服务端算好
+ *    （configured / enabled / model / provider / providerName / baseUrl / hasKey / missing …），
+ *    永远不含 apiKey；
+ *  - PUT { video_config: { enabled } } 只改开关（模型与地址在控制台写，这里不碰）。
+ * 手机（android-local）只有同步成员令牌：经本地服务窄代理读写已绑定的中枢，那里存着同一份配置。
  */
 
-type QualityValue = '64' | '32' | '16';
-
+/** 只取面板用得到的字段：模型 / 提供商 / 缺什么（服务端还会返回 baseUrl、hasKey 等，页面不需要） */
 interface VideoStatus {
   configured: boolean;
   enabled: boolean;
-  baseUrl: string;
   model: string;
-  hasKey: boolean;
-  maxTokens?: number;
-  quality?: number;
-  douyinBrowser?: boolean;
-  /** 服务端算好的缺失项（Base URL / API Key / 模型名） */
-  missing?: string[];
-  /** 这台机器上有没有 Edge / Chrome（抖音接口失败时的浏览器兜底用） */
-  browserAvailable?: boolean;
-  platform?: string;
+  provider: string;
+  providerName: string;
+  missing: string[];
 }
 
-interface VideoTestResult {
-  ok: boolean;
-  latencyMs: number;
-  sample?: string;
-  model?: string;
-  error?: string;
+interface VideoConfigResponse {
+  settings?: { video_config?: string };
+  status?: Partial<VideoStatus>;
 }
 
-const qualityOptions: Array<{ value: QualityValue; label: string }> = [
-  { value: '64', label: '720P（64）' },
-  { value: '32', label: '480P（32）' },
-  { value: '16', label: '360P（16）' },
-];
+const EMPTY_STATUS: VideoStatus = {
+  configured: false,
+  enabled: false,
+  model: '',
+  provider: '',
+  providerName: '',
+  missing: [],
+};
 
-/** 手机 App 内的本地服务：配置读写经窄代理落到已绑定的中枢（文案据此区分「本机 / 中枢」） */
+const router = useRouter();
 const { capabilities } = useRuntimeCapabilities();
+/** 手机 App 内的本地服务：配置读写经窄代理落到已绑定的中枢（文案据此区分「本机 / 中枢」） */
 const isAndroidLocal = computed(() => capabilities.value.runtime === 'android-local');
 
+const status = ref<VideoStatus>({ ...EMPTY_STATUS });
+const enabled = ref(false);
 const loaded = ref(false);
 const loading = ref(true);
 const saving = ref(false);
-const testing = ref(false);
-const clearing = ref(false);
-/** 新输入的 Key；空串只表示「这次没改」，保存时不提交 */
-const apiKey = ref('');
-const hasKey = ref(false);
-const browserAvailable = ref(true);
-const platform = ref('');
-const serverStatus = ref<VideoStatus | null>(null);
-const testResult = ref<VideoTestResult | null>(null);
-const saveMessage = ref('');
-const saveTone = ref<'ok' | 'err'>('ok');
 
-const form = reactive({
-  enabled: false,
-  baseUrl: '',
-  model: '',
-  /** number input 被清空时是空串，保存前用 clampTokens 归一 */
-  maxTokens: 4096 as number | string,
-  quality: '64' as QualityValue,
-  douyinBrowser: false,
+const configured = computed(() => status.value.configured);
+const modelLabel = computed(() => {
+  const model = status.value.model;
+  if (!model) return '';
+  const provider = status.value.providerName
+    || (status.value.provider === 'dashscope' ? '阿里云百炼' : status.value.provider);
+  return provider ? `${model} · ${provider}` : model;
 });
-
-/** 表单里看到的「还缺什么」：服务端状态没返回 missing 时兜底用 */
-const fallbackMissing = computed(() => {
-  const missing: string[] = [];
-  if (!form.baseUrl.trim()) missing.push('Base URL');
-  if (!hasKey.value) missing.push('API Key');
-  if (!form.model.trim()) missing.push('模型名');
-  return missing;
-});
+/** 服务端算好的缺失项（新接口只可能在「还没填 API Key」时非空） */
+const missingLabels = computed(() => status.value.missing.filter(Boolean));
 
 const stateTone = computed(() => {
-  const status = serverStatus.value;
-  if (!status) return '';
-  return status.configured ? 'tone-ok' : 'tone-warn';
+  if (!enabled.value) return '';
+  return configured.value ? 'tone-ok' : 'tone-warn';
 });
 
 const stateTitle = computed(() => {
-  const status = serverStatus.value;
-  if (!status) return '暂时读不到视频模型状态';
-  if (status.configured) return '已配置：收集箱视频条目可以直接点「提炼视频」';
-  if (!status.enabled) return '未启用：视频条目仍可保存，提炼前需要打开上面的开关并填好网关';
-  const missing = status.missing?.length ? status.missing : fallbackMissing.value;
-  return missing.length ? `已启用，但还缺：${missing.join('、')}` : '已启用，但服务端还不认为配置完整';
+  if (!enabled.value) return '未启用';
+  return configured.value ? '已启用' : '待配置';
 });
 
 const stateDetail = computed(() => {
-  const status = serverStatus.value;
-  if (!status) return '可以继续填写并保存；状态接口恢复后这里会显示实际生效的配置。';
-  if (status.configured) {
-    return `${status.model || form.model} @ ${status.baseUrl || form.baseUrl} · 视频清晰度 ${qualityLabel(status.quality)} · 抖音浏览器兜底${status.douyinBrowser ? '已开' : '未开'}`;
+  if (!enabled.value) return '视频条目仍可保存；打开开关后收集箱的「提炼视频」才会调用模型。';
+  if (!configured.value) {
+    // 预置了 DashScope 与模型，唯一缺的通常是 Key；其它缺失项（老数据）按服务端清单列出来
+    if (!missingLabels.value.length || missingLabels.value.includes('API Key')) {
+      return '还缺 API Key：去控制台填 DashScope API Key（模型与地址已预置）。';
+    }
+    return `还缺：${missingLabels.value.join('、')}——去控制台补齐后才能提炼视频。`;
   }
-  return '保存后这里会显示实际生效的配置（服务端不会回显 API Key）。';
+  return modelLabel.value ? `当前模型 ${modelLabel.value}` : '收集箱视频条目可以直接点「提炼视频」。';
 });
 
 const badge = computed(() => {
-  const status = serverStatus.value;
-  if (!status) return '';
-  return status.configured ? '已配置' : status.enabled ? '待配置' : '未启用';
+  if (!loaded.value) return '';
+  if (!enabled.value) return '未启用';
+  return configured.value ? '已启用' : '待配置';
 });
 
 const badgeTone = computed<'ok' | 'warn' | 'muted'>(() => {
-  const status = serverStatus.value;
-  if (!status) return 'muted';
-  if (status.configured) return 'ok';
-  return status.enabled ? 'warn' : 'muted';
+  if (!enabled.value) return 'muted';
+  return configured.value ? 'ok' : 'warn';
 });
 
-/** 二级导航徽标：开了开关却还没配齐时才提示「待配置」，默认未启用不打扰 */
-useSettingsBadge('panel-video', computed(() => {
-  const status = serverStatus.value;
-  return status && status.enabled && !status.configured ? '待配置' : '';
-}));
+/** 二级导航徽标：开了开关却还没配好时才提示「待配置」，默认未启用不打扰 */
+useSettingsBadge('panel-video', computed(() => (
+  status.value.enabled && !status.value.configured ? '待配置' : ''
+)));
 
-const douyinSwitchLabel = computed(() => {
-  if (!browserAvailable.value) return '不可用（本机没有 Edge / Chrome）';
-  return form.douyinBrowser ? '已开启（实验）' : '已关闭';
-});
-
-const browserNote = computed(() => {
-  if (browserAvailable.value) {
-    return '抖音链接默认走服务端接口抓取（不需要浏览器，图文 / 实况笔记也走这里）；接口失败时才用本机浏览器打开视频页兜底（实验，只覆盖视频作品）';
-  }
-  const os = platform.value === 'win32'
-    ? 'Windows'
-    : platform.value === 'darwin'
-      ? 'macOS'
-      : platform.value === 'linux'
-        ? 'Linux'
-        : '本机';
-  return `${os} 上没有检测到 Edge / Chrome：抖音链接仍走服务端接口抓取（不需要浏览器，图文 / 实况笔记同样可用），只是无法浏览器兜底`;
-});
-
-function qualityLabel(value?: number): string {
-  if (Number(value) === 32) return '480P（32）';
-  if (Number(value) === 16) return '360P（16）';
-  return '720P（64）';
-}
-
-function qualityValue(value: unknown): QualityValue {
-  const n = Number(value);
-  return n === 32 ? '32' : n === 16 ? '16' : '64';
-}
-
-function clampTokens(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 4096;
-  return Math.max(256, Math.min(65536, Math.round(n)));
-}
-
-/** 保存时提交的面板全量字段：服务端浅合并，未提交的字段保持原值 */
-function buildPayload(): Record<string, unknown> {
-  const key = apiKey.value.trim();
+function normalizeStatus(raw: Partial<VideoStatus> | undefined): VideoStatus {
+  if (!raw || typeof raw !== 'object') return { ...EMPTY_STATUS };
   return {
-    enabled: form.enabled,
-    baseUrl: form.baseUrl.trim(),
-    model: form.model.trim(),
-    maxTokens: clampTokens(form.maxTokens),
-    quality: Number(form.quality),
-    // 本机没有浏览器时不允许把「接口失败时用浏览器兜底」存成开启
-    douyinBrowser: browserAvailable.value ? form.douyinBrowser : false,
-    // 留空 = 保留原 Key（服务端不回显 Key）；显式清空只走「清除 Key」按钮
-    ...(key ? { apiKey: key } : {}),
+    configured: raw.configured === true,
+    enabled: raw.enabled === true,
+    model: typeof raw.model === 'string' ? raw.model : '',
+    provider: typeof raw.provider === 'string' ? raw.provider : '',
+    providerName: typeof raw.providerName === 'string' ? raw.providerName : '',
+    missing: Array.isArray(raw.missing) ? raw.missing.map(String) : [],
   };
 }
 
-async function load(): Promise<void> {
+/** 老服务端 / 状态字段缺失时的兜底：从脱敏的 video_config JSON 里读开关 */
+function savedEnabled(raw: unknown): boolean {
+  if (typeof raw !== 'string' || !raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as { enabled?: unknown };
+    return parsed.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+function errorText(error: any, fallback: string): string {
+  const detail = error?.response?.data?.error || error?.message;
+  return typeof detail === 'string' && detail ? detail : fallback;
+}
+
+/** 读配置：status 由这个窄接口一并返回（不再单独请求收集箱状态接口） */
+async function load(showError = true): Promise<void> {
   loading.value = true;
   try {
-    const [{ data: settings }, statusResponse] = await Promise.all([
-      api.get('/api/settings/video-config'),
-      api.get('/api/inbox/video-status').catch(() => null),
-    ]);
-    // GET /api/settings/video-config 返回与 /api/settings 同形状的 settings.video_config，
-    // 已脱敏（无 apiKey）；这里只取非密文字段兜底
-    let saved: Record<string, unknown> = {};
-    try {
-      saved = JSON.parse(String(settings?.settings?.video_config || '{}')) as Record<string, unknown>;
-    } catch {
-      saved = {};
-    }
-    const status = (statusResponse?.data || null) as VideoStatus | null;
-    serverStatus.value = status;
-    hasKey.value = Boolean(status?.hasKey ?? saved.apiKey);
-    // 老服务端 / 状态接口失败时缺 browserAvailable：按可用处理，避免在真机上误禁用
-    browserAvailable.value = status?.browserAvailable !== false;
-    platform.value = String(status?.platform || '');
-    form.enabled = Boolean(status?.enabled ?? saved.enabled);
-    form.baseUrl = String(status?.baseUrl ?? saved.baseUrl ?? '');
-    form.model = String(status?.model ?? saved.model ?? '');
-    form.maxTokens = clampTokens(status?.maxTokens ?? saved.maxTokens);
-    form.quality = qualityValue(status?.quality ?? saved.quality);
-    form.douyinBrowser = browserAvailable.value && Boolean(status?.douyinBrowser ?? saved.douyinBrowser);
-    apiKey.value = '';
+    const { data } = await api.get<VideoConfigResponse>('/api/settings/video-config');
+    const next = normalizeStatus(data?.status);
+    status.value = next;
+    enabled.value = data?.status ? next.enabled : savedEnabled(data?.settings?.video_config);
     loaded.value = true;
   } catch (error: any) {
-    notify.error(error?.response?.data?.error || '读取视频模型配置失败');
+    if (showError) notify.error(errorText(error, '读取视频理解模型配置失败'));
   } finally {
     loading.value = false;
   }
 }
 
-async function save(): Promise<void> {
+/** 开关变化即保存：只有 PUT 失败才回滚，读状态失败不回滚（配置其实已经写进去了） */
+async function saveEnabled(next: boolean): Promise<void> {
   if (saving.value) return;
+  const previous = enabled.value;
+  enabled.value = next;
+  if (status.value.enabled !== next) status.value = { ...status.value, enabled: next };
   saving.value = true;
-  saveMessage.value = '';
   try {
-    await api.put('/api/settings/video-config', { video_config: buildPayload() });
-    apiKey.value = '';
-    await load();
-    const missing = fallbackMissing.value;
-    saveTone.value = 'ok';
-    saveMessage.value = form.enabled && missing.length
-      ? `已保存，但还缺：${missing.join('、')}——补齐后才能提炼视频`
-      : '已保存视频模型配置';
-    notify.success('视频模型配置已保存');
+    await api.put('/api/settings/video-config', { video_config: { enabled: next } });
+    await load(false);
+    notify.success(next ? '已开启视频理解模型' : '已关闭视频理解模型');
   } catch (error: any) {
-    const message = error?.response?.data?.error || error?.message || '保存失败';
-    saveTone.value = 'err';
-    saveMessage.value = `保存失败：${message}`;
-    notify.error(message);
+    enabled.value = previous;
+    if (status.value.enabled !== previous) status.value = { ...status.value, enabled: previous };
+    notify.error(errorText(error, '保存视频理解开关失败'));
   } finally {
     saving.value = false;
   }
 }
 
-async function test(): Promise<void> {
-  if (testing.value) return;
-  testing.value = true;
-  testResult.value = null;
-  try {
-    const { data } = await api.post('/api/inbox/video-test', {
-      baseUrl: form.baseUrl.trim(),
-      model: form.model.trim(),
-      apiKey: apiKey.value.trim(),
-    });
-    const result = data as VideoTestResult;
-    testResult.value = result;
-    if (result.ok) notify.success(`连通成功（${result.latencyMs}ms）`);
-    else notify.error(result.error || '连通失败');
-  } catch (error: any) {
-    const message = error?.response?.data?.error || error?.message || '测试请求失败';
-    testResult.value = { ok: false, latencyMs: 0, error: message };
-    notify.error(message);
-  } finally {
-    testing.value = false;
-  }
+function onToggle(event: Event): void {
+  const input = event.target as HTMLInputElement | null;
+  void saveEnabled(Boolean(input?.checked));
 }
 
-/** 清除已存的 Key：apiKey: null 才是显式清空（空串在服务端表示保留原 Key） */
-async function clearKey(): Promise<void> {
-  if (clearing.value || !hasKey.value) return;
-  const ok = await confirmDialog({
-    title: '清除 API Key',
-    message: '清除后视频条目无法再提炼，需要重新填写 Key。其它视频配置不受影响。',
-    confirmText: '清除 Key',
-    danger: true,
-  });
-  if (!ok) return;
-  clearing.value = true;
-  try {
-    await api.put('/api/settings/video-config', { video_config: { apiKey: null } });
-    saveMessage.value = '已清除 API Key（视频条目暂时无法提炼）';
-    saveTone.value = 'ok';
-    testResult.value = null;
-    await load();
-    notify.success('已清除视频模型 API Key');
-  } catch (error: any) {
-    const message = error?.response?.data?.error || error?.message || '清除 Key 失败';
-    saveMessage.value = `清除 Key 失败：${message}`;
-    saveTone.value = 'err';
-    notify.error(message);
-  } finally {
-    clearing.value = false;
-  }
+/** 模型与密钥去控制台的「模型」页配（该页默认就是模型分区） */
+function openConsole(): void {
+  void router.push('/settings/agent-console');
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+});
 </script>
 
 <style scoped>
 .video-loading {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
 }
 
 /* 手机端：配置不在本机，说明它存在已绑定的中枢（真实来源） */
 .video-hub-note {
-  margin: 0 0 12px;
+  margin: 10px 0 0;
   line-height: 1.6;
 }
 
@@ -465,62 +290,20 @@ onMounted(load);
   font-weight: 600;
 }
 
-.video-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 4px 0 14px;
-}
-
 .video-switch-row {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  margin: 0 0 12px;
 }
 
-.video-field {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+.video-actions {
+  display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
-}
-
-.video-field > span {
-  color: var(--text-faint);
-}
-
-/* 地址 / 模型名可能很长：输入框铺满可用宽度，不截断 */
-.video-field input,
-.video-field :deep(.app-select) {
-  width: 100%;
-  max-width: 720px;
-  font-size: 12px;
-}
-
-.video-browser {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.video-key {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.video-key :deep(.secret-input-wrap) {
-  flex: 1;
-  min-width: 0;
-  max-width: 720px;
-}
-
-.video-key > .btn {
-  flex: none;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
 }
 
 .video-field-note {
@@ -529,26 +312,27 @@ onMounted(load);
   line-height: 1.5;
 }
 
-.video-actions {
+/* 当前配置的模型：只读展示，与状态条同一个视觉层级（不是说明文字） */
+.video-model {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: baseline;
+  gap: 8px;
   flex-wrap: wrap;
-}
-
-.video-result {
-  margin: 10px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
   font-size: 12px;
-  line-height: 1.6;
+}
+
+.video-model-label {
+  color: var(--text-faint);
+}
+
+.video-model-name {
+  color: var(--text);
+  font-weight: 600;
   overflow-wrap: anywhere;
-}
-
-.video-result.ok {
-  color: var(--success);
-}
-
-.video-result.err {
-  color: var(--danger);
 }
 
 .video-note {
@@ -557,14 +341,18 @@ onMounted(load);
 }
 
 @media (max-width: 640px) {
-  .video-field {
-    grid-template-columns: 1fr;
-    gap: 5px;
+  /* 窄屏单列：开关说明落到开关下面，主按钮独占一行 */
+  .video-switch-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
-  .video-field input,
-  .video-field :deep(.app-select),
-  .video-key :deep(.secret-input-wrap) {
-    max-width: none;
+  .video-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .video-actions .btn {
+    width: 100%;
   }
 }
 </style>

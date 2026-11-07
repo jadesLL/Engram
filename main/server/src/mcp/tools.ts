@@ -524,7 +524,7 @@ export function makeServer(): McpServer {
       + '产物写到 收集箱/转换结果/，**仍在收集箱、仍不属于知识库**：不建页面、不进检索、不能作为证据，'
       + '需要用户在收集箱界面确认「入库」后才成为可引用来源（入库是用户动作，你不要代劳）。'
       + '图片等 Agent-only 格式会被明确拒绝——那类文件用 read_inbox_item 拿原文件自行处理，再用 write_inbox_markdown 写回；'
-      + '音视频与视频链接（B站/抖音）走视频理解模型：需要用户在 设置 → Agent 与自动化 → 视频理解模型 配置后才能用，未配置时这里会返回可读原因。',
+      + '音视频与视频链接（B站/抖音）走视频理解模型：用户在 设置 → Agent 与自动化 → 视频理解模型 里确认开关，模型默认 DashScope qwen3.8-omni-flash，API Key 在 内置 Agent 控制台 → 模型 里填；未配置时这里会返回可读原因。',
     {
       path: z.string().describe('收集箱内的相对路径，如 收集箱/合同.pdf'),
     },
@@ -541,7 +541,7 @@ export function makeServer(): McpServer {
         return { content: [{ type: 'text', text: `原件不存在：${rel}` }], isError: true };
       }
       const capability = convertCapability(rel);
-      // 音视频 / 视频链接：走视频理解模型（需要设置里配置好）
+      // 音视频 / 视频链接：走视频理解模型（模型复用内置 Agent 控制台的 dsh 配置）
       if (capability === 'video') {
         if (!videoConfigReady()) {
           return { content: [{ type: 'text', text: `${rel}：${videoConfigHint()}` }], isError: true };

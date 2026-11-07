@@ -69,8 +69,9 @@ const PUBLIC_SETTINGS = [
   'home_layout',
   'theme',
   'editor_mode',
-  // 收集箱「视频链接 → 提炼」用的视频理解模型配置（JSON：enabled/baseUrl/apiKey/model/…）。
-  // 与 agent_config 分开：它是文本路由，视频输入是厂商扩展，不该互相覆盖。
+  // 收集箱「视频链接 → 提炼」的视频理解总开关（JSON：只有 enabled）。
+  // 2026-11 起模型/API Key 复用内置 Agent 控制台的 dsh 模型配置（见 lib/videoModel.ts），
+  // 这里不再存 baseUrl/apiKey/model；旧 JSON 里的这些字段在读取时被忽略。
   'video_config',
 ];
 
@@ -96,7 +97,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     const out: Record<string, string> = {};
     for (const k of PUBLIC_SETTINGS) {
       const raw = getSetting(k) || '';
-      // 视频配置里的 apiKey 不回显（面板用 /api/inbox/video-status 的 hasKey 判断）；
+      // 视频配置只回 enabled（模型/Key 在 dsh 配置里，面板用 /api/inbox/video-status 的 hasKey 判断）；
       // v1.5.1 起视频配置另有独立读写口 /api/settings/video-config（手机成员令牌可用），
       // 这里保留旧口径兼容旧客户端。
       if (k === 'video_config') {
@@ -124,7 +125,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       const v = body[k];
       if (v === undefined) continue;
       if (k === 'video_config') {
-        // 视频配置走归一化保存：空 apiKey 表示「保留原 Key」（面板不回显 Key，也不能被空值冲掉）。
+        // 视频配置走归一化保存：只认 enabled，旧客户端的 baseUrl/apiKey/model 字段被忽略。
         // 与 /api/settings/video-config 共用同一套解析/保存语义（见 lib/videoConfig.ts）。
         const { changed } = applyVideoConfigInput(v);
         if (changed) {

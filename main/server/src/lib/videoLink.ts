@@ -661,7 +661,7 @@ export async function prepareBilibiliMedia(
     const kind: BilibiliFailureKind = /超过下载上限/.test(lastError) ? 'too-large' : 'no-stream';
     throw new BilibiliError(
       (lastError || '取 B站播放地址失败') +
-        '。建议把「B站清晰度」调到 360P（设置 → Agent 与自动化 → 视频理解模型），或换一个更短的视频',
+        '。建议换一个更短的视频（清晰度固定 720P），或检查 设置 → Agent 与自动化 → 视频理解模型 里的模型配置',
       kind
     );
   }
@@ -1059,10 +1059,7 @@ export async function captureDouyinPost(
   }
 
   const hints: string[] = [];
-  if (browser && !options.allowBrowserFallback) {
-    hints.push('可在 设置 → 视频理解模型 打开「接口失败时用本机浏览器兜底」');
-  }
-  if (!browser) hints.push('这台机器没有可兜底的本机浏览器，请改用上传本地视频');
+  hints.push('请改用上传本地视频');
   hints.push('抖音接口可能已变更，请更新 Engram 后重试');
   throw new Error('抖音接口抓取失败（' + reason + '）。' + hints.join('；'));
 }

@@ -6,7 +6,15 @@ import { safeJoin } from '../lib/vault.js';
 import { isInboxPath, stemOf } from '../lib/brainPaths.js';
 import type { ChatContentPart, ChatMessage } from '../lib/modelClient.js';
 import { completeVideo } from '../lib/videoModelClient.js';
-import { getVideoConfig, videoConfigHint, type VideoConfig } from '../lib/videoConfig.js';
+import {
+  getVideoConfig,
+  videoConfigHint,
+  videoModelConfig,
+  VIDEO_DOUYIN_BROWSER,
+  VIDEO_QUALITY,
+  type VideoConfig,
+} from '../lib/videoConfig.js';
+import type { ResolvedVideoModel } from '../lib/videoModel.js';
 import {
   captureDouyinPost,
   fetchBilibiliSubtitle,
@@ -44,8 +52,10 @@ export interface VideoConvertOptions {
   onProgress?: (stage: string, detail?: string) => void;
   /** 仅供测试注入模型请求 */
   fetchImpl?: typeof fetch;
-  /** 测试/调用方显式指定配置；缺省读设置里的 video_config */
+  /** 测试/调用方显式指定开关；缺省读设置里的 video_config */
   config?: VideoConfig;
+  /** 测试/调用方显式指定模型；缺省从 dsh 的模型配置里解析（lib/videoModel.ts） */
+  model?: ResolvedVideoModel;
 }
 
 export interface VideoConvertResult {
@@ -333,7 +343,8 @@ export async function convertVideoInboxItem(
   options: VideoConvertOptions = {}
 ): Promise<VideoConvertResult> {
   const config = options.config ?? getVideoConfig();
-  const hint = videoConfigHint(config);
+  const model = options.model ?? videoModelConfig().provider;
+  const hint = videoConfigHint(config, model);
   if (hint) throw new Error(hint);
   if (!isInboxPath(relPath)) throw new Error('只能提炼收集箱内的音视频文件');
   options.signal?.throwIfAborted();
@@ -379,9 +390,9 @@ export async function convertVideoInboxItem(
         } else {
           subtitle = null;
           options.onProgress?.('获取字幕', '没有可用字幕，回退下载视频');
-          options.onProgress?.('获取视频', '下载 B站视频（' + qualityText(config.quality) + '）');
+          options.onProgress?.('获取视频', '下载 B站视频（' + qualityText(VIDEO_QUALITY) + '）');
           prepared = await prepareBilibiliMedia(info, {
-            quality: config.quality,
+            quality: VIDEO_QUALITY,
             destPath: tempPath,
             signal: options.signal,
             fetchImpl: options.fetchImpl,
@@ -407,10 +418,10 @@ export async function convertVideoInboxItem(
           destPath: tempPath,
           signal: options.signal,
           timeoutMs: 60_000,
-          quality: config.quality,
+          quality: VIDEO_QUALITY,
           maxBytes: inlineLimit,
           imagesDir,
-          allowBrowserFallback: config.douyinBrowser,
+          allowBrowserFallback: VIDEO_DOUYIN_BROWSER,
           fetchImpl: options.fetchImpl,
           onProgress: (stage, detail) => options.onProgress?.(stage, detail || '抓取抖音内容'),
         });
@@ -463,11 +474,11 @@ export async function convertVideoInboxItem(
       mediaBytes = Buffer.byteLength(subtitle.text, 'utf8');
       options.onProgress?.('准备请求', '整理字幕文本（' + subtitle.text.length + ' 字）');
       const messages = buildSubtitleMessages(summaryTarget(info?.title || name), subtitle);
-      options.onProgress?.('视频理解', '提交给 ' + config.model + '（CC 字幕 · ' + subtitle.text.length + ' 字）');
+      options.onProgress?.('视频理解', '提交给 ' + model.model + '（CC 字幕 · ' + subtitle.text.length + ' 字）');
       completion = await completeVideo(videoRequestParts(messages), {
         signal: options.signal,
         fetchImpl: options.fetchImpl,
-        config,
+        model,
       });
     } else if (imagePost) {
       source = 'images';
@@ -488,11 +499,11 @@ export async function convertVideoInboxItem(
         summaryTarget(imagePost.title || name, { author: imagePost.author }),
         encoded
       );
-      options.onProgress?.('视频理解', '提交给 ' + config.model + '（图文 ' + imageCount + ' 张）');
+      options.onProgress?.('视频理解', '提交给 ' + model.model + '（图文 ' + imageCount + ' 张）');
       completion = await completeVideo(videoRequestParts(messages), {
         signal: options.signal,
         fetchImpl: options.fetchImpl,
-        config,
+        model,
       });
     } else {
       if (!prepared) throw new Error('没有拿到可用的视频文件：请重试，或改用上传本地视频');
@@ -509,11 +520,11 @@ export async function convertVideoInboxItem(
         summaryTarget(prepared.title || name, { author: prepared.author, durationSec: prepared.durationSec }),
         { mime: prepared.mime, base64: buffer.toString('base64') }
       );
-      options.onProgress?.('视频理解', '提交给 ' + config.model + '（' + formatBytes(buffer.length) + ' 视频内联）');
+      options.onProgress?.('视频理解', '提交给 ' + model.model + '（' + formatBytes(buffer.length) + ' 视频内联）');
       completion = await completeVideo(videoRequestParts(messages), {
         signal: options.signal,
         fetchImpl: options.fetchImpl,
-        config,
+        model,
       });
     }
 

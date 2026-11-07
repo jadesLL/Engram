@@ -65,7 +65,33 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 - **能力位**：`GET /api/runtime/capabilities` 的 `features.agentConsole` / `features.videoConfig` 在桌面与 Docker 恒为 true；Android 本机服务在「已绑定中枢」时为 true，未绑定为 false（设置页「Agent 与自动化」整域隐藏，直接访问 `/settings/agent-console` 显示「请先在 多端同步 绑定中枢」）。`agentAdmin` 在手机上仍为 false：外部接入 / MCP Token 不出现。
 - **路由**：`EngramLocalServer.kt` 新增 18 条 `/api/agent-console/*` 窄代理 + `GET/PUT /api/settings/video-config` + 4 条 `/api/assistant/dream*` + `GET /api/guide`；均先过本机登录态，再以同步成员令牌转发中枢（`proxyAgent` / `proxyHub`）。
 - **鉴权**：BFF 的 preHandler 从 `requireAuth` 改为 `requireAssistantAccess`（owner / MCP token / 同步成员令牌）；`/agent-console/*` 反代与旧 iframe 路径仍 owner-only。
-- **安全**：手机能改中枢的模型 / 插件 / 预设 / 视频网关，但读不到任何 Key 明文（`credentials/describe` 只回 configured）；详见 `docs/ANDROID.md` 的「Agent 与自动化配置」。
+- **安全**：手机能改中枢的模型 / 插件 / 预设 / 视频模型，但读不到任何 Key 明文（`credentials/describe` 只回 configured）；详见 `docs/ANDROID.md` 的「Agent 与自动化配置」。
+
+## 视频理解模型（默认 DashScope / qwen3.8-omni-flash）
+
+> 2026-11 起：「视频理解模型」不再由 Engram 单独维护 Base URL / API Key / 模型名，改为复用「内置 Agent 控制台 → 模型」里同一份 dsh 模型配置。
+> 提供商与模型由 Engram 预置，用户只需要在控制台模型页填一个 DashScope API Key。
+
+- **预置的默认提供商**：`dashscope`（显示名「阿里云百炼（DashScope）」）、OpenAI 兼容地址 `https://dashscope.aliyuncs.com/compatible-mode/v1`、模型 `qwen3.8-omni-flash`、凭据引用 `DASHSCOPE_API_KEY`；常量与只读解析都在 `server/src/lib/videoModel.ts`。
+- **播种机制**（`server/src/assistant/videoModelDefaults.ts`）：第一次打开「设置 → Agent 与自动化 → 视频理解模型」时（`GET /api/settings/video-config` 或 `GET /api/inbox/video-status`），若 dsh 配置里还没有视频提供商，服务端先确保控制台在跑（`ensureConsole`），用 `settings/describe` 读 `llm-pi-ai` 当前的 providers，再用 `settings/mutate` 把 `providers.dashscope` 写进 dsh 的 web profile——之后控制台模型页就能直接看到这张卡。
+  - **幂等**：Engram 设置里记 `video_provider_seeded=1`；dsh 配置里已有 `dashscope` 或已有带 `qwen3.8-omni-flash` 的提供商时直接跳过，不覆盖用户自己配的。
+  - **冲突与失败**：revision 冲突（409）会重读一次再写；写失败不落标记，下次打开面板 / 保存开关时重试——控制台暂时起不来时 `GET` 的 `status` 会带 `seedError`，但不阻塞页面读取。
+  - **只写提供商、不写 Key**：播种内容只有 displayName / api / apiKeyEnv / baseURL / models，Key 始终由用户在控制台里填。
+- **用户只需要填一个 Key**：控制台模型页的 dashscope 卡填 DashScope API Key 即完成；Engram 设置页的面板只剩「启用开关 + 去控制台配置模型与 API Key 入口 + 当前模型展示」，Base URL / API Key / 模型名输入框与「测试连通性」按钮都已移除（后端 `POST /api/inbox/video-test` 仍在，保留给旧 Web 包与诊断）。
+- **解析（纯读文件，不启动 dsh）**：提供商来自 `$DSH_HOME/profiles/web/cordis.patch.yml` 顶层 `llm-pi-ai` 的 `config.providers.*`，Key 来自 `$DSH_HOME/.credentials.yaml` 的 `refs.<apiKeyEnv>`（取不到再回退同名环境变量）。提供商优先 `dashscope`，否则找含 `qwen3.8-omni-flash` 的那个；模型优先 `qwen3.8-omni-flash`，没有就用该提供商的第一个模型。
+- **与聊天 Agent 共用一份配置，默认模型各自独立**：视频只挑 dashscope / qwen3.8-omni-flash，不读 `agent-default-model`；聊天 Agent 的默认模型仍在控制台模型页另设，两边互不覆盖。
+- **接口**：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/settings/video-config` | `{ settings: { video_config }, status }`；顺带幂等播种，失败时 `status.seedError` 带原因 |
+| PUT | `/api/settings/video-config` | 只认 `video_config.enabled`（旧客户端带来的 baseUrl / apiKey / model 等字段一律忽略）；开关变化后补一次幂等播种 |
+| GET | `/api/inbox/video-status` | 同款 `status` + `browserAvailable` / `platform`（收集箱页面用，同样触发播种；播种失败时另有顶层 `seedError`） |
+| POST | `/api/inbox/video-test` | 用当前解析到的模型发一次最小文本请求；不看总开关，也不接受 baseUrl / apiKey 覆盖 |
+
+- **status 字段**：`configured`（开关打开且模型 / Key 齐全）、`enabled`、`provider`、`providerName`、`baseUrl`、`model`、`hasKey`、`missing`；另带旧面板固定值 `maxTokens: 4096`、`quality: 64`（720P）、`douyinBrowser: false`，兼容 v1.5.x 旧 Web 包。任何接口都不回显 API Key。
+- **视频管线**：`pipeline/inboxVideo.ts` 用解析到的模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块），`maxTokens=4096`；B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
+- **相关文件**：`lib/videoModel.ts`（只读解析 + 默认提供商常量）、`assistant/videoModelDefaults.ts`（幂等播种）、`lib/videoConfig.ts`（`video_config` 只存 `{ enabled }`，默认开启；status 汇总）、`routes/videoConfig.ts`、`routes/inbox.ts`（video-status / video-test）、`lib/videoModelClient.ts`、`pipeline/inboxVideo.ts`；前端面板 `web/src/components/settings/VideoPanel.vue`。
 
 ## DSH 侧用到的 Remote endpoint
 

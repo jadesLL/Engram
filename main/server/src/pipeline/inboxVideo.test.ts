@@ -24,15 +24,18 @@ let videoMime: typeof import('./inboxVideo.js').videoMime;
 let assertVideoInlineable: typeof import('./inboxVideo.js').assertVideoInlineable;
 let videoInlineLimitBytes: typeof import('./inboxVideo.js').videoInlineLimitBytes;
 
-/** 可用的视频模型配置（测试里只用来通过 videoConfigHint，不真正发请求） */
-const readyConfig = {
-  enabled: true,
+/** 可用的视频理解开关（模型来自 dsh 配置，测试里直接注入解析结果，不真正发请求） */
+const readyConfig = { enabled: true } as any;
+
+/** 解析后的模型配置（等价于内置 Agent 控制台里的 DashScope / qwen3.8-omni-flash） */
+const readyModel = {
+  providerId: 'dashscope',
+  providerName: '阿里云百炼（DashScope）',
   baseUrl: 'https://video.example.com/v1',
-  apiKey: 'test-key',
+  api: 'openai-completions',
   model: 'mock-video',
-  maxTokens: 4096,
-  quality: 64,
-  douyinBrowser: false,
+  apiKey: 'test-key',
+  keyRef: 'DASHSCOPE_API_KEY',
 } as any;
 
 /** 任一网络调用都直接失败：用来证明前置错误发生在网络请求之前 */
@@ -168,7 +171,8 @@ test('未启用视频理解：直接抛设置提示，不读媒体也不联网',
   await assert.rejects(
     () =>
       convertVideoInboxItem('收集箱/任意.mp4', {
-        config: { ...readyConfig, enabled: false },
+        config: { enabled: false },
+        model: readyModel,
         fetchImpl: noNetwork,
       }),
     /视频理解未启用/
@@ -187,7 +191,8 @@ test('抖音占位稿：接口抓取失败时给出可操作提示，不发起�
   await assert.rejects(
     () =>
       convertVideoInboxItem(placeholder, {
-        config: { ...readyConfig, douyinBrowser: false },
+        config: readyConfig,
+        model: readyModel,
         fetchImpl: noNetwork,
       }),
     (error: any) => {
@@ -204,7 +209,7 @@ test('本地音视频超过内联上限：转换前就报错，不发起模型�
   process.env.VIDEO_INLINE_MB = '0.000001';
   try {
     await assert.rejects(
-      () => convertVideoInboxItem(rel, { config: readyConfig, fetchImpl: noNetwork }),
+      () => convertVideoInboxItem(rel, { config: readyConfig, model: readyModel, fetchImpl: noNetwork }),
       (error: any) => {
         assert.match(error.message, /超过内联上限/);
         assert.match(error.message, /缩短视频时长|360P|截取片段/);
@@ -229,7 +234,7 @@ test('占位稿损坏（平台不认识）：给出重新粘贴链接的提示�
     ['---', '类型: video-link', '平台: youtube', '链接: https://youtu.be/abc', '标题: 外部视频', '---', '', '视频链接：https://youtu.be/abc', ''].join('\n')
   );
   await assert.rejects(
-    () => convertVideoInboxItem(rel, { config: readyConfig, fetchImpl: noNetwork }),
+    () => convertVideoInboxItem(rel, { config: readyConfig, model: readyModel, fetchImpl: noNetwork }),
     /占位稿已损坏/
   );
 });
@@ -340,7 +345,7 @@ test('B站有 CC 字幕：走字幕通道，不下载整段视频，产物 front
     throw new Error('不该请求：' + url);
   }) as unknown as typeof fetch;
 
-  const result = await convertVideoInboxItem(planted, { config: readyConfig, fetchImpl });
+  const result = await convertVideoInboxItem(planted, { config: readyConfig, model: readyModel, fetchImpl });
   assert.equal(result.source, 'subtitle');
   assert.equal(result.media.platform, 'bilibili');
   assert.equal(
@@ -416,7 +421,7 @@ test('抖音图文笔记：多图送 image_url 通道，产物 frontmatter 记�
     throw new Error('不该请求：' + url);
   }) as unknown as typeof fetch;
 
-  const result = await convertVideoInboxItem(planted, { config: readyConfig, fetchImpl });
+  const result = await convertVideoInboxItem(planted, { config: readyConfig, model: readyModel, fetchImpl });
   assert.equal(result.source, 'images');
   assert.equal(result.media.images, 2);
   assert.equal(modelBodies.length, 1);
@@ -433,7 +438,7 @@ test('抖音图文笔记：多图送 image_url 通道，产物 frontmatter 记�
 
 test('只允许收集箱内的路径：越界直接拒绝', async () => {
   await assert.rejects(
-    () => convertVideoInboxItem('原始资料/文档/越界.mp4', { config: readyConfig, fetchImpl: noNetwork }),
+    () => convertVideoInboxItem('原始资料/文档/越界.mp4', { config: readyConfig, model: readyModel, fetchImpl: noNetwork }),
     /只能提炼收集箱内的音视频文件/
   );
 });
