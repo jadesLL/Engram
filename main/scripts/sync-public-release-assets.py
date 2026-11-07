@@ -140,18 +140,11 @@ def ensure_release(target, token, tag):
     return rel
 
 
-def upload_file(target, token, rel, path, name=None):
-    """流式上传单个附件（同名先删）。name 用于回填时还原 Gitea 侧的附件名（本地临时文件名带前缀）。"""
-    name = name or os.path.basename(path)
-    size = os.path.getsize(path)
+def _upload_file_once(target, token, rel, path, name, size):
+    """单次流式上传尝试；连接异常原样抛出，由 upload_file 决定是否重试。"""
     upload_url = rel.get('upload_url') or f"{target['uploads']}/releases/{rel['id']}/assets{{?name,label}}"
     upload_url = upload_url.split('{')[0]
     url = f'{upload_url}?name={urllib.parse.quote(name)}'
-
-    if dry_run():
-        log(f'  [dry-run] 将上传 {name}（{size:,} 字节）')
-        return
-
     parsed = urllib.parse.urlsplit(url)
     conn_cls = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
     conn = conn_cls(parsed.netloc, timeout=1800)
@@ -171,11 +164,46 @@ def upload_file(target, token, rel, path, name=None):
                 conn.send(chunk)
         resp = conn.getresponse()
         body = resp.read().decode('utf-8', 'replace')
-        if resp.status not in (200, 201):
-            raise SyncError(f'上传 {name} 失败：HTTP {resp.status} {body[:300]}')
-        log(f'  已上传 {name}（{size:,} 字节）')
+        return resp.status, body
     finally:
         conn.close()
+
+
+# exe 约 300MB，上传要二十多分钟；2026-11-07 v1.5.8 发版实测在这一步被
+# ssl.SSLEOFError（对端提前断开）打断一次，整趟发版因此判失败。网络层错误重试，
+# 4xx（如 422 already_exists）属于请求本身有问题，不重试。
+UPLOAD_ATTEMPTS = 3
+UPLOAD_RETRY_DELAYS = (5, 15)
+
+
+def upload_file(target, token, rel, path, name=None):
+    """流式上传单个附件（同名先删）。name 用于回填时还原 Gitea 侧的附件名（本地临时文件名带前缀）。"""
+    name = name or os.path.basename(path)
+    size = os.path.getsize(path)
+    if dry_run():
+        log(f'  [dry-run] 将上传 {name}（{size:,} 字节）')
+        return
+    last_err = None
+    for attempt in range(1, UPLOAD_ATTEMPTS + 1):
+        try:
+            status, body = _upload_file_once(target, token, rel, path, name, size)
+        except (OSError, http.client.HTTPException) as exc:  # 含 ssl.SSLEOFError / 超时 / 连接重置
+            last_err = exc
+            log(f'  上传 {name} 第 {attempt} 次中断：{type(exc).__name__}: {exc}')
+        else:
+            if status in (200, 201):
+                log(f'  已上传 {name}（{size:,} 字节）')
+                return
+            if status >= 500:
+                last_err = SyncError(f'上传 {name} 失败：HTTP {status} {body[:300]}')
+                log(f'  上传 {name} 第 {attempt} 次失败：HTTP {status}')
+            else:
+                raise SyncError(f'上传 {name} 失败：HTTP {status} {body[:300]}')
+        if attempt < UPLOAD_ATTEMPTS:
+            delay = UPLOAD_RETRY_DELAYS[min(attempt - 1, len(UPLOAD_RETRY_DELAYS) - 1)]
+            log(f'  {delay}s 后重试…')
+            time.sleep(delay)
+    raise SyncError(f'上传 {name} 失败（已重试 {UPLOAD_ATTEMPTS} 次）：{last_err}')
 
 
 def delete_asset(target, token, asset_id):
@@ -187,8 +215,15 @@ def delete_asset(target, token, asset_id):
         raise SyncError(f'删除旧附件 id={asset_id} 失败：HTTP {status} {resp.get("_error", "")}')
 
 
+def canonical_asset_name(name):
+    """公开仓库（GitHub）会把附件名里的空格规整成点：`Engram 1.5.8.apk` 在 GitHub 上
+    叫 `Engram.1.5.8.apk`。判重必须按规整名比较，否则已存在的附件会被当成缺失、重复上传
+    并撞 422 already_exists（2026-11-07 v1.5.8 回填实测踩到）。"""
+    return re.sub(r'\s+', '.', name or '')
+
+
 def existing_assets(rel):
-    return {a['name']: a for a in (rel.get('assets') or [])}
+    return {canonical_asset_name(a['name']): a for a in (rel.get('assets') or [])}
 
 
 def sync_one(target, token, rel, path, stats):
@@ -196,7 +231,7 @@ def sync_one(target, token, rel, path, stats):
     name = os.path.basename(path)
     size = os.path.getsize(path)
     assets = existing_assets(rel)
-    old = assets.get(name)
+    old = assets.get(canonical_asset_name(name))
     if old and int(old.get('size', -1)) == size:
         log(f'  跳过 {name}（已存在且大小一致）')
         stats['skipped'] += 1
@@ -293,7 +328,7 @@ def mode_backfill(target, token, args):
         rel = ensure_release(target, token, tag)
         for asset in assets:
             name, size = asset['name'], int(asset.get('size') or 0)
-            have = existing_assets(rel).get(name)
+            have = existing_assets(rel).get(canonical_asset_name(name))
             if have and int(have.get('size', -1)) == size:
                 log(f'  跳过 {name}（已存在且大小一致）')
                 stats['skipped'] += 1
@@ -340,6 +375,15 @@ def run_self_test():  # pragma: no cover - 自检本身即测试代码
     for raw, expected in hostile:
         got = safe_temp_name(raw)
         check(f'净化 {raw!r} -> {expected!r}', got == expected, f'得到 {got!r}')
+
+    # 公开仓库会规整附件名（空格→点）：判重必须按规整名比较
+    for raw, expected in [
+        ('Engram 1.5.8.apk', 'Engram.1.5.8.apk'),
+        ('Engram Setup 1.5.8.exe', 'Engram.Setup.1.5.8.exe'),
+        ('sha256-1.5.8.txt', 'sha256-1.5.8.txt'),
+    ]:
+        got = canonical_asset_name(raw)
+        check(f'公开仓库附件名 {raw!r} -> {expected!r}', got == expected, f'得到 {got!r}')
 
     for raw in [p[0] for p in hostile]:
         path = temp_path_for(raw)

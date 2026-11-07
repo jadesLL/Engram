@@ -225,6 +225,8 @@ GitHub 上的仓库是私有仓库的**脱敏快照**（见 [`PUBLIC-MIRROR.md`]
 - **幂等**：同名附件大小一致就跳过，大小不同才删旧重传；重复触发不会重复上传 170MB 的 exe。
 - **不碰正文**：公开 Release 正文由 public-mirror 用**已脱敏的 CHANGELOG** 填写；CI 只在 Release 不存在时建一个空正文的壳，绝不把私有 CHANGELOG 正文带过去。
 - **目标非 github.com 时自动跳过并返回 0**（与 make-public-snapshot.sh 的判定一致），本地验证可用 `SYNC_DRY_RUN=1`。
+- **产物补传 / 修复**：`Actions → Repair Public Release`（`.gitea/workflows/repair-public-release.yml`）输入标签即可把 Gitea Release 里已有、但公开仓库缺的附件补传过去；它不构建产物、不碰 Release 正文，脚本以 `main` 上的修复件为准。适用场景：发版同步步骤网络中断（2026-11-07 v1.5.8 的 305MB exe 上传被 `ssl.SSLEOFError` 中断），或历史上遗留的缺附件版本。
+- **判重与重试**：GitHub 会把附件名里的空格规整成点（`Engram 1.5.8.apk` → `Engram.1.5.8.apk`），脚本按「规整后同名 + 同大小」判重（否则已存在附件会被当缺失、重复上传撞 422 `already_exists`）；上传遇网络错误自动重试 3 次，4xx 不重试。
 
 > 这些二进制是**公开发布**的：发版前必须确认产物里没有私有信息（内网地址、域名、凭据）。构建侧现有两手防护——`server/dist` 不再产出 `*.test.js`（`tsconfig.build.json`），`prepare-desktop.js` 复制时再过滤一次测试文件；设置页的示例地址一律用 `192.168.x.x` 这类文档式写法。
 

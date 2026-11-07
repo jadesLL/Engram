@@ -1,0 +1,55 @@
+# 公开仓库（GitHub）Release 产物补传 / 修复工作流
+#
+# 背景：发版 dispatch（Actions → Release → Run workflow 勾选 binaries）最后一步会把
+# exe / APK / sha256 同步到公开仓库同名 Release；该步可能因网络中断（2026-11-07 v1.5.8
+# 实测 ssl.SSLEOFError，305MB exe 上传途中被对端断开）或历史版本缺附件留下缺口。
+# 本工作流只补附件，不构建产物、不碰 Release 正文：
+#   - 从 Gitea Release 拉取该标签已有附件，按「规整后同名 + 同大小」判重；
+#   - 已存在且大小一致的跳过，缺的补上传；上传断线自动重试（逻辑在 sync-public-release-assets.py）。
+#
+# 用法：Actions → Repair Public Release → Run workflow，输入标签（如 v1.5.8）。
+name: Repair Public Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补传附件的发版标签（如 v1.5.8）'
+        required: true
+        type: string
+      dry_run:
+        description: '只打印计划，不实际上传'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  # Windows runner 的 Git Bash 会做 MSYS 路径转换，必须禁用
+  MSYS_NO_PATHCONV: '1'
+
+jobs:
+  repair:
+    runs-on: windows
+    steps:
+      - name: 检出 main（补传脚本以 main 上的修复件为准，不依赖历史标签）
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+
+      - name: 补传缺失产物到公开仓库 Release
+        shell: bash
+        env:
+          PUBLIC_REPO_URL: ${{ vars.PUBLIC_MIRROR_REPO_URL }}
+          PUBLIC_TOKEN: ${{ secrets.PUBLIC_MIRROR_TOKEN }}
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAG_INPUT: ${{ inputs.tag }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+        run: |
+          VERSION="${TAG_INPUT#v}"
+          PY=python; command -v python >/dev/null 2>&1 || PY="py -3"
+          export GITEA_API_URL="${GITHUB_SERVER_URL}"
+          export GITEA_REPO="${GITHUB_REPOSITORY}"
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
+            export SYNC_DRY_RUN=1
+          fi
+          $PY main/scripts/sync-public-release-assets.py backfill --versions "$VERSION"
