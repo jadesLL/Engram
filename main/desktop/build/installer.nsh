@@ -42,3 +42,36 @@
     engr_skip_per_machine_guard:
   ${endif}
 !macroend
+
+; ── 覆盖升级兜底（2026-11-08）────────────────────────────────────────────────
+; 用户实例：装了 1.5.7 的机器覆盖安装 1.5.8 时报
+;   "Failed to uninstall old application files. Please try running the installer again.: 2"
+; 机制：electron-builder 的升级路径先跑旧版卸载器（--updated 把旧安装目录逐个文件改名到临时
+; 目录），旧卸载器返回非 0 时 handleUninstallResult 直接 SetErrorLevel 2 + Quit，升级中止。
+; 旧卸载器失败的现实原因：旧安装目录里还有残留进程占着文件（内置 Agent 的 node.exe 孙进程、
+; 杀软扫描、跨盘改名），只要一个文件改名失败就 Abort。
+; 兜底：失败也继续装，先清空旧目录再覆盖。代价是这一次升级失去「失败可回滚」，可以接受——
+; 用户数据与设置在 userData，不在安装目录，清安装目录不影响数据。
+!macro customUnInstallCheck
+  ${if} $R0 == 0
+    Return
+  ${endif}
+  DetailPrint "旧版本卸载失败（Exit code $R0），改为清理旧安装目录后继续覆盖安装：$INSTDIR"
+  RMDir /r "$INSTDIR"
+!macroend
+
+!macro customUnInstallCheckCurrentUser
+  ${if} $R0 == 0
+    Return
+  ${endif}
+  DetailPrint "旧版本卸载失败（Exit code $R0），改为清理旧安装目录后继续覆盖安装：$INSTDIR"
+  RMDir /r "$INSTDIR"
+!macroend
+
+; 新装出来的卸载器自己也不再因为个别文件被占用而整次 Abort：默认实现（--updated）是逐文件
+; 改名到临时目录，一个占用就 Abort，于是下一次升级又卡在同一个报错上。这里改为「尽量删除」：
+; 删不掉的文件留着无妨，注册表与快捷方式照常清理。
+!macro customRemoveFiles
+  SetOutPath $TEMP
+  RMDir /r "$INSTDIR"
+!macroend

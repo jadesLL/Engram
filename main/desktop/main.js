@@ -47,6 +47,10 @@ const updateChain = require('./scripts/lib/update-chain');
 const updateFailure = require('./scripts/lib/update-failure');
 // 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
 const uninstallGuard = require('./scripts/lib/uninstall-guard');
+// 整棵进程树的收尾（Windows taskkill /T + tasklist 轮询），单测见 scripts/tests/process-tree.test.js。
+// 只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，它们占着安装目录里的文件，
+// 覆盖安装时旧版卸载器改名失败 → 用户看到 "Failed to uninstall old application files...: 2"。
+const processTree = require('./scripts/lib/process-tree');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -711,11 +715,8 @@ function stopLocalChild() {
       resolve();
     };
     const killTimer = setTimeout(() => {
-      try {
-        c.kill('SIGKILL');
-      } catch {
-        /* 已退出 */
-      }
+      // 超时不再只杀直接子进程：内置 Agent 的 node.exe 孙进程会活下来并占着安装目录文件
+      void killChildTree(c);
     }, 5000);
     c.once('exit', finish);
     c.once('error', finish);
@@ -725,6 +726,61 @@ function stopLocalChild() {
       finish();
     }
   });
+}
+
+/**
+ * 按 PID 结束整棵进程树并等到它真的消失。
+ * Windows 上 child.kill()/SIGKILL 只结束直接子进程；内置 Agent 的 dsh（resources\node\node.exe）
+ * 是 server 的孙进程、还会再拉子代理，必须 taskkill /T 一起收掉，否则它们握着 app.asar.unpacked
+ * 里的文件句柄，安装器的旧卸载器改名失败会直接中止升级（见 scripts/lib/process-tree.js 头注释）。
+ * 返回 Promise<boolean>：是否在预算内确认整棵已退出（查询失败按已退出处理，不卡住安装）。
+ */
+function killChildTree(child, timeoutMs = processTree.KILL_GRACE_MS) {
+  const pid = child && child.pid;
+  if (!pid) return Promise.resolve(true);
+  if (processTree.isWindows()) {
+    try {
+      execFile('taskkill', processTree.killTreeArgs(pid), { windowsHide: true }, () => {});
+    } catch {
+      /* 已退出 */
+    }
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    /* 已退出 */
+  }
+  return treeGone(pid, timeoutMs);
+}
+
+/** 轮询 tasklist 直到该 PID 消失（文件句柄释放）或超出预算 */
+function treeGone(pid, timeoutMs) {
+  if (!processTree.isWindows()) return Promise.resolve(true);
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = () => {
+      execFile('tasklist', processTree.tasklistArgs(pid), { windowsHide: true }, (err, stdout) => {
+        const alive = !err && processTree.pidAliveFromTasklist(String(stdout || ''), pid);
+        if (!alive) return resolve(true);
+        if (Date.now() >= deadline) return resolve(false);
+        setTimeout(tick, processTree.POLL_INTERVAL_MS);
+      });
+    };
+    tick();
+  });
+}
+
+/**
+ * 升级/退出前把内嵌 server 整棵子树清干净：先撤锁、撤端口、撤文件占用，
+ * 之后安装器的旧卸载器才有机会改名旧安装目录。returns 是否确认清干净。
+ */
+async function stopLocalTree() {
+  const c = serverChild;
+  serverChild = null;
+  if (!c || !c.pid) return true;
+  const ok = await killChildTree(c);
+  if (!ok) log('[local] 进程树在预算内未完全退出（可能仍有孙进程占文件）：pid=' + c.pid);
+  return ok;
 }
 
 // ---------- 启动调度 ----------
@@ -854,13 +910,10 @@ app.on('before-quit', () => {
     }
     tray = null;
   }
+  // 退出前也要收整棵子树：只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，
+  // 它们握着安装目录里的文件，下一次覆盖安装会卡在「卸载旧版本」（见 process-tree 注释）
   if (serverChild) {
-    try {
-      serverChild.kill('SIGKILL');
-    } catch {
-      /* 忽略 */
-    }
-    serverChild = null;
+    void stopLocalTree();
   }
 });
 
@@ -1450,7 +1503,7 @@ ipcMain.handle('desktop-update-run-installer', (_e, filePath, version) => {
     } catch {
       /* 忽略 */
     }
-    beginSilentInstall(file, autoState.latestVersion, 'manual update');
+    void beginSilentInstall(file, autoState.latestVersion, 'manual update');
   }, INSTALL_NOTICE_MS);
   return true;
 });
@@ -1706,8 +1759,13 @@ function reportPendingUpdateResult() {
 
 /** 静默安装 + 自动重启：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否
  *  自动启动，也不依赖任何脚本解释器）；PS 进度窗为尽力而为的装饰层。
- *  spawn 后主进程随即退出——先撤锁、撤端口、撤文件占用，NSIS 无需强杀旧进程即可覆盖安装。 */
-function beginSilentInstall(file, version, source = 'auto update') {
+ *  **先 await stopLocalTree() 把 server 与内置 Agent 整棵子树收干净再启动安装器**：
+ *  NSIS 升级的第一步是跑旧版卸载器把旧安装目录原子改名，孙进程（dsh 的 node.exe、子代理）
+ *  还占着文件时这一步必失败，用户看到的就是 "Failed to uninstall old application files...: 2"。
+ *  顺序不能反：先 spawn 安装器再退出是旧实现的写法，正是本次事故来源。 */
+async function beginSilentInstall(file, version, source = 'auto update') {
+  const treeFreed = await stopLocalTree();
+  if (!treeFreed) log('[update] 安装前进程树未完全退出，继续安装（安装器兜底会清旧目录）');
   const target = installedAppExe();
   const scopeFlag = installerScopeFlag();
   const cmd = `start "" /wait "${file}" /S ${scopeFlag} & start "" "${target}"`;
@@ -1836,7 +1894,7 @@ async function autoUpdateTick() {
       } catch {
         /* 忽略 */
       }
-      beginSilentInstall(file, autoState.latestVersion);
+      void beginSilentInstall(file, autoState.latestVersion);
     }, INSTALL_NOTICE_MS);
   } catch (e) {
     if (autoAbort && autoAbort.signal.aborted) {
