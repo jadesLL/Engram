@@ -39,6 +39,26 @@ export interface ApplyResult {
 
 export const UPDATE_SOURCE_HINT = '还没有配置更新源：打开「设置 → 连接与同步 → 更新源配置」填写远端仓库地址后重试。';
 
+/** `/api/update/check` 结果里与「是否已是最新」相关的字段（只取需要的，避免耦合整份响应） */
+export interface ServerUpdateCheckSummary {
+  hasUpdate?: boolean;
+  digestMatch?: boolean | null;
+  currentVersion?: string;
+  latestVersion?: string | null;
+}
+
+/**
+ * 「已经是最新版本」的判定：必须同时满足「版本没落后」与「镜像 digest 与远端一致」。
+ *
+ * 只看 `hasUpdate === false` 不够：`main` 通道的版本号与本地相同，更新由镜像 digest 驱动，
+ * 那时 hasUpdate 恒为 false、真正说明问题的是 digestMatch。任一字段未知（未检查/远端不可达）
+ * 一律返回 false——宁可多跑一次容器重建，也不谎报「已是最新」让用户以为更新过了。
+ */
+export function isServerAlreadyLatest(check: ServerUpdateCheckSummary | null | undefined): boolean {
+  if (!check) return false;
+  return check.hasUpdate === false && check.digestMatch === true;
+}
+
 /** 把主进程/服务端的错误码翻成人话（未配置更新源是最常见的一种） */
 export function friendlyApplyError(error?: string): string {
   const text = String(error || '').trim();

@@ -44,6 +44,9 @@ const updateCadence = require('./scripts/lib/update-cadence');
 const updateChain = require('./scripts/lib/update-chain');
 // 下载进度的纯逻辑（百分比收敛 / 广播节流 / 进度事件来源标记），单测在 scripts/tests/update-progress.test.js
 const updateProgress = require('./scripts/lib/update-progress');
+// 自动更新失败暂停的纯逻辑（同版本失败过一次就不再自动重试，记录持久化到 config.json），
+// 单测在 scripts/tests/update-failure.test.js
+const updateFailure = require('./scripts/lib/update-failure');
 // 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
 const uninstallGuard = require('./scripts/lib/uninstall-guard');
 
@@ -792,8 +795,17 @@ app.whenReady().then(() => {
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig({ silent: SILENT_START });
-  // 上一次「退出安装」结算：版本没前进就把原因挂到 autoState.installError，界面启动后能直接看到
+  // 上一次「退出安装」结算：版本没前进就把原因挂到 autoState.installError、写入失败暂停并弹通知，
+  // 界面启动后能直接看到
   reportPendingUpdateResult();
+  // 已有的失败暂停记录先灌进状态：设置页在首轮自动检查（启动 4 秒后）之前就能显示暂停横幅
+  {
+    const recordedFailure = readAutoUpdateFailure();
+    if (recordedFailure) {
+      autoState.blockedVersion = recordedFailure.version;
+      autoState.blockedReason = recordedFailure.reason;
+    }
+  }
   // 登录项与当前安装形态对齐（换过安装目录、旧版没写静默标记时改写命令），并把状态读进托盘菜单缓存；
   // 不 await：注册表读取失败也不能挡住启动
   if (!process.env.ENGRAM_USER_DATA) void reconcileLaunchAtLogin();
@@ -1469,13 +1481,18 @@ const INSTALL_NOTICE_MS = 3500; // 「正在更新」提示层展示时长，随
 
 const autoState = {
   enabled: true,
-  phase: 'idle', // idle | unconfigured | checking | downloading | up-to-date | installing | failed
+  // paused = 该目标版本自动更新失败过一次，本版本不再自动重试（等新版本或用户手动重试）
+  phase: 'idle', // idle | unconfigured | checking | downloading | up-to-date | installing | failed | paused
   latestVersion: null,
   percent: null,
   error: '',
   // 上一次「退出安装」的结果（重启后比对版本号得出）：装失败时留在这里给界面提示，
   // 与 phase/error 分开是因为自动检查每 4 秒就会把 phase 推着走一遍，message 会被冲掉。
   installError: '',
+  // 自动更新失败后暂停的目标版本与原因（config.json 的 autoUpdateFailure，见 lib/update-failure.js）；
+  // 有值时 主进程不再对这个版本自动下载/安装，界面显示暂停横幅并提供「重试自动更新」。
+  blockedVersion: null,
+  blockedReason: '',
 };
 let autoBusy = false;
 let autoAbort = null;
@@ -1509,6 +1526,74 @@ function publishAutoProgress(percent) {
   autoState.percent = updateProgress.clampPercent(percent);
   if (!result.publish) return;
   broadcast('desktop-update-state', { ...autoState });
+}
+
+/** 读取已持久化的「自动更新失败暂停」记录（损坏/旧格式按没有处理，不能靠脏数据永久停掉更新） */
+function readAutoUpdateFailure() {
+  try {
+    return updateFailure.normalizeFailure(readConfig().autoUpdateFailure);
+  } catch (e) {
+    log('read auto update failure failed (non-fatal): ' + describeError(e));
+    return null;
+  }
+}
+
+/** 把失败记录写进 config.json，并同步到主进程状态（界面横幅/重试按钮据此渲染） */
+function saveAutoUpdateFailure(version, reason) {
+  const record = updateFailure.recordFailure(readAutoUpdateFailure(), version, reason);
+  if (!record) return null;
+  try {
+    const cfg = readConfig();
+    cfg.autoUpdateFailure = record;
+    writeConfig(cfg);
+  } catch (e) {
+    log('save auto update failure failed (non-fatal): ' + describeError(e));
+  }
+  autoState.blockedVersion = record.version;
+  autoState.blockedReason = record.reason;
+  return record;
+}
+
+/** 清除失败暂停记录（版本不匹配时不动）；返回是否真的清掉了 */
+function clearAutoUpdateFailure(version) {
+  try {
+    const cfg = readConfig();
+    const current = updateFailure.normalizeFailure(cfg.autoUpdateFailure);
+    if (!current) return false;
+    if (version && !updateFailure.appliesTo(current, version)) return false;
+    delete cfg.autoUpdateFailure;
+    writeConfig(cfg);
+  } catch (e) {
+    log('clear auto update failure failed (non-fatal): ' + describeError(e));
+    return false;
+  }
+  autoState.blockedVersion = null;
+  autoState.blockedReason = '';
+  return true;
+}
+
+/**
+ * 失败后主动提示用户：应用可能已缩到托盘、用户也不会主动翻设置页，只把原因写进状态等于没提示。
+ * 系统通知点击直达主窗口（窗口还没建好时忽略点击，启动流程随后会正常显示主窗）。
+ */
+function notifyAutoUpdateFailure(version, reason) {
+  if (!Notification.isSupported()) return;
+  const record = updateFailure.recordFailure(null, version, reason);
+  if (!record) return;
+  const text = updateFailure.describeFailure(record);
+  try {
+    const n = new Notification({
+      title: `Engram v${record.version} 自动更新失败`,
+      body: text.length > 260 ? text.slice(0, 260) + '…' : text,
+      icon: trayIcon(),
+    });
+    n.on('click', () => {
+      if (win && !win.isDestroyed()) showMainWindow();
+    });
+    n.show();
+  } catch (e) {
+    log('auto update failure notification failed (non-fatal): ' + describeError(e));
+  }
 }
 
 /** 已安装应用的 exe 路径：静默安装完成后由安装编排脚本拉起新版 */
@@ -1636,9 +1721,19 @@ function reportPendingUpdateResult() {
     return;
   }
   const outcome = updateChain.installOutcome({ pendingVersion: pending?.version, currentVersion: app.getVersion() });
-  if (outcome.status === 'none' || outcome.status === 'ok') return;
+  if (outcome.status === 'none') return;
+  if (outcome.status === 'ok') {
+    // 这次安装真的生效了：清掉该版本的失败暂停（手动重试成功后也恢复自动更新）
+    clearAutoUpdateFailure(outcome.pendingVersion);
+    log('pending update result: installed v' + outcome.pendingVersion);
+    return;
+  }
   if (outcome.status === 'failed') {
     autoState.installError = `上次更新到 v${outcome.pendingVersion} 未生效（当前仍是 v${outcome.currentVersion}）：可能安装被系统拦截、UAC 被取消或安装中断，可再试一次或手动下载安装包。`;
+    // 安装没生效也算「本版本自动更新失败」：否则下一轮自动检查又会下载同一个包再装一次，
+    // 形成永远失败、永远重启的循环。暂停本版本并主动提示用户（用户原话 2026-11-08）。
+    saveAutoUpdateFailure(outcome.pendingVersion, '安装未生效：可能安装被系统拦截、UAC 被取消或安装中断');
+    notifyAutoUpdateFailure(outcome.pendingVersion, autoState.installError);
   } else {
     autoState.installError = `上次更新到 v${outcome.pendingVersion} 的结果无法确认，请检查当前版本。`;
   }
@@ -1700,6 +1795,8 @@ function pokeUpdateChecks(reason) {
   log('update poke: ' + reason);
   if (PACKAGED) {
     if (autoBusy || autoState.phase === 'installing') return;
+    // 本版本已因失败暂停自动更新：回前台不必立刻再查一遍（周期性检查会负责发现更新的新版本）
+    if (autoState.blockedVersion) return;
     autoBackoffIndex = 0;
     scheduleAutoUpdateCheck(600);
   } else {
@@ -1726,6 +1823,9 @@ async function autoUpdateTick() {
   autoBusy = true;
   autoAbort = new AbortController();
   let foundUpdate = false;
+  // 只有「已经确定目标版本、开始处理这个版本」之后的失败才写暂停记录；检查请求本身失败
+  // （网络抖动/仓库 5xx）不写，避免一次查不通就把自动更新永久停掉
+  let autoAttemptVersion = null;
   try {
     setAutoPhase('checking');
     const cfg = await resolveUpdateCfg(null);
@@ -1742,11 +1842,24 @@ async function autoUpdateTick() {
       setAutoPhase('up-to-date');
       return;
     }
+    // 这个版本此前自动更新失败过：本版本不再自动下载/安装（用户 2026-11-08 要求），
+    // 只把状态摆给界面与系统通知；发现更新的新版本时上面 appliesTo 不成立，自动恢复。
+    const recordedFailure = readAutoUpdateFailure();
+    if (recordedFailure && updateFailure.appliesTo(recordedFailure, release.version)) {
+      autoState.latestVersion = release.version;
+      autoState.blockedVersion = recordedFailure.version;
+      autoState.blockedReason = recordedFailure.reason;
+      setAutoPhase('paused');
+      log(`auto update paused for v${recordedFailure.version} (上次失败：${recordedFailure.reason || '原因未记录'})`);
+      return;
+    }
+    if (recordedFailure) clearAutoUpdateFailure(); // 新版本已发布：旧的失败记录不再拦自动更新
     // 这轮检查期间用户点了手动下载：让路，别和它抢同一个安装包文件（本轮就此结束）
     if (manualDownloadBusy) {
       setAutoPhase('idle');
       return;
     }
+    autoAttemptVersion = release.version;
     foundUpdate = true;
     autoState.latestVersion = release.version;
     autoState.installError = '';
@@ -1777,6 +1890,13 @@ async function autoUpdateTick() {
       setAutoPhase('idle'); // 手动中止（如关闭开关），不算失败
     } else {
       autoState.error = describeError(e);
+      // 目标版本已知才记录暂停（下载/校验/安装链路失败都属于「这个版本更新失败」）；
+      // 记录后本进程与重启后的自动检查都不再对这个版本重试，并弹系统通知提示用户。
+      if (autoAttemptVersion) {
+        saveAutoUpdateFailure(autoAttemptVersion, autoState.error);
+        notifyAutoUpdateFailure(autoAttemptVersion, autoState.error);
+        foundUpdate = false; // 已暂停本版本：下一轮回到普通退避，不再按「有更新待处理」每分钟重查
+      }
       setAutoPhase('failed');
       log('auto update failed: ' + autoState.error);
     }
@@ -1797,8 +1917,21 @@ ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
   if (!c.autoUpdate && autoAbort) autoAbort.abort(); // 中断进行中的自动下载
   setAutoPhase('idle');
   if (c.autoUpdate) {
+    // 用户重新打开开关 = 明确表示再试一次：清掉失败暂停记录并立即检查
+    clearAutoUpdateFailure();
     autoBackoffIndex = 0;
     scheduleAutoUpdateCheck(1000); // 开启后立即触发一次检查
+  }
+  return { ...autoState };
+});
+
+// 设置页「重试自动更新」：清掉暂停记录并立即重新检查（开关关着时只清记录，不擅自打开开关）
+ipcMain.handle('desktop-update-retry-auto', () => {
+  clearAutoUpdateFailure();
+  setAutoPhase('idle');
+  if (readConfig().autoUpdate !== false) {
+    autoBackoffIndex = 0;
+    scheduleAutoUpdateCheck(1000);
   }
   return { ...autoState };
 });

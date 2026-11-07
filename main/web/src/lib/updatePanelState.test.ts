@@ -52,9 +52,19 @@ test('进度轨宽度只认下载阶段：其余阶段为 0（轨道常驻占位
   assert.equal(autoProgressVisible({ ...base, phase: 'downloading', percent: 0 }), false);
 });
 
-test('色调：失败红、安装中黄，其余常规', () => {
+test('失败暂停（v1.5.9 起）与普通失败的文案都要点明「可重试」', () => {
+  const failed = autoUpdateStatusLine({ ...base, phase: 'failed', error: '网络中断' });
+  assert.ok(failed.includes('网络中断'));
+  const blocked = autoUpdateStatusLine({ ...base, phase: 'failed', error: '安装未生效', blockedVersion: '1.5.8' });
+  assert.ok(blocked.includes('已暂停 v1.5.8'), '失败且有暂停记录时要说清暂停了哪个版本');
+  const paused = autoUpdateStatusLine({ ...base, phase: 'paused', blockedVersion: '1.5.8' });
+  assert.ok(paused.includes('已暂停') && paused.includes('重试自动更新'), '暂停态要给可执行动作，槽位不留空');
+});
+
+test('色调：失败红、安装中/暂停黄，其余常规', () => {
   assert.equal(autoUpdateStatusTone({ ...base, phase: 'failed' }), 'err');
   assert.equal(autoUpdateStatusTone({ ...base, phase: 'installing' }), 'warn');
+  assert.equal(autoUpdateStatusTone({ ...base, phase: 'paused' }), 'warn');
   assert.equal(autoUpdateStatusTone({ ...base, phase: 'downloading' }), '');
   assert.equal(autoUpdateStatusTone({ ...base, phase: 'idle' }), '');
 });

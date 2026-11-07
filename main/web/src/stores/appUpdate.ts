@@ -110,7 +110,8 @@ export const useAppUpdateStore = defineStore('appUpdate', {
      *  - `authType`：私有库凭据方式（`token` / `password`）；换方式时服务端只保留当前方式的凭据；
      *  - `username`：用户名密码方式的用户名（非秘密）；
      *  - `token` / `password`：凭据（空串即清除；留空不传 = 不修改）；
-     *  - `autoUpdate`：自动检查 + 后台下载开关。
+     *  - `autoUpdate`：自动检查 + 后台下载开关；
+     *  - `retryAutoUpdate`：清掉「本版本自动更新已暂停」记录并立即重新检查。
      */
     async saveConfig(patch: {
       giteaUrl?: string;
@@ -120,6 +121,8 @@ export const useAppUpdateStore = defineStore('appUpdate', {
       token?: string;
       password?: string;
       autoUpdate?: boolean;
+      /** 清掉「自动更新失败暂停」记录并立即重新检查（面板「重试自动更新」按钮） */
+      retryAutoUpdate?: boolean;
       useHub?: boolean;
     }) {
       try {

@@ -55,11 +55,14 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     ipcRenderer.on('desktop-update-progress', listener);
     return () => ipcRenderer.removeListener('desktop-update-progress', listener);
   },
-  // ---------- 自动更新（主进程状态机：idle/unconfigured/checking/downloading/up-to-date/installing/failed） ----------
-  // 查询自动更新当前状态（含开关、阶段、最新版本、下载进度、失败原因）
+  // ---------- 自动更新（主进程状态机：idle/unconfigured/checking/downloading/up-to-date/installing/failed/paused） ----------
+  // 查询自动更新当前状态（含开关、阶段、最新版本、下载进度、失败原因；paused 时带
+  // blockedVersion/blockedReason = 该版本失败过一次、本版本不再自动重试）
   desktopUpdateGetState: () => ipcRenderer.invoke('desktop-update-get-state'),
-  // 开关自动更新（持久化到 config.json；开启后立即触发一次检查）
+  // 开关自动更新（持久化到 config.json；开启后立即触发一次检查，并清掉失败暂停记录）
   desktopUpdateSetAuto: (enabled) => ipcRenderer.invoke('desktop-update-set-auto', enabled),
+  // 清掉「本版本自动更新已暂停」记录并立即重新检查（设置页「重试自动更新」按钮）
+  desktopUpdateRetryAuto: () => ipcRenderer.invoke('desktop-update-retry-auto'),
   // 自动更新状态订阅（返回取消函数）
   onUpdateState: (cb) => {
     const listener = (_e, data) => cb(data);

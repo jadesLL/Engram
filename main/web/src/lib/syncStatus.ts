@@ -47,6 +47,11 @@ export interface SyncStatusOptions {
   now?: number;
   /** Android 本地端（Capacitor）：同步是「手动/定时跑一轮」而不是常驻长连接 */
   androidLocal?: boolean;
+  /**
+   * 服务器更新中（本页触发容器更新 / 桌面端远程更新同步中枢）：
+   * 服务中断是可预期的，状态条要显示「服务器更新中」，不能报成「同步中断」。
+   */
+  updating?: boolean;
 }
 
 function pad(n: number): string {
@@ -106,6 +111,19 @@ export function syncStatusView(
 
   const now = options.now ?? Date.now();
   const lastSync = formatSyncTime(status.lastSyncAt, now);
+
+  // 服务器更新中：服务被打断是可预期的，先于各状态档回答「现在为什么同步不了」。
+  // 中枢端同样适用：更新本机服务器时，中枢自己的状态也要说清在更新而不是照常「运行中」。
+  if (options.updating) {
+    return {
+      phase: 'syncing',
+      tone: 'busy',
+      icon: 'rotate-right',
+      label: '服务器更新中',
+      detail: '正在拉取镜像并重建容器，恢复后自动重连',
+      hint: '服务器更新完成后同步会自动继续，无需操作',
+    };
+  }
 
   if (role === 'hub') {
     const peers = status.peers || [];

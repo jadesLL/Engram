@@ -81,6 +81,18 @@
       </label>
     </div>
 
+    <!-- 自动更新失败暂停（用户 2026-11-08 要求）：本版本不再自动后台下载，手动下载/安装仍可用 -->
+    <div v-if="autoPausedHint" class="setting-row">
+      <div class="setting-copy">
+        <strong>自动更新已暂停</strong>
+        <span>{{ autoPausedHint }} 修好网络、凭据或被拦截的原因后可以立即重试；也可以直接用下方按钮手动更新。</span>
+      </div>
+      <button class="btn" type="button" :disabled="retryingAuto" @click="retryAuto">
+        <AppSpinner v-if="retryingAuto" :size="11" />
+        <template v-else>重试自动更新</template>
+      </button>
+    </div>
+
     <!-- 更新内容（Release 正文，纯文本取前几条） -->
     <div v-if="highlights.length" class="update-notes">
       <div class="update-notes-caption">本次更新内容</div>
@@ -193,6 +205,7 @@ import { useAppUpdateStore } from '../../stores/appUpdate';
 import { parseRepoUrl } from '../../lib/repoSourceUrl';
 import {
   appUpdateActionLabel,
+  appUpdateAutoPausedHint,
   appUpdateBlockedHint,
   appUpdateCheckedLabel,
   appUpdateCredentialProblem,
@@ -226,6 +239,8 @@ const repoUrlError = ref('');
 const credentialError = ref('');
 const saving = ref(false);
 const busy = ref(false);
+/** 「重试自动更新」请求进行中（按钮转圈，避免连点） */
+const retryingAuto = ref(false);
 const message = ref('');
 const messageTone = ref<'ok' | 'warn' | 'err'>('ok');
 
@@ -243,6 +258,8 @@ const primaryAction = computed(() => info.value.hasUpdate || info.value.ready ||
 const checkedLabel = computed(() => (info.value.checkedAt ? appUpdateCheckedLabel(info.value.checkedAt) : ''));
 const highlights = computed(() => (info.value.hasUpdate || info.value.ready ? releaseHighlights(info.value.releaseNotes) : []));
 const showNotificationRow = computed(() => info.value.ready && needsNotificationPermission(info.value));
+/** 自动更新失败暂停提示（本地服务记录 autoPausedVersion 才显示整行） */
+const autoPausedHint = computed(() => appUpdateAutoPausedHint(info.value));
 
 const groupHint = computed(() =>
   info.value.debugBuild
@@ -309,6 +326,22 @@ async function toggleAuto(event: Event) {
   const result = await store.saveConfig({ autoUpdate: enabled });
   if (!result.ok) notify.error(result.error || '保存失败');
   else notify.success(enabled ? '自动更新已开启' : '自动更新已关闭');
+}
+
+/**
+ * 清掉「本版本自动更新已暂停」记录并立即重新检查（用户修好网络/凭据/权限后不必等下一个版本）。
+ * 重试不清空手动动作：自动更新仍开着就继续后台下载，否则只清除记录由用户自己点下载。
+ */
+async function retryAuto() {
+  retryingAuto.value = true;
+  const result = await store.saveConfig({ retryAutoUpdate: true });
+  retryingAuto.value = false;
+  if (!result.ok) {
+    notify.error(result.error || '重试自动更新失败');
+    return;
+  }
+  notify.success('已清除暂停记录，正在重新检查更新');
+  await store.check(true);
 }
 
 async function save() {

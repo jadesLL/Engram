@@ -49,6 +49,12 @@ class AppUpdater(
         /** 下载完成后的系统通知（应用在前台时宿主可选择不弹） */
         fun notifyReady(version: String, apk: File)
 
+        /**
+         * 自动下载失败、已暂停本版本自动更新的系统通知。
+         * 失败发生在后台时用户看不到界面，必须有一条通知兜住；宿主没有通知权限时静默降级。
+         */
+        fun notifyAutoUpdateFailure(version: String, reason: String)
+
         /** 申请通知权限（Android 13+）；返回当前是否已授权 */
         fun requestNotificationPermission(): Boolean
     }
@@ -77,6 +83,9 @@ class AppUpdater(
     /** 用户点过安装但卡在系统「安装未知应用」授权页：回前台自动续装（见 resumePendingInstall） */
     @Volatile private var pendingInstallAfterPermission = false
 
+    /** 当前这轮下载是不是自动触发的：只有自动失败才写暂停记录（手动失败由用户自己看着办） */
+    @Volatile private var autoDownloadInFlight = false
+
     fun config(): AppUpdateConfig = AppUpdateConfig.fromSettings { key -> db.setting(key) }
 
     /**
@@ -92,6 +101,7 @@ class AppUpdater(
         val cfg = config()
         val current = currentVersion()
         val ready = readyApk()
+        val paused = autoPause()
         return JSONObject()
             .put("runtime", "android")
             .put("currentVersion", current)
@@ -128,6 +138,11 @@ class AppUpdater(
             .put("installLaunched", installLaunched)
             // 正等着用户去系统授权页点「允许」：界面据此提示「返回后会自动继续安装」
             .put("awaitingInstallPermission", pendingInstallAfterPermission)
+            // 自动更新暂停记录（本版本自动下载失败过）：界面据此显示「已暂停」与失败原因，
+            // 字段固定存在、无记录时为空串，前端不用做 undefined 判断
+            .put("autoPausedVersion", paused.version)
+            .put("autoPausedReason", paused.reason)
+            .put("autoPausedAt", paused.at)
     }
 
     /**
@@ -137,7 +152,8 @@ class AppUpdater(
      *  - `authType`：私有库凭据方式（`token` / `password`，与桌面/服务端同一口径）；
      *  - `username`：用户名密码方式的用户名（非秘密，进设置表）；
      *  - `token` / `password`：空串即清除（分别存 Keystore 密封的 SecretStore，不进设置表）；
-     *  - `autoUpdate`：自动检查 + 后台下载开关。
+     *  - `autoUpdate`：自动检查 + 后台下载开关；
+     *  - `retryAutoUpdate: true`：用户显式点「重试自动更新」——清掉暂停记录，自动更新开着就立刻重新检查。
      */
     fun saveConfig(body: JSONObject) {
         if (body.has("giteaUrl")) db.setSetting(AppUpdateConfig.KEY_URL, body.optString("giteaUrl").trim().trimEnd('/'))
@@ -162,11 +178,10 @@ class AppUpdater(
             // 只保留当前方式的凭据（与桌面/服务端「更新源配置」同一口径）：换方式后另一种不再需要
             if (mode == AppUpdateConfig.AUTH_PASSWORD) secrets.put(TOKEN_KEY, null) else secrets.put(PASSWORD_KEY, null)
         }
-        if (
-            body.has("giteaUrl") || body.has("giteaRepo") || body.has("authType") ||
+        val sourceChanged = body.has("giteaUrl") || body.has("giteaRepo") || body.has("authType") ||
             body.has("username") || body.optBoolean("useHub", false)
-        ) {
-            // 换源/换凭据后旧检查结果不再成立：清掉版本与包，避免拿旧仓库的包去装
+        if (sourceChanged) {
+            // 换源/换凭据方式后旧检查结果不再成立：清掉版本与包，避免拿旧仓库的包去装
             synchronized(lock) {
                 latestVersion = null; releaseTag = ""; releaseNotes = ""; assetName = ""; assetUrl = ""
                 totalBytes = 0; doneBytes = 0; percentValue = null; checkedAtMs = 0
@@ -175,6 +190,14 @@ class AppUpdater(
                 errorText = ""
             }
             updatesDir().listFiles()?.forEach { it.delete() }
+        }
+        // 换源或换凭据（令牌/密码）后旧失败记录不再成立：失败可能正是凭据不对造成的，
+        // 用户改完凭据就应允许自动下载重试；换源时同一版本号也代表另一份包
+        if (sourceChanged || body.has("token") || body.has("password")) clearAutoUpdatePause()
+        if (body.optBoolean("retryAutoUpdate", false)) {
+            // 用户显式点「重试自动更新」：清掉暂停记录；自动更新开着就立刻重新检查一次
+            clearAutoUpdatePause()
+            if (config().autoUpdate) requestCheck()
         }
     }
 
@@ -203,7 +226,8 @@ class AppUpdater(
         if (phase == PHASE_CHECKING || phase == PHASE_DOWNLOADING) return
         val fresh = checkedAtMs > 0 && System.currentTimeMillis() - checkedAtMs < AppUpdateConfig.CHECK_INTERVAL_MS
         if (fresh) {
-            if (assetUrl.isNotBlank() && readyApk() == null) requestDownload()
+            // 自动续下同样受暂停记录约束：本版本自动下载失败过就不再自动重试，检查本身不受影响
+            if (assetUrl.isNotBlank() && readyApk() == null && autoDownloadAllowed()) requestAutoDownload()
             return
         }
         requestCheck()
@@ -220,7 +244,15 @@ class AppUpdater(
     }
 
     /** 手动触发下载（检查结果里已有 assetUrl 才有意义；自动更新开启时检查完会自动下载） */
-    fun requestDownload() {
+    fun requestDownload() = startDownload(automatic = false)
+
+    /**
+     * 自动路径（检查完自动下 / 回前台自动续下）：失败一次就记下暂停，本版本不再自动重试；
+     * 用户手动点「下载」不走这里，所以暂停期间手动下载仍然可用。
+     */
+    private fun requestAutoDownload() = startDownload(automatic = true)
+
+    private fun startDownload(automatic: Boolean) {
         synchronized(lock) {
             if (phase == PHASE_DOWNLOADING) return
             if (assetUrl.isBlank()) {
@@ -228,6 +260,7 @@ class AppUpdater(
                 errorText = "还没有可下载的安装包，请先检查更新"
                 return
             }
+            autoDownloadInFlight = automatic
             phase = PHASE_DOWNLOADING
             errorText = ""
         }
@@ -359,19 +392,30 @@ class AppUpdater(
                 fail("Release 里的 APK 附件没有下载地址")
                 return
             }
+            // 发布更新的新版本（版本号不同）后自动恢复：暂停记录只针对失败过的那个版本号
+            if (AppUpdatePolicy.shouldClearAutoPause(autoPause().version, latestVersion)) clearAutoUpdatePause()
+            val hasUpdate = AppUpdatePolicy.hasUpdate(currentVersion(), latestVersion)
             synchronized(lock) {
-                if (AppUpdatePolicy.hasUpdate(currentVersion(), latestVersion)) {
-                    phase = PHASE_IDLE
-                } else {
-                    phase = PHASE_IDLE
+                phase = PHASE_IDLE
+                if (!hasUpdate) {
                     errorText = ""
                     latestVersion = null
                     releaseTag = ""
                     releaseNotes = ""
                 }
             }
-            // 发现新版：自动更新开着就直接后台下载（用户无需盯着，装的时候再点一次确认）
-            if (AppUpdatePolicy.hasUpdate(currentVersion(), latestVersion) && config().autoUpdate) requestDownload()
+            // 发现新版：自动更新开着就直接后台下载（用户无需盯着，装的时候再点一次确认）；
+            // 本版本自动下载失败过就只把暂停状态留给界面提示，不再自动重试
+            if (AppUpdatePolicy.shouldStartDownload(
+                    manual = false,
+                    autoUpdate = config().autoUpdate,
+                    hasUpdate = hasUpdate,
+                    pausedVersion = autoPause().version,
+                    latestVersion = latestVersion,
+                )
+            ) {
+                requestAutoDownload()
+            }
         } catch (error: Exception) {
             fail(describe(error))
         }
@@ -430,10 +474,18 @@ class AppUpdater(
             }
             finishReady(target)
         } catch (error: Exception) {
+            val detail = describe(error)
+            val automatic = synchronized(lock) {
+                val flag = autoDownloadInFlight
+                autoDownloadInFlight = false
+                flag
+            }
             synchronized(lock) {
                 phase = PHASE_ERROR
-                errorText = describe(error)
+                errorText = detail
             }
+            // 只有自动触发的下载失败才写暂停记录：手动下载失败不拦用户，也不改自动更新策略
+            if (automatic) recordAutoUpdateFailure(detail)
         }
     }
 
@@ -446,7 +498,10 @@ class AppUpdater(
             percentValue = 100
             errorText = ""
             installLaunched = false
+            autoDownloadInFlight = false
         }
+        // 包已经下全：不管这轮是自动还是手动，都说明该版本可用，暂停记录可以清掉了
+        clearAutoUpdatePause()
         host?.notifyReady(latestVersion ?: "", apk)
     }
 
@@ -497,6 +552,43 @@ class AppUpdater(
 
     private fun describe(error: Throwable): String =
         error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+
+    // ---------------------------------------------------------------- 自动更新暂停
+
+    /** 当前暂停记录（settings 表持久化；版本号空串 = 未暂停） */
+    private fun autoPause(): AutoUpdatePause = AutoUpdatePause.fromSettings { key -> db.setting(key) }
+
+    /** 自动下载是否放行：本版本自动下载失败过就不再自动下；手动下载与检查更新都不受影响 */
+    private fun autoDownloadAllowed(): Boolean = AppUpdatePolicy.shouldStartDownload(
+        manual = false,
+        autoUpdate = config().autoUpdate,
+        hasUpdate = AppUpdatePolicy.hasUpdate(currentVersion(), latestVersion),
+        pausedVersion = autoPause().version,
+        latestVersion = latestVersion,
+    )
+
+    /**
+     * 自动下载失败一次 → 记下这个版本，本版本不再自动重试，并让宿主发一条系统通知。
+     * 记在 settings 表而不是内存：失败常发生在后台，进程被杀后重启也不该再拿同一个坏包重试。
+     */
+    private fun recordAutoUpdateFailure(reason: String) {
+        val version = latestVersion?.trim().orEmpty()
+        if (version.isEmpty()) return
+        val detail = reason.take(500)
+        db.setSetting(AppUpdateConfig.KEY_AUTO_FAILED_VERSION, version)
+        db.setSetting(AppUpdateConfig.KEY_AUTO_FAILED_REASON, detail)
+        db.setSetting(AppUpdateConfig.KEY_AUTO_FAILED_AT, Instant.now().toString())
+        // 应用不在前台 / 没有通知权限时宿主静默降级：发不出通知也不能影响暂停记录与状态接口
+        runCatching { host?.notifyAutoUpdateFailure(version, detail) }
+    }
+
+    /** 清除暂停记录：发布新版本号、下载成功、用户点「重试自动更新」、换更新源时调用 */
+    private fun clearAutoUpdatePause() {
+        if (!autoPause().recorded) return
+        db.setSetting(AppUpdateConfig.KEY_AUTO_FAILED_VERSION, "")
+        db.setSetting(AppUpdateConfig.KEY_AUTO_FAILED_REASON, "")
+        db.setSetting(AppUpdateConfig.KEY_AUTO_FAILED_AT, "")
+    }
 
     companion object {
         /** 凭据存 SecretStore（Android Keystore 密封），与同步令牌同一套保管口径 */

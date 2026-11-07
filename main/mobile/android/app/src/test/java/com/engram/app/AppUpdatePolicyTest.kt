@@ -244,4 +244,74 @@ class AppUpdatePolicyTest {
         assertFalse("包不在（换源/装完清理）：不许自动装", AppUpdatePolicy.shouldResumeInstall(true, true, false))
         assertFalse("用户没点过安装：不许自动装", AppUpdatePolicy.shouldResumeInstall(false, true, true))
     }
+
+    /** 自动下载失败一次就暂停本版本：同版本（含补零写法）继续暂停，发新版本号后自动恢复 */
+    @Test fun pausesOnlyTheVersionThatFailed() {
+        assertTrue(AppUpdatePolicy.isAutoPaused("1.5.9", "1.5.9"))
+        assertTrue("补零写法属同一版本，不能因为写法不同就恢复", AppUpdatePolicy.isAutoPaused("1.5", "1.5.0"))
+        assertTrue(AppUpdatePolicy.isAutoPaused("v1.5.9", "1.5.9"))
+        assertFalse("发布新版本号后自动恢复", AppUpdatePolicy.isAutoPaused("1.5.9", "1.6.0"))
+        assertFalse("没有暂停记录", AppUpdatePolicy.isAutoPaused("", "1.5.9"))
+        assertFalse(AppUpdatePolicy.isAutoPaused(null, "1.5.9"))
+        assertFalse("目标版本未知时不算暂停", AppUpdatePolicy.isAutoPaused("1.5.9", null))
+    }
+
+    /** 暂停记录只在目标版本换成另一个版本号时清掉；目标未知时保守保留 */
+    @Test fun clearsPauseOnlyWhenTargetVersionChanges() {
+        assertTrue(AppUpdatePolicy.shouldClearAutoPause("1.5.9", "1.6.0"))
+        assertTrue(AppUpdatePolicy.shouldClearAutoPause("1.5.9", "1.5.8"))
+        assertFalse(AppUpdatePolicy.shouldClearAutoPause("1.5.9", "1.5.9"))
+        assertFalse("目标未知时保守保留", AppUpdatePolicy.shouldClearAutoPause("1.5.9", null))
+        assertFalse("本就没记录", AppUpdatePolicy.shouldClearAutoPause("", "1.6.0"))
+    }
+
+    /** 自动入口受暂停约束；用户点「下载」（manual）不受约束，手动下载永远放行 */
+    @Test fun gatesAutomaticDownloadButNeverManualDownload() {
+        assertFalse(
+            "本版本自动下载失败过：不再自动下",
+            AppUpdatePolicy.shouldStartDownload(false, true, true, "1.5.9", "1.5.9"),
+        )
+        assertTrue(
+            "暂停期间用户仍可手动下载",
+            AppUpdatePolicy.shouldStartDownload(true, true, true, "1.5.9", "1.5.9"),
+        )
+        assertTrue(
+            "发布新版本号后自动恢复",
+            AppUpdatePolicy.shouldStartDownload(false, true, true, "1.5.9", "1.6.0"),
+        )
+        assertTrue(
+            "清空暂停记录后恢复",
+            AppUpdatePolicy.shouldStartDownload(false, true, true, "", "1.5.9"),
+        )
+        assertFalse(
+            "自动更新关掉时不自动下",
+            AppUpdatePolicy.shouldStartDownload(false, false, true, "", "1.5.9"),
+        )
+        assertFalse(
+            "没有新版不自动下",
+            AppUpdatePolicy.shouldStartDownload(false, true, false, "", "1.5.9"),
+        )
+    }
+
+    /** 暂停记录读设置表：老库没有这几个键 = 没暂停；空串也按没暂停处理 */
+    @Test fun readsAutoPauseRecordFromSettings() {
+        val none = AutoUpdatePause.fromSettings { null }
+        assertFalse(none.recorded)
+        assertEquals("", none.version)
+        assertEquals("", none.reason)
+        assertEquals("", none.at)
+
+        val paused = AutoUpdatePause.fromSettings { key ->
+            when (key) {
+                AppUpdateConfig.KEY_AUTO_FAILED_VERSION -> " 1.5.9 "
+                AppUpdateConfig.KEY_AUTO_FAILED_REASON -> " 下载失败 HTTP 500 "
+                AppUpdateConfig.KEY_AUTO_FAILED_AT -> "2026-11-08T00:00:00Z"
+                else -> null
+            }
+        }
+        assertTrue(paused.recorded)
+        assertEquals("1.5.9", paused.version)
+        assertEquals("下载失败 HTTP 500", paused.reason)
+        assertEquals("2026-11-08T00:00:00Z", paused.at)
+    }
 }

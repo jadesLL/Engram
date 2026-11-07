@@ -17,6 +17,9 @@ export interface DesktopAutoState {
   percent: number | null;
   error: string;
   installError?: string;
+  /** 自动更新失败暂停的目标版本（主进程 lib/update-failure.js；有值时本版本不再自动下载） */
+  blockedVersion?: string | null;
+  blockedReason?: string;
 }
 
 export type StatusTone = '' | 'warn' | 'err';
@@ -50,7 +53,12 @@ export function autoUpdateStatusLine(state: DesktopAutoState): string {
     case 'installing':
       return s.latestVersion ? `正在安装 v${s.latestVersion}，应用即将自动重启…` : '正在安装更新，应用即将自动重启…';
     case 'failed':
-      return `自动更新失败：${s.error || '未知原因'}。可关闭后重开自动更新，或用下方「下载并安装」手动更新。`;
+      return s.blockedVersion
+        ? `自动更新失败：${s.error || '未知原因'}。已暂停 v${s.blockedVersion} 的自动更新，可点「重试自动更新」或手动更新。`
+        : `自动更新失败：${s.error || '未知原因'}。可关闭后重开自动更新，或用下方「下载并安装」手动更新。`;
+    case 'paused':
+      // 暂停态另有整行说明（含失败原因与「重试自动更新」按钮），这里给一句不重复的短提示，槽位不留空
+      return `自动更新已暂停：v${s.blockedVersion || '该版本'} 失败过一次，本版本不再自动下载安装，可点「重试自动更新」`;
     case 'unconfigured':
       return '尚未配置更新源，自动更新未生效（见下方「更新源配置」）。';
     default:
@@ -64,7 +72,7 @@ export function autoUpdateStatusLine(state: DesktopAutoState): string {
 export function autoUpdateStatusTone(state: DesktopAutoState): StatusTone {
   const phase = (state || {}).phase;
   if (phase === 'failed') return 'err';
-  if (phase === 'installing') return 'warn';
+  if (phase === 'installing' || phase === 'paused') return 'warn';
   return '';
 }
 
