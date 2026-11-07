@@ -200,39 +200,44 @@
           当前为<strong>预构建安装</strong>：安装器把「源码 + 运行依赖 + 已构建产物」直接解压到本机，<strong>不带 Git 与 .git</strong>，所以应用内不能增量拉源码更新。更新方式是用<strong>新版安装器覆盖安装</strong>（知识库数据保留）；需要长期在应用内自动更新时，可改用打包版 exe。
         </div>
 
-        <div v-if="autoSupported && installerMode" class="setting-row">
-          <div class="setting-copy">
-            <strong>自动更新</strong>
-            <span>启动后自动检查（之后每 8 小时复查），发现新版本自动在后台下载并静默安装；安装前应用内会提示，装完自动重启，全程无需手动操作。</span>
+        <template v-if="autoSupported && installerMode">
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>自动更新</strong>
+              <span>启动后自动检查（之后每 8 小时复查），发现新版本自动在后台下载并静默安装；安装前应用内会提示，装完自动重启，全程无需手动操作。</span>
+            </div>
+            <label class="switch-control">
+              <input type="checkbox" :checked="autoState.enabled" @change="toggleAuto" />
+              <span aria-hidden="true"></span>
+              <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
+            </label>
           </div>
-          <label class="switch-control">
-            <input type="checkbox" :checked="autoState.enabled" @change="toggleAuto" />
-            <span aria-hidden="true"></span>
-            <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
-          </label>
-        </div>
-        <p v-if="autoSupported && installerMode && autoState.installError" class="setting-message err">{{ autoState.installError }}</p>
-        <!-- 自动更新失败一次后的暂停态：本版本不再自动重试，只提示用户并可手动重试（用户 2026-11-08 要求） -->
-        <div v-if="autoSupported && installerMode && autoState.blockedVersion" class="setting-row">
-          <div class="setting-copy">
-            <strong>自动更新已暂停</strong>
-            <span>
-              v{{ autoState.blockedVersion }} 自动更新失败过一次，为避免反复失败重试，<strong>本版本不再自动下载安装</strong>。
-              {{ autoState.blockedReason ? `失败原因：${autoState.blockedReason}。` : '' }}
-              可以点右侧「重试自动更新」，或用下方「检查更新 / 下载并安装」手动更新；发布新版本后自动恢复。
-            </span>
+          <!-- 自动更新状态槽：固定高度，只换文字与进度条宽度，不按阶段增删节点。
+               以前这里是「有状态才渲染」的三段，自动更新一开，检查 → 下载 → 安装之间
+               卡片高度反复变化，下面的行和卡片底边就上下跳（用户 2026-11-08 报障）。 -->
+          <div class="auto-status-slot" aria-live="polite">
+            <p class="setting-message auto-status-line" :class="autoStatusTone" :title="autoStatus">{{ autoStatus }}</p>
+            <div class="update-progress auto-status-progress" :class="{ 'is-downloading': autoProgressVisible }">
+              <div class="update-progress-bar" :style="{ width: autoProgressValue + '%' }" />
+            </div>
           </div>
-          <button class="btn" type="button" :disabled="retryingAuto" @click="retryAuto">
-            <AppSpinner v-if="retryingAuto" :size="11" />
-            <template v-else>重试自动更新</template>
-          </button>
-        </div>
-        <p v-if="autoSupported && installerMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'paused' ? 'warn' : autoState.phase === 'installing' ? 'warn' : ''">
-          {{ autoStatus }}
-        </p>
-        <div v-if="autoSupported && installerMode && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
-          <div class="update-progress-bar" :style="{ width: autoState.percent + '%' }" />
-        </div>
+          <p v-if="autoState.installError" class="setting-message err">{{ autoState.installError }}</p>
+          <!-- 自动更新失败一次后的暂停态：本版本不再自动重试，只提示用户并可手动重试（用户 2026-11-08 要求） -->
+          <div v-if="autoState.blockedVersion" class="setting-row">
+            <div class="setting-copy">
+              <strong>自动更新已暂停</strong>
+              <span>
+                v{{ autoState.blockedVersion }} 自动更新失败过一次，为避免反复失败重试，<strong>本版本不再自动下载安装</strong>。
+                {{ autoState.blockedReason ? `失败原因：${autoState.blockedReason}。` : '' }}
+                可以点右侧「重试自动更新」，或用下方「检查更新 / 下载并安装」手动更新；发布新版本后自动恢复。
+              </span>
+            </div>
+            <button class="btn" type="button" :disabled="retryingAuto" @click="retryAuto">
+              <AppSpinner v-if="retryingAuto" :size="11" />
+              <template v-else>重试自动更新</template>
+            </button>
+          </div>
+        </template>
 
         <div v-if="installerMode" class="setting-row">
           <div class="setting-copy">
@@ -262,8 +267,9 @@
             <strong>下载并安装</strong>
             <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装，全程无需操作。</span>
           </div>
-          <button class="btn primary" type="button" :disabled="downloading || installing" @click="downloadAndInstall">
-            {{ installing ? '安装中…' : downloading ? `下载中 ${downloadPercent ?? ''}${downloadPercent !== null ? '%' : ''}` : '下载并安装' }}
+          <!-- 自动更新正在后台下载/安装时禁用：两者落盘到同一个安装包文件，并发会互相覆盖、进度也会互相串 -->
+          <button class="btn primary" type="button" :disabled="downloading || installing || autoDownloading" :title="autoDownloading ? '自动更新正在后台下载/安装安装包，完成后会自动安装；如需手动下载请先关闭「自动更新」' : ''" @click="downloadAndInstall">
+            {{ installing ? '安装中…' : downloading ? `下载中 ${downloadPercent ?? ''}${downloadPercent !== null ? '%' : ''}` : autoDownloading ? '自动更新下载中…' : '下载并安装' }}
           </button>
         </div>
         <div v-if="installerMode && downloading && downloadPercent !== null" class="update-progress">
@@ -428,6 +434,15 @@ import { notify } from '../../lib/notify';
 import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
 // 仓库地址解析与安卓端「安卓端更新」分组共用一份（lib/repoSourceUrl.ts），避免两处慢慢跑偏
 import { parseRepoUrl } from '../../lib/repoSourceUrl';
+// 自动更新状态槽的纯展示逻辑（文案/色调/进度宽度，且保证任何阶段都有文字），单测在 lib/updatePanelState.test.ts
+import {
+  acceptManualProgressEvent,
+  autoProgressPercent,
+  autoProgressVisible as autoProgressVisibleOf,
+  autoUpdateStatusLine,
+  autoUpdateStatusTone,
+  isAutoDownloading,
+} from '../../lib/updatePanelState';
 import {
   applyDesktopInstallerUpdate,
   applyServerUpdate,
@@ -884,31 +899,17 @@ const sourceAutoStatus = computed(() => {
   }
 });
 
-/** 自动更新状态机的用户可读描述 */
-const autoStatus = computed(() => {
-  const s = autoState.value;
-  switch (s.phase) {
-    case 'checking':
-      return '正在检查更新…';
-    case 'downloading':
-      return `发现新版本 v${s.latestVersion ?? '?'}，正在后台下载${s.percent != null ? ` ${s.percent}%` : ''}…`;
-    case 'up-to-date':
-      return '自动检查完成，已是最新版本';
-    case 'installing':
-      return s.latestVersion ? `正在安装 v${s.latestVersion}，应用即将自动重启…` : '正在安装更新，应用即将自动重启…';
-    case 'failed':
-      return s.blockedVersion
-        ? `自动更新失败：${s.error}。已暂停 v${s.blockedVersion} 的自动更新，可点「重试自动更新」或手动更新。`
-        : `自动更新失败：${s.error}。可关闭后重开自动更新，或用下方「下载并安装」手动更新。`;
-    // paused 由上方「自动更新已暂停」整行说明（含原因与重试按钮），这里不再重复一句话
-    case 'paused':
-      return '';
-    case 'unconfigured':
-      return '尚未配置更新源，自动更新未生效（见下方「更新源配置」）。';
-    default:
-      return '';
-  }
-});
+/**
+ * 自动更新状态槽（固定高度）的四个派生值：文案、色调、进度宽度、是否显示进度底色。
+ * 任何阶段都返回文字、槽位始终在 DOM 里——阶段切换只改文字与宽度，卡片高度不变，
+ * 下面的行与卡片底边就不会上下跳（用户 2026-11-08 报障）。
+ */
+const autoStatus = computed(() => autoUpdateStatusLine(autoState.value));
+const autoStatusTone = computed(() => autoUpdateStatusTone(autoState.value));
+const autoProgressValue = computed(() => autoProgressPercent(autoState.value));
+const autoProgressVisible = computed(() => autoProgressVisibleOf(autoState.value));
+/** 自动更新正在下载/安装：手动「下载并安装」要禁用（两者落盘同一个文件） */
+const autoDownloading = computed(() => installerMode.value && isAutoDownloading(autoState.value));
 
 async function toggleAuto(e: Event) {
   const wd = wikiDesktop();
@@ -1058,6 +1059,8 @@ async function downloadAndInstall() {
   // 下载进度由 onMounted 里的 desktop-update-progress 订阅统一喂给 downloadPercent。
   downloading.value = true;
   downloadError.value = '';
+  // 先清掉上一次/自动更新留下的百分比，按钮别在 0% 之前显示旧进度
+  downloadPercent.value = null;
   const r = await applyDesktopInstallerUpdate({
     cfg: updateSourceCfg.value,
     check: desktopCheck.value,
@@ -1178,7 +1181,10 @@ onMounted(() => {
     });
   }
   if (wd?.onUpdateProgress) {
+    // 这条通道主进程会同时用来推手动下载与后台自动更新的进度（旧壳不带 source）：
+    // 只采信 manual，否则两个下载同时跑时进度条会在这两个百分比之间来回跳。
     offProgress = wd.onUpdateProgress((p: any) => {
+      if (!acceptManualProgressEvent(p)) return;
       downloadPercent.value = p?.percent ?? null;
     });
   }
@@ -1361,6 +1367,37 @@ onUnmounted(() => {
   transition: width 200ms ease;
 }
 
+/* 自动更新状态槽：文案行 + 进度轨都常驻（固定高度），阶段切换不增删节点。
+   这样卡片高度不随「检查/下载/安装」变化，下面的「检查更新 / 下载并安装」行和
+   卡片底边不会上下跳（用户 2026-11-08 报「开着自动更新这块来回乱跳」）。
+   行高与轨道高度写死，文字换行才可能改变高度：状态文案控制在单行，超长时省略。 */
+.auto-status-slot {
+  margin: 0 24px 14px;
+}
+.auto-status-slot .auto-status-line {
+  margin: 0;
+  min-height: 18px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auto-status-slot .auto-status-line.warn {
+  color: var(--warn);
+}
+.auto-status-slot .auto-status-line.err {
+  color: var(--danger);
+}
+.auto-status-slot .auto-status-progress {
+  margin: 6px 0 0;
+  background: transparent; /* 没有下载时不显示灰轨，但高度仍占位 */
+}
+.auto-status-slot .auto-status-progress.is-downloading {
+  background: var(--bg-secondary);
+}
+
 @media (max-width: 768px) {
   .integration-note {
     margin: 12px 18px 16px;
@@ -1376,6 +1413,12 @@ onUnmounted(() => {
   }
   .update-progress {
     margin: -4px 18px 12px;
+  }
+  .auto-status-slot {
+    margin: 0 18px 14px;
+  }
+  .auto-status-slot .auto-status-progress {
+    margin: 6px 0 0;
   }
 }
 

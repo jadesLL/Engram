@@ -42,6 +42,8 @@ const runtimeMode = require('./scripts/lib/runtime-mode');
 const updateCadence = require('./scripts/lib/update-cadence');
 // 更新链的纯逻辑（文件名净化 / sha256 校验 / 安装结果判定），单测在 scripts/tests/update-chain.test.js
 const updateChain = require('./scripts/lib/update-chain');
+// 下载进度的纯逻辑（百分比收敛 / 广播节流 / 进度事件来源标记），单测在 scripts/tests/update-progress.test.js
+const updateProgress = require('./scripts/lib/update-progress');
 // 自动更新失败暂停的纯逻辑（同版本失败过一次就不再自动重试，记录持久化到 config.json），
 // 单测在 scripts/tests/update-failure.test.js
 const updateFailure = require('./scripts/lib/update-failure');
@@ -1355,10 +1357,11 @@ async function checkForUpdate(passedCfg) {
 
 ipcMain.handle('desktop-update-check', (_e, passedCfg) => checkForUpdate(passedCfg));
 
-// 下载安装包到 userData/downloads/；进度经 send 回调推送（手动=发起窗口，自动=广播所有窗口）
+// 下载安装包到 userData/downloads/；进度经 send 回调推送，负载带 source 标明来源
+// （手动下载=发起窗口收 desktop-update-progress；自动更新=只进 autoState 并经 desktop-update-state 节流广播）
 // 文件名只取 URL 末段并净化（防路径穿越），落盘后必须与 Release 的 sha256 一致才留着——
 // expectedSha256 为空表示这次发布没提供校验文件，同样删除并拒绝安装（宁可更不了，不装没校验的包）。
-async function downloadUpdateFile(cfg, url, send, signal, expectedSha256) {
+async function downloadUpdateFile(cfg, url, send, signal, expectedSha256, progressSource = 'manual') {
   const target = String(url);
   // 只允许从配置的远端仓库下载（防注入任意 URL）
   if (!cfg || !cfg.giteaUrl || !target.startsWith(cfg.giteaUrl + '/')) {
@@ -1383,7 +1386,8 @@ async function downloadUpdateFile(cfg, url, send, signal, expectedSha256) {
     if (done) break;
     received += value.length;
     out.write(Buffer.from(value));
-    if (send) send('desktop-update-progress', { received, total, percent: total ? Math.floor((received / total) * 100) : null });
+    // source 让渲染层分清「手动下载」与「自动更新」：两者落盘路径相同，进度混用会让进度条来回跳
+    if (send) send('desktop-update-progress', updateProgress.progressPayload({ received, total, percent: total ? Math.floor((received / total) * 100) : null }, progressSource));
   }
   await new Promise((resolve, reject) => {
     out.on('error', reject);
@@ -1409,22 +1413,35 @@ async function downloadUpdateFile(cfg, url, send, signal, expectedSha256) {
   return { path: file, size: received, sha256: actual };
 }
 
+// 手动下载与自动更新落盘到同一个文件名（downloads/<安装包名>）：同时跑会互相覆盖，
+// 进度也会在设置页来回跳（2026-11-08 用户报障）。两边都设忙标记，绝不允许并发。
+let manualDownloadBusy = false;
+
 ipcMain.handle('desktop-update-download', async (e, url) => {
   // 下载源只认主进程持有的配置（.env），渲染进程传来的任何配置一律不采信：那条路径曾能
   // 任意指定 giteaUrl，把「只从配置源下载」的校验变成空转。资产还必须真在本次 Release 里。
   const cfg = await resolveUpdateCfg(null);
   if (!cfg.giteaUrl || !cfg.giteaRepo) throw new Error('尚未配置更新源');
-  lastCheckCfg = cfg;
-  autoState.installError = ''; // 新一轮安装开始：清掉上一次的结算提示
-  const release = await giteaLatestRelease(cfg);
-  if (!release) throw new Error('更新源上没有可用的 Release');
-  const asset = release.assets.find((a) => a.url === String(url));
-  if (!asset) throw new Error('下载地址不是当前更新源最新 Release 的资产，请保存更新源设置后重试');
-  const expected = await fetchSha256ForAsset(cfg, release, asset);
-  const sender = e.sender;
-  return downloadUpdateFile(cfg, asset.url, (ch, data) => {
-    if (sender && !sender.isDestroyed()) sender.send(ch, data);
-  }, undefined, expected);
+  if (autoState.phase === 'downloading' || autoState.phase === 'installing') {
+    throw new Error('自动更新正在后台下载/安装安装包，请等它完成，或先关闭「自动更新」再手动下载');
+  }
+  if (manualDownloadBusy) throw new Error('安装包正在下载中，请稍候');
+  manualDownloadBusy = true;
+  try {
+    lastCheckCfg = cfg;
+    autoState.installError = ''; // 新一轮安装开始：清掉上一次的结算提示
+    const release = await giteaLatestRelease(cfg);
+    if (!release) throw new Error('更新源上没有可用的 Release');
+    const asset = release.assets.find((a) => a.url === String(url));
+    if (!asset) throw new Error('下载地址不是当前更新源最新 Release 的资产，请保存更新源设置后重试');
+    const expected = await fetchSha256ForAsset(cfg, release, asset);
+    const sender = e.sender;
+    return await downloadUpdateFile(cfg, asset.url, (ch, data) => {
+      if (sender && !sender.isDestroyed()) sender.send(ch, data);
+    }, undefined, expected, 'manual');
+  } finally {
+    manualDownloadBusy = false;
+  }
 });
 
 function validateInstallerFile(filePath) {
@@ -1489,6 +1506,25 @@ function broadcast(channel, data) {
 function setAutoPhase(phase) {
   autoState.phase = phase;
   if (phase !== 'failed') autoState.error = '';
+  // 离开下载/安装态就把百分比清掉：否则下一轮下载一开场就顶着上一轮的 100%（截图里
+  // 「正在后台下载 100%」配一个刚起步的进度条就是这个陈旧值）
+  if (phase !== 'downloading' && phase !== 'installing') autoState.percent = null;
+  broadcast('desktop-update-state', { ...autoState });
+}
+
+// 自动下载进度：只更新 autoState 并经 desktop-update-state 节流广播（见 lib/update-progress.js）。
+// 不再往 desktop-update-progress 广播——那条通道归手动下载，两条一起刷会让设置页百分比乱跳。
+let autoPercentPublished = null; // { percent, at } | null
+
+/**
+ * 把自动下载的最新百分比并进 autoState，按节流规则决定是否广播给渲染层。
+ * 设置页的「自动更新」进度条只认 autoState.percent，与手动进度彻底分开。
+ */
+function publishAutoProgress(percent) {
+  const result = updateProgress.nextProgressPublish(autoPercentPublished, percent, Date.now());
+  autoPercentPublished = result.previous;
+  autoState.percent = updateProgress.clampPercent(percent);
+  if (!result.publish) return;
   broadcast('desktop-update-state', { ...autoState });
 }
 
@@ -1779,6 +1815,11 @@ async function autoUpdateTick() {
     setAutoPhase('idle');
     return;
   }
+  // 手动下载正在跑：别和它抢同一个安装包文件（会互相覆盖、进度互相串），一分钟后再看
+  if (manualDownloadBusy) {
+    scheduleAutoUpdateCheck(60_000);
+    return;
+  }
   autoBusy = true;
   autoAbort = new AbortController();
   let foundUpdate = false;
@@ -1813,16 +1854,22 @@ async function autoUpdateTick() {
       return;
     }
     if (recordedFailure) clearAutoUpdateFailure(); // 新版本已发布：旧的失败记录不再拦自动更新
+    // 这轮检查期间用户点了手动下载：让路，别和它抢同一个安装包文件（本轮就此结束）
+    if (manualDownloadBusy) {
+      setAutoPhase('idle');
+      return;
+    }
     autoAttemptVersion = release.version;
     foundUpdate = true;
     autoState.latestVersion = release.version;
     autoState.installError = '';
+    autoPercentPublished = null;
+    autoState.percent = null; // 新一轮下载从 0 开始，不继承上一轮的 100%
     setAutoPhase('downloading');
     const expected = await fetchSha256ForAsset(cfg, release, exe, autoAbort.signal);
     const { path: file } = await downloadUpdateFile(cfg, exe.url, (ch, data) => {
-      if (ch === 'desktop-update-progress') autoState.percent = data.percent ?? null;
-      broadcast(ch, data);
-    }, autoAbort.signal, expected);
+      if (ch === 'desktop-update-progress') publishAutoProgress(data.percent);
+    }, autoAbort.signal, expected, 'auto');
     if (readConfig().autoUpdate === false) {
       setAutoPhase('idle'); // 下载期间开关被关掉：放弃本次安装
       return;
