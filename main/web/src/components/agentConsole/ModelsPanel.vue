@@ -117,7 +117,7 @@
             <div class="field-block">
               <div class="block-head">
                 <span class="block-title">模型目录</span>
-                <span class="faint small">每行：模型 ID / 显示名称 / 上下文窗口（可选）</span>
+                <span class="faint small">每行：模型 ID / 显示名称 / 上下文窗口 / 输入类型</span>
               </div>
               <div v-if="officialModels.length" class="model-rows">
                 <div v-for="row in officialModels" :key="row.key" class="model-row">
@@ -132,12 +132,29 @@
                     aria-label="上下文窗口"
                     :disabled="!writable || savingOfficial"
                   />
+                  <div class="modality-chips" role="group" :aria-label="row.id ? row.id + ' 的输入类型' : '输入类型'">
+                    <label
+                      v-for="option in MODEL_INPUT_OPTIONS"
+                      :key="option.value"
+                      class="modality-chip"
+                      :class="{ checked: row.modalities.includes(option.value), 'is-disabled': !writable || savingOfficial }"
+                    >
+                      <input
+                        type="checkbox"
+                        :checked="row.modalities.includes(option.value)"
+                        :disabled="!writable || savingOfficial"
+                        @change="toggleModality($event, row.modalities, option.value)"
+                      />
+                      <span>{{ option.label }}</span>
+                    </label>
+                  </div>
                   <button class="btn icon" type="button" aria-label="删除模型" :disabled="!writable || savingOfficial" @click="removeOfficialModel(row.key)">
                     <Icon name="trash" :size="14" />
                   </button>
                 </div>
               </div>
               <p v-else class="empty-hint">模型目录为空：点「+ 添加模型」手动填写模型 ID（官方提供商不支持自动获取模型列表）。</p>
+              <p class="faint small modality-hint">勾选「图片」后内置 Agent 才能读取图片 / 截图；文本与图片至少保留一种。</p>
               <div class="row-actions">
                 <button class="btn small" type="button" :disabled="!writable || savingOfficial" @click="addOfficialModel">+ 添加模型</button>
                 <span class="faint small">填好模型 ID 与显示名称后点「保存」生效</span>
@@ -272,11 +289,28 @@
             <div v-for="row in providerModels" :key="row.key" class="model-row two-col">
               <input v-model="row.id" placeholder="模型 ID" aria-label="模型 ID" spellcheck="false" :disabled="savingProvider" />
               <input v-model="row.name" placeholder="显示名称" aria-label="显示名称" :disabled="savingProvider" />
+              <div class="modality-chips" role="group" :aria-label="row.id ? row.id + ' 的输入类型' : '输入类型'">
+                <label
+                  v-for="option in MODEL_INPUT_OPTIONS"
+                  :key="option.value"
+                  class="modality-chip"
+                  :class="{ checked: row.input.includes(option.value), 'is-disabled': savingProvider }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="row.input.includes(option.value)"
+                    :disabled="savingProvider"
+                    @change="toggleModality($event, row.input, option.value)"
+                  />
+                  <span>{{ option.label }}</span>
+                </label>
+              </div>
               <button class="btn icon" type="button" aria-label="删除模型" :disabled="savingProvider" @click="removeProviderModel(row.key)">
                 <Icon name="trash" :size="14" />
               </button>
             </div>
           </div>
+          <p class="faint small modality-hint">勾选「图片」后内置 Agent 才能读取图片 / 截图；文本与图片至少保留一种。</p>
           <div class="row-actions">
             <button class="btn small" type="button" :disabled="savingProvider" @click="addProviderModel">+ 添加模型</button>
           </div>
@@ -308,14 +342,16 @@ import {
   putDefaultModel,
   putOfficialModels,
   putProvider,
+  type CustomProviderModelEntry,
   type CustomProviderPayload,
+  type ModelInputModality,
   type ModelsPayload,
   type OfficialModelEntry,
   type OfficialProviderPayload,
   type SelectOption,
   type UpsertProviderBody,
 } from '../../lib/agentConsoleApi';
-import { normalizeModels, revisionConflict, splitModelOptions } from '../../lib/agentConsoleUi';
+import { normalizeInputModalities, normalizeModels, revisionConflict, splitModelOptions } from '../../lib/agentConsoleUi';
 
 /**
  * 模型面板：默认模型 / DeepSeek 官方 / 自定义提供商。
@@ -420,6 +456,35 @@ interface OfficialRow {
   id: string;
   name: string;
   contextWindow: string;
+  /** 官方目录的 inputModalities；界面至少保留一种 */
+  modalities: ModelInputModality[];
+}
+
+/** 输入类型勾选项：勾「图片」后内置 Agent 才能读图；至少保留一种 */
+const MODEL_INPUT_OPTIONS: Array<{ value: ModelInputModality; label: string }> = [
+  { value: 'text', label: '文本' },
+  { value: 'image', label: '图片' },
+];
+
+/**
+ * 勾选/取消输入类型。取消最后一个时把它恢复回来（至少保留一种）：
+ * checkbox 的原生勾选状态已经变了，这里直接纠正 DOM，避免界面与数据不一致。
+ */
+function toggleModality(event: Event, list: ModelInputModality[], modality: ModelInputModality): void {
+  const input = event.target as HTMLInputElement | null;
+  const checked = Boolean(input?.checked);
+  const index = list.indexOf(modality);
+  if (checked) {
+    if (index < 0) list.push(modality);
+    return;
+  }
+  if (index < 0) return;
+  if (list.length <= 1) {
+    if (input) input.checked = true;
+    notify.info('至少保留一种输入类型（文本 / 图片）');
+    return;
+  }
+  list.splice(index, 1);
 }
 
 const officialApiKey = ref('');
@@ -449,6 +514,8 @@ watch(
         id: model.id,
         name: model.name,
         contextWindow: model.contextWindow ? String(model.contextWindow) : '',
+        // 旧条目没有声明输入类型：按「文本 + 图片」回填，避免保存时把已有图片能力意外关掉
+        modalities: model.inputModalities?.length ? [...model.inputModalities] : ['text', 'image'],
       }));
       rowSeq = Math.max(rowSeq, officialModels.value.length);
     }
@@ -458,7 +525,7 @@ watch(
 
 function addOfficialModel(): void {
   rowSeq += 1;
-  officialModels.value.push({ key: rowSeq, id: '', name: '', contextWindow: '' });
+  officialModels.value.push({ key: rowSeq, id: '', name: '', contextWindow: '', modalities: ['text', 'image'] });
 }
 
 function removeOfficialModel(key: number): void {
@@ -475,10 +542,12 @@ function buildOfficialModels(): OfficialModelEntry[] {
     .map((row) => {
       const id = row.id.trim();
       const contextWindow = contextWindowOf(row);
+      const inputModalities = normalizeInputModalities(row.modalities);
       return {
         id,
         name: row.name.trim() || id,
         ...(contextWindow != null ? { contextWindow } : {}),
+        ...(inputModalities.length ? { inputModalities } : {}),
       };
     })
     .filter((row) => Boolean(row.id));
@@ -518,6 +587,8 @@ interface ModelRow {
   key: number;
   id: string;
   name: string;
+  /** pi-ai 提供者的 input 字段；界面至少保留一种 */
+  input: ModelInputModality[];
 }
 
 const modalOpen = ref(false);
@@ -566,8 +637,14 @@ function openProviderModal(provider?: CustomProviderPayload): void {
   providerForm.api = provider?.api || data.value.apiProtocols[0] || 'openai-completions';
   providerForm.baseURL = provider?.baseURL ?? '';
   providerModels.value = provider
-    ? provider.models.map((model, index) => ({ key: index + 1, id: model.id, name: model.name }))
-    : [{ key: 1, id: '', name: '' }];
+    ? provider.models.map((model, index) => ({
+      key: index + 1,
+      id: model.id,
+      name: model.name,
+      // 旧条目没有 input：按「文本 + 图片」回填，避免保存时把已有图片能力意外关掉
+      input: model.input?.length ? [...model.input] : ['text', 'image'],
+    }))
+    : [{ key: 1, id: '', name: '', input: ['text', 'image'] }];
   rowSeq = Math.max(rowSeq, providerModels.value.length);
   providerApiKey.value = '';
   providerMode.value = 'custom';
@@ -582,7 +659,7 @@ function closeProviderModal(): void {
 
 function addProviderModel(): void {
   rowSeq += 1;
-  providerModels.value.push({ key: rowSeq, id: '', name: '' });
+  providerModels.value.push({ key: rowSeq, id: '', name: '', input: ['text', 'image'] });
 }
 
 function removeProviderModel(key: number): void {
@@ -595,8 +672,16 @@ async function saveProvider(): Promise<void> {
   const displayName = providerForm.displayName.trim();
   const baseURL = providerForm.baseURL.trim();
   const api = providerForm.api.trim();
-  const models = providerModels.value
-    .map((row) => ({ id: row.id.trim(), name: row.name.trim() || row.id.trim() }))
+  const models: CustomProviderModelEntry[] = providerModels.value
+    .map((row) => {
+      const modelId = row.id.trim();
+      const input = normalizeInputModalities(row.input);
+      return {
+        id: modelId,
+        name: row.name.trim() || modelId,
+        ...(input.length ? { input } : {}),
+      };
+    })
     .filter((row) => Boolean(row.id));
   if (!id) {
     notify.error('请填写 Provider ID');
@@ -664,7 +749,7 @@ async function discoverProviderModels(): Promise<void> {
         continue;
       }
       rowSeq += 1;
-      providerModels.value.push({ key: rowSeq, id: model.id, name: model.name || model.id });
+      providerModels.value.push({ key: rowSeq, id: model.id, name: model.name || model.id, input: ['text', 'image'] });
       added += 1;
     }
     notify.success(added ? `已添加 ${added} 个可用模型` : '模型目录已包含全部可用模型');
@@ -880,16 +965,70 @@ function handleMutationError(error: unknown): void {
 }
 .model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 110px 32px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 110px minmax(120px, auto) 32px;
   gap: 8px;
   align-items: center;
 }
 .model-row.two-col {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(120px, auto) 32px;
 }
 .model-row input {
   min-width: 0;
   font-size: 12px;
+}
+
+/* 输入类型勾选（文本 / 图片）：胶囊式 checkbox，窄屏可换行 */
+.modality-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.modality-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+.modality-chip:hover:not(.is-disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.modality-chip.checked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.modality-chip.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.modality-chip input {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.modality-chip.is-disabled input {
+  cursor: not-allowed;
+}
+.modality-hint {
+  margin: 7px 0 0;
+  line-height: 1.6;
 }
 .row-actions {
   display: flex;
@@ -1000,6 +1139,9 @@ function handleMutationError(error: unknown): void {
   .model-row input:nth-child(2),
   .model-row input:nth-child(3) {
     grid-column: 1 / -1;
+  }
+  .model-row .modality-chips {
+    grid-column: 1;
   }
   .model-row.two-col {
     grid-template-columns: minmax(0, 1fr) 32px;

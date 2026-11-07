@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client';
 import {
+  agentPermissionMode,
   agentWorkspaceDir,
   bundledDshExecutable,
   bundledDshHome,
@@ -9,6 +10,7 @@ import {
   getAgentConfig,
   type AgentConfig,
 } from './config.js';
+import { normalizeAgentPermissionMode } from './permissionMode.js';
 import { ensureAgentNodeRuntime } from './agentNode.js';
 import { CONSOLE_PROFILE, agentSettingsStateFingerprint } from './agentSettings.js';
 import { writeAgentPatch, writeChatPatch } from './agentPatch.js';
@@ -63,8 +65,9 @@ interface RuntimeEntry {
 }
 
 /**
- * 配置指纹：dsh 入口、真实 Node 运行时、dsh 版本、控制台配置状态（profile patch / bundle 列表 / 凭据）。
- * 控制台里改了模型或插件 → 指纹变化 → 下一轮 acquireRuntime 关闭旧进程重开。
+ * 配置指纹：dsh 入口、真实 Node 运行时、dsh 版本、权限模式、控制台配置状态（profile patch / bundle 列表 / 凭据）。
+ * 控制台里改了模型或插件、或设置页改了权限 → 指纹变化 → 下一轮 acquireRuntime 关闭旧进程重开。
+ * 权限模式是进程级环境变量（DSH_PERMISSION_MODE），只在启动时生效，必须算进指纹。
  */
 function runtimeConfigKey(config: AgentConfig, home: string, nodePath: string, dshBin: string): string {
   return JSON.stringify([
@@ -72,6 +75,7 @@ function runtimeConfigKey(config: AgentConfig, home: string, nodePath: string, d
     dshBin,
     nodePath,
     bundledDshVersion() || '',
+    normalizeAgentPermissionMode(config.permissionMode),
     agentSettingsStateFingerprint(home),
   ]);
 }
@@ -135,6 +139,8 @@ function acquireRuntime(key: string): RuntimeEntry {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     DSH_HOME: home,
+    // 权限模式：完全访问 / 工作区写入 / 只读（设置页可改，改完由路由回收整个运行时池重开）
+    DSH_PERMISSION_MODE: agentPermissionMode(),
     // 旧版 Engram 里存的 Key 继续作为官方 Provider 的凭据（新配置请到控制台「设置 → 模型」）
     ...(config.apiKey ? { DEEPSEEK_API_KEY: config.apiKey } : {}),
   };

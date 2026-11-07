@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { agentWorkspaceDir, bundledDshExecutable, bundledDshHome, bundledDshVersion, getAgentConfig } from './config.js';
+import { agentPermissionMode, agentWorkspaceDir, bundledDshExecutable, bundledDshHome, bundledDshVersion, getAgentConfig } from './config.js';
 import { CONSOLE_PROFILE } from './agentSettings.js';
 import { ensureAgentNodeRuntime } from './agentNode.js';
 
@@ -195,6 +195,8 @@ function startConsole(origin: string): Promise<ConsoleStatus> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       DSH_HOME: home,
+      // 权限模式：完全访问 / 工作区写入 / 只读（设置页可改；改完路由会重启控制台）
+      DSH_PERMISSION_MODE: agentPermissionMode(),
       ...(getAgentConfig().apiKey ? { DEEPSEEK_API_KEY: getAgentConfig().apiKey as string } : {}),
     };
     // 真实 Node 不需要 ELECTRON_RUN_AS_NODE（留着只会让下游误判运行形态）

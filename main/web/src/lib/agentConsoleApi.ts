@@ -53,10 +53,15 @@ export interface ModelDefaultPayload {
   modelOptions: SelectOption[];
 }
 
+/** 模型输入类型：dsh 官方模型目录用 inputModalities，pi-ai 自定义提供商模型用 input */
+export type ModelInputModality = 'text' | 'image';
+
 export interface OfficialModelEntry {
   id: string;
   name: string;
   contextWindow?: number;
+  /** 官方模型目录支持读取的输入类型（缺省表示未声明，界面上按文本+图片回填） */
+  inputModalities?: ModelInputModality[];
 }
 
 export interface OfficialProviderPayload {
@@ -77,13 +82,20 @@ export interface OfficialProviderPayload {
   revision: number;
 }
 
+export interface CustomProviderModelEntry {
+  id: string;
+  name: string;
+  /** pi-ai 提供者模型支持读取的输入类型（字段名就是 input；缺省表示未声明） */
+  input?: ModelInputModality[];
+}
+
 export interface CustomProviderPayload {
   id: string;
   displayName: string;
   api: string;
   baseURL: string;
   apiKeyConfigured: boolean;
-  models: Array<{ id: string; name: string }>;
+  models: CustomProviderModelEntry[];
   revision: number;
 }
 
@@ -126,7 +138,7 @@ export interface UpsertProviderBody {
   displayName: string;
   api: string;
   baseURL: string;
-  models: Array<{ id: string; name: string }>;
+  models: CustomProviderModelEntry[];
   apiKey?: string;
   clearApiKey?: boolean;
   expectedRevision?: number;

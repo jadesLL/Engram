@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { DATA_DIR } from '../config.js';
 import { getSetting, setSetting } from '../lib/db.js';
 import { nativePathForPlainNode } from './agentNode.js';
+import { normalizeAgentPermissionMode, type AgentPermissionMode } from './permissionMode.js';
 
 /**
  * 内置 Agent（聊天抽屉）配置与路径。
@@ -23,6 +24,8 @@ export interface AgentConfig {
   api?: string;
   /** 模型凭据：跑 dsh 时经环境变量注入（自定义地址用 ENGRAM_AGENT_API_KEY，官方用 DEEPSEEK_API_KEY） */
   apiKey?: string;
+  /** 权限模式（见 permissionMode.ts；缺省按 danger-full-access 完全访问） */
+  permissionMode?: string;
 }
 
 export const AGENT_CONFIG_KEY = 'agent_config';
@@ -45,6 +48,16 @@ export function setAgentConfig(patch: Partial<AgentConfig>): AgentConfig {
   }
   setSetting(AGENT_CONFIG_KEY, JSON.stringify(next));
   return next;
+}
+
+/**
+ * 内置 Agent 的权限模式（启动 dsh 时注入 DSH_PERMISSION_MODE）。
+ *
+ * 默认「完全访问」：内置 Agent 跑在独立空壳工作目录、知识库只经 MCP 工具访问，
+ * 不逐次弹审批更顺手；读不懂的旧配置值退回默认，避免脏值把运行时卡住。
+ */
+export function agentPermissionMode(): AgentPermissionMode {
+  return normalizeAgentPermissionMode(getAgentConfig().permissionMode);
 }
 
 /** 内置 Agent 的 DSH_HOME：数据目录内，与用户自己的 ~/.dsh 隔离 */
