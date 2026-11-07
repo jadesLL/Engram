@@ -45,6 +45,15 @@ export interface AppUpdateInfo {
   /** 已保存用户名密码的密码（留空提交 = 不修改） */
   passwordSaved: boolean;
   autoUpdate: boolean;
+  /**
+   * 自动更新暂停的目标版本：自动后台下载失败过一次后由本地服务记录，本版本不再自动下载
+   * （手动下载/安装仍可用）；发布新版本或用户点「重试自动更新」后清空。
+   */
+  autoPausedVersion: string;
+  /** 自动更新暂停的失败原因（用户可读） */
+  autoPausedReason: string;
+  /** 暂停记录时间（ISO-8601；旧版本地服务没有该字段时为空串） */
+  autoPausedAt: string;
   checkedAt: string;
   /** 安装包已下载完整、可以点「立即安装」 */
   ready: boolean;
@@ -83,6 +92,9 @@ export function emptyAppUpdateInfo(): AppUpdateInfo {
     tokenSaved: false,
     passwordSaved: false,
     autoUpdate: true,
+    autoPausedVersion: '',
+    autoPausedReason: '',
+    autoPausedAt: '',
     checkedAt: '',
     ready: false,
     apkName: '',
@@ -124,6 +136,9 @@ export function normalizeAppUpdateInfo(raw: any): AppUpdateInfo {
     tokenSaved: Boolean(raw.tokenSaved),
     passwordSaved: Boolean(raw.passwordSaved),
     autoUpdate: raw.autoUpdate !== false,
+    autoPausedVersion: String(raw.autoPausedVersion || ''),
+    autoPausedReason: String(raw.autoPausedReason || ''),
+    autoPausedAt: String(raw.autoPausedAt || ''),
     checkedAt: String(raw.checkedAt || ''),
     ready: Boolean(raw.ready),
     apkName: String(raw.apkName || ''),
@@ -214,6 +229,21 @@ export function appUpdateBlockedHint(info: AppUpdateInfo): string {
   if (info.debugBuild) return '当前是调试包（版本号带后缀）：装正式版会与它并存成两个 App，请手动安装发布版 APK。';
   if (info.ready && !info.canInstall) return '系统还没允许 Engram 安装应用：点「立即安装」会自动打开系统授权页，允许后返回会自动继续。';
   return '';
+}
+
+/**
+ * 自动更新是否因大失败而暂停（本地服务记录 autoPausedVersion）：本版本不再自动后台下载，
+ * 只能手动下载/安装；发布新版本或点「重试自动更新」后恢复。
+ */
+export function appUpdateAutoPaused(info: AppUpdateInfo): boolean {
+  return Boolean(info.autoPausedVersion);
+}
+
+/** 自动更新暂停的提示文案；没有暂停返回空串（面板据此决定是否渲染整行） */
+export function appUpdateAutoPausedHint(info: AppUpdateInfo): string {
+  if (!info.autoPausedVersion) return '';
+  const reason = info.autoPausedReason ? `（${info.autoPausedReason}）` : '';
+  return `v${info.autoPausedVersion} 自动下载失败${reason}，为避免反复失败重试，本版本不再自动后台下载。手动下载安装仍可用；发布新版本后自动恢复。`;
 }
 
 /** 是否需要「允许通知」按钮（Android 13+ 未授权时才提示，用于下载完成提醒） */
