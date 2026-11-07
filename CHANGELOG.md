@@ -9,6 +9,98 @@
 - **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（推完 `v*` 标签后必须 dispatch `binaries` 补产 APK/exe）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.5.8（2026-11-07）
+
+**本版主线是同步可靠性：改名/移动后的「已提炼」不再丢在旧路径，多端同步不再把「已整理」回退成「未整理」，同步落地的文件变更即时推送到界面。视频理解模型改为复用内置 Agent 控制台里的 DSH 模型配置（设置页只留一个开关），视频提炼新增 B 站 CC 字幕优先与抖音图文/实况；内置 Agent 默认完全访问、模型目录可勾选图片输入。安装与更新链整段补齐：安装器内置 Node 22.20.0 + pnpm 10.20.0、不再依赖 npm 引导，修掉客户机「Unknown command: file」，预构建包安装不再跑 git 检查，应用内卸载不再「假卸载」，大产物下载改 IPv6 优先。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
+
+**同步可靠性：改名不丢账本、多端不再回退、文件变更即刷新**
+
+- 账本随路径迁移：中枢 applyPush(move)、成员端 applyRemoteMove、带外改名与 Android 本地改名/移动统一走 remapRawSourcePaths（服务端 source_versions、Android evidence_snapshots/page_revisions）；原始资料改名或换分类后，「已提炼」不再滞留在旧路径。
+- 证据账本改为「只前进不后退」合并：陈旧/不完整快照不再回退或删除较新的 active 版本，也不经页面广播污染第三端（修「已提炼被翻回未提炼」）；db.ts / vaultWatch.ts 的账本写入路径一并收口。
+- /api/sync/distilled 只回中枢仍存在的资料、不再按中枢分类过滤；中枢返回空清单时手机跳过 plan.clear，避免把本机状态误清。
+- 增量回放的 file op 携带 hash，旧行空 hash 时成员端兼容拉取（修「某端离线期间文件更新永久丢失」）。
+- 永久 4xx 推送进死信，不再堵在队首把后续变更卡住。
+- 文件对账按 mtime 较新者胜并回写 utimes，修多端轮流覆盖同一文件。
+- 同步内核与路由随改动同步调整：成员端 sync/client.ts、中枢 sync/hub.ts、变更行 sync/rows.ts、oplog 存储 sync/store.ts 与 routes/sync.ts；Android 成员端同一套口径（见下）。
+- 新增 syncFidelity.e2e 覆盖 A–H：改名保标记、陈旧/不完整快照不回退、成员补齐、oplog 裁剪自愈、直推 move 迁账本、回放 hash、mtime 裁决等；配套 evidenceLedger / oplogHash / pushRetry 单测。
+- 同步落地的文件变更补前端刷新事件：成员端拉取落盘（pullFile）、应用远端删除、应用远端改名推 file-changed；中枢端成员推文件落盘（/api/sync/file）与成员删除/改名文件同样推 file-changed，收集箱列表与角标、侧栏文件列表不再停在旧状态。
+- 页面删除仍只走 page-deleted，不重复推文件事件；改名事件带 oldPath，前端按路径失效旧条目。
+- 新增 sync/fileEvents.test.ts 覆盖中枢四条路径（文件推送 / 收集箱 .md 删除 / 页面删除不重复推 / 文件改名带 oldPath），同步端到端场景用真实 /api/events SSE 断言中枢与成员在文件落地、删除后都收到 file-changed。
+
+**视频理解：模型配置统一到内置 Agent 控制台**
+
+- 设置 → 视频理解模型只保留开关（默认开启），去掉控制台入口与当前模型展示；模型与 API Key 统一在「内置 Agent 控制台 → 模型」里填。
+- 服务端预置 DashScope（阿里云百炼）提供商与 qwen3.8-omni-flash：用户只需在控制台填一个 API Key，视频理解即可用；播种幂等，不覆盖用户已有配置。
+- 新增 lib/videoModel.ts（只读解析 dsh profile patch 的 llm-pi-ai providers 与 .credentials.yaml refs）与 assistant/videoModelDefaults.ts（幂等播种）；新增请求 origin 还原（反代 / HTTPS 走 x-forwarded-*），供 DSH 浏览器信任围栏使用。
+- video_config 只存 enabled，旧客户端提交的 baseUrl / apiKey / model 字段忽略，旧客户端保存不再冲掉中枢配置。
+- 收集箱提炼任务（pipeline/inboxAgentTask.ts、pipeline/inboxVideo.ts）与 /api/inbox 路由、videoModelClient 全部改走解析出的模型配置，不再读取 Engram 自己的 baseUrl/apiKey/model。
+- 「测试连通性」改用当前生效模型、不看总开关：用户可以先测通再决定是否开启；配置缺失时明确提示去控制台补齐哪些字段。
+- videoModel.test.ts / videoConfig.test.ts / routes/videoConfig.test.ts / inboxVideo.test.ts 同步改造；收集箱与视频链接提示文案、README、用户指南、安卓窄代理注释同步更新。
+
+**视频提炼：B 站 CC 字幕优先、抖音图文与实况**
+
+- B 站新增 CC 字幕抓取（player/wbi/v2，重试并校验 cid），转标准 SRT 与带 [mm:ss] 的纯文本；有字幕时直接走字幕理解、不再下载整段视频（省流量、更快、网关更少拒），拿不到字幕回退原视频路径。
+- 抖音一次详情请求同时覆盖视频与图文/实况笔记；图文按多图 image_url 送多模态模型，不再提示「图文作品暂不支持提炼」；视频路径补清晰度/体积预检。
+- 模型客户端 ChatContentPart 新增 image_url 内容块（仅 OpenAI 兼容网关可用）。
+- B 站抓取错误分级（BilibiliError）并给出可操作中文提示；下载前 onPlan 预检体积，超限提前说明。
+- 提炼产物 frontmatter 记录视频平台、作者、时长、链接、封面、提炼依据、媒体清晰度、抓取方式等元数据，入库后保留。
+- videoLink.test.ts / inboxVideo.test.ts / modelClient.test.ts 补覆盖；收集箱与视频链接页文案、用户指南、README 按新行为同步。
+
+**内置 Agent：默认完全访问 + 模型图片输入**
+
+- 权限：内置 Agent 默认「完全访问」（danger-full-access），设置页「内置 Agent（聊天抽屉）」卡片可切换完全访问 / 工作区写入 / 只读。
+- 控制台与聊天运行时启动都注入 DSH_PERMISSION_MODE；改权限后控制台按新 env 重启，聊天运行时按配置指纹在下一轮自然重开，不打断在跑的轮次。
+- 模型图片能力：模型目录（DeepSeek 官方 + 自定义提供商）每行新增「文本 / 图片」输入类型勾选，与 dsh 的 inputModalities / input 字段对齐；勾选图片后内置 Agent 才能读取图片与截图，至少保留一种输入类型（不允许两种都取消）。
+- 权限与模型能力经 routes/assistant.ts、routes/agentConsole.ts 下发，agentConsole.ts / dshRuntime.ts 把 env 注入子进程，控制台与聊天抽屉同一口径。
+- 前端 ModelsPanel / AgentPanel 与 agentConsoleApi、agentConsoleUi 同步新口径；新增权限模式、模型输入能力纯函数测试与权限路由测试；README 功能总览与使用步骤同步。
+
+**安装器与更新链：内置 Node/pnpm，预构建包不再跑 git**
+
+- 安装器 exe 内置固定运行时：Node 22.20.0 便携 zip + pnpm 10.20.0 bundled pnpm.cjs（node 直接跑 pnpm.cjs、不执行 npm install，客户机全局 pnpm 版本不再影响安装）。
+- prepare-runtime.js 负责准备与校验（ZIP 头、包内 node.exe 实际版本、pnpm -v）；部署脚本优先离线解压/拷贝内置运行时，仅从仓库裸跑脚本（无 runtime）才退回「下载 Node + npm install -g pnpm@10.20.0（必须走 npm.cmd）」。
+- GUI 增加 ENGINE_VERSION 比较：旧克隆引擎不能盖掉新 exe 里的修复（版本相同仍优先克隆，保留引擎随 git pull 热更新）。
+- installer/main.js 与 scripts/lib/engine.js 接入内置运行时选择；README / USER-GUIDE / GITEA-CI 同步说明内置运行时与版本 pin。
+- 公开安装器发布流程与公开快照导出同步支持 runtime，并补上原先漏导出的 preload.js / bundle-zip.js；新增 installer-engine-select / installer-runtime-bundle 回归测试并接入 test。
+- pnpm 安装改走 npm.cmd：新增 Resolve-NpmCmd，修掉 Node 22 的 npm.ps1 从脚本里被 & 调用时重建出 "file @arguments" 导致的 Unknown command: "file"（此前 pnpm 四个安装组合全部失败）。
+- Out-Line 的 Add-Content 加 -ErrorAction Stop，失败原因不再被日志文件占用的 stderr 噪音淹没。
+- 克隆步骤支持「安装目录已存在但不是 git 仓库」（先装过预构建包的机器）：旧目录改名让位，克隆成功再删、失败则恢复，不再卡在 git clone 目录非空；新增 installer-npm-shim / installer-clone-over-existing 回归测试。
+- 更新链识别安装器自带 pnpm：update-from-source.ps1 的便携 PATH 增补 %LOCALAPPDATA%\engram\pnpm，deps.js resolvePnpmEntry 优先识别 %LOCALAPPDATA%\engram\pnpm\pnpm.cjs（以及旧 pnpm-home、便携 Node 的 node_modules 布局）；deps.test.js 增加内置 pnpm 候选路径回归用例。
+- 预构建环境包安装不再跑 git 更新：desktop 新增 readPrebuiltManifest / isGitCheckout，预构建安装与非 git 检出统一判为「源码更新不可用」、启动时标 unsupported 而非反复 failed，手动检查/更新直接给出「用新版安装器覆盖安装」说明（修客户端「检查更新」一直报 spawn git ENOENT）。
+- 预构建安装的版本行改用包清单 commit/builtAt（能看出装的是哪次打包），preload / desktop-get-env 增加 prebuilt 标记；git 定位补 PATH 扫描与 Git for Windows 常见目录兜底，spawn ENOENT 翻成含已查找路径的中文说明。
+- web 设置页区分安装包 / 源码 / 预构建三种更新入口与「预构建」徽标，版本说明文案不再冒充源码模式；buildLabel 与设置域防回归断言、runtime-mode 单测同步补充。
+- 应用内卸载不再「假卸载」：fork launcher 后等状态文件确认卸载脚本已拉起再退出，脚本缺失 / PowerShell 起不来 / 8 秒无响应则不退出并把原因回报设置页。
+- 安装根新增 .uninstalling 标记与启动守卫：卸载进行中再点图标会被拦下，>15 分钟过期标记自动清理，避免一次失败的卸载把应用永久锁死。
+- uninstall-engram.ps1 停进程改循环（覆盖卸载途中被重新拉起的实例）、删除重试 20 次、一并清理开始菜单快捷方式与开机自启注册表项；安装器完成提示里的卸载路径修正为「设置 → 本机应用」；新增 uninstall-guard.test.js 8 例并接入 pnpm test。
+
+**发布与 CI（内部）**
+
+- 大产物下载与发布验证改为 IPv6 优先、IPv4 自动回退：新增 main/scripts/download-artifact.cjs（解析 AAAA/A 后逐地址尝试、按协议族重试、响应截断即失败、支持 sha256 校验 / --dry-run / --resolve / --header、成功输出固定 DONE 行）与 10 个离线用例（不访问外网）；pnpm test 挂上新回归。
+- GITEA-CI.md 增加「大产物下载与验证」章节，记录 2026-11-06 验证脚本写死 curl -4 导致 130MB 下载约 8 分钟、同一文件 IPv6 约 3 秒的反面案例。
+- verify 镜像补拷 .gitignore（与 .npmrc / Dockerfile 同一批测试用文件），修复安装器运行时测试在 CI 误红；安装器运行时测试改为「main/.gitignore 或仓库根 .gitignore 任一排除 runtime」即通过，main/.gitignore 同步补 installer/resources/runtime/ 忽略规则。
+
+**测试与回归**
+
+- Docker 离线 verify（build + typecheck + test）全绿；platform-parity-check.sh --strict 通过。
+- 安卓 gradlew testDebugUnitTest BUILD SUCCESSFUL，126 个 Kotlin 单测通过（含新增 InboxStatusMergeTest、SyncSchedulePolicyTest）。
+- server 同步回归 40/40（syncFidelity.e2e 等），web 护栏 34/34。
+- 安装器：installer-engine-select / installer-runtime-bundle / installer-npm-shim / installer-clone-over-existing 回归测试接入 test，既有安装器测试全过。
+- 桌面壳与设置页：runtime-mode / buildLabel / settingsDomains / uninstall-guard 防回归断言接入 test。
+- 下载：download-artifact 10 个离线用例（双栈优先/回退、5xx 重试、截断、sha256 不符、输出已存在、4xx）。
+- 卸载在本机隔离副本端到端验收：正常卸载删目录并写 ##ALLDONE、launcher 缺失时设置页报错且应用不退出、卸载标记存在时启动即退出。
+
+**安卓端：自 v1.5.7 以来的累计更新**
+
+- 本区间安卓原生改动集中在 ab9a9078（同步状态修复）：EngramLocalServer.kt、新增 InboxStatusMerge.kt、LocalDatabase.kt、SyncEngine.kt、新增 SyncSchedulePolicy.kt 及 Kotlin 单测；另有 8214637f 对 EngramLocalServer.kt 视频配置窄代理注释的口径更新（仅注释，无行为变化），Web 侧文案随同一份构建同步。
+- 收集箱状态本机按磁盘推导 + sync_inbox_status 持久缓存，不再被 sync.connected 一票否决：手机「已入库 / 已转换」不再回退成待整理。
+- 前台 90s 心跳与窄代理写后触发同步；拉取缺口 30s 自愈重试；本地改名/移动时 evidence_snapshots 与 page_revisions 随路径迁移。
+- 上述「改名不丢账本、证据账本只前进不后退、/api/sync/distilled 口径、file op hash、4xx 死信、mtime 裁决、文件变更 file-changed」在手机成员端同源生效（SyncEngine.kt / LocalDatabase.kt）。
+- APK 基于本次标签重新构建并签名，versionName 1.5.7→1.5.8、versionCode 由 main/desktop/package.json 推导；从 v1.5.7 覆盖安装即可，本机知识库数据不受影响。
+
+**Windows exe、Docker 与发布交付**
+
+- Docker 镜像 1.5.8 + latest 用同一标签源码构建；Windows exe 与已签名 APK 由同一标签产出。
+- exe、APK 与 sha256 挂 Gitea Release 并同步公开仓库同名 Release，归档至 releases/1.5.8/。
+
 ## v1.5.7（2026-11-03）
 
 **手机端两项体验修复：收集箱补上「未入库 / 待整理 / 已转换 / 已入库」四档状态分类——已入库的条目不再从手机界面消失，转换产物可回看、可预览；知识库左侧目录按触屏重做——长按多选、分区动作收进 ⋯ 面板、折叠屏常驻栏不再丢字、满窗目录铺满并让开底栏。同步落地三端并行开发规范与发版门禁（三端契约测试、手机滞后清单、巡检脚本）。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
