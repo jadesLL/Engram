@@ -254,6 +254,7 @@ import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
 import { useAppUpdateStore } from '../stores/appUpdate';
 import { useSyncStore } from '../stores/sync';
+import { useServerUpdateStore } from '../stores/serverUpdate';
 import { syncStatusView } from '../lib/syncStatus';
 import { APP_VERSION } from '../version';
 import { useRoute } from 'vue-router';
@@ -328,6 +329,7 @@ const MOBILE_GROUPS: ReadonlyArray<{ id: SettingsDomainId; label: string; icon: 
 
 const app = useAppStore();
 const sync = useSyncStore();
+const serverUpdate = useServerUpdateStore();
 const appUpdateStore = useAppUpdateStore();
 
 /** 外观行状态：与桌面「外观」分组的主题选项同一份 store 值 */
@@ -339,6 +341,7 @@ const themeLabel = computed(() => {
 /** 同步状态：与首页同步胶囊同一套 lib/syncStatus 文案（android-local 的判定口径也一致） */
 const syncStatus = computed(() => syncStatusView(sync.status, {
   androidLocal: capabilities.value.runtime === 'android-local',
+  updating: serverUpdate.updating,
 }));
 
 /* 账户卡：与「我的」面板同一份只读展示（中枢给本机的成员名 + 同步状态），不另造账户体系 */

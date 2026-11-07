@@ -80,8 +80,13 @@ import {
   applyServerUpdate,
   applySourceUpdate,
   friendlyApplyError,
+  isServerAlreadyLatest,
   type ApplyResult,
 } from '../lib/applyUpdate';
+import { api } from '../api';
+import { notify } from '../lib/notify';
+import { markServerUpdatePending } from '../lib/serverUpdateFeedback';
+import { useServerUpdateStore } from '../stores/serverUpdate';
 import Icon from './Icon.vue';
 
 interface SourceUpdateState {
@@ -106,6 +111,8 @@ const router = useRouter();
 const updateStore = useUpdateStore();
 /** 手机端（Android App）的应用内更新：下载 APK → 调起系统安装器，见 stores/appUpdate.ts */
 const appUpdate = useAppUpdateStore();
+/** 服务器更新中：连接状态（侧栏胶囊 / 首页状态条）据此显示「服务器更新中」 */
+const serverUpdate = useServerUpdateStore();
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 /**
  * 桌面端（App.vue 同款判定：有 wikiDesktop 桥就有融合标题栏）：入口渲染进标题栏 #win-titlebar-slot，
@@ -216,6 +223,36 @@ const progressLines = computed(() => {
 });
 
 /**
+ * 「已经是最新」预检：更新成功后再次点更新入口时给成功提示，而不是重复重建容器
+ * （与设置页同一判定，见 lib/applyUpdate 的 isServerAlreadyLatest）。
+ * 检查失败不拦更新，日志写清原因后按原流程继续。
+ */
+async function serverUpdateAlreadyLatest(log: (line: string) => void): Promise<boolean> {
+  try {
+    const { data } = await api.post('/api/update/check', {});
+    return isServerAlreadyLatest(data);
+  } catch (e: any) {
+    const reason = e.response?.data?.error || e.response?.data?.warning || e?.message || '未知错误';
+    log('无法确认是否已是最新（' + reason + '），继续按原流程更新');
+    return false;
+  }
+}
+
+/** 更新前落一条跨刷新标记：页面在新容器起来后自动刷新，刷新回来据此弹「更新成功」 */
+async function markPendingBeforeApply(): Promise<void> {
+  let fromVersion = String(updateStore.lastResult?.currentVersion || '');
+  let fromCommit = '';
+  try {
+    const { data } = await api.get('/api/update/state');
+    fromVersion = String(data?.currentVersion || fromVersion);
+    fromCommit = String(data?.commit || '');
+  } catch {
+    // 读不到提交号就只比版本号：版本没变同样能识别出「可能已回滚」
+  }
+  markServerUpdatePending({ fromVersion, fromCommit, source: 'notice' });
+}
+
+/**
  * 点一下就更新，不再二次确认（用户 2026-09-24 明确要求）：
  * 四种形态各自接手（源码重建重启 / 下载 exe 静默安装 / 服务端换镜像并重启 /
  * 手机端下载 APK 再调起系统安装器），这里只负责把进度与失败原因显示出来。
@@ -242,6 +279,15 @@ async function runUpdate() {
       onInstalling: () => { applyPercent.value = null; },
     });
   } else {
+    log('正在确认是否已是最新版本…');
+    if (await serverUpdateAlreadyLatest(log)) {
+      applyPhase.value = 'skipped';
+      log('已是最新版本，无需更新。');
+      notify.success('已是最新版本，无需更新');
+      return;
+    }
+    await markPendingBeforeApply();
+    serverUpdate.begin({ target: 'local' });
     log('正在提交更新请求…');
     result = await applyServerUpdate({
       log,
@@ -255,6 +301,7 @@ async function runUpdate() {
   }
   applyPhase.value = 'error';
   applyError.value = friendlyApplyError(result.error);
+  serverUpdate.finish();
   log(applyError.value);
 }
 

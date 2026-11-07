@@ -47,8 +47,8 @@ export interface SyncLinkStatus {
   candidates: SyncLinkCandidate[];
 }
 
-/** 胶囊颜色只认这个 key（`.link-<key>`）；hub/muted/connected 是四色之外的中性档 */
-export type SyncChannelKey = SyncChannelKind | 'hub' | 'muted' | 'connected' | 'connecting';
+/** 胶囊颜色只认这个 key（`.link-<key>`）；hub/muted/connected/updating 是四色之外的中性档 */
+export type SyncChannelKey = SyncChannelKind | 'hub' | 'muted' | 'connected' | 'connecting' | 'updating';
 
 /** 状态输入：在首页状态模型的字段上补 link 与 hubUrl（后者用于没有 link 时推断通道） */
 export interface SyncChannelInput extends SyncStatusInput {
@@ -81,6 +81,12 @@ export interface SyncChannelView {
 export interface SyncChannelOptions {
   /** 注入当前时间便于单测 */
   now?: number;
+  /**
+   * 服务器正在更新（本页触发容器更新 / 桌面端远程更新同步中枢）：
+   * 服务被打断是可预期的，连接状态要说「服务器更新中」而不是继续报过期的「已连接」
+   * 或红色的「连接中断」。
+   */
+  updating?: boolean;
 }
 
 const CHANNEL_LABEL: Record<SyncChannelKey, string> = {
@@ -92,6 +98,7 @@ const CHANNEL_LABEL: Record<SyncChannelKey, string> = {
   connecting: '连接中…',
   hub: '中枢',
   muted: '已停用',
+  updating: '服务器更新中',
 };
 
 const CHANNEL_FULL_LABEL: Record<SyncChannelKey, string> = {
@@ -103,6 +110,7 @@ const CHANNEL_FULL_LABEL: Record<SyncChannelKey, string> = {
   connecting: '正在连接中枢…',
   hub: '中枢运行中',
   muted: '同步已停用',
+  updating: '服务器更新中',
 };
 
 /** 提示的第三行：这块的两个热区各自做什么（断开时右侧那颗 ⟳ 换成重连） */
@@ -219,6 +227,25 @@ export function syncChannelView(
   const busy = Boolean(status.syncing || status.reconciling || status.running)
     || pending > 0
     || pendingPulls > 0;
+
+  // 服务器更新中：服务被打断是可预期的，先于所有通道档回答「现在为什么连不上」。
+  // 中枢端同样适用——更新本机服务器时，成员看到的在线数也会短暂变化。
+  if (options.updating) {
+    const host = hubHost(status.hubUrl);
+    return {
+      key: 'updating',
+      label: CHANNEL_LABEL.updating,
+      fullLabel: CHANNEL_FULL_LABEL.updating,
+      title: host ? `${CHANNEL_FULL_LABEL.updating} · ${host}` : CHANNEL_FULL_LABEL.updating,
+      detail: '正在拉取镜像并重建容器，恢复后自动重连',
+      hint: '更新完成后自动恢复，无需重复操作',
+      busy: true,
+      pending,
+      host,
+      latencyMs: null,
+      since: null,
+    };
+  }
 
   // 中枢端没有「连出去」的通道：改看成员在线数，颜色用中性（不占四色语义）
   if (role === 'hub') {
