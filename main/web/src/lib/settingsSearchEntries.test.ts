@@ -66,7 +66,7 @@ test('搜索面板：键盘（↑↓ / ↵ / esc / Tab）、焦点还原、跳�
   assert.match(source, /event\.key === 'Tab'/, '没有把焦点锁在面板内');
 });
 
-test('设置页外壳：跳转链接 / 搜索入口 / 状态总览 / 目录只留大类', () => {
+test('设置页外壳：跳转链接 / 搜索入口 / 状态总览 / 左栏两级目录', () => {
   const view = fs.readFileSync(path.join(webSrc, 'views', 'SettingsView.vue'), 'utf8');
   assert.match(view, /class="settings-skip"/, '缺少「跳到设置内容」的键盘跳转链接');
   assert.match(view, /<SettingsSearch/, '设置页没有挂载搜索面板');
@@ -74,8 +74,10 @@ test('设置页外壳：跳转链接 / 搜索入口 / 状态总览 / 目录只�
   assert.match(view, /ctrlKey \|\| event\.metaKey/, '没有 Ctrl / ⌘ K 打开搜索的快捷键');
   assert.match(view, /addEventListener\('keydown', onGlobalKey, true\)/, '设置页快捷键没有抢在全局搜索页之前（挂捕获阶段）');
   assert.match(view, /function onNavKeydown/, '目录不支持方向键导航');
-  // 二级锚点不再进目录：目录项只按大类渲染
-  assert.doesNotMatch(view, /settings-nav-sub/, '目录里又出现了二级锚点');
+  // 2026-11 卡片式版式：二级分组只随当前大类展开，点击定位（不跟滚动联动）
+  assert.match(view, /class="settings-nav-sub"/, '左栏缺少当前大类的二级分组');
+  assert.match(view, /settings-nav-subitem/, '左栏二级分组项没有渲染');
+  assert.doesNotMatch(view, /activeAnchor/, '又出现了滚动联动高亮：目录会跟着内容自己跳');
   assert.match(view, /settings-nav-meta/, '目录行尾没有状态文字');
 });
 

@@ -115,8 +115,8 @@ test('设置页 JS 认的是内容列这根滚动条（重设计后不再做锚�
 test('分组间距唯一：折叠后相邻分组的间距必须处处一样', () => {
   assert.match(
     ruleBody(css, '.settings-group'),
-    /margin:\s*0 24px 14px/,
-    '分组底部间距不再是统一的 14px（2026-11 重设计收紧一档）：相邻分组的节奏会不一致',
+    /margin:\s*0 0 18px/,
+    '分组底部间距不再是统一的 18px（卡片式版式）：相邻分组的节奏会不一致',
   );
   assert.doesNotMatch(
     css,
@@ -125,7 +125,7 @@ test('分组间距唯一：折叠后相邻分组的间距必须处处一样', ()
   );
   assert.match(
     ruleBody(css, '.settings-content'),
-    /padding-bottom:\s*72px/,
+    /padding-bottom:\s*56px/,
     '页面底部留白不再由内容列承担：取消最后一组的特例后，最后一张卡片会贴着底边',
   );
 });
@@ -148,13 +148,13 @@ test('实时状态走状态条：不再是灰色小字，说明也不贴住上�
   );
   assert.match(
     ruleBody(css, '.group-body'),
-    /padding:\s*12px 16px 14px/,
-    '分组内容区顶部留白被压回 4px：卡内第一段提示会重新贴住色带',
+    /padding:\s*2px 22px 8px/,
+    '分组内容区内边距被改掉：卡片式版式的行内边距会与卡片左右缘对不齐',
   );
   assert.match(
     ruleBody(css, '.settings-native .setting-copy span'),
-    /margin-top:\s*6px/,
-    '设置项说明与标题的间距被压回去：又变成「提示和上面的设置挨太近」',
+    /margin-top:\s*3px/,
+    '设置项说明与标题的间距被改掉：又变成「提示和上面的设置挨太近」',
   );
 });
 

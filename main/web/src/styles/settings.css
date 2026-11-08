@@ -16,46 +16,58 @@
  */
 .settings-view {
   position: relative;
-  width: min(1220px, 100%);
+  width: min(1280px, 100%);
   height: 100%;
   min-height: 0;
   margin: 0 auto;
-  padding: 30px 28px 0;
+  padding: 18px 28px 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* 2026-11 版式：补上原先引用但全库未定义的令牌（焦点环 / 强调文字） */
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-text: var(--accent);
 }
 
-/* 页头：标题 + 搜索入口。原来那句「七个单一职责的分类……」已删——自我说明不产生信息量 */
-.settings-page-head {
-  flex: 0 0 auto;
+/* 左栏顶部搜索入口：长得像输入框，点开是命令面板（2026-11 版式：搜索常驻左栏，不再占页头） */
+.settings-nav-search {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 10px;
-}
-.settings-page-actions { flex: none; display: flex; align-items: center; gap: 8px; }
-.settings-page-head h2 {
-  margin: 0;
-  font-size: 25px;
-  line-height: 1.2;
-}
-.settings-page-head p {
-  margin: 5px 0 0;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border-strong);
+  border-radius: 9px;
+  background: var(--card-bg);
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 12.5px;
+  text-align: left;
 }
+.settings-nav-search:hover { background: var(--control-bg-hover); color: var(--text); }
+.settings-nav-search .nav-search-label { flex: 1; min-width: 0; }
+.settings-nav-search kbd {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
+.settings-nav-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; margin-top: 14px; }
+.settings-nav-domain { display: flex; flex-direction: column; }
 
 .settings-shell {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: 236px minmax(0, 1fr);
   /* 单行必须占满壳层高度，两个滚动列才各有确定高度（否则列跟着内容长高，又溢到视口外） */
   grid-template-rows: minmax(0, 1fr);
-  gap: 24px;
+  gap: 32px;
 }
 
 /*
@@ -68,8 +80,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px 10px 20px 4px;
+  padding: 2px 10px 16px 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -87,17 +98,16 @@
 }
 /* 大类导航项：42px 行高 + 图标 + 行尾状态（二级锚点已移出目录） */
 .settings-nav-item {
-  position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
   width: 100%;
-  min-height: 42px;
-  padding: 0 11px;
+  min-height: 35px;
+  padding: 0 9px;
   border: 1px solid transparent;
   border-radius: 9px;
   color: var(--text-secondary);
-  font-size: 13.5px;
+  font-size: 13px;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
@@ -129,17 +139,6 @@
   color: var(--text);
   font-weight: 600;
 }
-/* Win11 NavigationView 选中指示条 */
-.settings-nav-item.active::before {
-  content: '';
-  position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: 0;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent);
-}
 .settings-nav-item:focus-visible,
 .settings-nav-subitem:focus-visible {
   outline: 2px solid var(--accent);
@@ -157,19 +156,18 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin: 2px 0 4px 19px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
+  margin: 2px 0 6px 30px;
+  padding-left: 0;
 }
 .settings-nav-subitem {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 30px;
-  padding: 5px 8px;
-  border-radius: 5px;
-  color: var(--text-secondary);
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text-faint);
   font-size: 12.5px;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
@@ -178,9 +176,19 @@
   background: var(--bg-hover);
   color: var(--text);
 }
-/* 滚动联动高亮：文字与定位圆点同时点亮，一眼看出当前 viewport 在哪个分组 */
+/* 点击目录后的当前分组（不再跟滚动联动） */
 .settings-nav-subitem.active {
+  background: var(--accent-soft);
   color: var(--accent);
+  font-weight: 550;
+}
+/* 危险分组标记：只给一行小字，不铺色块 */
+.nav-danger {
+  flex: none;
+  margin-left: auto;
+  padding-left: 6px;
+  color: var(--danger);
+  font-size: 10.5px;
   font-weight: 600;
 }
 .settings-nav-subitem .nav-dot {
@@ -234,12 +242,11 @@
 .settings-content {
   min-width: 0;
   min-height: 0;
-  padding: 2px 2px 0;
-  /* 内容列是第二个滚动容器：目录与正文各一个滚动条，互不牵扯（底部 72px 从 .settings-view 挪到这里，
-     保证最后一张卡片能滚到舒服的位置，也承接原来的页面底部留白） */
+  padding: 0 2px 0;
+  /* 内容列是第二个滚动容器：目录与正文各一个滚动条，互不牵扯 */
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: 72px;
+  padding-bottom: 56px;
   /* 容器查询上下文：侧栏可拖拽加宽，「窗口大但内容列窄」视口媒体查询管不到，
      行内布局的收窄断点改由内容列自身宽度决定（见文件底部 @container 块） */
   container-type: inline-size;
@@ -249,20 +256,25 @@
 .settings-domain {
   display: flex;
   flex-direction: column;
+  /* 卡片式版式：内容列不跟着窗口无限拉宽（超过 840px 行长就散了） */
+  width: min(840px, 100%);
 }
 .domain-head {
-  padding: 2px 24px 8px;
+  padding: 0 0 16px;
 }
 .domain-head h3 {
   margin: 0;
-  font-size: 17px;
-  line-height: 1.35;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
 }
 .domain-head p {
   margin: 5px 0 0;
+  max-width: 56ch;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 /*
@@ -297,8 +309,8 @@
  *   .block-caption       卡内小分区标题（如软件更新的 服务器/桌面端/更新源）
  */
 .settings-group {
-  margin: 0 24px 14px;
-  scroll-margin-top: 16px;
+  margin: 0 0 18px;
+  scroll-margin-top: 12px;
 }
 
 /* 搜索跳转后的目标分组闪一下：告诉用户「就是这一块」 */
@@ -324,27 +336,20 @@
 .group-card {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 16px;
   background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(29, 27, 23, 0.035);
 }
 .group-band {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  padding: 15px 22px 8px;
+  background: transparent;
+  border-bottom: 0;
 }
 .group-ico {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  display: none;
 }
 .group-text {
   flex: 1;
@@ -354,9 +359,10 @@
   gap: 1px;
 }
 .group-title {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
-  line-height: 1.3;
+  letter-spacing: -0.004em;
+  line-height: 1.35;
   color: var(--text);
 }
 .group-hint {
@@ -368,12 +374,10 @@
   white-space: nowrap;
 }
 .group-body {
-  /* 2026-09-27：顶部留白从 4px 提到 12px（卡内第一段内容不能贴住色带）。
-     2026-11 重设计：底部 16 → 14，与 14px 的行内边距对齐，整页节奏更紧。 */
-  padding: 12px 16px 14px;
+  padding: 2px 22px 8px;
 }
 .group-body.flush {
-  padding: 0;
+  padding: 0 22px 2px;
 }
 
 /* 分组折叠（2026-09-24）：点色带空白处或右侧箭头收起/展开，状态按锚点持久化 */
@@ -497,7 +501,7 @@
   border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
 }
 .level-danger .group-band {
-  background: linear-gradient(90deg, var(--danger-soft), transparent 70%), var(--bg-secondary);
+  background: transparent;
 }
 .level-danger .group-ico {
   background: var(--danger-soft);
@@ -547,10 +551,11 @@
      内容列很窄时左列允许压缩，再窄由下方容器查询转单列 */
   grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
-  gap: 18px;
-  min-height: 64px;
-  padding: 15px 20px;
-  border-bottom: 1px solid var(--border);
+  gap: 24px;
+  min-height: 54px;
+  padding: 13px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
 }
 .settings-native .setting-row:last-child {
   border-bottom: 0;
@@ -568,12 +573,11 @@
 }
 .settings-native .setting-copy span {
   display: block;
-  /* 行标题下面的说明：4px 太挤，给到 6px（2026-09-27 用户报「提示性的文字和上面的设置挨得太近」） */
-  margin-top: 6px;
-  max-width: 60ch;
+  margin-top: 3px;
+  max-width: 58ch;
   color: var(--text-secondary);
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.55;
   text-wrap: pretty;
 }
 .settings-native .setting-control {
@@ -591,7 +595,7 @@
 }
 .settings-native .settings-panel > .setting-message,
 .settings-panel.settings-native > .setting-message {
-  margin: 0 24px 22px;
+  margin: 0 22px 16px;
 }
 .settings-native .ok { color: var(--success); }
 .settings-native .err { color: var(--danger); }
@@ -759,8 +763,8 @@
 /* ---------- 响应式（壳层与共享框架） ---------- */
 @media (max-width: 1024px) {
   .settings-shell {
-    grid-template-columns: 200px minmax(0, 1fr);
-    gap: 18px;
+    grid-template-columns: 208px minmax(0, 1fr);
+    gap: 22px;
   }
 }
 
@@ -774,9 +778,6 @@
     overflow: visible;
     padding-bottom: 0;
   }
-  .settings-page-head h2 {
-    font-size: 22px;
-  }
   .settings-shell {
     display: block;
   }
@@ -784,11 +785,24 @@
     display: none;
   }
   .domain-head {
-    padding: 2px 18px 10px;
+    padding: 0 0 12px;
   }
   .settings-group {
-    margin-right: 18px;
-    margin-left: 18px;
+    margin-right: 0;
+    margin-left: 0;
+    margin-bottom: 14px;
+  }
+  .group-card {
+    border-radius: 14px;
+  }
+  .group-band {
+    padding: 13px 16px 6px;
+  }
+  .group-body {
+    padding: 2px 16px 6px;
+  }
+  .settings-native .setting-row {
+    padding: 12px 0;
   }
   .group-hint {
     white-space: normal;
@@ -814,9 +828,6 @@
   .settings-view {
     padding-right: 12px;
     padding-left: 12px;
-  }
-  .settings-page-head p {
-    max-width: 32ch;
   }
   .settings-native.settings-panel,
   .settings-native .settings-panel {
@@ -875,14 +886,18 @@
  */
 @media (max-width: 768px) {
   /* —— 分组列表首页 —— */
-  /* 手机列表首页只留「设置」标题：桌面版那句「七个单一职责的分类……」在窄屏是纯噪声 */
-  .settings-view.is-mobile-list .settings-page-head p {
-    display: none;
-  }
   .settings-mobile-list {
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+  /* 手机列表首页的标题：桌面版页头已并入左栏，窄屏在这里补一个（2026-11 版式） */
+  .settings-mobile-title {
+    margin: 0 4px 2px;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
   }
   .settings-mobile-account {
     display: flex;
@@ -891,7 +906,7 @@
     width: 100%;
     padding: 12px 14px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: 14px;
     background: var(--card-bg);
     text-align: left;
   }
@@ -935,8 +950,9 @@
   .settings-mobile-group {
     overflow: hidden;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: 14px;
     background: var(--card-bg);
+    box-shadow: 0 1px 2px rgba(29, 27, 23, 0.035);
   }
   .settings-mobile-row {
     display: flex;
@@ -958,16 +974,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 9px;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
     background: var(--bg-tertiary);
     color: var(--text-secondary);
   }
   .settings-mobile-row-label {
     flex: 1;
     min-width: 0;
-    font-size: 15px;
+    font-size: 14.5px;
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1045,9 +1061,6 @@
    2026-11 设置页重设计：搜索面板 / 状态总览 / 键盘焦点 / 排版工艺
    ========================================================================== */
 
-/* 页标题比分类标题小一档：设置是「壳」，分类才是内容 */
-.settings-page-head h2 { font-size: 20px; }
-
 /* Tab 第一下就能看到「跳到设置内容」 */
 .settings-skip {
   position: absolute;
@@ -1066,66 +1079,45 @@
 }
 .settings-skip:focus-visible { transform: none; outline: 2px solid var(--on-accent); outline-offset: 2px; }
 
-/* 搜索入口：长得像输入框，点开是命令面板 */
-.settings-search-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--control-border-strong);
-  border-radius: var(--radius-control);
-  background: var(--control-bg);
-  color: var(--text-secondary);
-  font-size: 13px;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-.settings-search-trigger:hover { background: var(--control-bg-hover); border-color: var(--border-strong); color: var(--text); }
-.settings-search-trigger:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.settings-search-trigger kbd {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border: 1px solid var(--border-strong);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.5;
-}
+/* 旧页头搜索按钮已并入左栏（见 .settings-nav-search），这里不再保留第二套入口样式 */
 
-/* 状态总览：同步 / 更新 / 版本。会变的状态用点 + 值表达，不是一个只读胶囊 */
+/* 左栏底部状态（同步 / 更新 / 版本）：一行一条，安静地待在最下面（2026-11 版式：
+   不再横在页头当一条抢注意力的胶囊带） */
 .settings-status-strip {
-  flex: 0 0 auto;
+  flex: none;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
   overflow-x: auto;
-  padding-bottom: 10px;
   scrollbar-width: none;
 }
 .settings-status-strip::-webkit-scrollbar { display: none; }
 .settings-status-item {
   flex: none;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 7px;
-  height: 30px;
-  padding: 0 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card-bg);
-  color: var(--text-secondary);
-  font-size: 12px;
+  width: 100%;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11.5px;
   white-space: nowrap;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.settings-status-item:hover { background: var(--bg-secondary); border-color: var(--border-strong); color: var(--text); }
+.settings-status-item:hover { background: var(--bg-hover); color: var(--text-secondary); }
 .settings-status-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-status-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
-.settings-status-label { color: var(--text-secondary); }
-.settings-status-value { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.settings-status-label { color: var(--text-faint); }
+.settings-status-value { margin-left: auto; font-weight: 500; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.settings-status-item.tone-warn .settings-status-value { color: var(--warning); }
 .settings-status-item.tone-ok .settings-status-dot { background: var(--success); }
 .settings-status-item.tone-accent .settings-status-dot { background: var(--accent); }
 .settings-status-item.tone-warn .settings-status-dot { background: var(--warning); }
@@ -1247,10 +1239,7 @@
 
 /* 手机端：列表首页有自己的搜索入口；子页返回栏右侧给搜索 */
 @media (max-width: 768px) {
-  .settings-search-trigger { display: none; }
-  .settings-page-head { padding-bottom: 4px; }
-  .settings-status-strip { padding-bottom: 6px; }
-  .settings-mobile-search {
+    .settings-mobile-search {
     display: flex;
     align-items: center;
     gap: 8px;

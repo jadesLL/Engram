@@ -526,7 +526,7 @@ watch(() => [info.value.repoUrl, info.value.authType, info.value.username], sync
   color: var(--text-faint);
 }
 .update-notes {
-  margin: 0 24px 14px;
+  margin: 0 22px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-secondary);
@@ -551,13 +551,13 @@ watch(() => [info.value.repoUrl, info.value.authType, info.value.username], sync
   overflow-wrap: anywhere;
 }
 .integration-note {
-  margin: 14px 24px 18px;
+  margin: 14px 22px 16px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }
 .setting-message {
-  margin: 0 24px 14px;
+  margin: 0 22px 12px;
 }
 .setting-message.ok {
   color: var(--success);
