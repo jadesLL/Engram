@@ -46,10 +46,28 @@ const LEGACY_HOME_BLOCK = [
   "          Authorization: 'Bearer tok'",
 ].join('\n');
 
-test('chatPatchText：在 web profile 上叠 sdk stdio 应用并关掉 Web UI', () => {
+test('chatPatchText：在 web profile 上叠 sdk stdio 应用、关掉 Web UI，并启用聊天会话的 host 工具', () => {
   const text = chatPatchText();
   const ids = agentPatchEntryIds(text);
-  assert.deepEqual(ids, ['sdk-app-startup', 'sdk-jsonrpc-server', 'webserver', 'web-runtime', 'hmr', 'session-title-llm']);
+  assert.deepEqual(ids, [
+    'sdk-app-startup',
+    'sdk-jsonrpc-server',
+    'webserver',
+    'web-runtime',
+    'hmr',
+    'session-title-llm',
+    'tool-bash',
+    'tool-pwsh',
+    'tool-jobs',
+    'tool-fs',
+    'tool-fs-search',
+    'tool-todo',
+    'skill-filesystem',
+    'tool-skill',
+    'tool-web',
+    'tool-result-pruner',
+    'compaction-basic',
+  ]);
   assert.match(text, /profile: web/);
   assert.match(text, /- id: webserver\n {2}disabled: true/);
   assert.match(text, /- id: web-runtime\n {2}disabled: true/);
@@ -57,6 +75,23 @@ test('chatPatchText：在 web profile 上叠 sdk stdio 应用并关掉 Web UI', 
   // 知识库改走 CLI，聊天覆盖层不再写 MCP 条目
   assert.equal(text.includes('mcp-engram'), false);
   assert.equal(text.includes('dsh-mcp-client'), false);
+  // 聊天会话由 SDK 创建、不挂 web 层的 agent preset：命令 / 文件 / skill / 联网 / 压缩
+  // 必须在 host 层启用，否则 `engram` CLI 与 skill 都没有入口（v1.5.10 的聊天抽屉正是缺这一层）
+  assert.match(text, /- id: tool-pwsh\n {2}disabled: !!js process\.platform !== 'win32'/);
+  assert.match(text, /- id: tool-bash\n {2}disabled: !!js process\.platform === 'win32'/);
+  for (const id of [
+    'tool-jobs',
+    'tool-fs',
+    'tool-fs-search',
+    'tool-todo',
+    'skill-filesystem',
+    'tool-skill',
+    'tool-web',
+    'tool-result-pruner',
+    'compaction-basic',
+  ]) {
+    assert.match(text, new RegExp(`- id: ${id}\\n {2}disabled: false`));
+  }
   assert.equal(text.endsWith('\n'), true);
 });
 

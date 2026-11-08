@@ -49,6 +49,11 @@ test('工具名剥掉 MCP 前缀并翻成中文，没登记的退回原名', () 
   assert.equal(bareToolName('search'), 'search');
   assert.equal(toolLabel('mcp__engram__write_page'), '写入页面');
   assert.equal(toolLabel('some_unknown_tool'), 'some_unknown_tool');
+  // dsh 原生工具（v1.5.10 起聊天抽屉与工作台同一套工具面）：执行记录不能只显示英文原名
+  assert.equal(toolLabel('pwsh'), '执行命令');
+  assert.equal(toolLabel('read_image'), '查看图片');
+  assert.equal(toolLabel('web_search'), '联网搜索');
+  assert.equal(toolLabel('skill'), '加载技能');
 });
 
 test('子代理标签：模型给的标签优先', () => {

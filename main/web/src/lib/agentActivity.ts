@@ -40,6 +40,20 @@ export const TOOL_LABELS: Record<string, string> = {
   add_inbox_file: '新建收集箱文件',
   // 提问：问题弹在对话最下侧，图标/状态条据此说明「它在等你点选」
   ask_user: '向你提问（对话底部弹窗）',
+  // dsh 原生工具：v1.5.10 起聊天抽屉与内置 Agent 工作台是同一套工具面，执行记录要能读懂
+  pwsh: '执行命令',
+  bash: '执行命令',
+  read: '读取文件',
+  write: '写文件',
+  edit: '修改文件',
+  read_image: '查看图片',
+  glob: '查找文件',
+  grep: '搜索文件内容',
+  skill: '加载技能',
+  web_search: '联网搜索',
+  web_fetch: '抓取网页',
+  job_output: '读取后台任务',
+  todo_write: '更新任务清单',
   // 委派类工具：正常会被子代理卡接管（不再单独成行），这里兜住没起成子会话的那次调用
   subagent: '派子代理',
   subagent_fork: '派子代理（继承对话）',
