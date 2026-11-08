@@ -245,15 +245,20 @@ act_runner 以 Windows 宿主机模式运行（label `windows`），Docker 命�
 |---|---|
 | 机器 | 开发机 DEV-PC（Windows，Docker Desktop Linux 引擎） |
 | 安装目录 | `C:\Users\example\gitea-runner\`（gitea-runner.exe v3.3.0 + config.yaml + .runner） |
-| 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——Engram 与 Example_Selection_Tool 的 CI 都由它执行 |
-| 启动 | `gitea-runner.exe daemon --config config.yaml`；开机自启走计划任务 `GiteaRunnerDaemon`（登录触发、崩溃自动重启，`Get-ScheduledTask GiteaRunnerDaemon` 查状态） |
-| 看门狗 | 计划任务 `GiteaRunnerWatchdog`（2026-09-04 起，每 5 分钟）：`gitea-runner.exe` 进程消失即调 `start-runner.ps1` 拉起并记 `watchdog.log`。覆盖进程崩溃、开机时 Docker 管道未就绪导致启动失败等场景（原计划任务只在登录时拉一次，runner 启动失败会一直无人认领任务，2026-08-23 迁移时曾排队 6 小时） |
+| 注册方式 | **全局（instance 级）**，当前在线 runner id=4，name `dev-pc-scnml1a`，labels `windows:host`——Engram 与 Example_Selection_Tool 的 CI 都由它执行（旧 id=3 `dev-pc-bbo2mil` 已离线闲置，确认无用后可在管理页删除） |
+| 启动 | `gitea-runner.exe daemon --config config.yaml`。登录自启：HKCU Run 项 `EngramGiteaRunner` → `powershell -File runner-watchdog.ps1`（非管理员账户也能写）；再加计划任务 `GiteaRunnerWatchdog` 每 5 分钟重试（登录触发任务在当前非管理员账户下注册会「拒绝访问」，用 Run 键顶替即时拉起）。2026-11-08 起「启动」文件夹里的 `gitea-runner.cmd` / `gitea-runner-watchdog.cmd` 已停用并备份到 `startup-backup\` |
+| 看门狗 | `runner-watchdog.ps1`（幂等；命名互斥量 `Global\EngramGiteaRunnerWatchdog` 防登录瞬时双启）：PATH 前置 `C:\Program Files\Git\bin`、`DOCKER_CONTEXT=default`，进程不在即拉起 daemon 并记 `runner-watchdog.log`；计划任务每 5 分钟跑一次，覆盖进程崩溃、开机竞态与 Docker 晚就绪。注意 **runner 上线 ≠ 能跑 job**：Docker Desktop 未就绪时 job 会失败 |
 | config.yaml 关键项 | `container.docker_host: npipe:////./pipe/dockerDesktopLinuxEngine`（Windows 下 runner 默认探测 /var/run/docker.sock 失败，必须显式指向 Docker Desktop 的 Linux 引擎命名管道）；日志级别 debug（排查认领问题用，平时可调回 info） |
 
 **迁移踩坑（旧机下线后 CI 全部排队无人认领）**：
 - 旧 runner（id=1 dev-pc / id=2 仓库级 dev-pc）已于 2026-08-23 删除；注意 **runner 注册有作用域**——用仓库页 token 注册的 runner 只服务该仓库（曾导致 Engram CI 排队 6 小时无人认领而 另一示例仓库 正常），必须用全局管理页（`/-/admin/actions/runners`，注意 `/-/` 前缀）的 Registration Token 注册。
 - 管理页「创建新运行器」是**下拉菜单**，Registration Token 直接嵌在菜单的只读输入框里（页面 HTML 即含，无需点击交互）。
 - 派发卡死恢复：任务派给已下线 runner 的会永久排队，推送一个空提交（`git commit --allow-empty`）触发新 run 即可被在线 runner 认领。
+
+**自愈链路踩坑（2026-11-08：重启后 runner 长期离线）**：
+- 两个「启动」文件夹入口（`gitea-runner.cmd` + `gitea-runner-watchdog.cmd`）同时拉起 daemon，第二个实例抢 `.runner` 锁报 `runner file is already locked by another process` 退出；先起的实例随后也退出，而常驻看门狗循环进程没活下来——于是重启后 runner 一直离线、CI 只能排队。修复见上表「启动 / 看门狗」：入口收敛为 HKCU Run + 计划任务共用一个幂等 watchdog 脚本（互斥量防并发），旧 `.cmd` 备份到 `startup-backup\`。
+- 运维检查三件套：`Get-Process gitea-runner`、`Get-ScheduledTask GiteaRunnerWatchdog`、`Get-Content runner-watchdog.log -Tail 5`。
+- GitHub 公开镜像 job 从 `gitea.com` 拉 `actions/checkout`；该源 504 时 mirror 会在 21 秒内失败（重跑即可，与代码无关）。
 
 ## wine 交叉打包关键坑（desktop/Dockerfile.ci + scripts/build-desktop-ci.sh）
 
