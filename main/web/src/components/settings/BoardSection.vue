@@ -59,7 +59,6 @@ import { notify } from '../../lib/notify';
 import { boardAutoChoices, boardAutoLabel, formatBoardDue, formatBoardStamp } from '../../lib/boardAuto';
 import SettingsGroup from './SettingsGroup.vue';
 import AppSelect from '../ui/AppSelect.vue';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 
 /**
  * 「任务看板提炼」设置面板：自动重新提炼的间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
@@ -132,8 +131,6 @@ const statusLabel = computed(() => {
   if (current.stale) return `已到期（${boardAutoLabel(current.autoDays)}）`;
   return `等待到期（${boardAutoLabel(current.autoDays)}）`;
 });
-
-useSettingsBadge('agent-board', computed(() => (config.value?.running ? '正在提炼' : '')));
 
 function applyConfig(data: BoardConfigDto): void {
   config.value = data;
