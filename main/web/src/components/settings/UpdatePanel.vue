@@ -6,10 +6,9 @@
         <span class="group-ico" aria-hidden="true"><Icon name="download" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">服务器更新</span>
-          <span class="group-hint">Docker 部署的服务端：比对 Release 与镜像仓库版本、切换更新通道、拉取镜像就地重建；桌面端绑定多端同步后可在此远程更新同步服务器</span>
+          <span class="group-hint">比对版本、切换通道、拉取镜像重建容器</span>
         </span>
-        <span v-if="versionBadge" class="group-badge tone-muted">{{ versionBadge }}</span>
-        <span v-if="serverBadge.text" class="group-badge" :class="`tone-${serverBadge.tone}`">{{ serverBadge.text }}</span>
+        <span v-if="serverBadge.text" class="group-badge" :class="'tone-' + serverBadge.tone">{{ serverBadge.text }}</span>
         <button
           type="button"
           class="group-caret"
@@ -25,30 +24,32 @@
       <template v-if="state.desktop">
         <!-- 已绑定多端同步：在此直接远程更新同步中枢服务器 -->
         <template v-if="syncHubUrl">
-          <div class="setting-row">
-            <div class="setting-copy">
-              <strong>同步服务器 <code>{{ syncHubHost }}</code></strong>
-              <span>
-                多端同步绑定的服务器（Docker 部署）。在此即可远程更新，无需登录服务器网页。<template v-if="hubState">
-                  当前 <code>v{{ hubState.currentVersion }}</code><template v-if="hubState.commit">（{{ hubState.commit }}）</template><template v-if="hubState.imageTag">，通道 <code>{{ hubState.imageTag }}</code></template>。
-                </template>
-              </span>
-            </div>
-            <div class="check-controls">
-              <span v-if="hubState?.busy || hubUpdating" class="check-status">服务器更新中…</span>
-              <button class="btn primary" type="button" :disabled="hubUpdating || !hubState?.supported || hubState?.busy" @click="confirmHubApply">
-                立即更新
-              </button>
-            </div>
-          </div>
+          <ul class="value-list">
+            <li class="value-row">
+              <span class="value-label">同步服务器</span>
+              <span class="value-text">{{ syncHubHost }}</span>
+            </li>
+            <li class="value-row">
+              <span class="value-label">当前版本</span>
+              <span class="value-text">{{ hubVersionText }}</span>
+            </li>
+            <li class="value-row">
+              <span class="value-label">更新通道</span>
+              <span class="value-text is-muted">{{ hubState?.imageTag || '—' }}</span>
+            </li>
+            <li v-if="hubCheckResult?.hasUpdate && hubCheckResult.latestVersion" class="value-row">
+              <span class="value-label">最新版本</span>
+              <span class="value-text">{{ 'v' + hubCheckResult.latestVersion }}</span>
+            </li>
+          </ul>
 
           <div class="setting-row">
             <div class="setting-copy">
               <strong>检查更新</strong>
-              <span>在服务器侧比对远端仓库 Release 与镜像仓库版本。</span>
+              <span>在服务器侧比对远端 Release 与镜像仓库版本。</span>
             </div>
-            <div class="check-controls">
-              <span v-if="hubCheckResult" class="check-status" :class="hubCheckResult.hasUpdate ? 'has' : 'none'">
+            <div class="setting-actions">
+              <span v-if="hubCheckResult?.ok" class="setting-value" :class="hubCheckResult.hasUpdate ? 'tone-warn' : 'tone-ok'">
                 {{ hubCheckLabel }}
               </span>
               <button class="btn" type="button" :disabled="hubChecking" @click="doHubCheck">
@@ -60,12 +61,23 @@
           <p v-if="hubCheckError" class="setting-message err">{{ hubCheckError }}</p>
           <p v-else-if="hubCheckResult?.warning" class="setting-message warn">{{ hubCheckResult.warning }}</p>
 
-          <div v-if="hubState && !hubState.supported" class="integration-note">
-            服务器未挂载 Docker socket，无法远程更新。请在服务器上编辑
-            <code>docker-compose.pull.yml</code>，在 engram 服务的 volumes 增加一行
-            <code>- /var/run/docker.sock:/var/run/docker.sock</code>，然后执行
-            <code>docker compose -f docker-compose.pull.yml up -d</code> 重新创建容器，之后即可在此页一键更新。
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>立即更新</strong>
+              <span>拉取最新镜像并重建容器，服务中断 1–3 分钟，数据不受影响。</span>
+            </div>
+            <div class="setting-actions">
+              <button class="btn primary" type="button" :disabled="hubUpdating || !hubState?.supported || hubState?.busy" @click="confirmHubApply">
+                立即更新
+              </button>
+            </div>
           </div>
+
+          <p v-if="hubState && !hubState.supported" class="setting-note tone-warn">
+            服务器未挂载 Docker socket：在 engram 服务的 volumes 加
+            <code>- /var/run/docker.sock:/var/run/docker.sock</code>，
+            再用 <code>docker compose -f docker-compose.pull.yml up -d</code> 重建容器。
+          </p>
 
           <p v-if="hubStateError" class="setting-message err">{{ hubStateError }}</p>
 
@@ -78,44 +90,52 @@
             </div>
           </div>
           <p v-if="hubTimeout" class="setting-message err">
-            服务器长时间未恢复。若更新失败，旧容器已自动回滚；仍无法访问时请在服务器执行
+            服务器长时间未恢复。若更新失败，旧容器已自动回滚；仍无法访问时在服务器执行
             <code>docker start engram-old</code> 手动恢复，然后重新检查。
           </p>
         </template>
 
         <!-- 桌面端但未绑定同步 -->
-        <div v-else-if="isDesktop" class="integration-note">
-          当前运行在桌面端。在「设置 → 多端同步」绑定服务器后，即可在此直接远程更新服务器，无需登录服务器网页；桌面端自身的更新见下方「桌面端更新」分组。
-        </div>
+        <p v-else-if="isDesktop" class="setting-note">
+          桌面端：在「多端同步」绑定服务器后即可在这里远程更新它；桌面端自身的更新见下方「桌面端更新」。
+        </p>
         <!-- 浏览器访问桌面本地服务 -->
-        <div v-else class="integration-note">
-          当前页面由桌面端本地服务提供，服务器（Docker）容器更新请从浏览器登录服务器地址操作。
-        </div>
+        <p v-else class="setting-note">
+          当前页面由桌面端本地服务提供；服务器（Docker）更新请在浏览器登录服务器地址操作。
+        </p>
       </template>
       <!-- 环境不支持：未挂 sock -->
-      <div v-else-if="!state.supported" class="integration-note">
-        当前服务器未挂载 Docker socket，无法在网页内自动更新。请编辑服务器上的
-        <code>docker-compose.pull.yml</code>，在 engram 服务的 volumes 增加一行
-        <code>- /var/run/docker.sock:/var/run/docker.sock</code>，然后执行
-        <code>docker compose -f docker-compose.pull.yml up -d</code> 重新创建容器，之后即可在此页一键更新。
-      </div>
+      <p v-else-if="!state.supported" class="setting-note tone-warn">
+        当前服务器未挂载 Docker socket：在 engram 服务的 volumes 加
+        <code>- /var/run/docker.sock:/var/run/docker.sock</code>，
+        再用 <code>docker compose -f docker-compose.pull.yml up -d</code> 重建容器。
+      </p>
 
       <template v-else>
+        <ul class="value-list">
+          <li class="value-row">
+            <span class="value-label">当前版本</span>
+            <span class="value-text">{{ serverVersionText }}</span>
+          </li>
+          <li v-if="checkResult?.hasUpdate && checkResult.latestVersion" class="value-row">
+            <span class="value-label">最新版本</span>
+            <span class="value-text">{{ 'v' + checkResult.latestVersion }}</span>
+          </li>
+        </ul>
+
         <div class="setting-row">
           <div class="setting-copy">
             <strong>更新通道</strong>
-            <span>
-              <code>latest</code> 跟随正式发版（默认）；<code>main</code> 跟随主分支滚动构建，合入 main 即可更新测试，无需发版。切换后即时生效。
-            </span>
+            <span>latest 跟随正式发版；main 跟随主分支滚动构建。</span>
           </div>
-          <div class="channel-control">
+          <div class="setting-actions">
             <AppSelect
               v-model="form.imageTag"
               aria-label="更新通道"
               :options="channelOptions"
               @change="saveChannel"
             />
-            <span v-if="channelSaved" class="channel-saved">已保存</span>
+            <span v-if="channelSaved" class="setting-value tone-ok">已保存</span>
             <AppSpinner v-else-if="savingChannel" :size="11" />
           </div>
         </div>
@@ -123,12 +143,9 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从远端仓库 Release 与镜像仓库比对当前版本。<template v-if="state.imageTag">当前通道：<code>{{ state.imageTag }}</code></template></span>
+            <span>从远端仓库 Release 与镜像仓库比对当前版本。</span>
           </div>
-          <div class="check-controls">
-            <span v-if="checkResult" class="check-status" :class="checkResult.hasUpdate ? 'has' : 'none'">
-              {{ checkLabel }}
-            </span>
+          <div class="setting-actions">
             <button class="btn" type="button" :disabled="checking" @click="doCheck">
               <AppSpinner v-if="checking" :size="11" />
               <template v-else>检查更新</template>
@@ -141,7 +158,7 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>立即更新</strong>
-            <span>拉取最新镜像并重建容器，服务将中断 1–3 分钟，数据不受影响。</span>
+            <span>拉取最新镜像并重建容器，服务中断 1–3 分钟，数据不受影响。</span>
           </div>
           <button class="btn primary" type="button" :disabled="updating || !state.supported" @click="confirmApply">
             立即更新
@@ -157,7 +174,7 @@
           </div>
         </div>
         <p v-if="healthTimeout" class="setting-message err">
-          服务长时间未恢复。若更新失败，旧容器已自动回滚；仍无法访问时请在服务器执行
+          服务长时间未恢复。若更新失败，旧容器已自动回滚；仍无法访问时在服务器执行
           <code>docker start engram-old</code> 手动恢复，然后刷新本页。
         </p>
       </template>
@@ -172,10 +189,9 @@
         <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">桌面端更新</span>
-          <span class="group-hint">Windows 桌面端的版本：安装包自动或手动下载安装，源码模式增量拉取提交并重新构建，预构建安装用新版安装器覆盖安装（开机自启与桌面快捷方式见「本机应用 → 桌面端应用」，卸载见「本机应用 → 卸载 Engram」）</span>
+          <span class="group-hint">这台 Windows 版的更新方式与状态</span>
         </span>
-        <span v-if="desktopVersionBadge" class="group-badge tone-muted">{{ desktopVersionBadge }}</span>
-        <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
+        <span v-if="desktopBadge.text" class="group-badge" :class="'tone-' + desktopBadge.tone">{{ desktopBadge.text }}</span>
         <button
           type="button"
           class="group-caret"
@@ -188,28 +204,47 @@
       </div>
       <div v-show="!desktopCollapsed" class="group-body flush">
 
-      <div v-if="!isDesktop" class="integration-note">
-        在 Windows 桌面端内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
-      </div>
+      <p v-if="!isDesktop" class="setting-note">
+        在 Windows 桌面端内可在此下载并安装最新安装包；浏览器访问时仅作展示。
+      </p>
 
       <template v-else>
-        <div v-if="sourceMode" class="integration-note">
-          当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。依赖清单真变化时会<strong>在应用内自动装依赖</strong>（pnpm install），不需要再去终端跑脚本；构建约需 1 分钟，期间弹出置顶进度窗口，完成后应用自动重启，数据不受影响。版本号仅随发版变化，<strong>提交号随每次更新变化</strong>，用它判断是否已更新到最新代码。
-        </div>
-        <div v-if="prebuiltMode" class="integration-note">
-          当前为<strong>预构建安装</strong>：安装器把「源码 + 运行依赖 + 已构建产物」直接解压到本机，<strong>不带 Git 与 .git</strong>，所以应用内不能增量拉源码更新。更新方式是用<strong>新版安装器覆盖安装</strong>（知识库数据保留）；需要长期在应用内自动更新时，可改用打包版 exe。
-        </div>
+        <ul class="value-list">
+          <li class="value-row">
+            <span class="value-label">当前版本</span>
+            <span class="value-text">{{ desktopVersionText }}</span>
+          </li>
+          <li class="value-row">
+            <span class="value-label">更新方式</span>
+            <span class="value-text is-muted">{{ desktopUpdateModeText }}</span>
+          </li>
+          <li v-if="desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.latestVersion" class="value-row">
+            <span class="value-label">最新版本</span>
+            <span class="value-text">{{ 'v' + desktopCheck.latestVersion }}</span>
+          </li>
+        </ul>
+
+        <p v-if="sourceMode" class="setting-note">
+          源码模式：更新 = 增量拉源码并重建（约 1 分钟），自动装依赖并重启。
+        </p>
+        <p v-if="prebuiltMode" class="setting-note">
+          预构建安装不含 Git：应用内不能增量拉源码，请用新版安装器覆盖安装，知识库数据保留。
+        </p>
 
         <template v-if="autoSupported && installerMode">
           <div class="setting-row">
             <div class="setting-copy">
               <strong>自动更新</strong>
-              <span>启动后自动检查（之后每 8 小时复查），发现新版本自动在后台下载并静默安装；安装前应用内会提示，装完自动重启，全程无需手动操作。</span>
+              <span>启动后自动检查，后台下载并静默安装，装完自动重启。</span>
             </div>
             <label class="switch-control">
-              <input type="checkbox" :checked="autoState.enabled" @change="toggleAuto" />
+              <input
+                type="checkbox"
+                :checked="autoState.enabled"
+                :aria-label="'自动更新，' + (autoState.enabled ? '已开启' : '已关闭')"
+                @change="toggleAuto"
+              />
               <span aria-hidden="true"></span>
-              <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
             </label>
           </div>
           <!-- 自动更新状态槽：固定高度，只换文字与进度条宽度，不按阶段增删节点。
@@ -226,17 +261,16 @@
           <div v-if="autoState.blockedVersion" class="setting-row">
             <div class="setting-copy">
               <strong>自动更新已暂停</strong>
-              <span>
-                v{{ autoState.blockedVersion }} 自动更新失败过一次，为避免反复失败重试，<strong>本版本不再自动下载安装</strong>。
-                {{ autoState.blockedReason ? `失败原因：${autoState.blockedReason}。` : '' }}
-                可以点右侧「重试自动更新」，或用下方「检查更新 / 下载并安装」手动更新；发布新版本后自动恢复。
-              </span>
+              <span>v{{ autoState.blockedVersion }} 自动更新失败过一次，本版本不再自动重试；可点右侧重试，或用下方按钮手动更新。</span>
             </div>
             <button class="btn" type="button" :disabled="retryingAuto" @click="retryAuto">
               <AppSpinner v-if="retryingAuto" :size="11" />
               <template v-else>重试自动更新</template>
             </button>
           </div>
+          <p v-if="autoState.blockedVersion && autoState.blockedReason" class="setting-note">
+            失败原因：{{ autoState.blockedReason }}。发布新版本后自动恢复。
+          </p>
         </template>
 
         <div v-if="installerMode" class="setting-row">
@@ -244,10 +278,7 @@
             <strong>检查更新</strong>
             <span>手动从远端仓库 Release 比对桌面端版本。</span>
           </div>
-          <div class="check-controls">
-            <span v-if="desktopCheck && desktopCheck.ok" class="check-status" :class="desktopCheck.hasUpdate ? 'has' : 'none'">
-              {{ desktopCheck.hasUpdate ? `有新版本 v${desktopCheck.latestVersion}` : '已是最新' }}
-            </span>
+          <div class="setting-actions">
             <button class="btn" type="button" :disabled="desktopChecking" @click="doDesktopCheck">
               <AppSpinner v-if="desktopChecking" :size="11" />
               <template v-else>检查更新</template>
@@ -255,21 +286,20 @@
           </div>
         </div>
         <p v-if="installerMode && desktopUnsupported" class="setting-message warn">
-          当前桌面端版本过旧，不支持应用内更新。请到仓库 Release 页手动下载最新安装包覆盖安装一次，之后即可在应用内更新。
+          当前桌面端版本过旧，不支持应用内更新；请到仓库 Release 页手动下载最新安装包覆盖安装一次。
         </p>
         <p v-if="installerMode && desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
-          尚未配置远端仓库更新源（见下方「更新源配置」）。
+          尚未配置更新源，见下方「更新源配置」。
         </p>
         <p v-else-if="installerMode && desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
 
         <div v-if="installerMode && desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
           <div class="setting-copy">
             <strong>下载并安装</strong>
-            <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装，全程无需操作。</span>
+            <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装。</span>
           </div>
-          <!-- 自动更新正在后台下载/安装时禁用：两者落盘到同一个安装包文件，并发会互相覆盖、进度也会互相串 -->
           <button class="btn primary" type="button" :disabled="downloading || installing || autoDownloading" :title="autoDownloading ? '自动更新正在后台下载/安装安装包，完成后会自动安装；如需手动下载请先关闭「自动更新」' : ''" @click="downloadAndInstall">
-            {{ installing ? '安装中…' : downloading ? `下载中 ${downloadPercent ?? ''}${downloadPercent !== null ? '%' : ''}` : autoDownloading ? '自动更新下载中…' : '下载并安装' }}
+            {{ installing ? '安装中…' : downloading ? '下载中 ' + (downloadPercent ?? '') + (downloadPercent !== null ? '%' : '') : autoDownloading ? '自动更新下载中…' : '下载并安装' }}
           </button>
         </div>
         <div v-if="installerMode && downloading && downloadPercent !== null" class="update-progress">
@@ -283,20 +313,25 @@
           <div v-if="sourceAutoSupported" class="setting-row">
             <div class="setting-copy">
               <strong>自动检查更新</strong>
-              <span>启动后自动检查（之后每 8 小时复查）；发现新提交只在设置页与系统通知里提示，更新仍由你点「更新并重启」确认，不会自动重启。</span>
+              <span>启动后自动检查（之后每 8 小时）；发现新提交只在设置页与系统通知里提示，不会自动重启。</span>
             </div>
             <label class="switch-control">
-              <input type="checkbox" :checked="sourceAuto.enabled" @change="toggleSourceAuto" />
+              <input
+                type="checkbox"
+                :checked="sourceAuto.enabled"
+                :aria-label="'自动检查更新，' + (sourceAuto.enabled ? '已开启' : '已关闭')"
+                @change="toggleSourceAuto"
+              />
               <span aria-hidden="true"></span>
-              <em>{{ sourceAuto.enabled ? '已开启' : '已关闭' }}</em>
             </label>
           </div>
           <p
             v-if="sourceAutoSupported && sourceAutoStatus"
-            class="setting-message"
-            :class="sourceAuto.phase === 'behind' ? 'warn' : sourceAuto.phase === 'failed' ? 'err' : ''"
+            class="state-strip source-auto-state"
+            :class="sourceAutoStateTone"
           >
-            {{ sourceAutoStatus }}
+            <span class="state-dot" aria-hidden="true"></span>
+            <span>{{ sourceAutoStatus }}</span>
           </p>
 
           <div class="setting-row">
@@ -304,8 +339,8 @@
               <strong>检查更新</strong>
               <span>增量拉取远端源码，比对当前分支落后多少提交。</span>
             </div>
-            <div class="check-controls">
-              <span v-if="srcResult && srcResult.ok" class="check-status" :class="srcResult.upToDate ? 'none' : 'has'">
+            <div class="setting-actions">
+              <span v-if="srcResult && srcResult.ok" class="setting-value" :class="srcResult.upToDate ? 'tone-ok' : 'tone-warn'">
                 {{ sourceCheckText }}
               </span>
               <button class="btn" type="button" :disabled="srcChecking || srcUpdating" @click="doSourceCheck">
@@ -319,13 +354,13 @@
           <div v-if="srcResult?.ok && !srcResult.upToDate" class="setting-row">
             <div class="setting-copy">
               <strong>更新并重启</strong>
-              <span>增量拉取 {{ srcResult.behind }} 个提交并重新构建（约 1 分钟），应用将自动重启，数据不受影响。</span>
+              <span>增量拉取 {{ srcResult.behind }} 个提交并重新构建（约 1 分钟），完成后自动重启，数据不受影响。</span>
             </div>
             <button class="btn primary" type="button" :disabled="srcUpdating" @click="doSourceUpdate">
               更新并重启
             </button>
           </div>
-          <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，请看置顶的更新进度窗口；构建完成后应用自动重启，数据不受影响。</p>
+          <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，请看置顶的更新进度窗口；完成后应用自动重启。</p>
         </template>
       </template>
       </div>
@@ -342,7 +377,7 @@
         <span class="group-ico" aria-hidden="true"><Icon name="globe" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">更新源配置</span>
-          <span class="group-hint">远端仓库地址与访问凭据：服务器与桌面端检查更新共用这一份配置</span>
+          <span class="group-hint">远端仓库地址与访问凭据</span>
         </span>
         <span v-if="configLoaded && !state.giteaConfigured" class="group-badge tone-warn">未配置</span>
         <button
@@ -356,14 +391,14 @@
         </button>
       </div>
       <div v-show="!sourceCollapsed" class="group-body flush">
-      <div class="integration-note">
-        只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需填凭据。
-      </div>
+      <p class="setting-note">
+        配置写入服务器数据目录的 .env 文件，随数据卷持久化；公开仓库无需填凭据。
+      </p>
 
-      <div class="setting-row setting-row-form">
+      <div class="setting-row setting-row-form repo-row">
         <div class="setting-copy">
           <strong>远端仓库地址</strong>
-          <span>打开仓库首页，把浏览器地址栏整条复制粘贴过来（Release 页地址也可以），如 https://gitea.xxx.com/username/Engram。</span>
+          <span>仓库首页或 Release 页地址，整条粘贴即可。</span>
         </div>
         <input v-model="form.repoUrl" type="text" placeholder="https://gitea.xxx.com/username/Engram" aria-label="远端仓库地址" @input="repoUrlError = ''" />
         <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
@@ -372,16 +407,28 @@
       <div class="setting-row setting-row-form credential-row">
         <div class="setting-copy">
           <strong>访问凭据</strong>
-          <span>私有仓库才需要。可任选一种方式，公开仓库留空即可。</span>
-          <div class="auth-type-toggle">
-            <button type="button" :class="['seg-btn', form.authType === 'token' ? 'active' : '']" @click="form.authType = 'token'">访问令牌</button>
-            <button type="button" :class="['seg-btn', form.authType === 'password' ? 'active' : '']" @click="form.authType = 'password'">用户名密码</button>
-          </div>
+          <span>私有仓库才需要；公开仓库留空即可。</span>
         </div>
         <div class="credential-inputs">
+          <div class="segmented credential-type" role="radiogroup" aria-label="凭据方式">
+            <button
+              type="button"
+              role="radio"
+              :aria-checked="form.authType === 'token'"
+              :class="{ active: form.authType === 'token' }"
+              @click="form.authType = 'token'"
+            >访问令牌</button>
+            <button
+              type="button"
+              role="radio"
+              :aria-checked="form.authType === 'password'"
+              :class="{ active: form.authType === 'password' }"
+              @click="form.authType = 'password'"
+            >用户名密码</button>
+          </div>
           <template v-if="form.authType === 'token'">
             <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌" aria-label="远端仓库访问令牌" />
-            <p class="setting-message hint">在仓库站点右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限）。清空保存即删除。</p>
+            <p class="setting-note">仓库站点「设置 → 应用」里生成只读令牌；清空保存即删除。</p>
           </template>
           <template v-else>
             <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
@@ -396,12 +443,12 @@
               />
               <button
                 v-if="storedPassword"
-                class="btn small"
+                class="btn"
                 type="button"
                 @click="clearStoredPassword = !clearStoredPassword"
               >{{ clearStoredPassword ? '取消清除' : '清除已保存密码' }}</button>
             </div>
-            <p v-if="clearStoredPassword" class="setting-message hint password-clear-hint">保存时将删除已保存的仓库密码。</p>
+            <p v-if="clearStoredPassword" class="setting-note password-clear-hint">保存时将删除已保存的仓库密码。</p>
           </template>
         </div>
       </div>
@@ -409,7 +456,7 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>保存配置</strong>
-          <span>写入服务器数据目录 .env 文件，即时生效。</span>
+          <span>写入服务器数据目录 .env，即时生效。</span>
         </div>
         <button class="btn primary" type="button" :disabled="savingConfig" @click="saveConfig">
           {{ savingConfig ? '保存中…' : '保存配置' }}
@@ -431,7 +478,7 @@ import { useSettingsBadge } from '../../lib/settingsBadges';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
-import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
+import { formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
 // 仓库地址解析与安卓端「安卓端更新」分组共用一份（lib/repoSourceUrl.ts），避免两处慢慢跑偏
 import { parseRepoUrl } from '../../lib/repoSourceUrl';
 // 自动更新状态槽的纯展示逻辑（文案/色调/进度宽度，且保证任何阶段都有文字），单测在 lib/updatePanelState.test.ts
@@ -604,6 +651,8 @@ const prebuiltMode = ref(false);
 const installerMode = computed(() => !sourceMode.value && !prebuiltMode.value);
 /** 源码模式的 git 身份（提交号/日期/是否脏），打包形态与浏览器访问时为空 */
 const desktopEnv = ref<GitIdentity | null>(null);
+/** desktop-get-env 是否已回：回来前「更新方式」写 —，不先猜成安装包 */
+const desktopEnvLoaded = ref(false);
 const srcChecking = ref(false);
 const srcResult = ref<any>(null);
 const srcUpdating = ref(false);
@@ -646,19 +695,26 @@ const hubLog = ref<string[]>([]);
  * 同时经 lib/settingsBadges 供设置页二级导航显示。检查过才知道的（hasUpdate）
  * 只在已有检查结果时提示，没检查过就不虚报「已是最新」。
  */
-const serverBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>(() => {
+const serverBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' | 'accent' | 'danger' }>(() => {
+  if (updating.value || hubUpdating.value) return { text: '更新中', tone: 'accent' };
+  if (healthTimeout.value || hubTimeout.value) return { text: '更新超时', tone: 'danger' };
+  if (checkError.value || hubCheckError.value) return { text: '检查失败', tone: 'danger' };
   const r = checkResult.value;
-  if (r?.ok && r.hasUpdate) return { text: `有新版 v${r.latestVersion}`, tone: 'warn' };
+  if (r?.ok && r.hasUpdate) return { text: '有新版', tone: 'warn' };
   if (r?.ok) return { text: '已是最新', tone: 'ok' };
   return { text: '', tone: 'muted' };
 });
-const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>(() => {
+const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' | 'accent' | 'danger' }>(() => {
+  if (installing.value) return { text: '安装中', tone: 'accent' };
+  if (downloading.value) return { text: '下载中', tone: 'accent' };
+  if (srcUpdating.value) return { text: '更新中', tone: 'accent' };
+  if (downloadError.value) return { text: '下载失败', tone: 'danger' };
   if (prebuiltMode.value) return { text: '预构建', tone: 'muted' };
   if (sourceAuto.value?.phase === 'behind') {
     return { text: `${sourceAuto.value.behind ?? 0} 个新提交`, tone: 'warn' };
   }
   const r = desktopCheck.value;
-  if (r?.ok && r.hasUpdate) return { text: `有新版 v${r.latestVersion}`, tone: 'warn' };
+  if (r?.ok && r.hasUpdate) return { text: '有新版', tone: 'warn' };
   if (r?.ok) return { text: '已是最新', tone: 'ok' };
   return { text: '', tone: 'muted' };
 });
@@ -818,35 +874,42 @@ const updateSourceCfg = computed<UpdateSourceCfg>(() => ({
 }));
 
 /**
- * 提交身份：桌面源码模式取主进程 IPC（含提交日期/脏标记），Docker 镜像与浏览器
- * 访问取服务端 /api/update/state（镜像内烤入的 /app/GIT_SHA）。
+ * 服务器卡片的版本行：版本号 + 短提交号（版本号仅随发版变化，提交号才说明构建到哪一次）。
+ * 原来挂在卡头徽标上的版本号移到这里：卡头只留一个「有没有新版」的状态徽标。
  */
-const identity = computed<GitIdentity>(() => {
-  const env = desktopEnv.value;
-  const commit = env?.commit || state.value.commit || '';
-  if (!commit) return { commit: '' };
-  return { commit, commitDate: env?.commitDate || '', dirty: env?.dirty };
+const serverVersionText = computed(() => {
+  const current = state.value.currentVersion;
+  if (!current) return '—';
+  const commit = state.value.commit ? ' · ' + shortCommit(state.value.commit) : '';
+  return 'v' + current + commit;
 });
 
-/**
- * 面板右上角版本徽标：附构建提交号（版本号仅随发版变化，提交号随每次更新/构建变化，
- * 见 lib/buildLabel.ts）；取不到提交号时退回纯版本号。
- */
-const versionBadge = computed(() => {
-  const base = state.value.currentVersion ? `v${state.value.currentVersion}` : '';
-  return base ? formatVersionLabel(base, identity.value) : '';
+/** 同步中枢服务器（远程更新）的版本：未知时统一写 —，不猜 */
+const hubVersionText = computed(() => {
+  const st = hubState.value;
+  if (!st?.currentVersion) return '—';
+  return 'v' + st.currentVersion + (st.commit ? ' · ' + st.commit : '');
 });
 
-/**
- * 桌面端版本徽标：主进程 desktop-get-env 返回 app.getVersion() 与 git 身份；
- * 仅桌面端形态显示（浏览器访问服务器时桌面端卡片仅作展示，不贴版本号）。
- */
-const desktopVersionBadge = computed(() => {
-  if (!isDesktop.value) return '';
+/** 桌面端版本行：主进程 desktop-get-env 的 app.getVersion() + 提交号 */
+const desktopVersionText = computed(() => {
   const env = desktopEnv.value as (GitIdentity & { version?: string }) | null;
-  const base = env?.version ? `v${env.version}` : '';
-  if (!base) return '';
-  return formatVersionLabel(base, { commit: env?.commit || '', commitDate: env?.commitDate || '', dirty: env?.dirty });
+  if (!env?.version) return '—';
+  return 'v' + env.version + (env.commit ? ' · ' + env.commit : '');
+});
+
+/** 桌面端更新方式：与源码模式 / 预构建 / 安装包三种入口一一对应（未就绪时写 —） */
+const desktopUpdateModeText = computed(() => {
+  if (!desktopEnvLoaded.value) return '—';
+  if (sourceMode.value) return '源码模式（增量拉取并重建）';
+  if (prebuiltMode.value) return '预构建安装（新版安装器覆盖）';
+  return '安装包（自动或手动下载）';
+});
+
+/** 源码模式自动检查的状态条色调：有新提交 / 失败需要处理时给琥珀点，其余默认 */
+const sourceAutoStateTone = computed(() => {
+  const phase = sourceAuto.value?.phase;
+  return phase === 'behind' || phase === 'failed' ? 'tone-warn' : '';
 });
 
 // 分组折叠：本组件三张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
@@ -875,7 +938,6 @@ function fmtCheckLabel(r: any): string {
   return '远端镜像有更新';
 }
 
-const checkLabel = computed(() => fmtCheckLabel(checkResult.value));
 const hubCheckLabel = computed(() => fmtCheckLabel(hubCheckResult.value));
 
 /** 源码模式自动检查状态文字：只提示，不自动升级（重启时机由用户点「更新并重启」决定） */
@@ -1173,12 +1235,21 @@ onMounted(() => {
   loadSync();
   const wd = wikiDesktop();
   if (wd?.getDesktopEnv) {
-    wd.getDesktopEnv().then((env: any) => {
-      desktopEnv.value = env;
-      prebuiltMode.value = Boolean(env?.prebuilt);
-      // 预构建安装同属「非打包形态」，但没有 git 检出：不能走源码更新分支
-      sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32' && !env.prebuilt);
-    });
+    wd.getDesktopEnv()
+      .then((env: any) => {
+        desktopEnv.value = env;
+        prebuiltMode.value = Boolean(env?.prebuilt);
+        // 预构建安装同属「非打包形态」，但没有 git 检出：不能走源码更新分支
+        sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32' && !env.prebuilt);
+      })
+      .catch(() => {
+        /* 主进程未就绪时按安装包形态兜底 */
+      })
+      .finally(() => {
+        desktopEnvLoaded.value = true;
+      });
+  } else {
+    desktopEnvLoaded.value = true;
   }
   if (wd?.onUpdateProgress) {
     // 这条通道主进程会同时用来推手动下载与后台自动更新的进度（旧壳不带 source）：
@@ -1221,91 +1292,46 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.integration-note {
-  margin: 14px 24px 18px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.check-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-/* 更新通道行：下拉即时保存 + 短暂「已保存」提示 */
-.channel-control {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.channel-saved {
-  color: var(--success);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.check-status {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.check-status.has {
-  color: var(--accent, #3b82f6);
-  font-weight: 600;
-}
-
-/* 分组卡片（flush 内容）内的行级消息：全局规则只覆盖面板直接子级，这里补齐边距；
+/* 分组内容区（flush）里的行级消息 / 状态条：行自带 22px 内边距，这里只补纵向间距；
    位于 setting-row 内的消息保持网格定位不加边距 */
 .setting-message {
-  margin: 0 22px 12px;
+  margin: 0 0 12px;
 }
 .setting-row .setting-message {
   margin: 0;
 }
-
-/* 凭据方式二选一分段按钮 */
-.auth-type-toggle {
-  display: inline-flex;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-.seg-btn {
-  padding: 5px 14px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.seg-btn.active {
-  background: var(--bg);
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
-}
-.setting-message.hint {
-  margin: 6px 0 0;
-  color: var(--text-faint);
+.source-auto-state {
+  margin: 0 0 12px;
 }
 
-/* 凭据行：标签+切换按钮在上，输入框统一排在切换按钮下方 */
+/* 表单行：标签独占一行，输入框在下一行占满（长仓库地址不被挤成窄条）；
+   行内报错跟着单列走，不再被全局的 grid-column: 2 挤到隐式列里 */
+.setting-row.repo-row,
 .setting-row.credential-row {
   grid-template-columns: 1fr;
+}
+.setting-row.repo-row .setting-message,
+.setting-row.credential-row .setting-message {
+  grid-column: 1;
 }
 .credential-inputs {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-top: 10px;
 }
+.credential-type {
+  flex: 0 0 auto;
+}
 .credential-inputs input {
-  flex: 1 1 220px;
+  flex: 1 1 200px;
   max-width: 420px;
+  min-width: 0;
+}
+.credential-inputs .setting-note {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
 }
 .password-control {
   display: flex;
@@ -1322,15 +1348,10 @@ onUnmounted(() => {
 .password-control .btn {
   white-space: nowrap;
 }
-.password-clear-hint {
-  flex-basis: 100%;
-}
-.credential-inputs .hint {
-  flex-basis: 100%;
-}
 
+/* 更新日志：等宽滚动区（输出流，保留容器边界） */
 .update-log {
-  margin: 12px 24px;
+  margin: 12px 0;
   padding: 10px 12px;
   max-height: 220px;
   overflow-y: auto;
@@ -1355,7 +1376,7 @@ onUnmounted(() => {
 
 .update-progress {
   height: 6px;
-  margin: -4px 24px 12px;
+  margin: -4px 0 12px;
   overflow: hidden;
   border-radius: 3px;
   background: var(--bg-secondary);
@@ -1370,9 +1391,10 @@ onUnmounted(() => {
 /* 自动更新状态槽：文案行 + 进度轨都常驻（固定高度），阶段切换不增删节点。
    这样卡片高度不随「检查/下载/安装」变化，下面的「检查更新 / 下载并安装」行和
    卡片底边不会上下跳（用户 2026-11-08 报「开着自动更新这块来回乱跳」）。
-   行高与轨道高度写死，文字换行才可能改变高度：状态文案控制在单行，超长时省略。 */
+   行高与轨道高度写死，文字换行才可能改变高度：状态文案控制在单行，超长时省略。
+   注：updatePanelLayout.test.ts 锁了这段类名与常驻结构，不能改成按阶段渲染。 */
 .auto-status-slot {
-  margin: 0 22px 12px;
+  margin: 0 0 12px;
 }
 .auto-status-slot .auto-status-line {
   margin: 0;
@@ -1399,34 +1421,23 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .integration-note {
-    margin: 12px 18px 16px;
-  }
   .setting-message {
-    margin: 0 18px 14px;
+    margin: 0 0 14px;
   }
   .setting-row .setting-message {
     margin: 0;
   }
   .update-log {
-    margin: 12px 18px;
+    margin: 12px 0;
   }
   .update-progress {
-    margin: -4px 18px 12px;
+    margin: -4px 0 12px;
   }
   .auto-status-slot {
-    margin: 0 18px 14px;
+    margin: 0 0 14px;
   }
   .auto-status-slot .auto-status-progress {
     margin: 6px 0 0;
-  }
-}
-
-@media (max-width: 640px) {
-  .check-controls {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
   }
 }
 </style>

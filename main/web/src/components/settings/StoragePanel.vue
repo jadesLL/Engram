@@ -3,70 +3,76 @@
     anchor="storage-trash"
     class="settings-native"
     title="回收站"
-    :hint="trashLoading ? '正在读取回收站...' : `回收站中有 ${trashItems.length} 个项目，共 ${formatBytes(trashTotalSize)}`"
+    hint="误删的内容可恢复，也可永久删除"
     flush
   >
-    <template #actions>
-      <button class="btn danger" type="button" :disabled="trashLoading || !trashItems.length" @click="emptyTrash">
+    <span v-if="trashLoading" class="setting-value trash-summary">正在读取回收站…</span>
+    <span v-else-if="trashItems.length" class="setting-value trash-summary">{{ trashItems.length }} 个项目 · 共 {{ formatBytes(trashTotalSize) }}</span>
+    <p v-else class="setting-note">回收站为空，删除的内容会先放这里。</p>
+
+    <template v-if="trashItems.length">
+      <div class="trash-tools">
+        <input v-model="trashQuery" class="trash-filter" placeholder="筛选名称或原路径" aria-label="筛选回收站" />
+        <label class="trash-select-all">
+          <input
+            type="checkbox"
+            :checked="allVisibleTrashSelected"
+            :disabled="!filteredTrash.length"
+            @change="toggleAllTrash"
+          />
+          <span>全选</span>
+        </label>
+        <button class="btn" type="button" :disabled="!selectedTrash.size || trashBusy" @click="restoreSelectedTrash">
+          <Icon name="restore" :size="14" />
+          恢复所选
+        </button>
+        <button class="btn danger" type="button" :disabled="!selectedTrash.size || trashBusy" @click="deleteSelectedTrash">
+          <Icon name="trash" :size="14" />
+          永久删除
+        </button>
+      </div>
+
+      <div v-if="filteredTrash.length" class="trash-list">
+        <div v-for="item in filteredTrash" :key="item.id" class="trash-row">
+          <input
+            type="checkbox"
+            :checked="selectedTrash.has(item.id)"
+            :aria-label="'选择 ' + item.name"
+            @change="toggleTrash(item.id)"
+          />
+          <Icon :name="item.kind === 'page' ? 'pages' : 'attach'" :size="16" class="trash-kind" />
+          <div class="trash-main">
+            <div class="trash-name-line">
+              <span class="trash-name" v-tooltip.auto="item.name">{{ item.name }}</span>
+              <span v-if="item.legacy" class="legacy-tag">历史项目</span>
+            </div>
+            <div class="trash-meta" v-tooltip="item.originalPath">
+              <span>{{ item.originalPath }}</span>
+              <span>{{ formatTrashDate(item.deletedAt) }}</span>
+              <span>{{ formatBytes(item.size) }}</span>
+            </div>
+          </div>
+          <div class="trash-actions">
+            <button class="icon-btn" type="button" v-tooltip="'恢复'" aria-label="恢复" :disabled="trashBusy" @click="restoreTrash([item.id])">
+              <Icon name="restore" :size="15" />
+            </button>
+            <button class="icon-btn danger-icon" type="button" v-tooltip="'永久删除'" aria-label="永久删除" :disabled="trashBusy" @click="deleteTrash([item.id])">
+              <Icon name="trash" :size="15" />
+            </button>
+          </div>
+        </div>
+      </div>
+      <p v-else class="setting-note">没有匹配的项目。</p>
+    </template>
+
+    <p v-if="trashMsg" class="setting-message" :class="trashOk ? 'ok' : 'err'">{{ trashMsg }}</p>
+
+    <div v-if="trashItems.length" class="setting-actions trash-footer">
+      <button class="btn danger" type="button" :disabled="trashBusy" @click="emptyTrash">
         <Icon name="trash" :size="14" />
         清空回收站
       </button>
-    </template>
-
-    <div class="trash-tools">
-      <label class="trash-select-all">
-        <input
-          type="checkbox"
-          :checked="allVisibleTrashSelected"
-          :disabled="!filteredTrash.length"
-          @change="toggleAllTrash"
-        />
-        <span>全选</span>
-      </label>
-      <input v-model="trashQuery" class="trash-filter" placeholder="筛选名称或原路径" aria-label="筛选回收站" />
-      <button class="btn small" type="button" :disabled="!selectedTrash.size || trashBusy" @click="restoreSelectedTrash">
-        <Icon name="restore" :size="14" />
-        恢复所选
-      </button>
-      <button class="btn small danger" type="button" :disabled="!selectedTrash.size || trashBusy" @click="deleteSelectedTrash">
-        <Icon name="trash" :size="14" />
-        永久删除
-      </button>
     </div>
-
-    <div v-if="filteredTrash.length" class="trash-list">
-      <div v-for="item in filteredTrash" :key="item.id" class="trash-row">
-        <input
-          type="checkbox"
-          :checked="selectedTrash.has(item.id)"
-          :aria-label="`选择 ${item.name}`"
-          @change="toggleTrash(item.id)"
-        />
-        <Icon :name="item.kind === 'page' ? 'pages' : 'attach'" :size="16" class="trash-kind" />
-        <div class="trash-main">
-          <div class="trash-name-line">
-            <span class="trash-name" v-tooltip.auto="item.name">{{ item.name }}</span>
-            <span v-if="item.legacy" class="legacy-tag">历史项目</span>
-          </div>
-          <div class="trash-meta" v-tooltip="item.originalPath">
-            <span>{{ item.originalPath }}</span>
-            <span>{{ formatTrashDate(item.deletedAt) }}</span>
-            <span>{{ formatBytes(item.size) }}</span>
-          </div>
-        </div>
-        <div class="trash-actions">
-          <button class="icon-btn" type="button" v-tooltip="'恢复'" aria-label="恢复" :disabled="trashBusy" @click="restoreTrash([item.id])">
-            <Icon name="restore" :size="15" />
-          </button>
-          <button class="icon-btn danger-icon" type="button" v-tooltip="'永久删除'" aria-label="永久删除" :disabled="trashBusy" @click="deleteTrash([item.id])">
-            <Icon name="trash" :size="15" />
-          </button>
-        </div>
-      </div>
-    </div>
-    <p v-else-if="trashLoading" class="trash-empty">正在读取回收站...</p>
-    <p v-else class="trash-empty">{{ trashQuery ? '没有匹配的项目' : '回收站为空' }}</p>
-    <p v-if="trashMsg" class="setting-message trash-message" :class="trashOk ? 'ok' : 'err'">{{ trashMsg }}</p>
   </SettingsGroup>
 
   <!-- 图片资产：图片是 md 父项的私有资产，正常入口是右击那个条目 →「查看引用图片」。
@@ -75,30 +81,21 @@
     anchor="storage-assets"
     class="settings-native"
     title="图片资产"
-    :hint="assetLoading
-      ? '正在读取图片资产...'
-      : `未归属 ${orphanAssets.unassigned.length} 张 · 未被引用 ${orphanAssets.unreferenced.length} 张，共 ${formatBytes(orphanAssets.totalBytes)}`"
+    hint="正文没再引用的图片，可删除或重新挂载"
     flush
   >
-    <template #actions>
-      <button
-        class="btn danger"
-        type="button"
-        :disabled="assetLoading || assetBusy || !orphanTotal"
-        @click="deleteAllOrphans"
-      >
-        <Icon name="trash" :size="14" />
-        全部清理
-      </button>
-    </template>
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>待清理图片</strong>
+        <span v-if="assetLoading">正在读取图片资产…</span>
+        <span v-else-if="!orphanTotal">没有未归属或未被引用的图片。</span>
+        <span v-else>未归属是散图；未被引用是正文删了引用的残留。</span>
+      </div>
+      <span v-if="!assetLoading" class="setting-value">{{ orphanTotal }} 张 · {{ formatBytes(orphanAssets.totalBytes) }}</span>
+    </div>
 
-    <p class="asset-note">
-      图片不会出现在目录树、知识图谱或搜索结果里。未归属图片是历史遗留的散图（用户已不能单独上传图片）；
-      未被引用图片是正文里已经删掉引用的残留。挂载会把图片移到目标内容名下并把引用追加到正文末尾。
-    </p>
-
-    <div v-if="orphanTotal" class="trash-list">
-      <div v-for="item in orphanList" :key="item.path" class="trash-row">
+    <div v-if="orphanTotal" class="trash-list asset-list">
+      <div v-for="item in orphanList" :key="item.path" class="trash-row asset-row">
         <img class="asset-thumb" :src="item.url" :alt="item.name" loading="lazy" />
         <div class="trash-main">
           <div class="trash-name-line">
@@ -107,7 +104,7 @@
           </div>
           <div class="trash-meta" v-tooltip="item.path">
             <span>{{ formatBytes(item.size) }}</span>
-            <span>{{ item.unassigned ? '没有父项' : `原父项 ${item.parentTitle || item.parentId}` }}</span>
+            <span>{{ item.unassigned ? '没有父项' : '原父项 ' + (item.parentTitle || item.parentId) }}</span>
           </div>
         </div>
         <div class="trash-actions">
@@ -134,9 +131,14 @@
         </div>
       </div>
     </div>
-    <p v-else-if="assetLoading" class="trash-empty">正在读取图片资产...</p>
-    <p v-else class="trash-empty">没有未归属或未被引用的图片</p>
-    <p v-if="assetMsg" class="setting-message trash-message" :class="assetOk ? 'ok' : 'err'">{{ assetMsg }}</p>
+    <p v-if="assetMsg" class="setting-message" :class="assetOk ? 'ok' : 'err'">{{ assetMsg }}</p>
+
+    <div v-if="orphanTotal" class="setting-actions asset-footer">
+      <button class="btn danger" type="button" :disabled="assetBusy" @click="deleteAllOrphans">
+        <Icon name="trash" :size="14" />
+        全部清理
+      </button>
+    </div>
   </SettingsGroup>
 </template>
 
@@ -476,30 +478,19 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* ---------- 图片资产 ---------- */
-.asset-note {
-  margin: 14px 20px 0;
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.7;
+/* 卡内列表口径：容器给边界、行之间只用细线（不再每行套框，也不再是卡中卡）。
+   工具条与动作行都落在 .group-body.flush 的左右内边距里，所以自身不再加左右边距。 */
+.setting-value.trash-summary {
+  display: block;
+  margin: 8px 0 0;
+  text-align: left;
 }
-.asset-thumb {
-  width: 42px;
-  height: 42px;
-  flex-shrink: 0;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  object-fit: cover;
-  background: var(--bg-tertiary);
-}
-/* 挂载目标下拉的尺寸与配色交给 AppSelect 的 mini 变体（UI 2.0 令牌） */
-
 .trash-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 14px 20px 0;
+  margin: 10px 0 0;
 }
 .trash-select-all {
   display: inline-flex;
@@ -513,13 +504,18 @@ onMounted(() => {
   flex: 1 1 200px;
   min-width: 0;
 }
+.trash-tools .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .trash-list {
   max-height: 520px;
   overflow-y: auto;
-  margin: 12px 20px 18px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  margin: 12px 0 0;
   padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 .trash-row {
   display: grid;
@@ -529,6 +525,12 @@ onMounted(() => {
   min-height: 58px;
   padding: 8px 2px;
   border-bottom: 1px solid var(--border);
+}
+.trash-row:last-child {
+  border-bottom: 0;
+}
+.asset-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 .trash-kind {
   color: var(--text-faint);
@@ -582,43 +584,48 @@ onMounted(() => {
   align-items: center;
   gap: 2px;
 }
-.trash-empty {
-  margin: 20px;
-  color: var(--text-faint);
-  font-size: 12px;
-  text-align: center;
+.asset-thumb {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  background: var(--bg-tertiary);
 }
-.trash-message {
-  margin: -6px 20px 16px;
+/* 行内结果提示与卡底动作行的纵向间距（左右留白由 .group-body 统一给） */
+.settings-native .setting-message {
+  margin: 8px 0 6px;
+}
+.trash-footer,
+.asset-footer {
+  margin: 12px 0 4px;
 }
 
 @media (max-width: 768px) {
-  .trash-tools {
-    grid-template-columns: auto minmax(0, 1fr);
-    margin: 12px 16px 0;
+  .trash-filter {
+    flex-basis: 100%;
   }
   .trash-tools .btn {
-    width: 100%;
-  }
-  .trash-list {
-    margin: 12px 16px 16px;
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 40px;
   }
 }
 
 @media (max-width: 640px) {
-  .trash-tools {
-    grid-template-columns: 1fr 1fr;
-  }
-  .trash-select-all,
-  .trash-filter {
-    grid-column: 1 / -1;
-  }
   .trash-row {
     grid-template-columns: auto auto minmax(0, 1fr);
+  }
+  .asset-row {
+    grid-template-columns: auto minmax(0, 1fr);
   }
   .trash-actions {
     grid-column: 2 / -1;
     justify-content: flex-end;
+  }
+  .asset-row .trash-actions {
+    grid-column: 1 / -1;
   }
   .trash-meta {
     display: grid;

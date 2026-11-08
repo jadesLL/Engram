@@ -1,10 +1,11 @@
 <template>
   <section class="settings-panel settings-native">
     <SettingsGroup anchor="account-credentials" title="账户" hint="登录密码与当前会话" :default-open="true" flush>
+      <!-- 登录密码：表单行，两个输入 + 唯一主按钮；输入用 placeholder 说明 -->
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
-          <strong>修改密码</strong>
-          <span>新密码至少需要 6 位。</span>
+          <strong>登录密码</strong>
+          <span>新密码至少 6 位。</span>
         </div>
         <div class="password-controls">
           <SecretField v-model="pwd.old" autocomplete="current-password" placeholder="原密码" aria-label="原密码" />
@@ -19,18 +20,25 @@
           <strong>当前会话</strong>
           <span>退出后需要重新输入密码。</span>
         </div>
-        <button class="btn danger" type="button" @click="logout">退出登录</button>
+        <button class="text-action danger" type="button" @click="logout">退出登录</button>
       </div>
 
       <!-- 系统解锁（只有装了 Android 壳的手机端有这条桥；桌面/网页端整行不出现） -->
       <div v-if="biometricVisible" class="setting-row">
         <div class="setting-copy">
           <strong>指纹 / 人脸解锁</strong>
-          <span v-if="biometricSaved">已开启：登录页可调用系统解锁直接进入。密码由系统钥匙串（Android Keystore）保管。</span>
-          <span v-else>未开启：在登录页输入一次密码时勾选「记住密码」即可开启。</span>
+          <span>登录页可用系统解锁直接进入，密码由系统钥匙串保管。</span>
         </div>
-        <button v-if="biometricSaved" class="btn" type="button" @click="disableBiometric">关闭</button>
+        <div class="setting-actions">
+          <span class="setting-value" :class="biometricSaved ? 'tone-ok' : ''">
+            {{ biometricSaved ? '已开启' : '未开启' }}
+          </span>
+          <button v-if="biometricSaved" class="btn" type="button" @click="disableBiometric">关闭</button>
+        </div>
       </div>
+      <p v-if="biometricVisible && !biometricSaved" class="setting-note">
+        在登录页输入一次密码并勾选「记住密码」即可开启。
+      </p>
     </SettingsGroup>
 
     <!-- 连接通道：服务器经 /health 通告直连地址时才存在（Android 本地版没有这条链路）；
@@ -44,22 +52,22 @@
     >
       <div class="setting-row">
         <div class="setting-copy">
-          <strong>连接通道</strong>
-          <span>当前访问路径与直连可用性。</span>
+          <strong>当前链路</strong>
+          <span>当前走的路线，以及直连是否可用。</span>
         </div>
-        <div class="conn-controls">
-          <span class="conn-badge" :class="'conn-' + connState">{{ connBadgeText }}</span>
+        <div class="setting-actions">
+          <span class="setting-value" :class="connTone">{{ connBadgeText }}</span>
           <button v-if="connState === 'tunnel-ok'" class="btn primary" type="button" @click="switchToDirect">
             使用直连访问
           </button>
-          <button v-else-if="connState !== 'direct'" class="btn" type="button" @click="probeConn">重测</button>
+          <button v-else-if="connState !== 'direct'" class="btn" type="button" @click="probeConn">重新检测</button>
         </div>
-        <p v-if="directUrl && connState !== 'direct'" class="setting-message conn-direct-row">
-          直连地址（可填入 APP / 桌面端的「直连地址」可选框）：
-          <code>{{ directUrl }}</code>
-          <button class="btn" type="button" @click="copyDirect">{{ directCopied ? '已复制' : '复制' }}</button>
-        </p>
       </div>
+      <p v-if="directUrl && connState !== 'direct'" class="setting-note conn-direct-note">
+        直连地址可填入 APP / 桌面端的「直连地址」：
+        <code>{{ directUrl }}</code>
+        <button class="text-action" type="button" @click="copyDirect">{{ directCopied ? '已复制' : '复制' }}</button>
+      </p>
     </SettingsGroup>
   </section>
 </template>
@@ -158,6 +166,13 @@ const connBadgeText = computed(() => {
   }
 });
 
+/** 行尾状态色：已直连 = 已完成；隧道且直连可用 = 可切换的机会；纯隧道 = 普通值不上色 */
+const connTone = computed(() => {
+  if (connState.value === 'direct') return 'tone-ok';
+  if (connState.value === 'tunnel-ok') return 'tone-accent';
+  return '';
+});
+
 async function probeConn() {
   connState.value = 'loading';
   directCopied.value = false;
@@ -216,35 +231,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.conn-controls {
+/* 直连地址行：一句说明 + 可整段选中的地址 + 复制按钮，窄列自动换行 */
+.conn-direct-note {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-.conn-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.conn-loading { background: var(--bg-tertiary); color: var(--text-faint); }
-.conn-direct { background: var(--success-soft); color: var(--success); }
-.conn-tunnel-ok { background: var(--accent-soft); color: var(--accent); }
-.conn-tunnel { background: var(--warn-soft); color: var(--warning); }
-.conn-direct-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 6px;
 }
-.conn-direct-row code {
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-  font-size: 12.5px;
+.conn-direct-note code {
   user-select: all;
 }
 /* 可换行 flex：窄列时输入框收缩、按钮换行。不依赖视口媒体查询——

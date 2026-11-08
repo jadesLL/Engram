@@ -2,43 +2,42 @@
   <SettingsGroup
     anchor="agent-console"
     title="内置 Agent 控制台"
-    :badge="state.text"
-    :badge-tone="state.tone"
-    hint="模型、插件与 Agent 预设都在 Engram 原生控制台里配置，与聊天抽屉共用同一份 dsh 配置；改动对聊天 Agent 生效"
+    hint="模型、插件与 Agent 预设的配置入口"
   >
-    <div class="console-toolbar">
-      <div class="console-state">
-        <span class="state-dot" :class="`tone-${state.tone}`" aria-hidden="true" />
-        <strong>{{ state.text }}</strong>
-        <span v-if="startedAtLabel" class="faint small">启动于 {{ startedAtLabel }}</span>
-        <span v-if="status?.dshVersion" class="faint small">dsh {{ status.dshVersion }}</span>
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>运行状态</strong>
+        <span>{{ statusDetail }}</span>
       </div>
-      <div class="console-actions">
-        <button class="btn primary small" type="button" @click="openConsole">打开控制台</button>
-        <button class="btn small" type="button" :disabled="busy" @click="refresh">
+      <!-- 状态只在这里出现一处：卡头不再重复徽标，也不再用状态点 + 文字的旧写法 -->
+      <span class="setting-value" :class="stateValueTone">{{ state.text }}</span>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>控制台</strong>
+        <span>重启或停止只影响控制台进程，聊天不受影响。</span>
+      </div>
+      <div class="setting-actions">
+        <button class="btn primary" type="button" @click="openConsole">打开控制台</button>
+        <button class="btn ghost" type="button" :disabled="busy" @click="refresh">
           {{ busy ? '处理中…' : '刷新' }}
         </button>
-        <button class="btn small" type="button" :disabled="busy" @click="restart">重启</button>
-        <button class="btn small" type="button" :disabled="busy || !status?.running" @click="stop">停止</button>
+        <button class="btn ghost" type="button" :disabled="busy" @click="restart">重启</button>
+        <button class="btn ghost" type="button" :disabled="busy || !status?.running" @click="stop">停止</button>
         <!-- 新标签只对浏览器 / Docker 端有意义：Electron 壳与手机 App 里都没有真正的浏览器标签页 -->
         <a
           v-if="!isDesktop && !isAndroidLocal"
-          class="btn small new-tab"
+          class="btn ghost new-tab"
           href="/settings/agent-console"
           target="_blank"
           rel="noopener"
-        >在新标签打开</a>
+        >新标签打开</a>
       </div>
     </div>
 
-    <p v-if="problem" class="state-strip tone-warn console-notice">
-      <span class="state-dot" aria-hidden="true" />
-      <span>{{ problem }}</span>
-    </p>
-
-    <p class="faint small console-foot">
-      模型、插件、Agent 预设都在 Engram 原生控制台里配置，与聊天抽屉里的 Agent 共用同一份配置；控制台空闲 30 分钟会自动关闭，下次打开本页或发起读写会重新拉起。
-    </p>
+    <p v-if="problem" class="setting-note tone-warn">{{ problem }}</p>
+    <p class="setting-note">控制台空闲 30 分钟自动关闭，下次打开本页会重新拉起。</p>
   </SettingsGroup>
 </template>
 
@@ -59,7 +58,7 @@ import { useRuntimeCapabilities } from '../../lib/capabilities';
 
 /**
  * 设置页里的「内置 Agent 控制台」入口卡（2026-10 原生化）：
- * 只保留状态条 + 生命周期按钮 + 打开控制台（router push 到整页 /settings/agent-console）。
+ * 只保留运行状态 + 生命周期按钮 + 打开控制台（router push 到整页 /settings/agent-console）。
  * 配置表单在 views/AgentConsoleView.vue 的四个面板里，这里只保留入口与生命周期操作。
  *
  * 桌面端（window.wikiDesktop）不显示「在新标签打开」：Electron 壳里新标签没有意义；
@@ -80,17 +79,32 @@ const busy = ref(false);
 const state = computed(() => consoleStateLabel(status.value));
 const startedAtLabel = computed(() => formatStartedAt(status.value?.startedAt));
 
-/** 「哪里不对」的一句话；空串表示正常 */
+/** 运行状态行的说明：启动时间 + dsh 版本（状态词本身只在行尾 setting-value 出现一次） */
+const statusDetail = computed(() => {
+  const parts: string[] = [];
+  if (startedAtLabel.value) parts.push(`启动于 ${startedAtLabel.value}`);
+  if (status.value?.dshVersion) parts.push(`dsh ${status.value.dshVersion}`);
+  return parts.length ? parts.join(' · ') : '点「刷新」重新读取状态。';
+});
+
+/** 行尾状态色：运行中 = 已完成，失败 = 需处理，未读取 / 未启动 = 普通值不上色 */
+const stateValueTone = computed(() => {
+  if (state.value.tone === 'ok') return 'tone-ok';
+  if (state.value.tone === 'warn') return 'tone-warn';
+  return '';
+});
+
+/** 「哪里不对」的一句话；空串表示正常（只讲原因与下一步，不重复行尾状态词） */
 const problem = computed(() => {
-  if (loadError.value) return `控制台状态读取失败：${loadError.value}`;
+  if (loadError.value) return `状态读取失败：${loadError.value}`;
   const current = status.value;
   if (!current) return '';
   if (!current.running) {
     return current.error
-      ? `控制台没能启动：${current.error}`
-      : '控制台未启动：点「刷新」拉起，或进控制台页里重试。';
+      ? `启动失败：${current.error}`
+      : '点「刷新」拉起控制台，或进控制台页里重试。';
   }
-  if (!current.upstreamReady) return '控制台进程已启动，但上游 dsh 还没就绪：稍等片刻再点「刷新」。';
+  if (!current.upstreamReady) return '上游 dsh 还没就绪，稍等片刻再点「刷新」。';
   return '';
 });
 
@@ -152,49 +166,9 @@ onMounted(() => void load());
 </script>
 
 <style scoped>
-.console-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 12px 0;
-}
-.console-state {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-.console-state .state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  flex: none;
-}
-.console-state .state-dot.tone-ok {
-  background: var(--success);
-  box-shadow: 0 0 0 3px var(--success-soft);
-}
-.console-state .state-dot.tone-warn {
-  background: var(--warning);
-  box-shadow: 0 0 0 3px var(--warn-soft);
-}
-.console-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.new-tab {
+/* 「新标签打开」是链接形态的按钮：去掉链接下划线（含悬停），其余交给 .btn 基元 */
+.new-tab,
+.new-tab:hover {
   text-decoration: none;
-}
-.console-notice {
-  margin: 0 0 12px;
-}
-.console-foot {
-  margin: 12px 0 0;
-  line-height: 1.7;
 }
 </style>

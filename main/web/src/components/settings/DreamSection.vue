@@ -3,61 +3,86 @@
     <div class="panel-head">
       <div>
         <h3>自动整理（梦境思考）</h3>
-        <p>到点让内置 Agent 在后台把没提炼的原始资料整理进知识库，并做一次全库纠错；过程就是「梦境思考」这个对话，随时可点开看。</p>
+        <p>到点让内置 Agent 在后台提炼未整理的原始资料，并做一次全库纠错。</p>
       </div>
     </div>
 
     <SettingsGroup
       anchor="agent-dream"
       title="自动整理（梦境思考）"
-      :hint="`按计划自动跑一轮：整理未提炼的资料 + 一次纠错（${status?.scheduleLabel || '未启用'}）`"
+      hint="按计划提炼资料并做一次全库纠错。"
     >
-      <div v-if="loaded" class="dream-status" :class="{ ok: statusOk, bad: statusBad, busy: Boolean(status?.running) }">
-        <div class="dream-status-row">
-          <span class="dream-dot" aria-hidden="true"></span>
-          <span class="dream-status-label">{{ statusLabel }}</span>
-          <button class="btn mini" type="button" @click="loadStatus">刷新</button>
+      <!-- 运行状态：会变的实时状态统一用状态条，不再用灰字铺一段说明 -->
+      <div v-if="loaded" class="state-strip dream-status" :class="statusTone">
+        <span class="state-dot" aria-hidden="true" />
+        <div class="dream-status-copy">
+          <strong class="dream-status-label">{{ statusLabel }}</strong>
+          <span v-if="nextRunText" class="dream-meta">下次运行：{{ nextRunText }}</span>
+          <span v-if="lastRunText" class="dream-meta">上次运行：{{ lastRunText }}</span>
+          <span v-if="status?.last?.error" class="dream-error">{{ status.last.error }}</span>
+          <span class="dream-meta" :title="auditDetail">{{ auditText }}</span>
         </div>
-        <div v-if="nextRunText" class="dream-meta">下次运行：{{ nextRunText }}</div>
-        <div v-if="lastRunText" class="dream-meta">上次运行：{{ lastRunText }}</div>
-        <div v-if="status?.last?.error" class="dream-error">{{ status.last.error }}</div>
-        <div class="dream-meta">当前待办：{{ auditText }}</div>
+        <div class="setting-actions dream-status-actions">
+          <button class="btn ghost small" type="button" @click="loadStatus">刷新</button>
+        </div>
       </div>
 
-      <div class="dream-form">
-        <label class="dream-switch">
-          <input v-model="form.enabled" type="checkbox" />
-          <span>启用梦境思考：到点自动跑一轮</span>
-        </label>
+      <!-- 计划：启用开关 + 频率 + 时间，一行一件事 -->
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>启用自动整理</strong>
+          <span>默认关闭；打开后到点自动跑一轮。</span>
+        </div>
+        <div class="setting-control dream-switch-cell">
+          <label class="switch-control">
+            <input v-model="form.enabled" type="checkbox" aria-label="启用自动整理" />
+            <span aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
 
-        <label class="dream-field">
-          <span>运行频率</span>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>运行频率</strong>
+          <span>每天一次，或每隔几天跑一次。</span>
+        </div>
+        <div class="setting-control dream-control">
           <AppSelect v-model="form.frequency" aria-label="运行频率" :options="frequencyOptions" />
-        </label>
-
-        <label v-if="form.frequency === 'interval'" class="dream-field">
-          <span>间隔天数</span>
-          <input v-model.number="form.intervalDays" type="number" min="1" max="30" step="1" />
-        </label>
-
-        <label class="dream-field">
-          <span>运行时间</span>
-          <input v-model="form.time" type="time" step="60" />
-        </label>
+        </div>
       </div>
 
-      <div class="dream-actions">
-        <button class="btn primary small" type="button" :disabled="saving || !dirty" @click="save">
-          {{ saving ? '保存中…' : '保存' }}
+      <div v-if="form.frequency === 'interval'" class="setting-row">
+        <div class="setting-copy">
+          <strong>间隔天数</strong>
+          <span>1 到 30 天。</span>
+        </div>
+        <div class="setting-control dream-control">
+          <input v-model.number="form.intervalDays" type="number" min="1" max="30" step="1" aria-label="间隔天数" />
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>运行时间</strong>
+          <span>建议放在凌晨空闲时段。</span>
+        </div>
+        <div class="setting-control dream-control">
+          <input v-model="form.time" type="time" step="60" aria-label="运行时间" />
+        </div>
+      </div>
+
+      <div class="setting-actions dream-actions">
+        <button v-if="status?.sessionId" class="btn ghost small" type="button" @click="openConversation">
+          查看过程与结果
         </button>
         <button v-if="!status?.running" class="btn small" type="button" :disabled="starting" @click="runNow">
           {{ starting ? '正在发起…' : '立即执行一次' }}
         </button>
-        <button v-else class="btn small" type="button" :disabled="stopping" @click="stop">
+        <button v-else class="btn danger small" type="button" :disabled="stopping" @click="stop">
           {{ stopping ? '正在停止…' : '停止' }}
         </button>
-        <button v-if="status?.sessionId" class="btn small" type="button" @click="openConversation">
-          查看过程与结果
+        <button class="btn primary small" type="button" :disabled="saving || !dirty" @click="save">
+          {{ saving ? '保存中…' : '保存' }}
         </button>
       </div>
 
@@ -66,33 +91,27 @@
       <section class="dream-board">
         <div class="dream-board-head">
           <h4>提炼看板</h4>
-          <span class="faint small">{{ boardHint }}</span>
+          <span v-if="boardHint" class="dream-board-hint">{{ boardHint }}</span>
         </div>
 
-        <p v-if="!loaded" class="faint small dream-board-empty">正在读取提炼记录…</p>
-        <p v-else-if="!boardRounds.length" class="faint small dream-board-empty">
-          还没有提炼记录。配好模型凭据后点「立即执行一次」，或等计划时间自动跑一轮——跑完这里会列出这轮
-          提炼了哪几份资料、写入或更新了哪些页面、修了什么问题，以及收尾小结。
-        </p>
+        <p v-if="!loaded" class="setting-note">正在读取提炼记录…</p>
+        <div v-else-if="!boardRounds.length" class="empty-panel">
+          还没有提炼记录。点「立即执行一次」，或等计划时间自动跑一轮。
+        </div>
 
         <template v-else>
-          <article
-            v-for="(round, index) in boardRounds"
-            :key="round.runId"
-            class="dream-round"
-            :class="`tone-${roundTone(round.status)}`"
-          >
+          <article v-for="(round, index) in boardRounds" :key="round.runId" class="dream-round">
             <header class="dream-round-head" @click="toggleRound(round.runId, index)">
-              <span class="dream-round-badge" :class="`tone-${roundTone(round.status)}`">{{ statusText(round.status) }}</span>
+              <span class="group-badge" :class="`tone-${roundBadgeTone(round.status)}`">{{ statusText(round.status) }}</span>
               <span class="dream-round-time">{{ formatStamp(round.startedAt) }}</span>
-              <span class="faint small">{{ roundMeta(round) }}</span>
-              <span v-if="index === 0" class="dream-round-new">最近一轮</span>
-              <button class="dream-round-fold" type="button" @click.stop="toggleRound(round.runId, index)">
+              <span v-if="roundMeta(round)" class="dream-round-meta">{{ roundMeta(round) }}</span>
+              <span v-if="index === 0" class="group-badge tone-accent">最近一轮</span>
+              <button class="text-action dream-round-fold" type="button" @click.stop="toggleRound(round.runId, index)">
                 {{ isRoundOpen(round.runId, index) ? '收起' : '展开' }}
               </button>
             </header>
 
-            <div v-if="round.error" class="dream-error">{{ round.error }}</div>
+            <p v-if="round.error" class="dream-error">{{ round.error }}</p>
 
             <template v-if="isRoundOpen(round.runId, index)">
               <div class="dream-round-metrics">
@@ -113,7 +132,7 @@
                 <ul class="dream-items">
                   <li v-for="page in round.pages" :key="`page-${page.label}`">
                     <a class="dream-item-link" href="#" @click.prevent="openPage(page.label)">{{ page.label }}</a>
-                    <span v-if="page.note" class="faint small">{{ page.note }}</span>
+                    <span v-if="page.note" class="dream-item-note">{{ page.note }}</span>
                     <span v-if="!page.ok" class="dream-item-fail">写入失败</span>
                   </li>
                 </ul>
@@ -125,14 +144,14 @@
                   <li v-for="change in round.changes" :key="`${change.kind}-${change.label}`">
                     <span class="dream-item-kind">{{ changeKindText(change.kind) }}</span>
                     <span class="dream-item-text">{{ change.label }}</span>
-                    <span v-if="change.note" class="faint small">{{ change.note }}</span>
+                    <span v-if="change.note" class="dream-item-note">{{ change.note }}</span>
                     <span v-if="!change.ok" class="dream-item-fail">失败</span>
                   </li>
                 </ul>
               </div>
 
-              <p v-if="!round.counts.calls" class="faint small dream-round-note">
-                这一轮没有工具调用（可能是空跑或被中断），详情看对话里的过程。
+              <p v-if="!round.counts.calls" class="setting-note">
+                这一轮没有工具调用，详情看对话里的过程。
               </p>
 
               <div v-if="round.summary" class="dream-round-summary">
@@ -144,7 +163,7 @@
                 </div>
                 <button
                   v-if="summaryFoldNeeded(round.summary)"
-                  class="dream-summary-toggle"
+                  class="btn ghost small dream-summary-toggle"
                   type="button"
                   @click="toggleSummary(round.runId)"
                 >
@@ -153,15 +172,13 @@
               </div>
             </template>
 
-            <p v-else-if="round.summary" class="faint small dream-round-peek">{{ summaryPeek(round.summary) }}</p>
+            <p v-else-if="round.summary" class="setting-note dream-round-peek">{{ summaryPeek(round.summary) }}</p>
           </article>
         </template>
       </section>
 
-      <p class="faint small dream-note">
-        跑的是内置 Agent：只经 engram 命令读写知识库，写入仍受证据门禁约束，删除只入回收站。没有待整理资料也没有待核查问题时，
-        到点只做一次检查就跳过，不消耗模型额度。运行过程与结论都留在「梦境思考」对话里，可在左栏 ✨ 聊天抽屉查看。
-        多端同步群组只在一台设备开启（配置按设备保存）。
+      <p class="setting-note">
+        跑的是内置 Agent：只经 engram 命令读写知识库，写入受证据门禁约束、删除只入回收站。没有待办时到点只检查一次，不消耗模型额度。
       </p>
     </SettingsGroup>
   </section>
@@ -172,6 +189,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
+import { confirmDialog } from '../../lib/confirm';
 import { renderMarkdown } from '../../lib/markdown';
 import {
   boardHint as boardHintOf,
@@ -198,6 +216,9 @@ import { useSettingsBadge } from '../../lib/settingsBadges';
  *
  * 提炼看板的数据也全来自服务端（server/src/assistant/dreamBoard.ts）：轮次、工具卡明细、
  * 起点/收口计数都由它算好；界面只负责排版与 Markdown 渲染，不自己推断「这轮干了什么」。
+ *
+ * 2026-11 第二轮内容精修：状态收进 .state-strip（会变的值不再当灰说明写）；表单改 setting-row
+ * 一行一件事；看板轮次去外框、只留细线；机制长句删到一句「必须说」的备注里。
  */
 
 type Frequency = 'daily' | 'interval';
@@ -257,6 +278,13 @@ const boardRounds = computed(() => status.value?.board?.rounds ?? []);
 
 const boardHint = computed(() => boardHintOf(status.value?.board));
 
+/** 轮次状态 → 卡头同款徽标色档（复用 dreamBoard 的 ok / bad / busy / plain 映射） */
+const ROUND_BADGE_TONE = { ok: 'ok', bad: 'danger', busy: 'accent', plain: 'muted' } as const;
+
+function roundBadgeTone(state: string): string {
+  return ROUND_BADGE_TONE[roundTone(state)];
+}
+
 function isRoundOpen(runId: string, index: number): boolean {
   const flag = roundOpen.value[runId];
   return flag === undefined ? index === 0 : flag;
@@ -302,27 +330,34 @@ const dirty = computed(() => (
   || Number(form.intervalDays) !== Number(stored.intervalDays)
 ));
 
-const statusOk = computed(() => Boolean(status.value?.config.enabled && status.value?.agentReady && !status.value?.last?.error));
-const statusBad = computed(() => Boolean(status.value?.last?.status === 'failed' || (status.value?.config.enabled && !status.value?.agentReady)));
+/** 状态条色档：跑起来了用强调色，失败/待配置用警示色，配置就绪用完成色，停用保持中性 */
+const statusTone = computed(() => {
+  const s = status.value;
+  if (!s) return '';
+  if (s.running) return 'tone-busy';
+  if (s.last?.status === 'failed' || (s.config.enabled && !s.agentReady)) return 'tone-warn';
+  if (s.config.enabled && s.agentReady) return 'tone-ok';
+  return '';
+});
 
 const statusLabel = computed(() => {
   const s = status.value;
   if (!s) return '';
-  if (s.running) return '正在运行：内置 Agent 正在整理与纠错';
-  if (!s.agentReady) return '待配置：内置 Agent 还没配模型凭据（在「内置 Agent」分组填 Key）';
-  if (!s.config.enabled) return '已停用（不会自动运行）';
+  if (s.running) return '正在运行';
+  if (!s.agentReady) return '待配置：先给内置 Agent 填模型凭据';
+  if (!s.config.enabled) return '已停用';
   const last = s.last.status;
-  if (last === 'completed') return '已启用，上次运行完成';
-  if (last === 'failed') return '已启用，上次运行失败';
-  if (last === 'skipped') return '已启用，上次检查没有待办，已跳过';
-  if (last === 'cancelled') return '已启用，上次运行被停止';
-  return '已启用，等待计划时间';
+  if (last === 'completed') return '上次运行完成';
+  if (last === 'failed') return '上次运行失败';
+  if (last === 'skipped') return '上次无待办，已跳过';
+  if (last === 'cancelled') return '上次运行已停止';
+  return '等待计划时间';
 });
 
 const nextRunText = computed(() => {
   const s = status.value;
   if (!s || !s.config.enabled || !s.nextRunAt) return '';
-  return `${formatNext(s.nextRunAt)}${s.due ? '（已到时间，马上开跑）' : ''}`;
+  return `${formatNext(s.nextRunAt)}${s.due ? '（已到期）' : ''}`;
 });
 
 const lastRunText = computed(() => {
@@ -332,7 +367,15 @@ const lastRunText = computed(() => {
   return `${formatStamp(s.last.at)} · ${trigger}`;
 });
 
+/** 状态条里只说「欠多少」；死链/重复/规则落后的拆解放 title，不占版面 */
 const auditText = computed(() => {
+  const s = status.value;
+  if (!s) return '';
+  const issues = s.audit.deadLinks + s.audit.duplicates + s.audit.outdatedPages;
+  return `待提炼 ${s.audit.pendingFiles} 份 · 待核查 ${issues} 处`;
+});
+
+const auditDetail = computed(() => {
   const s = status.value;
   if (!s) return '';
   const issues = s.audit.deadLinks + s.audit.duplicates + s.audit.outdatedPages;
@@ -428,7 +471,15 @@ async function runNow(): Promise<void> {
   }
 }
 
+/** 停止是不可撤销动作（已写入的页面不会回滚）：先确认再停 */
 async function stop(): Promise<void> {
+  const ok = await confirmDialog({
+    title: '停止本轮自动整理',
+    message: '本轮已写入的页面不会回滚，剩余步骤不再执行。继续？',
+    confirmText: '停止',
+    danger: true,
+  });
+  if (!ok) return;
   stopping.value = true;
   try {
     await api.post('/api/assistant/dream/stop', {});
@@ -492,45 +543,55 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ---------- 运行状态条：状态点在首行光学中线上，右侧只留一个刷新 ---------- */
 .dream-status {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.7;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 6px;
 }
-.dream-status.ok { border-color: var(--success, #3fb27f); }
-.dream-status.bad { border-color: var(--warn, #c77916); }
-.dream-status.busy { border-color: var(--accent); }
-.dream-status-row {
+.dream-status-copy {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
-.dream-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-faint, #999);
+.dream-status-label {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.dream-status-actions {
   flex: none;
 }
-.dream-status.ok .dream-dot { background: var(--success, #3fb27f); }
-.dream-status.bad .dream-dot { background: var(--warn, #c77916); }
-.dream-status.busy .dream-dot { background: var(--accent); }
-.dream-status-label { font-weight: 600; }
-.dream-status-row .btn.mini {
-  margin-left: auto;
-  padding: 2px 8px;
-  font-size: 12px;
+.dream-meta {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
-.dream-meta { color: var(--text-faint); }
-.dream-error { color: var(--danger, #d95757); word-break: break-all; }
+.dream-error {
+  color: var(--danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 
-/* ---------- 提炼看板 ---------- */
+/* ---------- 计划表单：控件与全局 32px 口径对齐 ---------- */
+.dream-switch-cell {
+  display: flex;
+  justify-content: flex-end;
+}
+.dream-control :deep(.app-select) {
+  width: 100%;
+}
+.dream-control input {
+  width: 100%;
+}
+.dream-actions { margin-top: 12px; }
 
+/* ---------- 提炼看板：细线分组，不再每轮套一张描边卡 ---------- */
 .dream-board {
-  margin: 18px 0 0;
+  margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
@@ -538,32 +599,22 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 .dream-board-head h4 {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
 }
-.dream-board-empty {
-  margin: 0;
-  line-height: 1.7;
+.dream-board-hint {
+  color: var(--text-secondary);
+  font-size: 11.5px;
 }
-
 .dream-round {
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-left-width: 3px;
-  border-radius: 6px;
-  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
 }
-.dream-round:last-child { margin-bottom: 0; }
-.dream-round.tone-ok { border-left-color: var(--success, #3fb27f); }
-.dream-round.tone-bad { border-left-color: var(--danger, #d95757); }
-.dream-round.tone-busy { border-left-color: var(--accent); }
-.dream-round.tone-plain { border-left-color: var(--border-strong); }
-
+.dream-round:first-of-type { border-top: 0; }
 .dream-round-head {
   display: flex;
   align-items: center;
@@ -571,37 +622,17 @@ onUnmounted(() => {
   flex-wrap: wrap;
   cursor: pointer;
 }
-.dream-round-badge {
-  padding: 1px 7px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  font-size: 11px;
+.dream-round-time {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
-.dream-round-badge.tone-ok { color: var(--success, #3fb27f); }
-.dream-round-badge.tone-bad { color: var(--danger, #d95757); }
-.dream-round-badge.tone-busy { color: var(--accent); }
-.dream-round-badge.tone-plain { color: var(--text-faint); }
-.dream-round-time { font-weight: 600; }
-.dream-round-new {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11px;
-}
-.dream-round-fold {
-  margin-left: auto;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: none;
+.dream-round-meta {
   color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
+  font-size: 11.5px;
 }
-.dream-round-fold:hover { border-color: var(--accent); color: var(--accent); }
-.dream-round-peek { margin: 6px 0 0; line-height: 1.7; }
-.dream-round-note { margin: 8px 0 0; }
+.dream-round-fold { margin-left: auto; }
+.dream-round-peek { margin-top: 6px; }
 
 .dream-round-metrics {
   display: flex;
@@ -612,14 +643,16 @@ onUnmounted(() => {
 .dream-metric {
   padding: 2px 8px;
   border-radius: 4px;
-  background: var(--accent-soft);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
+  font-size: 11.5px;
 }
 
 .dream-group { margin-top: 10px; }
 .dream-group-label {
-  margin-bottom: 4px;
-  color: var(--text-faint);
+  margin-bottom: 2px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
 }
 .dream-items {
   margin: 0;
@@ -631,22 +664,29 @@ onUnmounted(() => {
   align-items: baseline;
   gap: 8px;
   padding: 2px 0;
+  font-size: 12px;
   line-height: 1.6;
 }
 .dream-item-link { color: var(--accent); text-decoration: none; }
 .dream-item-link:hover { text-decoration: underline; }
 .dream-item-text { color: var(--text-secondary); word-break: break-all; }
+.dream-item-note {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  word-break: break-all;
+}
 .dream-item-kind {
   flex: none;
   padding: 0 5px;
-  border: 1px solid var(--border);
   border-radius: 3px;
-  color: var(--text-faint);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
   font-size: 11px;
 }
-.dream-item-fail { color: var(--danger, #d95757); }
-
+.dream-item-fail { color: var(--danger); }
 .dream-round-summary { margin-top: 12px; }
+.dream-summary-toggle { margin-top: 8px; }
+
 /* 折叠只给长文用：短小结套上容器会让最后一行被渐隐遮住，看起来像被截断。
    渐隐用 mask 而不是盖一层背景色——设置面板底色在浅色/深色下不同，遮罩不挑底色。 */
 .dream-md-wrap.fold {
@@ -661,17 +701,6 @@ onUnmounted(() => {
   mask-image: none;
   -webkit-mask-image: none;
 }
-.dream-summary-toggle {
-  margin-top: 8px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: none;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-.dream-summary-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
 /* 小结按 Markdown 渲染（renderMarkdown 的产物是 v-html，样式要 :deep 才命得中） */
 .dream-md {
@@ -704,7 +733,7 @@ onUnmounted(() => {
 .dream-md :deep(code) {
   padding: 1px 4px;
   border-radius: 3px;
-  background: var(--accent-soft);
+  background: var(--bg-secondary);
   font-size: 12px;
 }
 .dream-md :deep(pre) {
@@ -712,7 +741,7 @@ onUnmounted(() => {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   overflow-x: auto;
 }
 .dream-md :deep(pre code) { padding: 0; background: none; }
@@ -720,9 +749,10 @@ onUnmounted(() => {
   margin: 6px 0;
   padding: 2px 0 2px 10px;
   border-left: 2px solid var(--border-strong);
-  color: var(--text-faint);
+  color: var(--text-secondary);
 }
 .dream-md :deep(a) { color: var(--accent); }
+/* 小结里的表格也只留行间细线，不再套一圈外框 */
 .dream-md :deep(.md-table) {
   width: 100%;
   margin: 6px 0;
@@ -731,67 +761,11 @@ onUnmounted(() => {
 }
 .dream-md :deep(.md-table th),
 .dream-md :deep(.md-table td) {
-  padding: 3px 8px;
-  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
   text-align: left;
 }
-.dream-md :deep(.md-table th) { background: var(--bg-tertiary); }
-.dream-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 4px 0 14px;
-}
-.dream-field {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-}
-.dream-field > span { color: var(--text-faint); }
-.dream-field input[type='number'],
-.dream-field input[type='time'] {
-  width: 100%;
-  max-width: 220px;
-  padding: 7px 10px;
-  font-size: 13px;
-}
-.dream-field :deep(.app-select) {
-  width: 100%;
-  max-width: 220px;
-}
-.dream-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-}
-.dream-switch input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
-}
-.dream-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.dream-note {
-  margin: 14px 0 0;
-  line-height: 1.7;
-}
+.dream-md :deep(.md-table th) { color: var(--text-secondary); font-weight: 600; }
 
-@media (max-width: 640px) {
-  .dream-field {
-    grid-template-columns: 1fr;
-    gap: 5px;
-  }
-  .dream-field input[type='number'],
-  .dream-field input[type='time'],
-  .dream-field :deep(.app-select) {
-    max-width: none;
-  }
-}
 </style>

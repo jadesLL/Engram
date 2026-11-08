@@ -5,7 +5,7 @@
         <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">桌面端应用</span>
-          <span class="group-hint">Windows 桌面端本机行为：登录后是否自动启动、桌面快捷方式重建</span>
+          <span class="group-hint">登录启动与桌面快捷方式</span>
         </span>
         <span v-if="launchAtLoginSupported" class="group-badge" :class="launchAtLogin.enabled ? 'tone-ok' : 'tone-muted'">
           {{ launchAtLogin.enabled ? '开机自启已开启' : '开机自启已关闭' }}
@@ -22,54 +22,51 @@
       </div>
       <div v-show="!appCollapsed" class="group-body flush">
 
-        <!-- 开机自启：登录 Windows 后静默启动到系统托盘（旧版壳无此 API 时整行隐藏） -->
+        <!-- 开机自启：登录 Windows 后静默启动到系统托盘（旧版壳无此 API 时整行隐藏）。
+             状态只由开关自身 + 卡头徽标表达，不再在开关旁写「已开启 / 已关闭」。 -->
         <div v-if="launchAtLoginSupported" class="setting-row">
           <div class="setting-copy">
             <strong>开机自启</strong>
-            <span>
-              登录 Windows 后自动启动 Engram，<strong>静默驻留系统托盘</strong>：不弹主窗口，内嵌服务照常运行；
-              托盘图标双击（或桌面快捷方式）即可打开主界面。托盘右键菜单里也能开关。
-            </span>
+            <span>登录 Windows 后静默启动到系统托盘，不弹主窗口。</span>
           </div>
-          <div class="check-controls">
-            <span v-if="launchAtLogin.blocked" class="check-status has">已被系统禁用</span>
+          <div class="setting-actions">
+            <span v-if="launchAtLogin.blocked" class="setting-value tone-warn">已被系统禁用</span>
             <label class="switch-control">
               <input
                 type="checkbox"
                 :checked="launchAtLogin.enabled"
                 :disabled="launchAtLoginBusy"
+                :aria-label="'开机自启，' + (launchAtLogin.enabled ? '已开启' : '已关闭')"
                 @change="toggleLaunchAtLogin"
               />
               <span aria-hidden="true"></span>
-              <em>{{ launchAtLogin.enabled ? '已开启' : '已关闭' }}</em>
             </label>
           </div>
         </div>
         <p v-if="launchAtLoginMessage" class="setting-message" :class="launchAtLoginError ? 'err' : ''">{{ launchAtLoginMessage }}</p>
-        <p v-if="launchAtLoginSupported && launchAtLogin.blocked" class="setting-message warn">
-          启动项被「任务管理器 → 启动」禁用了，开机不会自动运行；在这里重新打开一次开关即可恢复。
+        <p v-if="launchAtLoginSupported && launchAtLogin.blocked" class="setting-note tone-warn">
+          启动项被「任务管理器 → 启动」禁用了，开机不会自动运行；在这里关再开一次即可恢复。
         </p>
-        <p v-if="launchAtLoginSupported && launchAtLogin.stale" class="setting-message warn">
-          检测到启动项命令与当前安装位置不一致（换过安装目录或旧版本写入），开关一次即可修正。
+        <p v-if="launchAtLoginSupported && launchAtLogin.stale" class="setting-note tone-warn">
+          启动项命令与当前安装位置不一致，开关一次即可修正。
         </p>
 
         <!-- 桌面快捷方式：图标丢失或显示不对时重建（源码模式同时生成带 Engram 图标的 Engram.exe） -->
         <div v-if="shortcutSupported" class="setting-row">
           <div class="setting-copy">
             <strong>桌面快捷方式</strong>
-            <span>
-              桌面上的 Engram 图标丢失或显示不对时在此重建，图标外观沿用「界面与检索 → 外观」里的本机选择。
-              <template v-if="sourceMode">源码模式的启动程序是 Electron 官方运行时（图标是 Electron 的原子），重建会在同目录生成一份带 Engram 图标的 Engram.exe 作为启动目标，资源管理器与任务栏图标随之统一。</template>
-              <template v-else>重建指向当前安装目录 Engram.exe 的桌面快捷方式。</template>
-            </span>
+            <span>桌面图标丢失或显示不对时重建。</span>
           </div>
-          <div class="check-controls">
+          <div class="setting-actions">
             <button class="btn" type="button" :disabled="shortcutBusy" @click="doRebuildShortcut">
               <AppSpinner v-if="shortcutBusy" :size="11" />
-              <template v-else>重建桌面快捷方式</template>
+              <template v-else>重建快捷方式</template>
             </button>
           </div>
         </div>
+        <p v-if="shortcutSupported && sourceMode" class="setting-note">
+          源码模式会重建一份带 Engram 图标的 Engram.exe，任务栏与资源管理器图标随之统一。
+        </p>
         <p v-if="shortcutMessage" class="setting-message" :class="shortcutError ? 'err' : ''">{{ shortcutMessage }}</p>
       </div>
     </div>
@@ -234,31 +231,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.check-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.check-status {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.check-status.has {
-  color: var(--accent, #3b82f6);
-  font-weight: 600;
-}
-/* 分组卡片（flush 内容）内的行级消息：全局规则只覆盖面板直接子级，这里补齐边距；
-   位于 setting-row 内的消息保持网格定位不加边距 */
+/* 分组内容区（flush）里的行级消息：行自身已带 22px 内边距，这里只补纵向间距 */
 .setting-message {
-  margin: 0 22px 12px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.setting-message.err {
-  color: var(--danger);
-}
-.setting-message.warn {
-  color: var(--warn);
+  margin: 0 0 12px;
 }
 </style>

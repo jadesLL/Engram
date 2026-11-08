@@ -13,58 +13,69 @@
       :badge="status.bundled ? '' : '缺依赖'"
       :badge-tone="status.bundled ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
-      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 engram 命令读写。模型与插件在下方「内置 Agent 控制台」里配置（Engram 原生界面）"
+      hint="随包的 DeepSeek Harness"
     >
-      <!-- 运行时摘要（dsh 版本 + profile，来自 /api/assistant/status）：右侧一键跳到下方的控制台分组 -->
-      <div class="state-strip builtin-summary">
-        <span class="state-dot" aria-hidden="true" />
-        <strong class="builtin-summary-text">{{ runtimeSummary }}</strong>
-        <a class="builtin-summary-link" href="#agent-console" @click.prevent="jumpToConsole">配置模型与插件</a>
+      <!-- 运行时清单（来自 /api/assistant/status）：版本 / profile / 工作目录走值列表，不再套灰底带框表格 -->
+      <ul class="value-list">
+        <li class="value-row">
+          <span class="value-label">dsh 运行时</span>
+          <span class="value-text is-muted">{{ status.bundled ? '已随包内置' : '未找到（依赖缺失）' }}</span>
+        </li>
+        <li class="value-row">
+          <span class="value-label">dsh 版本</span>
+          <span class="value-text">{{ status.agentVersion || '—' }}</span>
+        </li>
+        <li class="value-row">
+          <span class="value-label">运行 profile</span>
+          <span class="value-text">{{ status.profile || 'web' }}</span>
+        </li>
+        <li class="value-row">
+          <span class="value-label">工作目录</span>
+          <span class="value-text"><code>{{ status.workspace || '—' }}</code></span>
+        </li>
+      </ul>
+
+      <p class="setting-note">
+        点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 engram 命令读写。
+      </p>
+
+      <!-- 模型与插件在控制台里配：原来的链接蓝改为行尾幽灵按钮，主入口仍在下方控制台卡 -->
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>模型与插件</strong>
+          <span>在下方「内置 Agent 控制台」里配置，与聊天共用。</span>
+        </div>
+        <div class="setting-actions">
+          <button class="btn ghost" type="button" @click="jumpToConsole">配置</button>
+        </div>
       </div>
 
-      <div class="builtin-rows">
-        <div class="builtin-row">
-          <span>dsh 运行时</span>
-          <strong :class="status.bundled ? 'ok' : 'warn'">
-            {{ status.bundled ? '已随包内置' : '未找到（依赖缺失）' }}
-          </strong>
-        </div>
-        <div class="builtin-row">
-          <span>运行 profile</span>
-          <strong class="path-value">web（与下方控制台共用同一份配置）</strong>
-        </div>
-        <div class="builtin-row">
-          <span>模型与插件</span>
-          <strong class="path-value">在下方「内置 Agent 控制台」里配置（Engram 原生 Agent 控制台）</strong>
-        </div>
-        <div class="builtin-row">
-          <span>工作目录</span>
-          <strong class="path-value">{{ status.workspace }}</strong>
-        </div>
-        <div v-if="status.legacyKey" class="builtin-row">
-          <span>旧版 Key</span>
-          <strong class="warn">检测到旧版模型 Key：已继续作为官方 Provider 凭据；建议到控制台里重新配置</strong>
-        </div>
-      </div>
+      <p v-if="status.legacyKey" class="setting-note tone-warn">
+        检测到旧版模型 Key，已作为官方 Provider 凭据继续使用；建议到控制台重新配置。
+      </p>
 
       <!-- 权限模式：旧服务端没有 status.permission 就不渲染（向后兼容）；
            写入口是 owner-only（requireAuth），手机成员拿不到，所以按管理面能力位隐藏。 -->
-      <div v-if="permission && capabilities.features.agentAdmin" class="builtin-permission">
-        <div class="builtin-permission-row">
-          <label class="builtin-permission-label" for="agent-permission-select">权限</label>
-          <AppSelect
-            id="agent-permission-select"
-            v-model="permissionMode"
-            class="builtin-permission-select"
-            aria-label="内置 Agent 权限"
-            :options="permissionOptions"
-            :placeholder="permissionLabel"
-            :disabled="savingPermission"
-            @change="savePermission"
-          />
+      <template v-if="permission && capabilities.features.agentAdmin">
+        <div class="setting-row">
+          <div class="setting-copy">
+            <strong>权限</strong>
+            <span>{{ permissionHint }}</span>
+          </div>
+          <div class="setting-control permission-control">
+            <AppSelect
+              id="agent-permission-select"
+              v-model="permissionMode"
+              aria-label="内置 Agent 权限"
+              :options="permissionOptions"
+              :placeholder="permissionLabel"
+              :disabled="savingPermission"
+              @change="savePermission"
+            />
+          </div>
         </div>
-        <p class="builtin-permission-hint">{{ permissionHint }}</p>
-      </div>
+        <p class="setting-note">权限改动会重启控制台与聊天运行时，对新会话生效。</p>
+      </template>
     </SettingsGroup>
 
     <!-- 内置 Agent 控制台：Engram 原生整页（模型 / 插件 / Agent 预设 / 高级），入口卡只保留状态条与打开按钮。
@@ -85,7 +96,7 @@
       v-if="capabilities.features.agentAdmin"
       anchor="agent-target"
       title="外部接入"
-      hint="外置 Agent 走 engram CLI + skill：一键接入写入 skill 与命令行包装脚本，不再改客户端 MCP 配置"
+      hint="外部 Agent 接入（CLI + skill）"
     >
       <AgentCliSection />
     </SettingsGroup>
@@ -93,42 +104,34 @@
     <SettingsGroup
       anchor="agent-tools"
       title="工具与手册"
-      :hint="`只读参考：Agent 通过 engram 命令读写知识库——读 ${readCommands.length} 条不改动知识库，写 ${writeCommands.length} 条带证据门禁并记入操作日志，另有 ${systemCommands.length} 条连接与说明命令`"
+      hint="只读参考：engram 命令速查"
     >
-      <p class="faint small tools-intro">
-        命令统一以 <code>engram</code> 开头（本机一键接入后 PATH 里可用；远程设备先用 <code>node engram.js</code>）；
-        每条命令附一句话功能与使用要点。
+      <p class="setting-note">
+        命令统一以 <code>engram</code> 开头；远程设备先用 <code>node engram.js</code>。
       </p>
 
+      <!-- 命令参考：读 → 写 → 系统三组，行间细线分隔，不再给每条命令套一层小表格 -->
       <div class="tools-groups">
         <section v-for="group in commandGroups" :key="group.label" class="tools-group">
-          <h5>{{ group.label }}（{{ group.items.length }}）</h5>
+          <h5 class="tools-group-title">{{ group.label }}（{{ group.items.length }}）</h5>
           <article v-for="cmd in group.items" :key="cmd.command" class="tool-row">
-            <div class="tool-title">
-              <code class="tool-name">{{ formatCliCommand(cmd.command) }}</code>
-            </div>
+            <code class="tool-name">{{ formatCliCommand(cmd.command) }}</code>
             <p class="tool-summary">{{ cmd.summary }}</p>
-            <dl class="tool-meta">
-              <div>
-                <dt>要点</dt>
-                <dd>{{ cmd.notes }}</dd>
-              </div>
-            </dl>
+            <p class="tool-notes">{{ cmd.notes }}</p>
           </article>
         </section>
       </div>
 
-      <p class="faint small tools-foot">
+      <p class="setting-note">
         全局选项：<code v-for="(option, index) in CLI_GLOBAL_OPTIONS" :key="index">{{ option }}</code>。
-        {{ CLI_EXIT_NOTE }}。作业方法论见《Agent 作业指南》（<code>engram guide</code>），具体作业手法与纪律用
-        <code>engram skill list</code> 看清单、<code>engram skill show &lt;name&gt;</code> 取全文。
       </p>
-      <div class="guide-actions">
-        <button class="btn small" type="button" @click="copyCommandSheet">复制命令清单</button>
-        <button class="btn small" type="button" @click="loadGuide">
-          {{ guideOpen ? '收起作业指南' : '查看《Agent 作业指南》' }}
+      <p class="setting-note">{{ CLI_EXIT_NOTE }}。</p>
+      <div class="setting-actions tools-actions">
+        <button class="btn ghost" type="button" @click="copyCommandSheet">复制命令清单</button>
+        <button class="btn" type="button" title="《Agent 作业指南》" @click="loadGuide">
+          {{ guideOpen ? '收起作业指南' : '查看作业指南' }}
         </button>
-        <button class="btn small" type="button" @click="copy(guide)">复制指南全文</button>
+        <button class="btn ghost" type="button" @click="copy(guide)">复制指南全文</button>
       </div>
       <pre v-if="guideOpen" class="guide-pre">{{ guide || '加载中…' }}</pre>
     </SettingsGroup>
@@ -147,7 +150,6 @@ import {
   formatCliCommand,
   groupedCliCommands,
 } from '../../lib/cliReference';
-import { agentRuntimeSummary } from '../../lib/agentConsole';
 import { expandGroup } from '../../lib/settingsCollapse';
 import AgentCliSection from './AgentCliSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
@@ -180,11 +182,8 @@ const status = ref<any>({
 // 设置页二级导航徽标：随包运行时缺失时提示「缺依赖」，其余不打扰
 useSettingsBadge('agent-builtin', computed(() => (status.value.bundled ? '' : '缺依赖')));
 
-/** 卡片顶部摘要：dsh 版本 + profile，取不到显示「未知」 */
-const runtimeSummary = computed(() => agentRuntimeSummary(status.value));
-
 /**
- * 「配置模型与插件」：跳到同页「内置 Agent 控制台」分组（anchor: agent-console）。
+ * 「模型与插件」行尾的「配置」：跳到同页「内置 Agent 控制台」分组（anchor: agent-console）。
  * 跳法与二级导航一致（SettingsView.scrollToAnchor）：先展开分组再滚动。
  */
 function jumpToConsole(): void {
@@ -257,10 +256,10 @@ const permissionLabel = computed(() => {
   const selected = current.options.find((item) => item.value === permissionMode.value);
   return selected?.label || permissionMode.value || current.mode || '完全访问';
 });
+/** 权限行的一句说明：服务端给的当前模式描述；重启影响由行下 setting-note 承载 */
 const permissionHint = computed(() => {
   const selected = permission.value?.options.find((item) => item.value === permissionMode.value);
-  const lead = selected?.description ? `${selected.description}。` : '';
-  return `${lead}默认完全访问；调整后控制台与聊天运行时自动重启，对新会话生效。`;
+  return selected?.description || '默认完全访问，不限制文件修改。';
 });
 
 /** 状态到达/保存成功后把下拉同步到服务端的权威值 */
@@ -292,11 +291,8 @@ async function savePermission(mode: string): Promise<void> {
   }
 }
 
-/** 命令参考表：分组顺序与 lib/cliReference 的 CLI_GROUPS 一致（读 → 写 → 系统） */
+/** 命令参考：分组顺序与 lib/cliReference 的 CLI_GROUPS 一致（读 → 写 → 系统） */
 const commandGroups = groupedCliCommands();
-const readCommands = CLI_COMMANDS.filter((item) => item.group === '读');
-const writeCommands = CLI_COMMANDS.filter((item) => item.group === '写');
-const systemCommands = CLI_COMMANDS.filter((item) => item.group === '系统');
 
 /** 命令清单复制：一条命令一行，便于贴进客户端说明或自己的速查表 */
 async function copyCommandSheet(): Promise<void> {
@@ -327,205 +323,52 @@ async function copy(text: string) {
 </script>
 
 <style scoped>
-/* 运行时摘要：走全局 .state-strip（浅底 + 细描边 + 状态点），这里是它的一行变体 */
-.builtin-summary {
-  align-items: center;
-  margin: 0 0 12px;
-}
-.builtin-summary-text {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.builtin-summary-link {
-  flex: none;
-  margin-left: auto;
-  color: var(--accent);
-  font-size: 12px;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.builtin-summary-link:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.builtin-summary-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.builtin-rows {
-  margin: 12px 0 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-.builtin-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-.builtin-row:last-child {
-  border-bottom: none;
-}
-.builtin-row span {
-  color: var(--text-faint);
-}
-.builtin-row .ok {
-  color: var(--accent, #2e9e6b);
-}
-.builtin-row .warn {
-  color: var(--warn, #c77916);
-}
-.builtin-row .path-value {
-  max-width: 62%;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-/* 权限模式：与 builtin-rows 同款浅底块，一行下拉 + 一行说明 */
-.builtin-permission {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 12px 0 0;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-.builtin-permission-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.builtin-permission-label {
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.builtin-permission-select {
-  width: 220px;
-  max-width: 100%;
-  font-size: 12px;
-}
-.builtin-permission-hint {
-  margin: 0;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.6;
-}
-.builtin-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 14px 0 0;
-}
-.builtin-form label {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-}
-.builtin-form label > span {
-  color: var(--text-faint);
-}
-/* 地址/模型名可能很长：输入框铺满可用宽度（面板内最大 720px），不截断 */
-.builtin-form input,
-.builtin-form .app-select {
-  width: 100%;
-  max-width: 720px;
-  font-size: 12px;
-}
-.builtin-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.tools-intro {
-  margin: 10px 0 0;
-  line-height: 1.6;
-}
+/* 「工具与手册」是只读参考：分组标题 + 命令行，行间只用细线分隔 */
 .tools-groups {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 14px;
+  gap: 14px;
+  margin-top: 12px;
 }
-.tools-group h5 {
-  margin: 0 0 8px;
+.tools-group-title {
+  margin: 0 0 2px;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
 }
 .tool-row {
-  padding: 10px 0;
+  padding: 9px 0;
   border-top: 1px solid var(--border);
 }
 .tool-row:first-of-type {
   border-top: none;
 }
-.tool-title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-/* 命令较长（含参数说明）：允许换行，不要把分组卡片撑出横向滚动 */
+/* 命令可能很长（含参数说明）：占满一行、允许换行，不把卡片撑出横向滚动 */
 .tool-name {
-  flex: 1 1 auto;
-  min-width: 0;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
   font-weight: 600;
-  overflow-wrap: anywhere;
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 .tool-summary {
   margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.6;
 }
-.tool-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 6px 0 0;
-}
-.tool-meta > div {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 8px;
-}
-.tool-meta dt {
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.7;
-}
-.tool-meta dd {
-  margin: 0;
+.tool-notes {
+  margin: 2px 0 0;
   color: var(--text-secondary);
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 1.6;
 }
-.tool-meta code {
-  overflow-wrap: anywhere;
-  white-space: normal;
+/* 权限下拉：铺满行尾控件列（与其它面板的 :deep(.app-select) 约定一致） */
+.permission-control :deep(.app-select) {
+  width: 100%;
 }
-.tools-foot {
-  margin: 14px 0 0;
-  line-height: 1.7;
-}
-.guide-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 参考卡底部的复制 / 查看按钮：与上方说明留一点距离 */
+.tools-actions {
   margin-top: 12px;
 }
 .guide-pre {
@@ -539,20 +382,5 @@ async function copy(text: string) {
   font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
-}
-
-@media (max-width: 640px) {
-  .builtin-permission-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-  }
-  .builtin-permission-select {
-    width: 100%;
-  }
-  .tool-meta > div {
-    grid-template-columns: 1fr;
-    gap: 0;
-  }
 }
 </style>

@@ -1,9 +1,9 @@
 <template>
-  <SettingsGroup class="settings-native" anchor="account-appearance" title="外观" hint="界面显示方式" :default-open="true" flush>
+  <SettingsGroup class="settings-native" anchor="account-appearance" title="外观" hint="本机即时生效" :default-open="true" flush>
     <div class="setting-row">
       <div class="setting-copy">
         <strong>主题</strong>
-        <span>选择浅色、深色或跟随系统。软件图标（网页标签页、桌面窗口/任务栏/托盘/快捷方式）随主题一起切换。</span>
+        <span>浅色、深色或跟随系统，软件图标同步切换。</span>
       </div>
       <div class="segmented" role="radiogroup" aria-label="主题">
         <button
@@ -22,25 +22,33 @@
 
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>悬停提示严格避让</strong>
-        <span>提示只贴在被说明对象的四周（不外移、不画引导线）。开启后逐边比较，优先选不压住内容的一边，必要时换边或收窄气泡；关闭后优先贴首选方向显示，允许轻微遮挡。</span>
+        <strong>悬停提示</strong>
+        <span>提示气泡尽量不遮挡内容，必要时换边或收窄。</span>
       </div>
       <label class="switch-control">
-        <input type="checkbox" :checked="tipStrict" @change="toggleTipStrict" />
+        <input
+          type="checkbox"
+          :checked="tipStrict"
+          :aria-label="'悬停提示严格避让，' + (tipStrict ? '已开启' : '已关闭')"
+          @change="toggleTipStrict"
+        />
         <span aria-hidden="true"></span>
-        <em>{{ tipStrict ? '已开启' : '已关闭' }}</em>
       </label>
     </div>
 
     <div class="setting-row">
       <div class="setting-copy">
         <strong>显示 AI 工作区</strong>
-        <span>侧栏里的「AI 工作区」是服务端自动生成的操作日志、全库索引与关系库，日常不需要看，默认隐藏。打开后它出现在侧栏底部（只读）。</span>
+        <span>在侧栏底部显示 AI 工作日志与关系库（只读）。</span>
       </div>
       <label class="switch-control">
-        <input type="checkbox" :checked="app.showAiWorkspace" @change="toggleAiWorkspace" />
+        <input
+          type="checkbox"
+          :checked="app.showAiWorkspace"
+          :aria-label="'显示 AI 工作区，' + (app.showAiWorkspace ? '已显示' : '已隐藏')"
+          @change="toggleAiWorkspace"
+        />
         <span aria-hidden="true"></span>
-        <em>{{ app.showAiWorkspace ? '已显示' : '已隐藏' }}</em>
       </label>
     </div>
   </SettingsGroup>
@@ -57,6 +65,10 @@ import { getTooltipStrict, setTooltipStrict } from '../../lib/tooltip';
  * 「界面与检索 → 外观」分组。
  * 2026-09-28 从 AccountPanel 拆出（方案 A「一事一类」）：外观属于「界面与检索」，
  * 与账户凭据不再同页；拆出后 AccountPanel 只剩账户与连接通道。
+ *
+ * 2026-11 第二轮内容精修：行说明压到一句（说结果，不写「逐边比较、不外移、不画引导线」这类
+ * 实现细节）；开关旁不再重复「已开启/已关闭」，状态由开关本身 + aria-label 承担；卡头说明
+ * 只写「本机即时生效」，不再复读卡内信息。
  */
 const app = useAppStore();
 
@@ -86,4 +98,3 @@ const themeOptions = [
   { value: 'system', label: '跟随系统' },
 ];
 </script>
-

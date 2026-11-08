@@ -1,94 +1,91 @@
 <template>
   <div class="cli-section">
-    <!-- CLI 运行时：外置客户端的「一键接入」全靠它，所以先亮状态 -->
+    <!-- CLI 运行时：会变的状态走状态条，命令与路径用值列表（不再用链接蓝当状态） -->
     <div class="state-strip cli-status" :class="cli.available ? 'tone-ok' : 'tone-warn'">
       <span class="state-dot" aria-hidden="true" />
       <div class="cli-status-copy">
         <strong>{{ cli.available ? 'engram CLI 可用' : 'engram CLI 不可用' }}</strong>
-        <code v-if="cli.available" class="cli-status-command">{{ cli.command }}</code>
-        <span v-else>{{ cli.error || '未找到 CLI 运行时（需要 Node 20+）' }}</span>
-        <span v-if="cli.available && cli.shimPath" class="cli-status-path">
-          PATH 包装脚本：<code>{{ cli.shimPath }}</code>
-        </span>
-        <span v-if="configPath" class="cli-status-path">
-          连接配置：<code>{{ configPath }}</code>
-        </span>
+        <span v-if="cli.available" class="cli-status-hint">外部 Agent 通过它读写知识库。</span>
+        <span v-else class="cli-status-error">{{ cli.error || '未找到 CLI 运行时（需要 Node 20+）' }}</span>
       </div>
-      <div class="cli-status-actions">
-        <button v-if="cli.available" class="btn small" type="button" @click="copy(cli.command, '已复制 CLI 命令')">
+      <div class="setting-actions cli-status-actions">
+        <button
+          v-if="cli.available"
+          class="btn ghost small"
+          type="button"
+          @click="copy(cli.command, '已复制 CLI 命令')"
+        >
           复制命令
         </button>
         <button class="btn small" type="button" :disabled="loading" @click="loadAll">
-          {{ loading ? '检测中…' : '刷新检测' }}
+          {{ loading ? '检测中…' : '重新检测' }}
         </button>
-        <button class="btn small" type="button" @click="openCommandReference">查看命令参考</button>
+        <button class="btn ghost small" type="button" @click="openCommandReference">命令参考</button>
       </div>
     </div>
 
-    <p class="integration-note">
-      一键接入只写入 skill 与 CLI 包装脚本（PATH 里的 <code>engram</code> 命令），并顺带清掉旧版本写入的
-      Engram MCP 条目（只删 <code>engram</code> 这一项，其他 MCP 配置不动）。
+    <ul v-if="cli.available || configPath" class="value-list">
+      <li v-if="cli.available" class="value-row">
+        <span class="value-label">CLI 命令</span>
+        <span class="value-text"><code>{{ cli.command }}</code></span>
+      </li>
+      <li v-if="cli.shimPath" class="value-row">
+        <span class="value-label">包装脚本</span>
+        <span class="value-text is-muted"><code>{{ cli.shimPath }}</code></span>
+      </li>
+      <li v-if="configPath" class="value-row">
+        <span class="value-label">连接配置</span>
+        <span class="value-text is-muted"><code>{{ configPath }}</code></span>
+      </li>
+    </ul>
+
+    <p class="setting-note">
+      一键接入只写入 skill 与 PATH 包装脚本，并清理旧版 Engram MCP 条目。
     </p>
 
-    <!-- 客户端卡片：每张只回答「检测到没有 / 接入了没有 / CLI 可不可用」 -->
+    <!-- 客户端接入：一行一个客户端，状态只在行尾出现一次 -->
     <div class="sub-block">
       <div class="block-head">
         <h4>客户端接入</h4>
-        <span v-if="installedCount" class="block-meta">已接入 {{ installedCount }} / {{ clients.length }}</span>
+        <span v-if="installedCount" class="setting-value">已接入 {{ installedCount }} / {{ clients.length }}</span>
       </div>
 
       <div v-if="loadError" class="empty-panel">{{ loadError }}</div>
       <div v-else-if="!clients.length" class="empty-panel">
-        {{ loading ? '正在检测本机客户端…' : '未检测到可接入的客户端：装好客户端并至少运行一次后回来刷新。' }}
+        {{ loading ? '正在检测本机客户端…' : '未检测到可接入的客户端；装好并运行一次后回来重新检测。' }}
       </div>
-      <div v-else class="client-grid">
-        <article v-for="client in clients" :key="client.id" class="client-card">
-          <div class="client-head">
+      <div v-else class="cli-client-list">
+        <div v-for="client in clients" :key="client.id" class="setting-row">
+          <div class="setting-copy">
             <strong>{{ client.title }}</strong>
-            <span class="client-chip" :class="client.installed ? 'ok' : ''">
-              {{ client.installed ? '已检测到' : '未检测到' }}
+            <span v-if="clientHint(client)">{{ clientHint(client) }}</span>
+            <span v-if="clientSkillPaths(client).length" class="cli-skill-paths">
+              <code v-for="skillPath in clientSkillPaths(client)" :key="skillPath">{{ skillPath }}</code>
             </span>
           </div>
-          <dl class="client-meta">
-            <div>
-              <dt>skill</dt>
-              <dd :class="client.skillsInstalled ? 'ok' : 'warn'">{{ client.skillsInstalled ? '已接入' : '未接入' }}</dd>
+          <div class="cli-client-side">
+            <span class="setting-value" :class="clientTone(client)">{{ clientStatus(client) }}</span>
+            <div class="setting-actions">
+              <button
+                class="btn small"
+                type="button"
+                :disabled="busyId !== '' || !client.installed || !client.cliAvailable"
+                @click="register(client)"
+              >
+                {{ busyId === client.id ? '处理中…' : (client.skillsInstalled ? '重新接入' : '一键接入') }}
+              </button>
+              <button
+                v-if="client.skillsInstalled"
+                class="btn danger small"
+                type="button"
+                :disabled="busyId !== ''"
+                @click="unregister(client)"
+              >
+                移除接入
+              </button>
             </div>
-            <div>
-              <dt>CLI</dt>
-              <dd :class="client.cliAvailable ? 'ok' : 'warn'">{{ client.cliAvailable ? '可用' : '不可用' }}</dd>
-            </div>
-            <div v-if="clientSkillPaths(client).length">
-              <dt>skill 目录</dt>
-              <dd class="path-value">
-                <div v-for="skillPath in clientSkillPaths(client)" :key="skillPath">
-                  <code>{{ skillPath }}</code>
-                </div>
-              </dd>
-            </div>
-          </dl>
-          <div class="client-actions">
-            <button
-              class="btn primary small"
-              type="button"
-              :disabled="busyId !== '' || !client.installed || !client.cliAvailable"
-              @click="register(client)"
-            >
-              {{ busyId === client.id ? '处理中…' : (client.skillsInstalled ? '重新接入' : '一键接入') }}
-            </button>
-            <button
-              v-if="client.skillsInstalled"
-              class="btn small"
-              type="button"
-              :disabled="busyId !== ''"
-              @click="unregister(client)"
-            >
-              移除接入
-            </button>
           </div>
-          <p v-if="!client.installed" class="client-hint">未检测到该客户端：安装并至少运行一次后再回来接入。</p>
-          <p v-else-if="!client.cliAvailable" class="client-hint">本机 CLI 运行时不可用，先修复上面的 CLI 状态。</p>
-        </article>
+        </div>
       </div>
     </div>
 
@@ -101,19 +98,18 @@
           生成令牌
         </button>
       </div>
-      <p class="integration-note">
-        远程设备用令牌执行 <code>engram login</code>；同一令牌也可走 REST API（<code>Authorization: Bearer</code>）。
-        删除后使用该令牌的客户端立即失去访问权。
+      <p class="setting-note">
+        远程设备用令牌执行 <code>engram login</code>，也可走 REST API 的 Bearer 认证；删除后立即失效。
       </p>
-      <div v-if="tokens.length" class="token-list">
-        <div v-for="tokenItem in tokens" :key="tokenItem.id" class="token-row">
-          <div class="token-copy">
+      <div v-if="tokens.length" class="cli-token-list">
+        <div v-for="tokenItem in tokens" :key="tokenItem.id" class="setting-row">
+          <div class="setting-copy">
             <strong>{{ tokenItem.name }}</strong>
             <SecretField mode="text" :value="tokenItem.token" />
           </div>
-          <div class="token-actions">
-            <button class="btn small" type="button" @click="copy(tokenItem.token, '已复制令牌')">复制</button>
-            <button class="text-action danger" type="button" @click="delToken(tokenItem.id)">删除</button>
+          <div class="setting-actions">
+            <button class="btn ghost small" type="button" @click="copy(tokenItem.token, '已复制令牌')">复制</button>
+            <button class="btn danger small" type="button" @click="delToken(tokenItem.id)">删除</button>
           </div>
         </div>
       </div>
@@ -122,7 +118,10 @@
 
     <!-- 远程接入：下载 cli.js 后在本机 login，不依赖 Engram 启动时自动登记的连接 -->
     <div class="sub-block">
-      <h4>远程接入（其他设备上的 Agent）</h4>
+      <div class="block-head">
+        <h4>远程接入</h4>
+      </div>
+      <p class="setting-note">其他设备上的 Agent：下载 CLI 后用令牌登录，不依赖本机已安装。</p>
       <ol class="remote-steps">
         <li>
           <div class="remote-step-head">
@@ -132,8 +131,8 @@
         </li>
         <li>
           <div class="remote-step-head">
-            <span>登记连接（令牌在 设置 → Agent 与自动化 → 外部接入 → Agent 令牌 里生成）。</span>
-            <div class="remote-step-controls">
+            <span>用令牌登记连接：</span>
+            <div class="setting-actions remote-step-controls">
               <AppSelect
                 v-if="tokens.length"
                 v-model="tokenSelectValue"
@@ -142,7 +141,7 @@
                 :options="tokenOptions"
               />
               <button
-                class="btn small"
+                class="btn ghost small"
                 type="button"
                 :disabled="!selectedToken"
                 @click="copy(loginCommand, '已复制 login 命令')"
@@ -152,20 +151,16 @@
             </div>
           </div>
           <div class="command-line"><code>{{ loginCommand }}</code></div>
-          <p v-if="!tokens.length" class="client-hint">还没有令牌：先在上方生成一个，再回来复制命令。</p>
+          <p v-if="!tokens.length" class="setting-note">还没有令牌：先在上方生成一个，再回来复制命令。</p>
         </li>
         <li>
           <div class="remote-step-head">
-            <span>验证连接与能力。</span>
+            <span>验证连接与能力：<code>node engram.js status</code>。</span>
           </div>
-          <div class="command-line"><code>node engram.js status</code></div>
         </li>
         <li>
           <div class="remote-step-head">
-            <span>
-              把 Engram skill 与客户调研入口 skill 放进客户端 skills 目录（见上方各客户端的 skill 目录），
-              或用 <code>node engram.js guide</code> 取作业指南。
-            </span>
+            <span>把两个 skill 放进客户端 skills 目录（见上方各客户端的 skill 目录），或用 <code>node engram.js guide</code> 取作业指南。</span>
           </div>
         </li>
       </ol>
@@ -176,17 +171,16 @@
       <div class="block-head">
         <h4>客户调研入口 skill</h4>
       </div>
-      <p class="integration-note">
-        一键接入会同时安装 Engram skill 与客户调研入口 skill（<code>engram-customer-research</code>）；
-        远程设备把这份 SKILL.md 放进客户端 skills 目录即可。流程与报告模板每次从 Engram 获取。
+      <p class="setting-note">
+        一键接入会同时安装 Engram skill 与客户调研入口 skill（<code>engram-customer-research</code>）；远程设备把这份 SKILL.md 放进客户端 skills 目录即可。
       </p>
-      <div class="client-actions">
+      <p v-if="!researchSkillBody" class="setting-note">
+        正文未就绪：可执行 <code>engram skill show engram-customer-research</code> 获取。
+      </p>
+      <div class="setting-actions cli-research-actions">
         <button class="btn small" type="button" :disabled="!researchSkillBody" @click="copyResearchSkill">
-          复制客户调研入口 SKILL.md
+          复制 SKILL.md
         </button>
-        <span v-if="!researchSkillBody" class="client-hint">
-          正文未就绪：可执行 <code>engram skill show engram-customer-research</code> 获取。
-        </span>
       </div>
     </div>
   </div>
@@ -214,6 +208,10 @@ import { expandGroup } from '../../lib/settingsCollapse';
  *   服务端不假设远程机器有本机安装；
  * - 客户调研入口 skill 的正文由同一个 agent-access 响应带上（skills.customerResearch.body），
  *   没有正文时按钮禁用并提示改用 engram skill show。
+ *
+ * 2026-11 第二轮内容精修：客户端卡（描边 + 灰底 + 三行状态表）改成一行一个客户端的 setting-row，
+ * 「已接入 / 未接入」只在行尾 .setting-value 出现一次；CLI 命令与路径改 value-list；
+ * 说明与步骤压到一句；动作降为描边 / 文字按钮（一卡不再多个实心主按钮）。
  */
 
 interface AgentAccessStatus {
@@ -266,6 +264,25 @@ function clientSkillPaths(client: AgentAccessStatus): string[] {
   if (Array.isArray(client.skillPaths) && client.skillPaths.length) return client.skillPaths;
   return client.skillPath ? [client.skillPath] : [];
 }
+
+/** 「接入状态」只说一次：已接入 / 未接入 / 未检测到（CLI 不可用不重复进状态，见 hint） */
+function clientStatus(client: AgentAccessStatus): string {
+  if (!client.installed) return '未检测到';
+  return client.skillsInstalled ? '已接入' : '未接入';
+}
+
+function clientTone(client: AgentAccessStatus): string {
+  return client.installed && client.skillsInstalled ? 'tone-ok' : '';
+}
+
+/** 行说明只回答「为什么按钮不可点 / 接入意味着什么」，不重复右侧状态 */
+function clientHint(client: AgentAccessStatus): string {
+  if (!client.installed) return '先安装并运行一次，再回来检测。';
+  if (!client.cliAvailable) return '本机 CLI 不可用，先修复上方状态。';
+  if (client.skillsInstalled) return '';
+  return '点右侧按钮写入 skill 与 CLI 包装脚本。';
+}
+
 const tokenOptions = computed(() =>
   tokens.value.map((item) => ({ value: String(item.id), label: `${item.name}（#${item.id}）` })),
 );
@@ -435,7 +452,7 @@ onMounted(loadAll);
   gap: 14px;
 }
 
-/* 状态条：CLI 命令可能带引号与空格，按需换行，不省略成一行 */
+/* ---------- CLI 运行时状态条 ---------- */
 .cli-status {
   align-items: center;
   flex-wrap: wrap;
@@ -452,39 +469,25 @@ onMounted(loadAll);
   color: var(--text);
   font-size: 12px;
 }
-.cli-status-command,
-.cli-status-path code {
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-.cli-status-path {
-  color: var(--text-faint);
-  font-size: 11.5px;
-}
 .cli-status-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex: none;
+  justify-content: flex-end;
 }
-
-.integration-note {
-  margin: 0;
+.cli-status-hint,
+.cli-status-error {
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-/* 卡内小分区：与全局 .sub-block + .sub-block 的细分隔线配合 */
+/* ---------- 卡内小分区（与全局 .sub-block + .sub-block 的细分隔线配合） ---------- */
 .sub-block {
   margin: 0;
   min-width: 0;
 }
 .sub-block + .sub-block {
   padding-top: 16px;
-}
-.sub-block h4 {
-  margin: 0 0 8px;
-  font-size: 13px;
 }
 .block-head {
   display: flex;
@@ -495,114 +498,39 @@ onMounted(loadAll);
 }
 .block-head h4 {
   margin: 0;
-}
-.block-meta {
-  color: var(--text-faint);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-.client-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
-  gap: 12px;
-}
-.client-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: 13px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-.client-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.client-head strong {
   font-size: 13px;
 }
-.client-chip {
-  flex: none;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.client-chip.ok {
-  background: var(--success-soft);
-  color: var(--success);
-}
-.client-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin: 0;
-}
-.client-meta > div {
-  display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
-  gap: 8px;
-}
-.client-meta dt {
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.6;
-}
-.client-meta dd {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.client-meta dd.ok { color: var(--success); }
-.client-meta dd.warn { color: var(--warning); }
-.client-actions {
+
+/* ---------- 客户端列表：一行一个客户端，右侧只放状态 + 动作 ---------- */
+.cli-client-side {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: auto;
-}
-.client-hint {
-  margin: 0;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.55;
-}
-
-.token-list {
-  border-top: 1px solid var(--border);
-}
-.token-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-.token-copy {
+  justify-content: flex-end;
+  gap: 8px 12px;
   min-width: 0;
 }
-.token-copy strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 12px;
-}
-.token-actions {
+.setting-copy .cli-skill-paths {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.setting-copy .cli-skill-paths code {
+  padding: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+/* ---------- 令牌列表 ---------- */
+.cli-token-list {
+  min-width: 0;
 }
 
+/* ---------- 远程接入步骤 ---------- */
 .remote-steps {
   margin: 0;
   padding-left: 20px;
@@ -621,10 +549,7 @@ onMounted(loadAll);
   flex-wrap: wrap;
 }
 .remote-step-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 .remote-token-select {
   min-width: 180px;
@@ -641,19 +566,16 @@ onMounted(loadAll);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.cli-research-actions {
+  margin-top: 10px;
+}
 
 @media (max-width: 768px) {
-  .client-grid {
-    grid-template-columns: 1fr;
-  }
-  .token-row {
-    grid-template-columns: 1fr;
-  }
-  .token-actions {
-    justify-content: flex-end;
-  }
   .remote-step-head {
     align-items: flex-start;
+  }
+  .cli-client-side {
+    justify-content: flex-start;
   }
 }
 </style>
