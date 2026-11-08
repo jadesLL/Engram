@@ -22,6 +22,7 @@ import {
   summarizeFileChange,
   summarizeMove,
   summarizePageChange,
+  summarizePreferenceChange,
   summarizeResearchChange,
   summarizeSessionChange,
   type SyncOpSummary,
@@ -635,7 +636,15 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
   if (push.kind === 'preference') {
     const changed = mergePreference(push.target, push.preference);
     const result = changed ? commit('preference', push.target, actorId) : {};
-    return { ok: true, seq: Number(result.seq || 0), revision: Number(result.revision || 0), preference: preferenceValue(push.target) };
+    return {
+      ok: true,
+      seq: Number(result.seq || 0),
+      revision: Number(result.revision || 0),
+      preference: preferenceValue(push.target),
+      // 有实际变化才给摘要：中枢在设置页「同步详情」里能看到是谁同步了哪个设置；
+      // 内容没变（同值重推）不写记录，避免每次对账刷屏
+      ...(changed ? { op: summarizePreferenceChange(String(push.target || '')) } : {}),
+    };
   }
 
   if (push.kind === 'board') {

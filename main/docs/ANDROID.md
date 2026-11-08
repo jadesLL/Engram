@@ -19,7 +19,7 @@ Engram Android 端不是远程网页壳。APK 打包与桌面/服务器相同的
 - **收集箱状态不会回退成「待整理」**：手机本机按磁盘事实推导（`收集箱/转换结果/` 里来源匹配的产物 → 已转换；`原始资料/文档/` 里同名且来源一致的副本 → 已入库），并把中枢成功响应的状态落盘缓存（设置键 `sync_inbox_status`）。冷启动首轮同步完成前、离线、任一轮同步失败时显示「上次已知状态」，不再用 `sync.connected` 一票否决；产物/入库副本在磁盘上存在时，任何 pending 结论都会被修正回已转换/已入库。
 - 原始资料 md 改「分类」与桌面端同口径：可移动到 `原始资料/文档`、`原始资料/对话`、`原始资料/灵感碎片`（不再是「只能留在 Wiki 目录」）。**改名/移动时账本跟随路径**：本机改名或收到同步 `move` 时，`evidence_snapshots` / `page_revisions` 里的路径键一起迁移（服务端对应 `remapRawSourcePaths`），否则新路径会显示「未提炼」（用户报障：已整理在其他端变成未整理）。
 - 客户调研支持查看记录、启动/停止任务、分别清除或一键清除记录（只删记录，知识库文档不动）、修改流程模板，均使用同步成员令牌窄代理到中枢；重复客户时先查知识库已有报告并让用户选「生成新版本 / 覆盖旧报告」；完整报告自动入库，资料不足简报只在页面反馈、可手动入库。报告按 `YYYY.MM.DD_公司全名调研报告` 命名（资料不足简报为 `…_调研简报`），重名追加 `_2`、`_3`，原始资料按同步分类设置回到手机。客户洞察工作台在手机上按单列排布（客户列表 → 客户档案 → 客户速览），章节用下拉切换并接安卓返回键；主体核验状态（已核实 / 未经工商核实 / 查无此主体）与警示条同桌面端一致；报告正文角标可点回「来源与结论对照」，点来源条目回到正文最近一处引用。
-- 不在手机上运行 dsh / CLI（知识库操作由外部 Agent 通过 `engram` CLI 完成），也不下发模型 Key；完成成员绑定后，聊天抽屉通过本机 loopback 服务把 Agent 交互窄代理到 Docker 中枢。会话与长任务留在 24 小时在线的服务器上，手机退后台只断开 SSE，不会取消已经提交的任务，回到前台后按 active run 与快照接续。
+- 不在手机上运行 dsh / CLI（知识库操作由外部 Agent 通过 `engram` CLI 完成），也不下发模型 Key（2026-11 起，内置 Agent 的模型配置与相关 Key 随「设置」分类在桌面端 / Docker 端之间同步，**手机不参与、不落 Key**：Kotlin 侧不加这些 preference key，未知 key 按现有逻辑跳过）；完成成员绑定后，聊天抽屉通过本机 loopback 服务把 Agent 交互窄代理到 Docker 中枢。会话与长任务留在 24 小时在线的服务器上，手机退后台只断开 SSE，不会取消已经提交的任务，回到前台后按 active run 与快照接续。
 - **Agent 与自动化配置（v1.5.1 起）**：绑定中枢后，手机设置页也会出现「内置 Agent / 内置 Agent 控制台 / 视频理解模型 / 自动整理（梦境思考）/ 任务看板提炼 / 工具与手册」，经本机 loopback 服务用同步成员令牌窄代理到中枢——改的是中枢上真正在跑的那一份配置（模型、插件、预设、视频理解模型开关、梦境计划），手机本身不运行 dsh。模型 Key 只写不读（读接口只回 configured/hasKey），视频理解模型默认 DashScope / qwen3.8-omni-flash、只需在控制台模型页填一个 DashScope API Key；改完下一轮对话或下次提炼生效；未绑定中枢时整个「Agent 与自动化」不出现，直接访问控制台路径显示「请先在 多端同步 绑定中枢」。详见下方「Agent 与自动化配置」。
 - 不提供同步中枢管理（成员邀请 / DDNS / TLS）、外部 Agent 接入与 Agent 令牌发放、Docker / 桌面端更新（拉镜像换容器、装 exe）、ONLYOFFICE 在线编辑或 OCR。外部 Agent 接入与 Agent 令牌等同 owner 权限，只在桌面 / 中枢生成，不下发到手机。**手机端有自己的应用内在线更新**（下载新 APK 并调起系统安装器，见下方「应用内在线更新（OTA）」）。同步来的 AI 工作区与证据仍可只读查看。
 - PDF.js 提取 PDF 自带文字层，浏览器兼容组件解析 DOCX/PPTX/XLSX 并把确定性文本写入本地搜索索引；图片和扫描 PDF 不做 OCR。
@@ -34,14 +34,15 @@ Engram Android 端不是远程网页壳。APK 打包与桌面/服务器相同的
 手机不运行 dsh / CLI（知识库操作由外部 Agent 通过 `engram` CLI 完成），模型 Key 也不下发；绑定中枢后，设置 → Agent 与自动化 的以下分组会出现在手机上（服务端能力位 `features.agentConsole` / `features.videoConfig` 在已绑定时为 true）：
 
 - **内置 Agent / 内置 Agent 控制台**：`/api/agent-console/*` 全部 18 条（状态、重启、停止、模型、提供商、插件、预设、高级、原始设置视图）经成员令牌窄代理到中枢。模型提供商、API Key、插件与 Agent 预设写的是中枢那一份 dsh 配置；`credentials/describe` 只回 configured，不回明文 Key。控制台首次打开时由中枢拉起 dsh web 进程（空闲 30 分钟回收），手机只做配置界面。
-- **视频理解模型**：`GET/PUT /api/settings/video-config` 窄代理（独立于通用 `/api/settings`）现在只同步一个开关——中枢的 `video_config` 只存 `{ enabled }`（默认开启），PUT 只认 `enabled`，旧客户端带来的 `baseUrl` / `apiKey` / `model` 等字段一律忽略。模型与 Key 不再经这条接口下发：中枢第一次打开该面板时会把默认提供商 `dashscope`（阿里云百炼，OpenAI 兼容地址）与 `qwen3.8-omni-flash` 幂等播种进内置 Agent 控制台的 dsh 模型配置，用户在控制台「模型」页填一个 DashScope API Key 即可；手机上同样能打开该控制台页（走已代理的 `/api/agent-console/*`）。手机面板读 `status` 展示当前模型与「已启用 / 待配置 / 未启用」，点「去控制台配置模型与 API Key」进控制台。
-- **手机端不需要额外适配**：模型与 Key 都在中枢，手机只读状态、改开关；窄代理是纯 JSON 透传（`GET` 回 `{ settings, status }`），`EngramLocalServer.kt` 的转发逻辑不用改。状态与连通性测试继续走已代理的 `/api/inbox/video-status`、`/api/inbox/video-test`（`video-test` 直接用解析到的模型测试，不再接受 baseUrl / apiKey 覆盖），API Key 不回显（状态只给 `hasKey`）。
+- **视频理解模型**：`GET/PUT /api/settings/video-config` 窄代理（独立于通用 `/api/settings`）现在只同步一个开关——中枢的 `video_config` 只存 `{ enabled }`（默认开启），PUT 只认 `enabled`，旧客户端带来的 `baseUrl` / `apiKey` / `model` 等字段一律忽略。模型与 Key 不再经这条接口下发：中枢第一次打开该面板时会把默认提供商 `dashscope`（阿里云百炼，OpenAI 兼容地址）与 `qwen3.8-omni-flash` 幂等播种进内置 Agent 控制台的 dsh 模型配置，用户在控制台「模型」页填一个 DashScope API Key 即可；手机上同样能打开该控制台页（走已代理的 `/api/agent-console/*`）。手机面板读 `status` 展示当前模型、「API Key 来源」（中枢控制台已配置 / 来自多端同步（中枢本机未配置）/ 未配置）与「已启用 / 待配置 / 未启用」，点「去控制台配置模型与 API Key」进控制台。
+- **模型配置多端同步（2026-11，手机不参与）**：桌面端 / Docker 端的「内置 Agent 控制台 → 模型」配置（提供商 / 官方 DeepSeek 配置 / 默认模型）与这些提供商引用到的 API Key 随同步的「设置」分类在群组内下发，**Android 端既不上传也不落盘**——手机只经窄代理读写中枢那一份配置与状态。因此手机面板上的 `status.keySource` 说的是**中枢**的 Key 来源：`local` = 中枢控制台已配置，`synced` = 中枢本机没配、来自群组另一台设备（手机面板文案写成「中枢控制台已配置 / 来自多端同步（中枢本机未配置）」）。手机不持有模型 Key，视频提炼与聊天都在中枢执行。
+- **手机端不需要额外适配**：模型与 Key 都在中枢，手机只读状态、改开关；窄代理是纯 JSON 透传（`GET` 回 `{ settings, status }`），`EngramLocalServer.kt` 的转发逻辑不用改。状态与连通性测试继续走已代理的 `/api/inbox/video-status`、`/api/inbox/video-test`（`video-test` 直接用解析到的模型测试，不再接受 baseUrl / apiKey 覆盖），API Key 不回显（状态只给 `hasKey` / `keySource`，新字段缺省时旧 Web 包按 `hasKey` 降级）。
 - **自动整理（梦境思考）**：`/api/assistant/dream` 的读/改与 `/dream/run`、`/dream/stop` 窄代理，计划与实际运行都在中枢。
 - **任务看板提炼**：沿用既有 `/api/tasks/board/config` 窄代理（看板页本就可在手机上就地改档位）。
 - **工具与手册**：`/api/guide` 窄代理读中枢的只读作业指南。
 - **外部 Agent 接入 / Agent 令牌不出现**：成员令牌不能生成 owner 级凭据，仍需到桌面 / 中枢操作。
 
-安全口径：成员令牌可以写中枢的 Agent 与视频模型配置（因此能改模型指向），但读不回任何 Key 明文；这是「用手机远程配置自己中枢」的显式取舍（见 `server/src/assistant/access.ts` 与 `routes/agentConsole.ts` 顶部注释）。
+安全口径：成员令牌可以写中枢的 Agent 与视频模型配置（因此能改模型指向），但读不回任何 Key 明文；这是「用手机远程配置自己中枢」的显式取舍（见 `server/src/assistant/access.ts` 与 `routes/agentConsole.ts` 顶部注释）。模型配置的跨端同步只发给同步群组内的设备（含 Key 明文，群组设备本身互信），Android 不在其中、也不保存 Key。
 
 ## 数据与安全
 

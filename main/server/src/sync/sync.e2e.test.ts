@@ -1114,6 +1114,82 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     assert.equal((await settingsOf(hub)).search_synonyms, '不接收=远端');
     await flags(nodeB, { settings: true, knowledge: true });
     await waitFor('重新开启补齐知识库并保留较新的本机设置', async () => (await pageContent(nodeB, isolatedPage)) === '这份页面暂不同步' && (await settingsOf(hub)).search_synonyms === '本机独立=保留');
+
+    // 内置 Agent 模型配置（preference agent_model_config）跨端互推：
+    // 中枢写本机 dsh 配置 → GET video-config 触发镜像 → 成员端合并后落盘；再反向推一次。
+    // 每个 worker 的 DSH_HOME 都在自己的临时 DATA_DIR 下，不碰真实用户数据目录。
+    const modelNeedle = `e2e 模型提供商-${crypto.randomUUID().slice(0, 8)}`;
+    const hubDsh = path.join(hub.dataDir, 'dsh');
+    const hubPatchPath = path.join(hubDsh, 'profiles', 'web', 'cordis.patch.yml');
+    const hubCredentialsPath = path.join(hubDsh, '.credentials.yaml');
+    const readText = (file: string): string => {
+      try { return fs.readFileSync(file, 'utf8'); } catch { return ''; }
+    };
+    fs.mkdirSync(path.dirname(hubPatchPath), { recursive: true });
+    fs.writeFileSync(hubPatchPath, [
+      '- id: llm-pi-ai',
+      '  config:',
+      '    providers:',
+      '      dashscope:',
+      `        displayName: ${modelNeedle}`,
+      '        apiKeyEnv: DASHSCOPE_API_KEY',
+      '        api: openai-completions',
+      '        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1',
+      '        models:',
+      '        - id: qwen3.8-omni-flash',
+    ].join('\n') + '\n', 'utf8');
+    fs.writeFileSync(hubCredentialsPath, [
+      'version: 1',
+      'refs:',
+      '  {',
+      "    DASHSCOPE_API_KEY: 'sk-e2e-synced-dashscope',",
+      '  }',
+    ].join('\n') + '\n', 'utf8');
+    const mirrorResponse = await api(hub, 'GET', '/api/settings/video-config');
+    assert.ok(mirrorResponse.ok, '中枢读取视频模型状态成功');
+    const mirrorBody = (await mirrorResponse.json()) as any;
+    assert.equal(mirrorBody.status.provider, 'dashscope');
+    assert.equal(mirrorBody.status.configured, true);
+    assert.equal(mirrorBody.status.keySource, 'local', '中枢本机控制台已配置 Key');
+    assert.equal(JSON.stringify(mirrorBody).includes('sk-e2e-synced-dashscope'), false, '状态接口不得回显 Key');
+    await waitFor('成员端收到中枢同步的模型配置', async () =>
+      readText(path.join(nodeB.dataDir, 'dsh', 'profiles', 'web', 'cordis.patch.yml')).includes(modelNeedle));
+    await waitFor('成员端收到中枢同步的模型 Key', async () =>
+      readText(path.join(nodeB.dataDir, 'dsh', '.credentials.yaml')).includes('sk-e2e-synced-dashscope'));
+    const memberVideo = (await (await api(nodeB, 'GET', '/api/settings/video-config')).json()) as any;
+    assert.equal(memberVideo.status.provider, 'dashscope');
+    assert.equal(memberVideo.status.configured, true);
+    assert.equal(memberVideo.status.hasKey, true);
+    assert.equal(memberVideo.status.keySource, 'local', '成员端拿到 Key 并落盘后即为本机配置');
+    assert.equal(memberVideo.status.keyFromNode, undefined, '本机已有 Key 时不显示来源设备');
+    assert.equal(JSON.stringify(memberVideo).includes('sk-e2e-synced-dashscope'), false, '成员端状态接口同样不回显 Key');
+
+    // 反向：成员端改本机 dsh 配置 → 镜像成偏好 → 中枢收到并落盘（union 合并，中枢原有 provider 保留）
+    const memberMarker = `e2e 成员模型-${crypto.randomUUID().slice(0, 8)}`;
+    const memberDsh = path.join(nodeB.dataDir, 'dsh');
+    fs.writeFileSync(path.join(memberDsh, 'profiles', 'web', 'cordis.patch.yml'), [
+      '- id: llm-pi-ai',
+      '  config:',
+      '    providers:',
+      '      dashscope:',
+      `        displayName: ${modelNeedle}`,
+      '        apiKeyEnv: DASHSCOPE_API_KEY',
+      '        api: openai-completions',
+      '        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1',
+      '        models:',
+      '        - id: qwen3.8-omni-flash',
+      '      member-only:',
+      `        displayName: ${memberMarker}`,
+      '        apiKeyEnv: MEMBER_ONLY_API_KEY',
+      '        baseURL: https://member.example/v1',
+      '        models:',
+      '        - id: member-model',
+    ].join('\n') + '\n', 'utf8');
+    assert.ok((await api(nodeB, 'GET', '/api/settings/video-config')).ok);
+    await waitFor('中枢收到成员端镜像的模型配置（并保留自己独有的 provider）', async () => {
+      const text = readText(hubPatchPath);
+      return text.includes(memberMarker) && text.includes(modelNeedle);
+    });
     const finalStatus = await (await api(nodeB, 'GET', '/api/sync/status')).json() as any;
     assert.equal(finalStatus.enabled, true, '只改分类不能误停同步绑定');
   } catch (error) {

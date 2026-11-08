@@ -78,7 +78,7 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
   - **冲突与失败**：revision 冲突（409）会重读一次再写；写失败不落标记，下次打开面板 / 保存开关时重试——控制台暂时起不来时 `GET` 的 `status` 会带 `seedError`，但不阻塞页面读取。
   - **只写提供商、不写 Key**：播种内容只有 displayName / api / apiKeyEnv / baseURL / models，Key 始终由用户在控制台里填。
 - **用户只需要填一个 Key**：控制台模型页的 dashscope 卡填 DashScope API Key 即完成；Engram 设置页的面板只剩「启用开关 + 去控制台配置模型与 API Key 入口 + 当前模型展示」，Base URL / API Key / 模型名输入框与「测试连通性」按钮都已移除（后端 `POST /api/inbox/video-test` 仍在，保留给旧 Web 包与诊断）。
-- **解析（纯读文件，不启动 dsh）**：提供商来自 `$DSH_HOME/profiles/web/cordis.patch.yml` 顶层 `llm-pi-ai` 的 `config.providers.*`，Key 来自 `$DSH_HOME/.credentials.yaml` 的 `refs.<apiKeyEnv>`（取不到再回退同名环境变量）。提供商优先 `dashscope`，否则找含 `qwen3.8-omni-flash` 的那个；模型优先 `qwen3.8-omni-flash`，没有就用该提供商的第一个模型。
+- **解析（纯读文件，不启动 dsh）**：提供商来自 `$DSH_HOME/profiles/web/cordis.patch.yml` 顶层 `llm-pi-ai` 的 `config.providers.*`，Key 来自 `$DSH_HOME/.credentials.yaml` 的 `refs.<apiKeyEnv>`（取不到再回退同名环境变量）。本机缺 Key（或本机根本没有 dashscope 提供商）时回落到多端同步下来的模型配置，见下方「模型配置多端同步」。提供商优先 `dashscope`，否则找含 `qwen3.8-omni-flash` 的那个；模型优先 `qwen3.8-omni-flash`，没有就用该提供商的第一个模型。
 - **与聊天 Agent 共用一份配置，默认模型各自独立**：视频只挑 dashscope / qwen3.8-omni-flash，不读 `agent-default-model`；聊天 Agent 的默认模型仍在控制台模型页另设，两边互不覆盖。
 - **接口**：
 
@@ -89,7 +89,7 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 | GET | `/api/inbox/video-status` | 同款 `status` + `browserAvailable` / `platform`（收集箱页面用，同样触发播种；播种失败时另有顶层 `seedError`） |
 | POST | `/api/inbox/video-test` | 用当前解析到的模型发一次最小文本请求；不看总开关，也不接受 baseUrl / apiKey 覆盖 |
 
-- **status 字段**：`configured`（开关打开且模型 / Key 齐全）、`enabled`、`provider`、`providerName`、`baseUrl`、`model`、`hasKey`、`missing`；另带旧面板固定值 `maxTokens: 4096`、`quality: 64`（720P）、`douyinBrowser: false`，兼容 v1.5.x 旧 Web 包。任何接口都不回显 API Key。
+- **status 字段**：`configured`（开关打开且模型 / Key 齐全）、`enabled`、`provider`、`providerName`、`baseUrl`、`model`、`hasKey`、`missing`、`keySource`（`local` = 本机控制台已配置 / `synced` = 来自多端同步、本机未配置 / `none` = 未配置；2026-11 新增，可选 `keyFromNode` 给出来源设备，旧服务端没有该字段时前端按 `hasKey` 降级）；另带旧面板固定值 `maxTokens: 4096`、`quality: 64`（720P）、`douyinBrowser: false`，兼容 v1.5.x 旧 Web 包。任何接口都不回显 API Key（面板只显示 Key 来源）。
 - **视频管线**：`pipeline/inboxVideo.ts` 用解析到的模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块），`maxTokens=4096`；B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
 - **相关文件**：`lib/videoModel.ts`（只读解析 + 默认提供商常量）、`assistant/videoModelDefaults.ts`（幂等播种）、`lib/videoConfig.ts`（`video_config` 只存 `{ enabled }`，默认开启；status 汇总）、`routes/videoConfig.ts`、`routes/inbox.ts`（video-status / video-test）、`lib/videoModelClient.ts`、`pipeline/inboxVideo.ts`；前端面板 `web/src/components/settings/VideoPanel.vue`。
 
@@ -113,6 +113,19 @@ MCP/工具结果里的图片被投影成占位文本（`model "..." does not dec
 
 所以「模型目录里勾图片」只对目录中的模型条目有效，**还要把控制台的默认模型指向该条目**，
 聊天抽屉才会真的能读图片与截图。
+
+## 模型配置多端同步（2026-11）
+
+> 起因：用户报「视频理解模型的 API Key 多端同步没有生效」——视频理解复用控制台的 dsh 模型配置，而这份配置原先按设计不进同步（旧版 `USER-GUIDE` 的「同步范围之外」一节）。
+> 用户确认后，把「内置 Agent 控制台 → 模型」里的配置（提供商 / 官方 DeepSeek 配置 / 默认模型 / 相关 API Key）纳入多端同步的**设置**分类，视频理解随之在每端可用。完整契约见 [`AGENT-MODEL-SYNC.md`](./AGENT-MODEL-SYNC.md)。
+
+- **同步什么**：自定义提供商（`llm-pi-ai` 的 `config.providers.*`：displayName / api / baseURL / apiKeyEnv / models）、官方 DeepSeek 配置（`llm-deepseek` 的 apiKeyEnv / baseURL / maxTokens / models）、默认模型（`agent-default-model`），以及**只被这些提供商引用到的** Key（`.credentials.yaml` 的 `refs`）。插件 / Agent 预设 / 权限模式 / dsh 的其它凭据仍各端自配。
+- **走哪条管道**：偏好项 `agent_model_config`（JSON 字符串，`version: 1`），归属「设置」分类——设置 → 多端同步 → 同步内容 里关掉「设置」就不再收发；分类开关按设备保存。`video_config` 的开关同样登记进偏好项，两端开着视频理解才一致。
+- **合并口径：并集**。本机独有内容保留；同 provider id / 同 Key 引用远端胜；official / default 只在远端有值时才覆盖。**删除不跨端**：一端删掉某个提供商，会被另一端的并集带回来，需要各端各自删。应用远端后把合并结果写回同一偏好项，并用 digest（设置 `agent_model_sync_digest`）抑制回声——只有「合并结果与远端不同」时才回推一次，收敛即停。
+- **写入本机的方式**：不在同步回调里起 dsh，直接改它读的两个文件——`profiles/web/cordis.patch.yml`（只动上面三类顶层条目，其余条目 / 注释 / 缩进逐字保留）与 `.credentials.yaml`（只重写顶层 `refs:` 段），写前各留一份 `*.engram-bak`。写完若控制台在跑就重启它；聊天运行时按配置指纹变化在下一轮自动重开。写失败不打断同步轮：payload 暂存设置 `agent_model_sync_pending`，下次启动 / 读取 / 保存时重试。
+- **视频侧回退**：视频解析先读本机 dsh 配置，缺 Key（或本机根本没有 dashscope 提供商）时用同步设置里的 `providers.dashscope` + 对应 Key 补上——对端只同步到了配置、dsh 还没重读时视频理解也能直接用。面板按 `status.keySource` 显示「本机控制台已配置 / 来自多端同步（本机未配置）/ 未配置」，只显示来源、不显示 Key。
+- **手机端**：不参与、也不落模型 Key——Kotlin 侧不加这些 preference key，未知 key 按现有逻辑跳过；手机上看到的是中枢那份配置与状态（窄代理），视频提炼与聊天都在中枢执行。
+- **安全**：任何接口都不回显 Key（沿用 `hasKey` / `keySource`）；同步日志只记偏好项的中文名「内置 Agent 模型配置」、不记值。同步数据里含 Key 明文，只发给同步群组内的设备——群组设备本身互信（能改对方模型指向），与既有同步模型一致。
 
 ## DSH 侧用到的 Remote endpoint
 

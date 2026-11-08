@@ -52,11 +52,17 @@
         <span class="video-field-note">已预置 DashScope（阿里云百炼）与 qwen3.8-omni-flash，只需要填一个 DashScope API Key。</span>
       </div>
 
-      <!-- 当前配置的模型：读服务端状态，页面不回显 API Key -->
+      <!-- 当前配置的模型与 Key 来源：读服务端状态，页面不回显 API Key（只有来源，没有 Key 本身） -->
       <div class="video-model">
-        <span class="video-model-label">当前模型</span>
-        <strong v-if="modelLabel" class="video-model-name">{{ modelLabel }}</strong>
-        <span v-else class="video-model-name faint">尚未配置（去控制台选择模型并填 Key）</span>
+        <div class="video-model-row">
+          <span class="video-model-label">当前模型</span>
+          <strong v-if="modelLabel" class="video-model-name">{{ modelLabel }}</strong>
+          <span v-else class="video-model-name faint">尚未配置（去控制台选择模型并填 Key）</span>
+        </div>
+        <div v-if="keySourceLabel" class="video-model-row">
+          <span class="video-model-label">API Key 来源</span>
+          <strong class="video-model-name" :class="keySourceClass">{{ keySourceLabel }}</strong>
+        </div>
       </div>
 
       <!-- 手机（android-local）不跑模型：开关与配置都落在已绑定的中枢 -->
@@ -66,7 +72,8 @@
 
       <p class="faint small video-note">
         模型与 API Key 都在内置 Agent 控制台的「模型」页配置：已预置 DashScope（阿里云百炼，OpenAI 兼容地址），
-        只需要填 DashScope API Key；API Key 不回显。这份配置保存在中枢、多端同步（桌面端 / Docker / 手机读写同一份）。
+        只需要填 DashScope API Key；API Key 不回显。模型配置与相关 Key 随多端同步的「设置」分类在同步群组内下发
+        （同步数据里含 Key 明文，只给群组内的设备），本机已配置的 Key 优先；手机不持有模型 Key，配置与提炼都在中枢执行。
         素材会发送给你在控制台配置的模型服务（OpenAI 兼容 chat/completions，视频以 video_url、图文笔记的图片以 image_url 内容块传递）；
         模型给出的时间戳 / 章节是估计值，纪要需人工复核。音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
       </p>
@@ -98,7 +105,13 @@ import SettingsGroup from './SettingsGroup.vue';
  * 手机（android-local）只有同步成员令牌：经本地服务窄代理读写已绑定的中枢，那里存着同一份配置。
  */
 
-/** 只取面板用得到的字段：模型 / 提供商 / 缺什么（服务端还会返回 baseUrl、hasKey 等，页面不需要） */
+/**
+ * Key 来源（2026-11 多端同步）：本机控制台配的（local）/ 本机没配、用的是群组同步下来的（synced）/ 都没有（none）。
+ * 页面只展示来源，任何分支都不渲染 Key 本身。
+ */
+type VideoKeySource = 'local' | 'synced' | 'none';
+
+/** 只取面板用得到的字段：模型 / 提供商 / 缺什么 / Key 来源（服务端还会返回 baseUrl 等，页面不需要） */
 interface VideoStatus {
   configured: boolean;
   enabled: boolean;
@@ -106,6 +119,10 @@ interface VideoStatus {
   provider: string;
   providerName: string;
   missing: string[];
+  /** Key 从哪来的：local=本机控制台已配置，synced=来自多端同步（本机未配置），none=未配置 */
+  keySource?: VideoKeySource;
+  /** 旧服务端没有 keySource 时的降级依据：有没有 Key（有就只可能是本机配的） */
+  hasKey?: boolean;
 }
 
 interface VideoConfigResponse {
@@ -120,6 +137,8 @@ const EMPTY_STATUS: VideoStatus = {
   provider: '',
   providerName: '',
   missing: [],
+  keySource: 'none',
+  hasKey: false,
 };
 
 const router = useRouter();
@@ -143,6 +162,34 @@ const modelLabel = computed(() => {
 });
 /** 服务端算好的缺失项（新接口只可能在「还没填 API Key」时非空） */
 const missingLabels = computed(() => status.value.missing.filter(Boolean));
+
+/**
+ * Key 来源文案（只讲「哪来的」，永远不带 Key 本身）：
+ *  - 桌面 / Docker：「本机控制台已配置」「来自多端同步（本机未配置）」「未配置」；
+ *  - 手机：页面写的是中枢那份状态（手机不持有模型 Key），所以把「本机」说成「中枢」。
+ */
+const keySourceLabel = computed(() => {
+  if (!loaded.value) return '';
+  const hub = isAndroidLocal.value;
+  switch (status.value.keySource) {
+    case 'local':
+      return hub ? '中枢控制台已配置' : '本机控制台已配置';
+    case 'synced':
+      return hub ? '来自多端同步（中枢本机未配置）' : '来自多端同步（本机未配置）';
+    default:
+      return '未配置';
+  }
+});
+
+/** 来源徽标配色走现有令牌：已配好（本地 / 同步）为 ok，未配置为 warn */
+const keySourceClass = computed<'ok' | 'warn'>(() => (status.value.keySource === 'none' ? 'warn' : 'ok'));
+
+/** 老服务端（status 还没有 keySource）降级：有 Key 就是本机配的，没有就是未配置，不报错也不编来源 */
+function normalizeKeySource(raw: Partial<VideoStatus> | undefined): VideoKeySource {
+  const value = raw?.keySource;
+  if (value === 'local' || value === 'synced' || value === 'none') return value;
+  return raw?.hasKey === true ? 'local' : 'none';
+}
 
 const stateTone = computed(() => {
   if (!enabled.value) return '';
@@ -191,6 +238,8 @@ function normalizeStatus(raw: Partial<VideoStatus> | undefined): VideoStatus {
     provider: typeof raw.provider === 'string' ? raw.provider : '',
     providerName: typeof raw.providerName === 'string' ? raw.providerName : '',
     missing: Array.isArray(raw.missing) ? raw.missing.map(String) : [],
+    keySource: normalizeKeySource(raw),
+    hasKey: raw.hasKey === true,
   };
 }
 
@@ -312,17 +361,24 @@ onMounted(() => {
   line-height: 1.5;
 }
 
-/* 当前配置的模型：只读展示，与状态条同一个视觉层级（不是说明文字） */
+/* 当前配置的模型 + Key 来源：只读展示，与状态条同一个视觉层级（不是说明文字） */
 .video-model {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
   padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary);
   font-size: 12px;
+}
+
+.video-model-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .video-model-label {
@@ -333,6 +389,15 @@ onMounted(() => {
   color: var(--text);
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+/* Key 来源用语义色标出「已配好 / 未配置」；色值只走令牌，不写字面色（见 platform-parity / 设计债） */
+.video-model-name.ok {
+  color: var(--success);
+}
+
+.video-model-name.warn {
+  color: var(--warning);
 }
 
 .video-note {

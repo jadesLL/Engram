@@ -11,7 +11,7 @@
 现状：内置 Agent 的会话（六张 `assistant_*` 表 + dsh 会话日志）**不参与**多端同步。设置页对用户是明示的：
 
 > 同步范围：页面、附件图片、原始资料文件与证据账本。各端密码、令牌、**助手会话**、模型配置保持独立。
-> —— `main/web/src/components/settings/SyncPanel.vue:173`
+> —— `main/web/src/components/settings/SyncPanel.vue:173`（2026-11 起这行文案已改：内置 Agent 的模型配置与相关 Key 随「设置」分类同步，见 [`AGENT-MODEL-SYNC.md`](./AGENT-MODEL-SYNC.md)；本节其余口径不变）
 
 本方案要把「会话」变成同步群组里的**第三类一等对象**（与页面、文件并列），使：
 
@@ -39,6 +39,7 @@
 
 - **不**同步 `DATA_DIR/dsh/**`（dsh 自己的会话日志）：跨端无意义且体积大。
 - **不**下发模型 Key 与 Agent 配置（维持「各端独立配置」现状，见 `README.md:79` 的表述）。
+  - 2026-11 更新：**模型配置已改为随「设置」分类同步**（提供商 / 官方配置 / 默认模型 / 相关 Key，见 [`AGENT-MODEL-SYNC.md`](./AGENT-MODEL-SYNC.md)）；插件 / Agent 预设 / 权限模式等其它 dsh 设置仍各端独立，手机不持有模型 Key。会话同步口径不受影响。
 - **不**做同一会话的实时双端协同（两端同时跑一轮）。这是明确的产品边界，不是技术妥协。
 - **不**改 dsh 运行时（`main/server/src/assistant/dshRuntime.ts`）与提示词构建（`prompts.ts`）。
 - **不**给 Android 做会话镜像（手机继续走「窄代理复用中枢 Agent」，见 §4.2 路径 1）。
