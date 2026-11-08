@@ -15,6 +15,7 @@
  * 的 .layout.settings-open .content），否则漏出壳层的绝对定位元素会顶出第三根没用的滚动条。
  */
 .settings-view {
+  position: relative;
   width: min(1220px, 100%);
   height: 100%;
   min-height: 0;
@@ -25,12 +26,16 @@
   gap: 16px;
 }
 
+/* 页头：标题 + 搜索入口。原来那句「七个单一职责的分类……」已删——自我说明不产生信息量 */
 .settings-page-head {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
 }
+.settings-page-actions { flex: none; display: flex; align-items: center; gap: 8px; }
 .settings-page-head h2 {
   margin: 0;
   font-size: 25px;
@@ -80,26 +85,47 @@
   flex-direction: column;
   margin-bottom: 8px;
 }
+/* 大类导航项：42px 行高 + 图标 + 行尾状态（二级锚点已移出目录） */
 .settings-nav-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  min-height: 36px;
-  padding: 8px 11px;
-  border-radius: 6px;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 13.5px;
   text-align: left;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
+.settings-nav-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.settings-nav-alert {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.settings-nav-item.active .settings-nav-meta { color: var(--text-secondary); }
 .settings-nav-item:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 .settings-nav-item.active {
-  background: var(--bg-hover);
+  background: var(--card-bg);
+  border-color: var(--border);
+  box-shadow: var(--shadow-raised);
   color: var(--text);
   font-weight: 600;
 }
@@ -208,6 +234,7 @@
 .settings-content {
   min-width: 0;
   min-height: 0;
+  padding: 2px 2px 0;
   /* 内容列是第二个滚动容器：目录与正文各一个滚动条，互不牵扯（底部 72px 从 .settings-view 挪到这里，
      保证最后一张卡片能滚到舒服的位置，也承接原来的页面底部留白） */
   overflow-y: auto;
@@ -270,7 +297,17 @@
  *   .block-caption       卡内小分区标题（如软件更新的 服务器/桌面端/更新源）
  */
 .settings-group {
-  margin: 0 24px 22px;
+  margin: 0 24px 14px;
+  scroll-margin-top: 16px;
+}
+
+/* 搜索跳转后的目标分组闪一下：告诉用户「就是这一块」 */
+.settings-group.is-target-flash > .group-card {
+  animation: settings-flash 1.6s ease;
+}
+@keyframes settings-flash {
+  0%, 35% { box-shadow: 0 0 0 2px var(--accent), var(--shadow-raised); }
+  100% { box-shadow: var(--shadow-raised); }
 }
 /*
  * 2026-09-27 起：所有分组统一 22px，删掉了原来的「最后一组少留一点」（那条用的是 :last-child 特例）。
@@ -331,10 +368,9 @@
   white-space: nowrap;
 }
 .group-body {
-  /* 2026-09-27：顶部留白从 4px 提到 12px。以前卡内第一段内容（说明、状态、表单）紧贴色带下沿，
-     和「设置项之间」的留白不成比例，看着像没写完。.flush 仍是 0：那种内容自带边框与内边距的
-     setting-row 列表要贴着色带才连成一张卡。 */
-  padding: 12px 16px 16px;
+  /* 2026-09-27：顶部留白从 4px 提到 12px（卡内第一段内容不能贴住色带）。
+     2026-11 重设计：底部 16 → 14，与 14px 的行内边距对齐，整页节奏更紧。 */
+  padding: 12px 16px 14px;
 }
 .group-body.flush {
   padding: 0;
@@ -512,8 +548,8 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: 18px;
-  min-height: 76px;
-  padding: 17px 24px;
+  min-height: 64px;
+  padding: 15px 20px;
   border-bottom: 1px solid var(--border);
 }
 .settings-native .setting-row:last-child {
@@ -527,16 +563,18 @@
 }
 .settings-native .setting-copy strong {
   display: block;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 .settings-native .setting-copy span {
   display: block;
   /* 行标题下面的说明：4px 太挤，给到 6px（2026-09-27 用户报「提示性的文字和上面的设置挨得太近」） */
   margin-top: 6px;
+  max-width: 60ch;
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-wrap: pretty;
 }
 .settings-native .setting-control {
   width: 170px;
@@ -1002,4 +1040,253 @@
   .settings-view.is-mobile-subpage {
     padding-bottom: 96px;
   }
+}
+/* ==========================================================================
+   2026-11 设置页重设计：搜索面板 / 状态总览 / 键盘焦点 / 排版工艺
+   ========================================================================== */
+
+/* 页标题比分类标题小一档：设置是「壳」，分类才是内容 */
+.settings-page-head h2 { font-size: 20px; }
+
+/* Tab 第一下就能看到「跳到设置内容」 */
+.settings-skip {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  z-index: 60;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12.5px;
+  font-weight: 550;
+  text-decoration: none;
+  transform: translateY(-260%);
+  transition: transform 0.12s ease;
+}
+.settings-skip:focus-visible { transform: none; outline: 2px solid var(--on-accent); outline-offset: 2px; }
+
+/* 搜索入口：长得像输入框，点开是命令面板 */
+.settings-search-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.settings-search-trigger:hover { background: var(--control-bg-hover); border-color: var(--border-strong); color: var(--text); }
+.settings-search-trigger:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.settings-search-trigger kbd {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* 状态总览：同步 / 更新 / 版本。会变的状态用点 + 值表达，不是一个只读胶囊 */
+.settings-status-strip {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  scrollbar-width: none;
+}
+.settings-status-strip::-webkit-scrollbar { display: none; }
+.settings-status-item {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.settings-status-item:hover { background: var(--bg-secondary); border-color: var(--border-strong); color: var(--text); }
+.settings-status-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-status-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.settings-status-label { color: var(--text-secondary); }
+.settings-status-value { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.settings-status-item.tone-ok .settings-status-dot { background: var(--success); }
+.settings-status-item.tone-accent .settings-status-dot { background: var(--accent); }
+.settings-status-item.tone-warn .settings-status-dot { background: var(--warning); }
+.settings-status-item.tone-danger .settings-status-dot { background: var(--danger); }
+.settings-status-item.tone-danger .settings-status-value { color: var(--danger); }
+
+/* 搜索面板 */
+.settings-search-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay, 100);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 20px 20px;
+  background: rgba(20, 19, 18, 0.28);
+  backdrop-filter: blur(3px);
+}
+.settings-search {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: 66vh;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-dialog);
+}
+.settings-search-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.settings-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+.settings-search-input:focus-visible { outline: none; }
+.settings-search-input::placeholder { color: var(--text-faint); }
+.settings-search-kbd,
+.settings-search-foot kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.settings-search-results { overflow-y: auto; padding: 8px; }
+.settings-search-group-label {
+  padding: 8px 10px 4px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+.settings-search-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 9px;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.settings-search-result.active { background: var(--accent-soft); }
+.settings-search-result:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+.settings-search-ico { flex: none; display: flex; color: var(--text-secondary); }
+.settings-search-result.active .settings-search-ico { color: var(--accent-text); }
+.settings-search-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-search-title { display: block; color: var(--text); font-size: 13px; font-weight: 550; line-height: 1.4; }
+.settings-search-title mark { padding: 0 1px; border-radius: 3px; background: var(--accent-soft); color: inherit; }
+.settings-search-path { display: block; margin-top: 1px; color: var(--text-secondary); font-size: 11.5px; line-height: 1.4; }
+.settings-search-enter { flex: none; color: var(--text-secondary); font-size: 11px; opacity: 0; }
+.settings-search-result.active .settings-search-enter { opacity: 1; }
+.settings-search-empty { margin: 0; padding: 32px 16px; color: var(--text-secondary); font-size: 13px; text-align: center; }
+.settings-search-empty-hint { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; }
+.settings-search-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+.settings-search-count { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* 键盘焦点：内容区里的控件统一光圈（组件自带的光圈不受影响） */
+.settings-view :where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 控件获得焦点时整行一起点亮：键盘用户不会跟丢 */
+.settings-native .setting-row:focus-within {
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+}
+.settings-native .setting-row:focus-within strong { color: var(--accent-text); }
+
+/* 数字统一等宽：版本号、统计、百分比滚动时不抖 */
+.settings-view { font-variant-numeric: tabular-nums; line-break: strict; }
+.settings-view :where(.stat-num, .progress-pct, code, kbd) { font-variant-numeric: tabular-nums; }
+
+/* 手机端：列表首页有自己的搜索入口；子页返回栏右侧给搜索 */
+@media (max-width: 768px) {
+  .settings-search-trigger { display: none; }
+  .settings-page-head { padding-bottom: 4px; }
+  .settings-status-strip { padding-bottom: 6px; }
+  .settings-mobile-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 44px;
+    padding: 0 13px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  .settings-mobile-search:active { background: var(--bg-hover); }
+  .settings-mobile-subhead { gap: 2px; }
+  .settings-mobile-subtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-mobile-search-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    color: var(--text-secondary);
+  }
+  .settings-mobile-search-btn:active { background: var(--bg-hover); }
+  .settings-search-mask { padding: 6vh 10px 10px; }
+  .settings-search-foot { display: none; }
+  .settings-search-title { font-size: 14px; }
+  .settings-search-path { font-size: 12px; }
+  .settings-mobile-search:focus-visible,
+  .settings-mobile-search-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+
+/* 减少动效：目标分组不闪、跳过链接不位移 */
+@media (prefers-reduced-motion: reduce) {
+  .settings-group.is-target-flash > .group-card { animation: none; }
+  .settings-skip { transition: none; }
 }

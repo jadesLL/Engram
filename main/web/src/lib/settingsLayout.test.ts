@@ -85,15 +85,22 @@ test('窄屏（≤768px）退回整页滚动，不叠出第二根滚动条', () 
   );
 });
 
-test('设置页 JS 认的是内容列这根滚动条，且两个滚动容器都挂了监听', () => {
+test('设置页 JS 认的是内容列这根滚动条（重设计后不再做锚点滚动联动）', () => {
   const view = fs.readFileSync(viewPath, 'utf8');
   assert.match(
     view,
-    /ref="contentEl"[\s\S]{0,40}class="settings-content"/,
-    '内容列没有拿到模板引用：滚动联动会挂在整页而不是内容列上',
+    /ref="contentEl"[\s\S]{0,60}class="settings-content"/,
+    '内容列没有拿到模板引用：切分类 / 搜索跳转时不知道该滚谁',
   );
-  assert.match(view, /paneEl\?\.addEventListener\('scroll'/, '内容列的滚动没被监听：滚动高亮不跟着动');
-  assert.match(view, /pageEl\.addEventListener\('scroll'/, '整页滚动（窄屏）没被监听：窄屏下滚动高亮失效');
+  // 2026-11 重设计：二级锚点移出目录，滚动联动高亮随之移除；内容列仍是桌面端唯一的滚动容器
+  assert.doesNotMatch(view, /activeAnchor/, '又出现了二级锚点高亮状态：目录里已经没有二级项了');
+  assert.match(
+    ruleBody(css, '.settings-content'),
+    /overflow-y:\s*auto/,
+    '内容列不再自己滚动：桌面端会退回整页滚动（侧栏目录也不会跟着滚）',
+  );
+  assert.match(view, /function selectDomain\(/, '缺少大类切换方法（切分类要把内容列滚回顶部）');
+  assert.match(view, /scrollToAnchor\(/, '缺少分组定位方法：搜索 / 深链跳转无处落点');
 });
 
 /**
@@ -108,8 +115,8 @@ test('设置页 JS 认的是内容列这根滚动条，且两个滚动容器都�
 test('分组间距唯一：折叠后相邻分组的间距必须处处一样', () => {
   assert.match(
     ruleBody(css, '.settings-group'),
-    /margin:\s*0 24px 22px/,
-    '分组底部间距不再是统一的 22px：折叠后 a1↔a2 与 a2↔a3 的节奏会不一致',
+    /margin:\s*0 24px 14px/,
+    '分组底部间距不再是统一的 14px（2026-11 重设计收紧一档）：相邻分组的节奏会不一致',
   );
   assert.doesNotMatch(
     css,
@@ -141,7 +148,7 @@ test('实时状态走状态条：不再是灰色小字，说明也不贴住上�
   );
   assert.match(
     ruleBody(css, '.group-body'),
-    /padding:\s*12px 16px 16px/,
+    /padding:\s*12px 16px 14px/,
     '分组内容区顶部留白被压回 4px：卡内第一段提示会重新贴住色带',
   );
   assert.match(
