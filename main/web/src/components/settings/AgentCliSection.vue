@@ -26,8 +26,8 @@
     </div>
 
     <p class="integration-note">
-      一键接入只写入 skill 与 CLI 包装脚本（PATH 里的 <code>engram</code> 命令），不再修改客户端的 MCP 配置；
-      旧版本写入的 MCP 条目已失效，可在客户端里自行清理。
+      一键接入只写入 skill 与 CLI 包装脚本（PATH 里的 <code>engram</code> 命令），并顺带清掉旧版本写入的
+      Engram MCP 条目（只删 <code>engram</code> 这一项，其他 MCP 配置不动）。
     </p>
 
     <!-- 客户端卡片：每张只回答「检测到没有 / 接入了没有 / CLI 可不可用」 -->
@@ -58,9 +58,13 @@
               <dt>CLI</dt>
               <dd :class="client.cliAvailable ? 'ok' : 'warn'">{{ client.cliAvailable ? '可用' : '不可用' }}</dd>
             </div>
-            <div v-if="client.skillPath">
+            <div v-if="clientSkillPaths(client).length">
               <dt>skill 目录</dt>
-              <dd class="path-value"><code>{{ client.skillPath }}</code></dd>
+              <dd class="path-value">
+                <div v-for="skillPath in clientSkillPaths(client)" :key="skillPath">
+                  <code>{{ skillPath }}</code>
+                </div>
+              </dd>
             </div>
           </dl>
           <div class="client-actions">
@@ -203,7 +207,8 @@ import { expandGroup } from '../../lib/settingsCollapse';
  * 外部 Agent 接入（2026-11，MCP → engram CLI + skill）：
  *
  * - 客户端卡片来自 GET /api/settings/agent-access 的 clients[]，一键接入 / 移除接入
- *   只写带 engram-managed 标记的 skill 目录与 CLI 包装脚本，不再写客户端 MCP 配置；
+ *   只写带 engram-managed 标记的 skill 目录与 CLI 包装脚本，不再写客户端 MCP 配置，
+ *   并顺带清掉旧版本写入的 Engram MCP 条目（服务端 agentLegacyConfig 负责，只删 engram 一项）；
  * - Agent 令牌沿用旧 mcp_tokens 表（历史表名），前端只叫「Agent 令牌」；
  * - 远程设备走「下载 CLI（/api/settings/agent-cli-source）+ engram login」，
  *   服务端不假设远程机器有本机安装；
@@ -217,6 +222,8 @@ interface AgentAccessStatus {
   installed: boolean;
   skillsInstalled: boolean;
   skillPath: string;
+  /** Qoder / WorkBuddy 这类客户端可能有多套变体目录，全部列出 */
+  skillPaths?: string[];
   cliAvailable: boolean;
   cliCommand: string;
 }
@@ -254,6 +261,11 @@ const busyId = ref('');
 const tokenSelectValue = ref('');
 
 const installedCount = computed(() => clients.value.filter((client) => client.skillsInstalled).length);
+/** 客户端要维护的全部 skill 文件路径（老服务端没有 skillPaths 时回退单个 skillPath） */
+function clientSkillPaths(client: AgentAccessStatus): string[] {
+  if (Array.isArray(client.skillPaths) && client.skillPaths.length) return client.skillPaths;
+  return client.skillPath ? [client.skillPath] : [];
+}
 const tokenOptions = computed(() =>
   tokens.value.map((item) => ({ value: String(item.id), label: `${item.name}（#${item.id}）` })),
 );
@@ -301,9 +313,12 @@ async function loadTokens(): Promise<void> {
 async function register(client: AgentAccessStatus): Promise<void> {
   busyId.value = client.id;
   try {
-    await api.post('/api/settings/agent-access/register', { id: client.id });
+    const { data } = await api.post('/api/settings/agent-access/register', { id: client.id });
     await loadAll();
-    notify.success(`已把 Engram skill 与 CLI 接入 ${client.title}`);
+    const cleaned = Array.isArray(data?.cleaned) ? data.cleaned.length : 0;
+    notify.success(cleaned
+      ? `已把 Engram skill 与 CLI 接入 ${client.title}，并清理了 ${cleaned} 处旧 Engram MCP 配置`
+      : `已把 Engram skill 与 CLI 接入 ${client.title}`);
   } catch (error) {
     await loadAll();
     notify.error(errorMessage(error, '接入失败：请检查本机 skill 目录是否可写'));
@@ -322,9 +337,10 @@ async function unregister(client: AgentAccessStatus): Promise<void> {
   if (!ok) return;
   busyId.value = client.id;
   try {
-    await api.post('/api/settings/agent-access/unregister', { id: client.id });
+    const { data } = await api.post('/api/settings/agent-access/unregister', { id: client.id });
     await loadAll();
-    notify.success('已移除接入');
+    const cleaned = Array.isArray(data?.cleaned) ? data.cleaned.length : 0;
+    notify.success(cleaned ? `已移除接入，并清理了 ${cleaned} 处旧 Engram MCP 配置` : '已移除接入');
   } catch (error) {
     await loadAll();
     notify.error(errorMessage(error, '移除失败：请检查本机 skill 目录'));

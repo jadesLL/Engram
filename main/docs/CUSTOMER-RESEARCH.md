@@ -118,7 +118,7 @@
 - **保存语义**：内置「调研并保存」按钮已授权保存——完整报告自动入库，资料不足简报只留页面反馈、不自动入库（不要声称已保存），主体核验不落文件；外部对话只有在用户明确要求保存时才传 `--save`（显式保存时简报也可入库），其余默认只出报告预览（可在客户洞察翻阅）。not-found 永不保存文件。结构校验不证明事实真伪，网页来源仍需 Agent 实际阅读核查。
 - **保存方式**：`--save`（或报告 JSON 里的 `save=true`）且 `existingReports` 非空时，必须带 `--save-mode new` 或 `--save-mode overwrite --overwrite-path`（取 `existingReports[].path`）；不先问用户就直接提交会被拒收。详见「重复客户：生成新版本 / 覆盖旧报告」与「自动入库策略」。
 
-在「设置 → Agent 与自动化 → 外部接入」一键接入（只装 CLI 包装脚本 + skill，**不再改客户端的 MCP 配置**）：
+在「设置 → Agent 与自动化 → 外部接入」一键接入（只装 CLI 包装脚本 + skill，**不再改客户端的 MCP 配置**；接入时顺带清掉旧版本写入的 Engram MCP 条目）：
 
 | 客户端 | 客户调研触发入口（skill 目录） |
 | --- | --- |
@@ -130,7 +130,7 @@
 | WorkBuddy | 用户级 `~/.workbuddy/skills/engram-customer-research/SKILL.md`（配置目录下的 skills；`~/.workbuddy-ai` 变体同构） |
 | Qoder | 配置目录 `skills/engram-customer-research/SKILL.md`（`~/.qoder` / `~/.qoder-cn`） |
 
-> **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 插件条目已失效，可自行清理。
+> **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 插件条目已失效，一键接入时会顺带清掉。
 
 入口 skill 只包含何时使用和如何调用，不复制流程与契约全文，不含 Token。重新注册不会覆盖用户自行创建的同名技能；注销只删除带 Engram 管理标记的 skill。Docker 的一键接入只作用于服务端所在机器，不能替远程电脑改配置；远程客户端先从设置页或 `GET /api/agent/cli` 下载 `cli.js`，执行 `engram login --url <服务端地址> --token <Agent 令牌>` 登记连接，再把入口 SKILL.md 复制到客户端 skills 目录。
 
