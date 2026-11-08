@@ -27,7 +27,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 ## 接入方式与优先级
 
 - **Agent 命令入口只有 `engram` CLI**：能跑 shell 的 Agent 一律用它（`--json` 得机器可读输出；`--url` / `--token` / `--allow-private` 可临时连接）。服务端没有 `/mcp` 端点、没有 `mcp__engram__*` 工具，也没有「MCP 兜底」这条路。
-- **skill 是给 Agent 的说明书**：设置 → Agent 与自动化 → 外部接入 → 一键接入会给目标客户端装上 `engram` skill（何时用 + 完整命令参考 + 纪律；正文里的调用方式按本机解析出的 CLI 命令替换），**不再改客户端的 MCP 配置**。入口 skill `engram-customer-research` 说明何时做客户调研与 `engram research begin/submit` 用法。
+- **skill 是给 Agent 的说明书**：设置 → Agent 与自动化 → 外部接入 → 一键接入会给目标客户端装上 `engram` skill（何时用 + 完整命令参考 + 纪律；正文里的调用方式按本机解析出的 CLI 命令替换），**不再改客户端的 MCP 配置**，并顺带清掉旧版本写入的 Engram MCP 条目（只删 `engram` 这一项）。入口 skill `engram-customer-research` 说明何时做客户调研与 `engram research begin/submit` 用法。
 - **本机零配置**：接入时写好 CLI 包装脚本（Windows `%USERPROFILE%\.engram\bin\engram.cmd`，POSIX `~/.engram/bin/engram`，在 PATH 里即可直接敲 `engram`）；服务端启动时已把本机地址与 Agent 令牌登记到 `~/.engram/config.json`（用户手动 `engram login` 的配置优先、不被覆盖）。调用方式：桌面/源码为 `"<node>" "<server>/dist/cli/cli.js"`，Docker 内为 `node /app/server/dist/cli/cli.js`。
 - **远程客户端**：从设置页或 `GET /api/agent/cli` 下载单文件 `cli.js`，`node engram.js login --url <url> --token <token>` 一次即可；Agent 令牌在 设置 → Agent 与自动化 → 外部接入 → Agent 令牌 生成/吊销（`Authorization: Bearer`，CLI 与 REST 共用）。
 - **图片类内容走临时文件**：`engram pages asset <ref>`（正文 `/media/...` 图片）、`engram files raw <path>`、`engram inbox raw <path> --out F` 默认把图片/二进制落到临时文件并打印路径（`--json` 含 `path` / `mimeType`），Agent 再用自己的图片读取工具打开；不要指望命令直接把图当图像内容返回。

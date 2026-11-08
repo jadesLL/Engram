@@ -164,10 +164,10 @@ Docker：node /app/server/dist/cli/cli.js <command>
 | DeepSeek Harness（dsh） | `$DSH_HOME/skills/engram/SKILL.md` | `$DSH_HOME 或 ~/.dsh` |
 | ZCode 桌面端 | `~/.zcode/skills/engram/SKILL.md` | `~/.zcode 或引擎路径` |
 | Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram/SKILL.md` | `默认 ~/.kimi-code` |
-| WorkBuddy | `~/.workbuddy/skills/engram/SKILL.md`（`~/.workbuddy-ai` 变体同构） | `~/.workbuddy / ~/.workbuddy-ai（环境变量优先）` |
-| Qoder | `<配置目录>/skills/engram/SKILL.md` | `~/.qoder / ~/.qoder-cn` |
+| WorkBuddy | `~/.workbuddy/skills/engram/SKILL.md`（`~/.workbuddy-ai` 变体同构；存在的变体目录都写） | `~/.workbuddy / ~/.workbuddy-ai（环境变量优先）` |
+| Qoder | `<配置目录>/skills/engram/SKILL.md`（`~/.qoder` 与 `~/.qoder-cn` 都存在时两套都写） | `~/.qoder / ~/.qoder-cn` |
 
-> **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 条目已失效，可自行清理。各客户端只装 skill + CLI 包装脚本，不再写 `mcpServers` / `[mcp_servers.*]` 之类的 MCP 配置。
+> **一键接入会顺带清旧**：旧版本写进 Codex / dsh / WorkBuddy / Qoder / Kimi 的 Engram MCP 条目在接入或移除接入时一并删掉（只删 `engram` 这一项，其他 MCP 配置不动）；写错目录的旧 skill（如 WorkBuddy 的 `~/.codebuddy/skills`）也会清掉带 Engram 管理标记的文件。各客户端只装 skill + CLI 包装脚本，不再写 `mcpServers` / `[mcp_servers.*]` 之类的 MCP 配置。
 
 一键接入只对本机安装的客户端落地（需与 Engram 桌面版同一台电脑）；Docker/远程部署时先在设置页或 `GET /api/agent/cli` 下载 `cli.js`，`node engram.js login --url <服务端地址> --token <Agent 令牌>` 登记连接，再把 skill 复制到客户端 skills 目录。设置里「工具与手册」分组的命令参考表逐条列出现有 `engram` 命令（功能、参数与要点）。
 

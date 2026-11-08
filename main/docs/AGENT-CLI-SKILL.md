@@ -143,14 +143,18 @@ export function ensureLocalAgentCli(): { cli: CliRuntime; env: NodeJS.ProcessEnv
 | dsh | DeepSeek Harness | $DSH_HOME 或 ~/.dsh | <home>/skills |
 | zcode | ZCode | ~/.zcode 或引擎路径 | ~/.zcode/skills |
 | kimi-code | Kimi Code CLI | $KIMI_CODE_HOME 或 ~/.kimi-code | <home>/skills |
-| workbuddy | WorkBuddy | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | <配置目录>/skills |
-| qoder | Qoder | ~/.qoder / ~/.qoder-cn | <config>/skills |
+| workbuddy | WorkBuddy | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | <配置目录>/skills；**存在的变体目录全部维护** |
+| qoder | Qoder | ~/.qoder / ~/.qoder-cn | <配置目录>/skills；**存在的变体目录全部维护**（国内版客户端只读 ~/.qoder-cn） |
 
-- `AgentAccessStatus = { id, title, installed, skillsInstalled, skillPath, cliAvailable, cliCommand }`；
+- `AgentAccessStatus = { id, title, installed, skillsInstalled, skillPath, skillPaths, cliAvailable, cliCommand }`；
   `registerAgentAccess(id)` / `unregisterAgentAccess(id)` 只写/删带 `<!-- engram-managed -->` 标记的 skill 目录与同标记的旧入口 skill；
-  同名非 Engram 管理的 skill 拒绝覆盖（沿用旧 `assert...Writable` 语义）。
+  同名非 Engram 管理的 skill 拒绝覆盖（沿用旧 `assert...Writable` 语义）。多套变体目录时 `skillPaths` 全部列出、全部写入。
 - 老版本装过的 `engram-customer-research` 入口（带旧标记前缀 `<!-- engram-managed-customer-research:`）升级时可覆盖，注销要清掉。
-- 清理旧 MCP 配置：注册/服务启动时不主动删用户配置（避免动用户文件）；但设置页「移除接入」要删旧 MCP 条目吗？**不删**，只在 UI 提示旧 MCP 条目已失效可自行清理。旧 home patch `$DSH_HOME/cordis.patch.yml` 里 Engram 的 MCP 条目按旧逻辑清（内置 Agent 启动会失败，必须清）——由工作流 B 处理。
+- 旧版本 Engram MCP 条目在一键接入 / 移除接入时一并清理（`lib/agentLegacyConfig.ts`，只删本方内容、其余配置逐字保留）：
+  Codex `$CODEX_HOME/config.toml` 的 `[mcp_servers.engram]` 表、dsh `$DSH_HOME/cordis.patch.yml` 的 mcp-engram 条目、
+  WorkBuddy `<配置目录>/mcp.json`、Qoder `<配置目录>/settings.json`（两个变体都清）、Kimi Code `<KIMI_CODE_HOME>/mcp.json`；
+  顺带清掉写错目录的旧 skill（WorkBuddy `~/.codebuddy/skills`、Codex `$CODEX_HOME/skills`）。
+  清理是顺带收尾：坏 JSON / 无写权限静默跳过，不影响接入结果。
 
 settings 路由（工作流 C，`routes/settings.ts`）：
 ```
