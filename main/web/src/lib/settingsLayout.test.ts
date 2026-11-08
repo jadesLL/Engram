@@ -85,15 +85,26 @@ test('窄屏（≤768px）退回整页滚动，不叠出第二根滚动条', () 
   );
 });
 
-test('设置页 JS 认的是内容列这根滚动条（重设计后不再做锚点滚动联动）', () => {
+test('设置页 JS 认的是内容列这根滚动条，并做滚动联动高亮', () => {
   const view = fs.readFileSync(viewPath, 'utf8');
   assert.match(
     view,
     /ref="contentEl"[\s\S]{0,60}class="settings-content"/,
     '内容列没有拿到模板引用：切分类 / 搜索跳转时不知道该滚谁',
   );
-  // 2026-11 重设计：二级锚点移出目录，滚动联动高亮随之移除；内容列仍是桌面端唯一的滚动容器
-  assert.doesNotMatch(view, /activeAnchor/, '又出现了二级锚点高亮状态：目录里已经没有二级项了');
+  // 2026-11 第二轮：用户要求「滑动页面和目录变色要实时同步」——滚动联动高亮重新接回内容列
+  assert.match(view, /function syncActiveGroupFromScroll\(/, '缺少滚动联动高亮函数：左栏目录又不会跟着内容滚了');
+  assert.match(view, /addEventListener\('scroll', onContentScroll/, '内容列滚动没有接到 scrollspy');
+  assert.match(
+    view,
+    /maxScroll\s*>\s*8/,
+    'scrollspy 的「滚到底」判定丢了 maxScroll 门槛：内容不足一屏的分类会一进来就高亮最后一组',
+  );
+  assert.match(
+    view,
+    /settings-nav-subitem[\s\S]{0,240}?active: activeGroup === group\.id/,
+    '二级目录项的 active 没有绑到滚动计算出的 activeGroup：滚动时目录不会变色',
+  );
   assert.match(
     ruleBody(css, '.settings-content'),
     /overflow-y:\s*auto/,
@@ -330,4 +341,3 @@ test('同步内容「设置」分类说明写清含内置 Agent 模型配置与 
     '旧口径「模型配置保持独立」还在：与本次「随设置分类同步」互相矛盾',
   );
 });
-

@@ -74,10 +74,11 @@ test('设置页外壳：跳转链接 / 搜索入口 / 状态总览 / 左栏两�
   assert.match(view, /ctrlKey \|\| event\.metaKey/, '没有 Ctrl / ⌘ K 打开搜索的快捷键');
   assert.match(view, /addEventListener\('keydown', onGlobalKey, true\)/, '设置页快捷键没有抢在全局搜索页之前（挂捕获阶段）');
   assert.match(view, /function onNavKeydown/, '目录不支持方向键导航');
-  // 2026-11 卡片式版式：二级分组只随当前大类展开，点击定位（不跟滚动联动）
+  // 2026-11 卡片式版式：二级分组只随当前大类展开；点击定位 + 滚动联动高亮（第二轮用户要求实时同步）
   assert.match(view, /class="settings-nav-sub"/, '左栏缺少当前大类的二级分组');
   assert.match(view, /settings-nav-subitem/, '左栏二级分组项没有渲染');
-  assert.doesNotMatch(view, /activeAnchor/, '又出现了滚动联动高亮：目录会跟着内容自己跳');
+  assert.match(view, /activeGroup === group\.id/, '二级分组的高亮没有绑定 activeGroup');
+  assert.match(view, /syncActiveGroupFromScroll/, '滚动联动高亮被移除：滑动页面时目录不会实时变色');
   assert.match(view, /settings-nav-meta/, '目录行尾没有状态文字');
 });
 

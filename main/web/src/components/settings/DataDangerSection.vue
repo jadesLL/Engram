@@ -1,39 +1,44 @@
 <template>
-  <!-- 危险操作：数据与存储大类的最后一个分组，level-danger 常驻警示色（2026-09-24 起不再用虚线隔离区） -->
+  <!-- 危险操作：知识库数据大类的最后一个分组，level-danger 常驻警示色（2026-09-24 起不再用虚线隔离区） -->
   <SettingsGroup
+    class="settings-native"
     anchor="data-danger"
     title="危险操作"
-    hint="不可撤销；清库与清日志执行前需要再次确认登录密码"
+    hint="不可撤销；执行前需再次输入登录密码"
     danger
     flush
   >
-    <div v-if="capabilities.features.agent" class="danger-row">
-      <div>
+    <div v-if="capabilities.features.agent" class="setting-row">
+      <div class="setting-copy">
         <strong>清空操作日志与关系库</strong>
-        <p>清空 AIWorks 系统区（操作日志、索引与关系库）；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
+        <span>只清日志、索引与关系库，概念与实体不受影响；任务会先停止。</span>
       </div>
-      <button
-        class="btn danger"
-        type="button"
-        :disabled="Boolean(busy)"
-        @click="wipeAiLogs"
-      >
-        {{ busy === 'ai-logs' ? '清空中...' : '清空日志' }}
-      </button>
+      <div class="setting-actions">
+        <button
+          class="btn danger"
+          type="button"
+          :disabled="Boolean(busy)"
+          @click="wipeAiLogs"
+        >
+          {{ busy === 'ai-logs' ? '清空中…' : '清空日志' }}
+        </button>
+      </div>
     </div>
-    <div class="danger-row">
-      <div>
+    <div class="setting-row">
+      <div class="setting-copy">
         <strong>一键清除知识数据</strong>
-        <p>先停止待执行和运行中的任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
+        <span>删除全部概念、实体、原始资料与归档；任务会先停止。</span>
       </div>
-      <button
-        class="btn danger-solid"
-        type="button"
-        :disabled="Boolean(busy)"
-        @click="wipe"
-      >
-        {{ busy === 'knowledge' ? '清除中...' : '一键清除' }}
-      </button>
+      <div class="setting-actions">
+        <button
+          class="btn danger-solid"
+          type="button"
+          :disabled="Boolean(busy)"
+          @click="wipe"
+        >
+          {{ busy === 'knowledge' ? '清除中…' : '一键清除' }}
+        </button>
+      </div>
     </div>
     <p v-if="message" class="setting-message wipe-message" :class="ok ? 'ok' : 'err'">{{ message }}</p>
 
@@ -56,6 +61,9 @@ import { useRuntimeCapabilities } from '../../lib/capabilities';
  *
  * 2026-09-28（方案 A「一事一类」）：卸载 Engram 从这里拆到 UninstallSection.vue（归「本机应用」）——
  * 删的是本机安装目录、不是知识数据，和清库同组是旧版混装。本组现在只剩数据类操作。
+ *
+ * 2026-11 内容精修：两行危险操作改用共享 .setting-row（标签 + 一句范围说明 + 行尾红按钮），
+ * 红按钮不再和折叠箭头挤在卡头；范围与不可撤销写进行说明，机制/流水细节进确认弹窗。
  */
 const app = useAppStore();
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
@@ -118,39 +126,8 @@ async function wipeAiLogs() {
 </script>
 
 <style scoped>
-.danger-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-}
-/* 末行去边框：用「后面还有没有危险行」判断，而不是 :last-child——卸载行带 <template> 包装时
-   后面可能跟着错误提示或注释节点，:last-child 会失配（2026-09-24 起三行结构） */
-.danger-row:not(:has(+ .danger-row)) {
-  border-bottom: 0;
-}
-.danger-row strong {
-  font-size: 13px;
-}
-.danger-row p {
-  margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-/* 卸载行的 .danger-actions / .danger-opt 样式随卸载分组移到 UninstallSection.vue */
+/* 组内行自带边框与留白（.group-body.flush）；这里只补结果提示的纵向间距 */
 .wipe-message {
-  margin: 4px 20px 14px;
-}
-
-@media (max-width: 640px) {
-  .danger-row {
-    grid-template-columns: 1fr;
-  }
-  .danger-row .btn {
-    width: 100%;
-  }
+  margin: 12px 0 6px;
 }
 </style>

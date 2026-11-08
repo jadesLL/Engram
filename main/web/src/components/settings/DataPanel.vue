@@ -7,55 +7,64 @@
       </div>
     </div>
 
-    <SettingsGroup anchor="data-location" title="存储位置" hint="数据目录与本地服务端口" :default-open="true">
-      <div class="data-location">
-        <Icon name="folder" :size="20" />
-        <div>
+    <SettingsGroup anchor="data-location" title="存储位置" hint="数据放在哪、怎么访问" :default-open="true" flush>
+      <div class="setting-row">
+        <div class="setting-copy">
           <strong>本地 Markdown 数据</strong>
-          <p v-if="capabilities.runtime === 'android-local'">知识内容保存在本应用的私有目录。卸载应用会删除尚未同步或导出的本地数据，请定期使用下方「导出备份」。</p>
-          <p v-else>知识内容位于服务端 <code>data/brain/</code>，整库备份请使用下方「导出备份」。</p>
+          <span v-if="isAndroidLocal">存在本应用私有目录；卸载会删除未同步的数据。</span>
+          <span v-else-if="isDesktopLocal || capabilities.runtime === 'desktop'">存在本机数据仓库；整库备份用下方「导出备份」。</span>
+          <span v-else>存在服务端 data/brain/；整库备份用下方「导出备份」。</span>
         </div>
       </div>
 
-      <div v-if="isDesktopLocal" class="dir-section">
-        <div class="dir-row">
-          <div class="dir-info">
-            <strong>数据仓库</strong>
-            <p><code class="dir-path">{{ dataDir }}</code></p>
-            <p>切换仓库不会迁移数据：已有 Engram 数据的目录会被直接打开（需用该仓库的登录密码），空目录则会新建一个空仓库。切换后本地服务自动重启。</p>
-          </div>
+      <div v-if="isDesktopLocal" class="setting-row">
+        <div class="setting-copy">
+          <strong>数据仓库</strong>
+          <span>切换不会迁移数据；空目录会新建空仓库。</span>
+        </div>
+        <div class="setting-actions">
           <button class="btn" type="button" :disabled="dirBusy" @click="changeDataDir">
-            {{ dirBusy ? '切换中...' : '切换仓库' }}
+            {{ dirBusy ? '切换中…' : '切换仓库' }}
           </button>
         </div>
-        <p v-if="dirMsg" class="setting-message" :class="dirOk ? 'ok' : 'err'">{{ dirMsg }}</p>
       </div>
+      <p v-if="dirMsg" class="setting-message" :class="dirOk ? 'ok' : 'err'">{{ dirMsg }}</p>
 
-      <div v-if="isDesktopLocal" class="dir-section">
-        <div class="dir-row">
-          <div class="dir-info">
-            <strong>本地服务端口</strong>
-            <p>内嵌服务监听 {{ lanAccess ? '0.0.0.0' : '127.0.0.1' }}:{{ portCurrent }}{{ lanAccess ? '（局域网设备也能访问）' : '（仅本机）' }}，默认 18180，与 Docker 版（18080）互不冲突；端口被其他程序占用时可修改，改动后本地服务自动以新端口重启。</p>
-            <p v-if="lanAccess">局域网访问是为「把这台电脑当同步中枢」开的（设置 → 多端同步 → 同步群组 里可关闭，退出中枢角色时也会自动关闭）。</p>
-            <p v-if="portEnvOverridden">检测到环境变量 ENGRAM_LOCAL_PORT 指定端口，此处修改不生效。</p>
-          </div>
-          <div class="port-controls">
-            <input
-              v-model="portInput"
-              class="port-input"
-              type="number"
-              min="1"
-              max="65535"
-              :disabled="portBusy || portEnvOverridden"
-              @keyup.enter="changePort"
-            />
-            <button class="btn" type="button" :disabled="portBusy || portEnvOverridden" @click="changePort">
-              {{ portBusy ? '重启中...' : '应用' }}
-            </button>
-          </div>
+      <ul v-if="isDesktopLocal" class="value-list">
+        <li class="value-row">
+          <span class="value-label">数据目录</span>
+          <span class="value-text"><code>{{ dataDir }}</code></span>
+        </li>
+        <li class="value-row">
+          <span class="value-label">访问范围</span>
+          <span class="value-text" :class="{ 'is-muted': !lanAccess }">{{ lanAccess ? '本机 + 局域网' : '仅本机' }}</span>
+        </li>
+      </ul>
+
+      <div v-if="isDesktopLocal" class="setting-row">
+        <div class="setting-copy">
+          <strong>本地服务端口</strong>
+          <span>默认 18180；被占用可改，改完服务自动重启。</span>
         </div>
-        <p v-if="portMsg" class="setting-message" :class="portOk ? 'ok' : 'err'">{{ portMsg }}</p>
+        <div class="setting-actions">
+          <input
+            v-model="portInput"
+            class="port-input"
+            type="number"
+            min="1"
+            max="65535"
+            :disabled="portBusy || portEnvOverridden"
+            aria-label="本地服务端口"
+            @keyup.enter="changePort"
+          />
+          <button class="btn" type="button" :disabled="portBusy || portEnvOverridden" @click="changePort">
+            {{ portBusy ? '重启中…' : '应用' }}
+          </button>
+        </div>
       </div>
+      <p v-if="portMsg" class="setting-message" :class="portOk ? 'ok' : 'err'">{{ portMsg }}</p>
+      <p v-if="portEnvOverridden" class="setting-note tone-warn">端口由环境变量 ENGRAM_LOCAL_PORT 指定，此处修改不生效。</p>
+      <p v-if="lanAccess" class="setting-note">局域网访问随「同步群组」的中枢模式开启，退出中枢时自动关闭。</p>
     </SettingsGroup>
 
     <!-- 备份与恢复：全库安全网，归入「主分组」强调（最该先看的一组） -->
@@ -67,40 +76,43 @@
       title="备份与恢复"
       hint="整库打包导出，或用备份 zip 整体替换"
       :default-open="true"
+      flush
     >
-      <div class="backup-section">
-        <div class="backup-row">
-          <div>
-            <strong>整库备份</strong>
-            <p>{{ capabilities.runtime === 'android-local' ? '导出可移植备份（知识文件与必要元数据，不含会话和同步令牌）。' : '打包 wiki.db 数据库与 brain/ 全部内容（不含回收站）为 zip 下载。' }}</p>
-          </div>
-          <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="exportBackup">
-            {{ backupBusy === 'export' ? '打包中...' : '导出备份' }}
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>整库备份</strong>
+          <span>{{ isAndroidLocal ? '导出可移植备份，不含会话与同步令牌。' : '打包 wiki.db 与 brain/，不含回收站。' }}</span>
+        </div>
+        <div class="setting-actions">
+          <button class="btn primary" type="button" :disabled="Boolean(backupBusy)" @click="exportBackup">
+            {{ backupBusy === 'export' ? '打包中…' : '导出备份' }}
           </button>
         </div>
-        <div class="backup-row">
-          <div>
-            <strong>从备份恢复</strong>
-            <p v-if="capabilities.runtime === 'android-local'">选择可移植 v2 或旧版整库备份 zip。恢复会替换本机知识文件并重建索引，但保留本机登录密码和同步令牌，立即生效。</p>
-            <p v-else>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端自动重启，Docker 版需重启容器。</p>
-          </div>
-          <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="pickRestore">
-            {{ backupBusy === 'restore' ? '恢复中...' : '选择备份文件' }}
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>从备份恢复</strong>
+          <span v-if="isAndroidLocal">替换本机知识文件并重建索引；登录密码与同步令牌保留。</span>
+          <span v-else>替换当前全部数据（含登录密码与模型配置）。</span>
+        </div>
+        <div class="setting-actions">
+          <button class="btn danger" type="button" :disabled="Boolean(backupBusy)" @click="pickRestore">
+            {{ backupBusy === 'restore' ? '恢复中…' : '选择备份文件' }}
           </button>
           <input ref="restoreInput" type="file" accept=".zip" style="display: none" @change="onRestoreFile" />
         </div>
-        <p v-if="backupMsg" class="setting-message backup-message" :class="backupOk ? 'ok' : 'err'">{{ backupMsg }}</p>
       </div>
+      <p v-if="!isAndroidLocal" class="setting-note">恢复暂存成功后需重启服务生效：桌面端自动重启，Docker 版重启容器。</p>
+      <p v-if="backupMsg" class="setting-message" :class="backupOk ? 'ok' : 'err'">{{ backupMsg }}</p>
     </SettingsGroup>
     <!-- 「搜索同义词」2026-09-28 起归「界面与检索」（它不是数据存储）：由 SettingsView 直接挂载 -->
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
-import Icon from '../Icon.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { confirmWithPassword } from '../../lib/dangerConfirm';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
@@ -117,7 +129,7 @@ const dirMsg = ref('');
 const dirOk = ref(false);
 /** 局域网访问：桌面端默认关闭（只监听 127.0.0.1），当中枢时在「同步群组」里开启 */
 const lanAccess = ref(false);
-
+const isAndroidLocal = computed(() => capabilities.value.runtime === 'android-local');
 onMounted(async () => {
   await loadCapabilities();
   if (!wikiDesktop) return;
@@ -287,96 +299,17 @@ async function onRestoreFile(ev: Event) {
 </script>
 
 <style scoped>
-.data-location {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 10px 0 14px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-/* 分组卡片（SettingsGroup）自带外边距与内边距，内部块只保留纵向间距 */
-.data-location:last-child {
-  margin-bottom: 0;
-}
-.data-location > svg {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-.data-location strong {
-  font-size: 13px;
-}
-.data-location p {
-  margin: 5px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.dir-section,
-.backup-section {
-  margin: 0 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.dir-section:last-child {
-  margin-bottom: 0;
-}
-.backup-section {
-  margin: 10px 0 0;
-}
-.dir-row,
-.backup-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  padding: 16px;
-}
-.dir-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-.dir-row + .setting-message,
-.backup-row + .backup-row,
-.backup-row + .backup-message {
-  border-top: 1px solid var(--border);
-}
-.dir-section strong,
-.backup-section strong {
-  font-size: 13px;
-}
-.dir-section p,
-.backup-section p {
-  margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-.dir-path {
-  word-break: break-all;
-}
-.port-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* 端口输入与行内按钮同排；宽度收窄，避免占满控件列 */
 .port-input {
   width: 96px;
-  font-size: 13px;
 }
-.backup-message {
-  padding: 10px 16px;
+/* 组内结果提示的纵向间距（左右留白由 .group-body 统一给；提高一级特异性压过全局 0 边距） */
+.settings-native .setting-message {
+  margin: 8px 0 6px;
 }
 
-@media (max-width: 640px) {
-  .dir-row,
-  .backup-row {
-    grid-template-columns: 1fr;
-  }
-  .dir-row .btn,
-  .backup-row .btn {
+@media (max-width: 768px) {
+  .port-input {
     width: 100%;
   }
 }

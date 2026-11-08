@@ -5,9 +5,9 @@
         <span class="group-ico" aria-hidden="true"><Icon name="refresh" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">同步群组</span>
-          <span class="group-hint">把多台设备组成一个同步群组：只要求中枢设备可被其他设备访问，成员设备之间无需互通</span>
+          <span class="group-hint">多台设备经中枢双向同步，成员之间无需互通</span>
         </span>
-        <span v-if="roleBadge" class="group-badge" :class="`tone-${roleBadgeTone}`">{{ roleBadge }}</span>
+        <span v-if="roleBadge" class="group-badge" :class="'tone-' + roleBadgeTone">{{ roleBadge }}</span>
         <button
           type="button"
           class="group-caret"
@@ -20,406 +20,461 @@
       </div>
       <div v-show="!groupCollapsed" class="group-body">
 
-    <!-- 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里。
-         旧版把状态网格 + 一个 260px 高的可展开日志塞在这张卡片里：日志只有 30 条、
-         没有级别/成员/时间，还把设置页拉得很长。摘要放最上面（角色卡/成员管理之前），
-         中枢与成员都先看到它，再往下看各自的配置。 -->
-    <div v-if="status && status.role !== 'none'" class="sync-summary">
-      <!-- 运行状态摘要：实时状态同样走状态条（底框 + 状态点），别和灰色说明文字混在一起 -->
-      <div class="summary-line state-strip" :class="summaryHealthy ? 'tone-ok' : 'tone-warn'">
-        <span class="state-dot" aria-hidden="true" />
-        <strong :class="summaryHealthy ? 'ok' : 'bad'">{{ connectionLabel }}</strong>
-        <span class="summary-detail">{{ summaryDetail }}</span>
-      </div>
-      <p v-if="status.lastError" class="sync-error">最近错误：{{ status.lastError }}</p>
-      <div class="sync-actions">
-        <button class="btn" type="button" @click="openSyncLogDrawer">
-          <Icon name="activity" :size="14" />
-          查看同步详情
-        </button>
-      </div>
-    </div>
-
-    <!-- 未配置：选择角色 -->
-    <template v-if="status && status.role === 'none'">
-      <div class="role-cards">
-        <div v-if="canBeHub" class="role-card">
-          <h4>这台设备作为中枢</h4>
-          <p>中枢保存群组权威数据，可查看每个成员的连接状态，并为成员设备生成绑定令牌。建议由常开的 NAS Docker 版担任。</p>
-          <button class="btn primary" type="button" :disabled="saving" @click="becomeHub">作为中枢启用</button>
-        </div>
-        <div class="role-card">
-          <h4>加入同步群组</h4>
-          <p>绑定到已有的中枢：在中枢上「添加成员」后会给出二维码与邀请链接——手机扫一下、或把链接发过来粘贴，中枢地址与绑定令牌就自动填好了；也可以按老办法手填。绑定后本机照常离线工作，联网时自动双向同步。</p>
-          <button class="btn" type="button" @click="pickJoin = true">绑定中枢</button>
-        </div>
-      </div>
-
-      <div v-if="pickJoin" class="sync-config">
-        <!-- 邀请链接导入：中枢那头的「复制邀请链接 / 二维码」就是喂给这两条路的——
-             粘贴导入是「一键复制链接」的对端，扫码是手机对着中枢屏幕。两者二选一，都不用再手抄。 -->
-        <div class="field-row invite-import">
-          <label for="sync-invite">邀请链接（可选）</label>
-          <div class="invite-import-row">
-            <input
-              id="sync-invite"
-              v-model="inviteText"
-              type="text"
-              placeholder="engram://join?hub=…&token=…"
-              spellcheck="false"
-              @input="applyInviteText()"
-            />
-            <button class="btn small" type="button" @click="pasteInvite">粘贴</button>
-            <button class="btn small primary" type="button" :disabled="saving || !parseInviteLink(inviteText)" @click="pairInvite">{{ saving ? '配对中…' : '一键配对' }}</button>
-            <button class="btn small" type="button" :disabled="saving" @click="scanning = true">
-              <Icon name="scan" :size="14" />
-              扫码
+        <!-- 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里 -->
+        <div v-if="status && status.role !== 'none'" class="sync-summary">
+          <div class="summary-line state-strip" :class="summaryHealthy ? 'tone-ok' : 'tone-warn'">
+            <span class="state-dot" aria-hidden="true" />
+            <strong :class="summaryHealthy ? 'ok' : 'bad'">{{ connectionLabel }}</strong>
+            <span class="summary-detail">{{ summaryDetail }}</span>
+          </div>
+          <p v-if="status.lastError" class="sync-error">最近错误：{{ status.lastError }}</p>
+          <div class="sync-summary-actions">
+            <button class="btn" type="button" @click="openSyncLogDrawer">
+              <Icon name="activity" :size="14" />
+              查看同步详情
             </button>
           </div>
-          <p v-if="!scanSupported" class="faint small">{{ cameraScanSupport().reason }}</p>
-          <p v-if="inviteNotice" class="invite-notice" :class="inviteNoticeTone">{{ inviteNotice }}</p>
-          <p v-else class="faint small">
-            在中枢那台设备的「同步群组 → 添加成员」里点「复制邀请链接」发过来粘贴；手机端也可以直接扫中枢屏幕上的二维码。
-          </p>
-        </div>
-        <div class="field-row">
-          <label for="sync-hub-url">中枢地址</label>
-          <input id="sync-hub-url" v-model="hubUrl" type="text" placeholder="http://192.168.x.x:18080 或 https://engram.xxx.com" spellcheck="false" />
-        </div>
-        <div class="field-row">
-          <label for="sync-hub-token">绑定令牌</label>
-          <SecretField id="sync-hub-token" v-model="hubToken" placeholder="lsync_…" />
-        </div>
-        <div v-if="capabilities.runtime === 'android-local'" class="field-row">
-          <label for="sync-direct-urls">局域网 / IPv6 直连地址（可选，每行一个）</label>
-          <textarea id="sync-direct-urls" v-model="directUrlsText" rows="2" placeholder="http://192.168.x.x:18080" spellcheck="false" />
-        </div>
-        <div class="sync-actions">
-          <button class="btn primary" type="button" :disabled="saving" @click="joinHub">保存并绑定</button>
-        </div>
-      </div>
-    </template>
-
-    <!-- 中枢：群组管理 -->
-    <template v-else-if="status && status.role === 'hub'">
-      <div class="role-banner">
-        <div>
-          <strong>本设备是同步群组的中枢</strong>
-          <span class="faint">成员绑定地址：{{ primaryHubAddress || '暂无可用地址（见下方说明）' }}</span>
-          <span v-if="deviceNameLine" class="faint small">{{ deviceNameLine }}</span>
-        </div>
-        <button class="text-action danger" type="button" @click="leaveRole('none')">退出中枢角色</button>
-      </div>
-
-      <!-- 成员绑定地址：**不能用 location.origin**。桌面版（内嵌服务只监听 127.0.0.1）打开设置页
-           时它永远是 http://127.0.0.1:18180，用户照着填到手机上必然连不上——真机上就是这么
-           报回来的。地址清单由服务端算（/api/sync/hub-addresses）：剔除回环、只留真正可达的
-           地址；一条都给不出时说清原因，并在桌面端给出「允许局域网访问」的一键开关。 -->
-      <div class="member-addresses">
-        <div class="address-head">
-          <strong>成员绑定地址</strong>
-          <span class="faint small">别的设备在「多端同步 → 绑定中枢」里填这里的地址，配上下面生成的绑定令牌</span>
-        </div>
-        <ul v-if="hubAddresses.length" class="address-list">
-          <li v-for="item in hubAddresses" :key="item.url" class="address-row">
-            <span class="address-kind">{{ item.label }}</span>
-            <code class="address-url">{{ item.url }}</code>
-            <button class="btn small" type="button" @click="copy(item.url)">复制</button>
-          </li>
-        </ul>
-        <p v-if="hubAddressNotice" class="address-warn">{{ hubAddressNotice }}</p>
-        <p v-if="hubSkippedNotice" class="faint small">{{ hubSkippedNotice }}</p>
-        <label v-if="lanAccessSupported" class="lan-access-toggle">
-          <input v-model="lanAccess" type="checkbox" :disabled="lanBusy" @change="toggleLanAccess" />
-          <span>
-            <strong>允许局域网访问</strong>
-            <span class="faint small">
-              开启后本地服务监听 0.0.0.0（随即自动重启，窗口会重新加载），局域网里的手机 / 其他电脑才连得上这台中枢；
-              关闭则只有这台电脑能访问（默认）。首次开启时 Windows 可能弹出防火墙询问，选「专用网络」允许。
-            </span>
-          </span>
-        </label>
-      </div>
-
-      <div class="peers-block">
-        <div class="peers-head">
-          <h4>群组成员（{{ peers.length }}）</h4>
-          <button class="btn small" type="button" :disabled="creating" @click="addPeer">添加成员</button>
-        </div>
-        <p class="faint small">
-          为每台成员设备命名并生成绑定令牌；这个名字就是各端看到的「来自 &lt;名字&gt;」（不再用设备主机名）。
-          点成员右侧的「邀请」会给出二维码与邀请链接——手机扫码、其他端粘贴链接即可绑定，不必手抄；
-          也可以照旧把令牌与中枢地址填到对应设备的「多端同步」设置里。点击令牌可展开查看完整值。
-        </p>
-        <ul v-if="peers.length" class="peer-list">
-          <li v-for="p in peers" :key="p.id" class="peer-row">
-            <div class="peer-info">
-              <strong>
-                <span class="dot" :class="p.online ? 'on' : 'off'" />{{ p.name }}
-              </strong>
-              <span class="faint small">
-                {{ p.online ? '在线' : '离线' }}
-                <!-- 上报的设备名与成员名一致时不重复显示；旧客户端报的是主机名，留着方便排查 -->
-                <template v-if="p.node_label && p.node_label !== p.name"> · 设备名 {{ p.node_label }}</template>
-                <template v-if="p.last_seen_at"> · 最近同步 {{ formatTime(p.last_seen_at) }}</template>
-              </span>
-              <span class="token-line faint small">
-                令牌
-                <SecretField mode="text" :value="p.token" copyable class="token-code-host" />
-              </span>
-            </div>
-            <div class="peer-actions">
-              <button class="btn small" type="button" @click="showPeerInvite(p)">邀请</button>
-              <button class="btn small" type="button" @click="regenPeer(p)">重置令牌</button>
-              <button class="text-action danger" type="button" @click="revokePeer(p)">移除</button>
-            </div>
-          </li>
-        </ul>
-        <p v-else class="empty-panel">还没有成员。点「添加成员」为第一台设备生成绑定令牌。</p>
-      </div>
-
-      <div v-if="newPeer" class="new-peer-card">
-        <h4>「{{ newPeer.name }}」绑定信息</h4>
-        <div class="field-row">
-          <label>中枢地址</label>
-          <div class="copy-row">
-            <template v-if="primaryHubAddress">
-              <code>{{ primaryHubAddress }}</code>
-              <button class="btn small" type="button" @click="copy(primaryHubAddress)">复制</button>
-            </template>
-            <span v-else class="faint small">暂无可用地址，见上方「成员绑定地址」的说明</span>
-          </div>
-        </div>
-        <p v-if="hubAddresses.length > 1" class="faint small">
-          这台中枢共 {{ hubAddresses.length }} 条可用地址（见上方），选与这台设备同网络的那条。
-        </p>
-        <div class="field-row">
-          <label>绑定令牌</label>
-          <div class="copy-row">
-            <SecretField mode="text" :value="newPeer.token" copyable class="token-code-host" />
-            <button class="btn small" type="button" @click="copy(newPeer.token)">复制</button>
-          </div>
         </div>
 
-        <!-- 二维码 + 邀请链接：手机扫一下、其他端粘贴一下，省掉手抄地址与 54 位令牌。
-             中枢有多条可达地址时（局域网 + 域名）先选一条，链接与二维码都按它生成。 -->
-        <div v-if="hubAddresses.length > 1" class="field-row invite-address-row">
-          <label for="sync-invite-address">邀请链接用的地址</label>
-          <AppSelect id="sync-invite-address" v-model="inviteAddressUrl" :options="inviteAddressOptions" />
-        </div>
-        <div v-if="inviteLink" class="invite-card">
-          <QrCode :text="inviteLink" :size="260" :alt="`邀请「${newPeer.name}」加入同步群组的二维码`" />
-          <div class="invite-card-body">
-            <strong>让「{{ newPeer.name }}」扫码或粘贴链接</strong>
-            <p class="faint small">
-              手机端：设置 → 多端同步 → 绑定中枢 → 扫码，对准左边这个二维码；
-              其他端：点下面的「复制邀请链接」发到那台设备，在「绑定中枢」里粘贴导入。两种方式二选一。
-            </p>
-            <div class="invite-actions">
-            <button class="btn small primary" type="button" :disabled="inviteLoading" @click="copyInviteLink">
-                <Icon name="link" :size="14" />
-                复制邀请链接
+        <!-- 未配置：二选一（「或」分隔，同一时刻只有一个主按钮） -->
+        <template v-if="status && status.role === 'none'">
+          <div class="role-choices">
+            <div v-if="canBeHub" class="role-option">
+              <strong>作为中枢</strong>
+              <p>保存群组权威数据、生成绑定令牌；建议用常开的 NAS Docker 版。</p>
+              <button class="btn" :class="{ primary: !pickJoin }" type="button" :disabled="saving" @click="becomeHub">
+                作为中枢启用
               </button>
             </div>
-            <p class="faint small">
-              链接里含这枚绑定令牌，只发给这一台设备；绑定成功后可在成员列表里重置令牌。
-            </p>
+            <span v-if="canBeHub" class="role-or" aria-hidden="true">或</span>
+            <div class="role-option">
+              <strong>绑定中枢</strong>
+              <p>用邀请链接或地址 + 令牌加入已有群组；本机照常离线工作。</p>
+              <button class="btn" type="button" @click="pickJoin = true">绑定中枢</button>
+            </div>
           </div>
-        </div>
-        <p v-else-if="inviteLoading" class="faint small">正在生成配对链接与二维码…</p>
-        <p v-else-if="inviteError" class="invite-notice bad">{{ inviteError }}</p>
-        <p v-else class="faint small">
-          这条邀请暂时只能手抄：没有可用的成员绑定地址（见上方说明）——先在部署侧声明对外地址，
-          或打开「允许局域网访问」后回到这里，二维码会自动出现。
-        </p>
-        <button class="btn small" type="button" @click="newPeer = null">我已保存，关闭</button>
-      </div>
 
-      <!-- DDNS 2026-09-28 起独立成组（方案 A）：它只在担任中枢时存在，卡片见本文件末尾的第二个根节点 -->
-    </template>
+          <template v-if="pickJoin">
+            <div class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>邀请链接</strong>
+                <span>中枢「添加成员」里复制后粘贴，自动填好地址与令牌。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <input
+                  id="sync-invite"
+                  v-model="inviteText"
+                  type="text"
+                  placeholder="engram://join?hub=…&token=…"
+                  spellcheck="false"
+                  aria-label="邀请链接"
+                  @input="applyInviteText()"
+                />
+              </div>
+            </div>
+            <div class="setting-actions sync-form-actions">
+              <button class="btn ghost" type="button" @click="pasteInvite">粘贴</button>
+              <button class="btn" type="button" :disabled="saving || !parseInviteLink(inviteText)" @click="pairInvite">
+                {{ saving ? '配对中…' : '一键配对' }}
+              </button>
+              <button class="btn ghost" type="button" :disabled="saving" @click="scanning = true">
+                <Icon name="scan" :size="14" />
+                扫码
+              </button>
+            </div>
+            <p v-if="!scanSupported" class="setting-note">{{ cameraScanSupport().reason }}</p>
+            <p v-if="inviteNotice" class="setting-note" :class="inviteNoticeTone === 'bad' ? 'tone-danger' : 'tone-ok'">{{ inviteNotice }}</p>
+            <p v-else class="setting-note">扫中枢屏幕上的二维码，或把邀请链接粘贴进来。</p>
 
-    <!-- 成员：绑定与状态 -->
-    <template v-else-if="status">
-      <div class="role-banner">
-        <div>
-          <strong>已绑定同步中枢</strong>
-          <span class="faint">{{ status.hubUrl || '—' }}</span>
-          <span v-if="deviceNameLine" class="faint small">{{ deviceNameLine }}</span>
-        </div>
-        <button class="text-action danger" type="button" @click="leaveRole('none')">解除绑定</button>
-      </div>
-      <div class="sync-config">
-        <div class="field-row">
-          <label for="sync-hub-url">中枢地址</label>
-          <input id="sync-hub-url" v-model="hubUrl" type="text" spellcheck="false" />
-        </div>
-        <div class="field-row">
-          <label for="sync-hub-token">绑定令牌</label>
-          <SecretField id="sync-hub-token" v-model="hubToken" :stored="status.hubToken" />
-        </div>
-        <div v-if="capabilities.runtime === 'android-local'" class="field-row">
-          <label for="sync-direct-urls-member">局域网 / IPv6 直连地址（可选，每行一个）</label>
-          <textarea id="sync-direct-urls-member" v-model="directUrlsText" rows="2" placeholder="http://192.168.x.x:18080" spellcheck="false" />
-        </div>
-        <div class="sync-actions">
-          <button class="btn" type="button" :disabled="saving" @click="saveBinding">保存修改</button>
-          <button class="btn" type="button" :disabled="reconciling" @click="reconcileNow">{{ reconciling ? '对账中…' : '立即全量对账' }}</button>
-        </div>
-      </div>
+            <div class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>中枢地址</strong>
+                <span>已自动填好；换中枢需先解除绑定。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <input
+                  id="sync-hub-url"
+                  v-model="hubUrl"
+                  type="text"
+                  placeholder="http://192.168.x.x:18080"
+                  spellcheck="false"
+                  aria-label="中枢地址"
+                />
+              </div>
+            </div>
+            <div class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>绑定令牌</strong>
+                <span>中枢「添加成员」时生成的那串。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <SecretField id="sync-hub-token" v-model="hubToken" placeholder="lsync_…" aria-label="绑定令牌" />
+              </div>
+            </div>
+            <div v-if="capabilities.runtime === 'android-local'" class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>直连地址</strong>
+                <span>局域网 / IPv6 地址，每行一个，可留空。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <textarea
+                  id="sync-direct-urls"
+                  v-model="directUrlsText"
+                  rows="2"
+                  placeholder="http://192.168.x.x:18080"
+                  spellcheck="false"
+                  aria-label="直连地址"
+                />
+              </div>
+            </div>
+            <div class="setting-actions sync-form-actions">
+              <button class="btn primary" type="button" :disabled="saving" @click="joinHub">保存并绑定</button>
+            </div>
+          </template>
+        </template>
 
-      <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接），内容见本文件末尾的第二个根节点。
-           它只在本机作为成员连接中枢域名时才有内容，因此除了那里的 v-if，
-           还把同一条件登记进导航（useSettingsAnchorVisible），避免中枢设备留下一个点不动的死锚点。 -->
-    </template>
+        <!-- 中枢：群组管理 -->
+        <template v-else-if="status && status.role === 'hub'">
+          <p v-if="deviceNameLine" class="setting-note sync-device-name">{{ deviceNameLine }}</p>
 
-    <!-- 运行状态的位置见卡片顶部（中枢与成员共用同一行摘要） -->
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>成员绑定地址</strong>
+              <span>别的设备在「绑定中枢」里填这里任一地址。</span>
+            </div>
+          </div>
+          <ul v-if="hubAddresses.length" class="address-list">
+            <li v-for="item in hubAddresses" :key="item.url" class="address-row">
+              <span class="address-kind">{{ item.label }}</span>
+              <code class="address-url">{{ item.url }}</code>
+              <button class="btn ghost" type="button" @click="copy(item.url)">复制</button>
+            </li>
+          </ul>
+          <p v-if="hubAddressNotice" class="setting-note tone-warn">{{ hubAddressNotice }}</p>
+          <p v-if="hubSkippedNotice" class="setting-note">{{ hubSkippedNotice }}</p>
 
-    <div v-if="status && status.role !== 'none'" class="sync-role-note">
-      <p>同步范围：页面、附件图片、原始资料文件、证据账本、内置 Agent 会话与任务看板、客户洞察记录。
-        内置 Agent 的模型配置与相关 API Key 随「设置」分类同步（明文随群组下发，只给群组内的设备；删除不同步，手机不持有模型 Key）；
-        各端登录密码、绑定令牌等仍各端独立。
-        两端同时修改同一页面时按字符级智能合并；无法自动合并的冲突以修改时间最新的一方为准：
-        普通页面中被取代的旧版本以「原名-时间」重命名保留在原目录（可删除），AI 工作区直接以最新为准覆盖，不产生新文件。</p>
-      <p>会话只在一轮回复结束后同步（正在对话中的内容留在本机），消息按条合并、各端看到的历史一致；
-        任务看板全端只有一份，任意端刷新后各端都换成最新那一版（标注「上次更新时间」与来源设备）。
-        会话列表里本机产生的会话标「本机」，别端来的标「来自 &lt;成员名&gt;」——名字取这里给设备起的成员名，不是设备主机名。</p>
-      <p v-if="capabilities.runtime === 'android-local'">安卓端退到后台后，还会继续完成最多 5 分钟的同步：把在途请求和待推队列跑完再停，完成后自动停止；回到前台会立即再对一次账。</p>
-    </div>
+          <div v-if="lanAccessSupported" class="setting-row">
+            <div class="setting-copy">
+              <strong>允许局域网访问</strong>
+              <span>开启后监听 0.0.0.0；Windows 可能问防火墙，选「专用网络」。</span>
+            </div>
+            <label class="switch-control">
+              <input v-model="lanAccess" type="checkbox" :disabled="lanBusy" aria-label="允许局域网访问" @change="toggleLanAccess" />
+              <span aria-hidden="true"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>群组成员</strong>
+              <span>给每台设备起名并生成令牌；「邀请」出二维码与链接。</span>
+            </div>
+            <div class="setting-actions">
+              <button class="btn primary" type="button" :disabled="creating" @click="addPeer">添加成员</button>
+            </div>
+          </div>
+          <ul v-if="peers.length" class="peer-list">
+            <li v-for="p in peers" :key="p.id" class="peer-row">
+              <div class="peer-info">
+                <strong>
+                  <span class="dot" :class="p.online ? 'on' : 'off'" />{{ p.name }}
+                </strong>
+                <span class="peer-meta">
+                  {{ p.online ? '在线' : '离线' }}
+                  <template v-if="p.node_label && p.node_label !== p.name"> · 设备名 {{ p.node_label }}</template>
+                  <template v-if="p.last_seen_at"> · 最近同步 {{ formatTime(p.last_seen_at) }}</template>
+                </span>
+                <span class="peer-token">
+                  令牌
+                  <SecretField mode="text" :value="p.token" copyable class="token-code-host" />
+                </span>
+              </div>
+              <div class="peer-actions">
+                <button class="btn ghost" type="button" @click="showPeerInvite(p)">邀请</button>
+                <button class="btn ghost" type="button" @click="regenPeer(p)">重置令牌</button>
+                <button class="text-action danger" type="button" @click="revokePeer(p)">移除</button>
+              </div>
+            </li>
+          </ul>
+          <p v-else class="setting-note">还没有成员；点「添加成员」生成第一台设备的绑定令牌。</p>
+
+          <div v-if="newPeer" class="new-peer-block">
+            <div class="setting-row">
+              <div class="setting-copy">
+                <strong>「{{ newPeer.name }}」绑定信息</strong>
+                <span>把地址与令牌填到那台设备，或让它扫码。</span>
+              </div>
+            </div>
+            <div class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>中枢地址</strong>
+                <span v-if="hubAddresses.length > 1">共 {{ hubAddresses.length }} 条可用地址，选同网络那条。</span>
+                <span v-else>成员设备要填的中枢地址。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <div class="copy-row">
+                  <template v-if="primaryHubAddress">
+                    <code>{{ primaryHubAddress }}</code>
+                    <button class="btn ghost" type="button" @click="copy(primaryHubAddress)">复制</button>
+                  </template>
+                  <span v-else class="setting-value">暂无可用地址</span>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>绑定令牌</strong>
+                <span>点令牌可展开完整值。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <div class="copy-row">
+                  <SecretField mode="text" :value="newPeer.token" copyable class="token-code-host" />
+                  <button class="btn ghost" type="button" @click="copy(newPeer.token)">复制</button>
+                </div>
+              </div>
+            </div>
+            <div v-if="hubAddresses.length > 1" class="setting-row setting-row-form">
+              <div class="setting-copy">
+                <strong>邀请链接地址</strong>
+                <span>链接与二维码按这条地址生成。</span>
+              </div>
+              <div class="setting-control sync-field">
+                <AppSelect
+                  id="sync-invite-address"
+                  v-model="inviteAddressUrl"
+                  aria-label="邀请链接用的地址"
+                  :options="inviteAddressOptions"
+                />
+              </div>
+            </div>
+
+            <div v-if="inviteLink" class="invite-block">
+              <QrCode :text="inviteLink" :size="260" :alt="'邀请「' + newPeer.name + '」加入同步群组的二维码'" />
+              <div class="invite-body">
+                <strong>让「{{ newPeer.name }}」扫码或粘贴链接</strong>
+                <p class="setting-note">手机端扫码，其他端把链接粘进「绑定中枢」。</p>
+                <div class="setting-actions invite-actions">
+                  <button class="btn" type="button" :disabled="inviteLoading" @click="copyInviteLink">
+                    <Icon name="link" :size="14" />
+                    复制邀请链接
+                  </button>
+                </div>
+                <p class="setting-note">链接里含这枚令牌，只发给这一台设备。</p>
+              </div>
+            </div>
+            <p v-else-if="inviteLoading" class="setting-note">正在生成配对链接与二维码…</p>
+            <p v-else-if="inviteError" class="setting-note tone-danger">{{ inviteError }}</p>
+            <p v-else class="setting-note">暂时没有可用的成员绑定地址：先在部署侧声明对外地址，或打开「允许局域网访问」。</p>
+
+            <div class="setting-actions new-peer-footer">
+              <button class="btn" type="button" @click="newPeer = null">我已保存，关闭</button>
+            </div>
+          </div>
+
+          <div class="setting-actions sync-footer">
+            <button class="btn danger" type="button" @click="leaveRole('none')">退出中枢角色</button>
+          </div>
+        </template>
+
+        <!-- 成员：绑定与状态 -->
+        <template v-else-if="status">
+          <p v-if="deviceNameLine" class="setting-note sync-device-name">{{ deviceNameLine }}</p>
+          <div class="setting-row setting-row-form">
+            <div class="setting-copy">
+              <strong>中枢地址</strong>
+              <span>换中枢需先解除绑定再重新绑定。</span>
+            </div>
+            <div class="setting-control sync-field">
+              <input id="sync-hub-url" v-model="hubUrl" type="text" spellcheck="false" aria-label="中枢地址" />
+            </div>
+          </div>
+          <div class="setting-row setting-row-form">
+            <div class="setting-copy">
+              <strong>绑定令牌</strong>
+              <span>不改就留空，保留原令牌。</span>
+            </div>
+            <div class="setting-control sync-field">
+              <SecretField id="sync-hub-token" v-model="hubToken" :stored="status.hubToken" aria-label="绑定令牌" />
+            </div>
+          </div>
+          <div v-if="capabilities.runtime === 'android-local'" class="setting-row setting-row-form">
+            <div class="setting-copy">
+              <strong>直连地址</strong>
+              <span>局域网 / IPv6 地址，每行一个，可留空。</span>
+            </div>
+            <div class="setting-control sync-field">
+              <textarea
+                id="sync-direct-urls-member"
+                v-model="directUrlsText"
+                rows="2"
+                placeholder="http://192.168.x.x:18080"
+                spellcheck="false"
+                aria-label="直连地址"
+              />
+            </div>
+          </div>
+          <div class="setting-actions sync-form-actions">
+            <button class="btn" type="button" :disabled="reconciling" @click="reconcileNow">{{ reconciling ? '对账中…' : '立即全量对账' }}</button>
+            <button class="btn primary" type="button" :disabled="saving" @click="saveBinding">保存修改</button>
+          </div>
+          <div class="setting-actions sync-footer">
+            <button class="btn danger" type="button" @click="leaveRole('none')">解除绑定</button>
+          </div>
+        </template>
+
+        <!-- 同步范围：必要语义压到每段 ≤2 行 -->
+        <div v-if="status && status.role !== 'none'" class="sync-role-note">
+          <p class="setting-note">同步范围：页面、附件图片、原始资料、证据账本、Agent 会话与任务看板、客户洞察记录；「设置」分类含模型配置与 API Key（明文随群组下发）。</p>
+          <p class="setting-note">各端登录密码、绑定令牌等仍各端独立；同一页面两端同时改按字符级合并，无法合并时以最新修改为准。</p>
+          <p v-if="capabilities.runtime === 'android-local'" class="setting-note">安卓端退到后台后最多再同步 5 分钟；回到前台立即对账。</p>
+        </div>
 
       </div>
     </div>
   </section>
 
-  <SettingsGroup class="settings-native" anchor="sync-content" title="同步内容" hint="每类内容独立控制；主页卡片和设置默认关闭，其余默认开启">
-    <p class="faint small">开关仅保存在本机，关闭后不上传也不接收该类内容，已同步的数据会保留。主页卡片和设置需在中枢及成员端分别开启。</p>
-    <div class="sync-category-list">
-      <label v-for="item in syncCategoryItems" :key="item.key" class="sync-category-row">
-        <input type="checkbox" :checked="categoryEnabled(item.key)" :disabled="saving || !status?.categories" @change="saveCategory(item.key, $event)" />
-        <span><strong>{{ item.label }}</strong><span class="faint small">{{ item.hint }}</span></span>
-        <span class="faint small">{{ categoryEnabled(item.key) ? '已开启' : '已关闭' }}</span>
-      </label>
-    </div>
+  <SettingsGroup
+    class="settings-native"
+    anchor="sync-content"
+    title="同步内容"
+    hint="每类内容单独开关；主页卡片与设置默认关闭"
+    flush
+  >
+    <p class="setting-note sync-content-note">关闭后本机不再上传或接收该类内容，已同步的数据会保留。</p>
+    <label
+      v-for="item in syncCategoryItems"
+      :key="item.key"
+      class="setting-row setting-row-toggle sync-category-row"
+    >
+      <span class="setting-check">
+        <input
+          type="checkbox"
+          :checked="categoryEnabled(item.key)"
+          :disabled="saving || !status?.categories"
+          :aria-label="item.label"
+          @change="saveCategory(item.key, $event)"
+        />
+      </span>
+      <div class="setting-copy">
+        <strong>{{ item.label }}</strong>
+        <span>{{ item.hint }}</span>
+      </div>
+      <span class="setting-value" :class="categoryEnabled(item.key) ? 'tone-ok' : 'is-muted'">
+        {{ categoryEnabled(item.key) ? '已开启' : '已关闭' }}
+      </span>
+    </label>
   </SettingsGroup>
 
-  <!-- 局域网优先：2026-09-28 起是「多端同步」下自己的分组（与「双栈连接」「DDNS 直连域名」同级）。
-       它和双栈连接回答的是同一个问题的两半——「先走哪条路」（局域网 → IPv6 → IPv4），
-       因此同样只在本机作为成员时才有内容，条件与 showDualStack 一致并登记进导航。
-       分组顺序 = 页面顺序：它在双栈连接之前登记，见 settingsDomains.test.ts 的顺序守卫。 -->
+  <!-- 局域网优先：与「双栈连接」回答同一个问题的两半（先走哪条路），只在成员端有内容。 -->
   <SettingsGroup
     v-if="showLanGroup"
     class="settings-native"
     anchor="sync-lan"
     title="局域网优先"
-    hint="中枢与本机同网段时优先直连内网地址：延迟最低，不占公网、不绕隧道"
+    hint="同网段优先直连中枢的内网地址"
     :badge="lanBadge"
     :badge-tone="lanBadgeTone"
   >
-    <div class="lan-config">
-      <label class="lan-toggle">
-        <input v-model="preferLan" type="checkbox" :disabled="saving" @change="savePreferLan" />
-        <span>
-          <strong>优先局域网</strong>
-          <span class="faint small">
-            同网段时先试中枢通告的内网地址，探不到再按中枢地址本身的顺序连（跨网段、容器网络、VPN、
-            手机蜂窝这些场景探不到内网地址，此时行为与不开这个开关完全一样）。
-          </span>
-        </span>
-      </label>
-
-      <!-- 实时状态（会变）走状态条：底框 + 状态点，与上面的灰色说明文字区分开 -->
-      <p class="lan-state state-strip" :class="lanChannelClass">
-        <span class="state-dot" aria-hidden="true" />
-        <span>{{ lanStateText }}</span>
-      </p>
-
-      <div class="lan-probes">
-        <p class="lan-probes-title">候选地址探测记录</p>
-        <ul v-if="lanCandidates.length" class="lan-probe-list">
-          <li v-for="(item, index) in lanCandidates" :key="`${item.kind}-${item.url}-${index}`">
-            <span class="lan-probe-kind">{{ item.label }}</span>
-            <code class="lan-probe-url">{{ item.url }}</code>
-            <span v-if="item.ok" class="lan-probe-ok">
-              ✓ {{ typeof item.latencyMs === 'number' ? `${item.latencyMs}ms` : '可达' }}
-            </span>
-            <span v-else class="lan-probe-bad">✗ {{ item.error || '不可达' }}</span>
-          </li>
-        </ul>
-        <p v-else class="faint small">还没有探测记录：下一轮连接会先试局域网，再按中枢地址逐级降级。</p>
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>优先局域网</strong>
+        <span>同网段先试内网地址，探不到按中枢地址顺序连。</span>
       </div>
-
-      <p class="lan-note faint small">
-        优先级固定为 局域网 → IPv6 → IPv4，三个都不通才算断开（断开时本机照常读写，改动排队等恢复）。
-        命中后地址会被缓存，网络切换或定期重探一轮，恢复了自动升回上一级。
-      </p>
+      <label class="switch-control">
+        <input v-model="preferLan" type="checkbox" :disabled="saving" aria-label="优先局域网" @change="savePreferLan" />
+        <span aria-hidden="true"></span>
+      </label>
     </div>
+
+    <!-- 实时状态（会变）走状态条：底框 + 状态点，与灰色说明文字区分开 -->
+    <p class="lan-state state-strip" :class="lanChannelClass">
+      <span class="state-dot" aria-hidden="true" />
+      <span>{{ lanStateText }}</span>
+    </p>
+
+    <div class="lan-probes">
+      <p class="lan-probes-title">候选地址探测记录</p>
+      <ul v-if="lanCandidates.length" class="lan-probe-list">
+        <li v-for="(item, index) in lanCandidates" :key="item.kind + '-' + item.url + '-' + index">
+          <span class="lan-probe-kind">{{ item.label }}</span>
+          <code class="lan-probe-url">{{ item.url }}</code>
+          <span v-if="item.ok" class="lan-probe-ok">
+            ✓ {{ typeof item.latencyMs === 'number' ? item.latencyMs + 'ms' : '可达' }}
+          </span>
+          <span v-else class="lan-probe-bad">✗ {{ item.error || '不可达' }}</span>
+        </li>
+      </ul>
+      <p v-else class="setting-note">还没有探测记录：下一轮连接会先试局域网，再逐级降级。</p>
+    </div>
+
+    <p class="setting-note">优先级固定为 局域网 → IPv6 → IPv4；断开时照常读写，恢复后自动补齐。</p>
   </SettingsGroup>
 
-  <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接，与「同步群组」「DDNS 直连域名」同级）。
-       在此之前它是成员端绑定表单下面的一块平铺内容：与上面的表单只剩 4px（相邻 margin 折叠），
-       既贴得近、又不能收起；提成独立分组后既有自己的目录项与色带折叠，间距也和别的分组一致。
-       只在本机作为成员连中枢域名时才有内容：条件同样登记进导航（见 setup 里的
-       useSettingsAnchorVisible），非成员设备不会留下点不动的死锚点。
-       分组顺序 = 页面顺序：它在 DDNS 分组之前登记，见 settingsDomains.test.ts 的顺序守卫。 -->
+  <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接），只在本机作为成员连接中枢域名时才有内容。 -->
   <SettingsGroup
     v-if="showDualStack"
     class="settings-native"
     anchor="sync-dualstack"
     title="双栈连接（IPv6 优先）"
-    hint="中枢域名同时有 IPv4/IPv6 时先走 IPv6，连不上自动改用 IPv4；协议族只在两次传输之间切换"
+    hint="域名连接优先 IPv6，不通自动改用 IPv4"
     :badge="dualStackBadge"
     :badge-tone="dualStackBadgeTone"
   >
     <div class="dualstack-config">
-      <label class="dualstack-toggle">
-        <input v-model="dualStack.enabled" type="checkbox" @change="saveDualStack(true)" />
-        <span>
+      <div class="setting-row">
+        <div class="setting-copy">
           <strong>启用双栈策略</strong>
-          <span class="faint small">
-            关掉后域名连接交回系统默认（IPv6/IPv4 由操作系统排序）。恢复即自动切回；
-            切换只发生在两次传输之间，不会打断正在上传／下载的文件。
-          </span>
-        </span>
-      </label>
+          <span>关闭后由系统决定 IPv6 / IPv4；切换不打断传输。</span>
+        </div>
+        <label class="switch-control">
+          <input v-model="dualStack.enabled" type="checkbox" aria-label="启用双栈策略" @change="saveDualStack(true)" />
+          <span aria-hidden="true"></span>
+        </label>
+      </div>
       <!-- 实时状态（会变）走状态条：底框 + 状态点，与上面的灰色说明文字区分开（2026-09-27） -->
       <p v-if="dualStackStateText" class="dualstack-state state-strip" :class="dualStackTone">
         <span class="state-dot" aria-hidden="true" />
         <span>{{ dualStackStateText }}</span>
       </p>
       <div v-show="dualStack.enabled" class="dualstack-fields">
-        <div class="field-row">
-          <label for="ds-failures">判定 IPv6 不通：连续失败</label>
-          <div class="ds-inputs">
-            <input id="ds-failures" v-model.number="dualStack.failureThreshold" type="number" min="1" max="20" />
-            <span class="faint small">次，或累计卡住</span>
-            <input id="ds-window" v-model.number="dualStack.windowSeconds" type="number" min="1" max="120" />
-            <span class="faint small">秒（任一满足即改用 IPv4）</span>
+        <div class="setting-row">
+          <div class="setting-copy">
+            <strong>判定 IPv6 不通</strong>
+            <span>连续失败次数或累计卡住秒数，任一满足即改用 IPv4。</span>
+          </div>
+          <div class="setting-actions ds-inputs">
+            <input id="ds-failures" v-model.number="dualStack.failureThreshold" type="number" min="1" max="20" aria-label="连续失败次数" />
+            <span class="ds-unit">次</span>
+            <input id="ds-window" v-model.number="dualStack.windowSeconds" type="number" min="1" max="120" aria-label="累计卡住秒数" />
+            <span class="ds-unit">秒</span>
           </div>
         </div>
-        <div class="field-row">
-          <label for="ds-probe">回探节奏：IPv4 每成功</label>
-          <div class="ds-inputs">
-            <input id="ds-probe" v-model.number="dualStack.probeAfterSuccesses" type="number" min="1" max="1000" />
-            <span class="faint small">次回探一次 IPv6；单次连接超时</span>
-            <input id="ds-timeout" v-model.number="dualStack.connectTimeoutMs" type="number" min="500" max="30000" step="500" />
-            <span class="faint small">毫秒</span>
+        <div class="setting-row">
+          <div class="setting-copy">
+            <strong>回探节奏</strong>
+            <span>IPv4 每成功 N 次回探一次 IPv6；单次连接超时 M 毫秒。</span>
+          </div>
+          <div class="setting-actions ds-inputs">
+            <input id="ds-probe" v-model.number="dualStack.probeAfterSuccesses" type="number" min="1" max="1000" aria-label="回探间隔次数" />
+            <span class="ds-unit">次</span>
+            <input id="ds-timeout" v-model.number="dualStack.connectTimeoutMs" type="number" min="500" max="30000" step="500" aria-label="单次连接超时毫秒" />
+            <span class="ds-unit">毫秒</span>
           </div>
         </div>
-        <div class="sync-actions">
+        <div class="setting-actions dualstack-actions">
           <button class="btn" type="button" :disabled="saving" @click="saveDualStack()">保存双栈设置</button>
         </div>
       </div>
     </div>
   </SettingsGroup>
 
-  <!-- DDNS 直连域名：2026-09-28 起独立成组（方案 A）——它只在「这台设备担任中枢」时才有内容，
-       因此除了这里的 v-if，还把同一条件登记进导航（useSettingsAnchorVisible），
-       避免非中枢设备留下一个点不动的死锚点。 -->
+  <!-- DDNS 直连域名：只在「这台设备担任中枢」时才有内容，同一条件登记进导航（useSettingsAnchorVisible）。 -->
   <SettingsGroup
     v-if="showDdns"
     class="settings-native"
     anchor="sync-ddns"
     title="DDNS 直连域名"
-    hint="只有中枢可开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名"
+    hint="只有中枢可开：用域名指向本机公网地址"
   >
     <DdnsSection :active="active" />
   </SettingsGroup>
@@ -545,15 +600,15 @@ const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 const canBeHub = computed(() => capabilities.value.syncRoles.includes('hub'));
 const status = ref<SyncStatus | null>(null);
 const syncCategoryItems = [
-  { key: 'homeCards', label: '主页卡片多端同步', hint: '卡片种类、顺序、尺寸和布局；默认关闭' },
-  { key: 'settings', label: '设置多端同步', hint: '主题、编辑模式、搜索同义词、专名勘误、AI 工作区显示偏好、内置 Agent 模型配置与相关 API Key（明文随群组下发）；默认关闭。登录凭据、绑定和本机配置不参与' },
-  { key: 'knowledge', label: '知识库多端同步', hint: '知识页面、普通附件和收集箱' },
-  { key: 'materials', label: '原始资料多端同步', hint: '文档、对话、灵感碎片及提炼状态' },
-  { key: 'customerResearch', label: '客户洞察多端同步', hint: '调研记录、报告正文与流程模板；默认开启' },
-  { key: 'assets', label: '图片资产多端同步', hint: '页面引用的图片文件' },
-  { key: 'aiWorkspace', label: 'AI 工作区多端同步', hint: '自动生成的日志、索引和关系库' },
-  { key: 'sessions', label: '会话多端同步', hint: '已完成的 Agent 会话（手机端直接访问中枢会话）' },
-  { key: 'board', label: '任务看板多端同步', hint: '最新提炼的任务看板（手机端直接访问中枢看板）' },
+  { key: 'homeCards', label: '主页卡片', hint: '卡片种类、顺序和尺寸；默认关闭。' },
+  { key: 'settings', label: '设置', hint: '主题、编辑模式、同义词、AI 工作区偏好，含内置 Agent 模型配置与相关 API Key（明文随群组下发）；默认关闭。' },
+  { key: 'knowledge', label: '知识库内容', hint: '知识页面、普通附件和收集箱。' },
+  { key: 'materials', label: '原始资料', hint: '文档、对话与灵感碎片。' },
+  { key: 'customerResearch', label: '客户洞察', hint: '调研记录、报告正文与流程模板；默认开启。' },
+  { key: 'assets', label: '图片资产', hint: '页面引用的图片文件。' },
+  { key: 'aiWorkspace', label: 'AI 工作区', hint: '自动生成的日志、索引和关系库。' },
+  { key: 'sessions', label: '会话', hint: '已完成的 Agent 会话（手机端直接访问中枢会话）。' },
+  { key: 'board', label: '任务看板', hint: '最新提炼的任务看板（手机端直接访问中枢看板）。' },
 ];
 function categoryEnabled(key: string): boolean {
   return status.value?.categories?.[key] ?? !['homeCards', 'settings'].includes(key);
@@ -743,8 +798,8 @@ const lanStateText = computed(() => {
 // 分组卡片色带上的角色徽标（与导航徽标同源）
 const roleBadge = computed(() => {
   const role = status.value?.role;
-  if (role === 'hub') return '中枢运行中';
-  if (role === 'member') return '已绑定中枢';
+  if (role === 'hub') return '中枢';
+  if (role === 'member') return '已绑定';
   return '未配置';
 });
 const roleBadgeTone = computed<'ok' | 'accent' | 'warn'>(() => {
@@ -1276,319 +1331,237 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.sync-category-list { display: grid; gap: 8px; }
-.sync-category-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.sync-category-row > span:first-of-type { flex: 1; min-width: 0; display: grid; gap: 4px; }
-.sync-category-row > input { flex-shrink: 0; accent-color: var(--success); }
-.sync-category-row > span:last-child { white-space: nowrap; color: var(--text-faint); }
-.sync-category-row > input:checked ~ span:last-child { color: var(--success); }
-.role-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
-  gap: 14px;
-  margin: 22px 4px 16px;
-}
-.role-card {
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
-  border-radius: 8px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.role-card h4 { margin: 0; }
-.role-card p { margin: 0; font-size: 13px; line-height: 1.6; opacity: 0.85; flex: 1; }
-
-.role-banner {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin: 22px 4px 16px;
-  flex-wrap: wrap;
-}
-.role-banner div { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
-
-.sync-role-note {
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 12px 14px;
-  font-size: 13px;
-  line-height: 1.7;
-  margin: 0 4px 16px;
-}
-.sync-role-note p { margin: 0; }
-
-.peers-block { margin: 0 4px 16px; }
-.peers-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.peers-head h4 { margin: 0; }
-.peer-list {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.peer-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 10px 12px;
-}
-.peer-info { display: flex; flex-direction: column; gap: 2px; }
-.peer-info strong { display: flex; align-items: center; gap: 8px; }
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.dot.on { background: var(--success, #2e9e5b); }
-.dot.off { background: var(--border, rgba(127, 127, 127, 0.4)); }
-.peer-actions { display: flex; align-items: center; gap: 10px; }
-
-/* 成员绑定地址：一条地址一行（标签 + 地址 + 复制），没有地址时给一句可执行的说明 */
-.member-addresses {
-  margin: 0 4px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.address-head { display: flex; flex-direction: column; gap: 2px; }
-.address-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.address-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 8px 12px;
-  flex-wrap: wrap;
-}
-.address-kind {
-  font-size: 12px;
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-.address-url {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.address-warn {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--warning-text, #b8860b);
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 10px 12px;
-}
-.lan-access-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 1.7;
-}
-.lan-access-toggle > span { display: flex; flex-direction: column; gap: 2px; }
-.lan-access-toggle input { margin-top: 3px; }
-
-.token-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.token-line .token-code-host {
-  min-width: 0;
-}
-.copy-row .token-code-host {
-  flex: 1;
-  min-width: 0;
-}
-
-.new-peer-card {
-  border: 1px solid var(--warning, #d8a012);
-  border-radius: 8px;
-  padding: 14px;
-  margin: 0 4px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.new-peer-card h4 { margin: 0; font-size: 14px; }
-
-/* ---- 邀请：二维码 + 复制链接（中枢）/ 粘贴 + 扫码（成员） ---- */
-/* 二维码与说明左右排：窄屏（手机看中枢设置页）自动换行，二维码不会被压小 */
-.invite-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  flex-wrap: wrap;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 12px;
-}
-.invite-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
-  min-width: min(240px, 100%);
-}
-.invite-card-body strong { font-size: 13px; }
-.invite-card-body p { margin: 0; }
-.invite-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-.invite-address-row { max-width: 520px; }
-
-.invite-import-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.invite-import-row input { flex: 1; min-width: min(220px, 100%); }
-.invite-import-row .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.invite-notice {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.7;
-  word-break: break-all;
-}
-.invite-notice.ok { color: var(--success, #2e9e5b); }
-.invite-notice.bad { color: var(--danger, #d64545); }
-.copy-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.copy-row code {
-  flex: 1;
-  word-break: break-all;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-}
-
-.sync-config {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 0 4px 4px;
-}
-.field-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.field-row label { font-size: 13px; font-weight: 600; }
-.field-row input,
-.field-row textarea,
-.field-row :deep(input) {
-  padding: 8px 10px;
-  font-size: 13px;
-}
-.sync-actions { display: flex; gap: 10px; }
-
-/* 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里（设置页不再被日志拉长）。
-   实时状态用全局 .state-strip（底框 + 状态点），这里只留摘要自己的排版 */
+/* ---------- 同步群组卡：运行摘要（实时状态走全局 .state-strip） ---------- */
 .sync-summary {
-  margin: 8px 4px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  margin: 6px 0 0;
 }
 .summary-line {
   flex-wrap: wrap;
   font-size: 13px;
 }
-.summary-line strong.ok { color: var(--success, #2e9e5b); }
-.summary-line strong.bad { color: var(--danger, #d64545); }
-.sync-summary .sync-actions { align-items: center; }
+.summary-line strong.ok { color: var(--success); }
+.summary-line strong.bad { color: var(--danger); }
+.sync-summary-actions {
+  display: flex;
+  justify-content: flex-end;
+}
 .sync-summary .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 .sync-error {
-  color: var(--danger, #d64545);
-  font-size: 12px;
   margin: 0;
-  word-break: break-all;
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
-.faint { opacity: 0.65; }
-.small { font-size: 12px; }
-.empty-panel { font-size: 13px; opacity: 0.7; }
-
-/* 双栈连接：2026-09-29 起是独立分组（多端同步 → 双栈连接），卡片外框、色带、折叠箭头
-   与间距都由 SettingsGroup / settings.css 统一给，这里只排卡内内容。
-   在此之前它是成员端绑定表单下面的一块平铺内容：与表单只剩 4px（相邻 margin 折叠）、
-   又不能收起——用户报「和上面的贴得太近，而且不能收缩」。 */
-.dualstack-config {
+/* ---------- 未配置：中枢 / 绑定二选一（不再用两张内层描边卡） ---------- */
+.role-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 20px;
+  margin: 16px 0 6px;
+}
+.role-option {
+  flex: 1 1 240px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
-.dualstack-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  cursor: pointer;
+.role-option strong {
+  font-size: 13.5px;
+  font-weight: 600;
 }
-.dualstack-toggle input { margin-top: 3px; }
-.dualstack-toggle > span { display: flex; flex-direction: column; gap: 6px; }
-.dualstack-state { margin: 0; word-break: break-all; }
-.dualstack-fields { display: flex; flex-direction: column; gap: 12px; }
-.ds-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ds-inputs input { width: 92px; }
+.role-option p {
+  flex: 1;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.role-option .btn { align-self: flex-start; }
+.role-or {
+  flex: none;
+  align-self: center;
+  color: var(--text-faint);
+  font-size: 12px;
+}
 
-/* 局域网优先：与「双栈连接」同一套卡内排版（卡片外框与色带由 SettingsGroup / settings.css 给） */
-.lan-config {
+/* ---------- 表单行：控件宽度按字段类型给，移动端回落整行 ---------- */
+.setting-control.sync-field {
+  width: min(340px, 100%);
+}
+.sync-field input,
+.sync-field textarea,
+.sync-field :deep(input),
+.sync-field :deep(textarea) {
+  width: 100%;
+}
+.sync-form-actions {
+  margin-top: 10px;
+}
+.sync-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.setting-note.sync-device-name {
+  margin: 4px 0 0;
+}
+
+/* ---------- 中枢：绑定地址与成员列表（行间细线，不再每行套灰底） ---------- */
+.address-list,
+.peer-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.address-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.address-kind {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.address-url {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.address-row .btn { flex: none; }
+.peer-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.peer-info {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 2px;
+  min-width: 0;
 }
-.lan-toggle {
+.peer-info strong {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  cursor: pointer;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
 }
-.lan-toggle input { margin-top: 3px; }
-.lan-toggle > span { display: flex; flex-direction: column; gap: 6px; }
+.peer-meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.peer-token {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.peer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot.on { background: var(--success); }
+.dot.off { background: var(--border); }
 
-/* 状态点跟着通道走：颜色来自 .link-<key> 的 --channel（与侧栏胶囊同一颗颜色），
-   这里只提高优先级盖过 settings.css 里 .state-strip .state-dot 的中性底色 */
+/* ---------- 新成员绑定信息 + 邀请（二维码） ---------- */
+.new-peer-block {
+  margin-top: 12px;
+}
+.new-peer-footer {
+  margin-top: 10px;
+}
+.copy-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.copy-row code {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.copy-row .token-code-host {
+  flex: 1;
+  min-width: 0;
+}
+.invite-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 12px;
+}
+.invite-body {
+  flex: 1;
+  min-width: min(240px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.invite-body strong { font-size: 13px; }
+.invite-body .setting-note { margin: 0; }
+.invite-actions { justify-content: flex-start; }
+
+/* ---------- 同步内容：整行可点，勾选框在左、状态值在行尾 ---------- */
+.setting-note.sync-content-note {
+  margin: 4px 0 0;
+}
+.setting-row.sync-category-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+}
+.setting-check {
+  display: flex;
+  align-items: center;
+}
+.sync-category-row input[type='checkbox'] {
+  accent-color: var(--success);
+}
+
+/* ---------- 局域网优先：状态条 + 探测记录 ---------- */
+.lan-state {
+  flex-wrap: wrap;
+  margin: 12px 0 0;
+}
+/* 状态点跟着通道走：颜色来自 .link-<key> 的 --channel（与侧栏胶囊同一颗颜色） */
 .lan-state .state-dot { background: var(--channel); }
-.lan-state { margin: 0; word-break: break-all; }
-
-.lan-probes { display: flex; flex-direction: column; gap: 6px; }
+.lan-probes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
 .lan-probes-title {
   margin: 0;
   color: var(--text-faint);
@@ -1599,7 +1572,6 @@ onUnmounted(() => {
 .lan-probe-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1609,9 +1581,14 @@ onUnmounted(() => {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
   font-size: 12.5px;
 }
-.lan-probe-kind { flex: none; color: var(--text-secondary); }
+.lan-probe-kind {
+  flex: none;
+  color: var(--text-secondary);
+}
 .lan-probe-url {
   min-width: 0;
   overflow: hidden;
@@ -1623,12 +1600,46 @@ onUnmounted(() => {
 }
 .lan-probe-ok { flex: none; margin-left: auto; color: var(--success); }
 .lan-probe-bad { flex: none; margin-left: auto; color: var(--danger); }
-.lan-note { margin: 0; line-height: 1.6; }
+
+/* ---------- 双栈连接：开关行 + 状态条 + 两组数字 ---------- */
+.dualstack-state {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+.dualstack-fields {
+  display: flex;
+  flex-direction: column;
+}
+.ds-inputs {
+  justify-content: flex-end;
+}
+.ds-inputs input { width: 92px; }
+.ds-unit {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.dualstack-actions {
+  margin: 12px 0 2px;
+}
 
 @media (max-width: 768px) {
-  /* 分组卡片在移动端已由 settings.css 收窄，内部块只需跟随 4px 内边距 */
-  .ddns-block {
-    padding-bottom: 6px;
+  .role-choices {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .role-or {
+    align-self: stretch;
+    text-align: center;
+  }
+  .role-option .btn { align-self: stretch; }
+  .setting-control.sync-field { width: 100%; }
+  .ds-inputs { justify-content: flex-start; }
+  /* 不在 .setting-row / .setting-actions 里的按钮：手机档同样保证 40px 热区 */
+  .role-option .btn,
+  .peer-actions .btn,
+  .address-row .btn,
+  .sync-summary .btn {
+    min-height: 40px;
   }
 }
 </style>

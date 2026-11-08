@@ -15,67 +15,73 @@
       :badge="badge"
       :badge-tone="badgeTone"
       title="视频理解模型"
-      hint="复用「内置 Agent 控制台 → 模型」里的 DSH 模型配置（已预置 DashScope 与 qwen3.8-omni-flash，只需填 API Key）；这里只控制收集箱的「提炼视频」用不用模型"
+      hint="收集箱「提炼视频」的开关与当前配置"
     >
-      <!-- 状态条（settings.css 约定：会变的状态走 .state-strip + state-dot，不用灰说明文字）：
-           未启用 / 待配置（缺 API Key）/ 已启用（当前模型） -->
-      <div v-if="loaded" class="state-strip video-state" :class="stateTone">
-        <span class="state-dot" aria-hidden="true" />
-        <div class="video-state-text">
-          <strong>{{ stateTitle }}</strong>
-          <span>{{ stateDetail }}</span>
-        </div>
-      </div>
-      <p v-else-if="loading" class="faint small video-loading">正在读取视频理解模型配置…</p>
-      <p v-else class="faint small video-loading">读取失败：刷新设置页重试（开关在读到当前状态前不可切换）。</p>
+      <p v-if="!loaded && loading" class="setting-note">正在读取视频理解模型配置…</p>
+      <p v-else-if="!loaded" class="setting-note tone-warn">
+        读取失败：刷新设置页重试；读到当前状态前不能切换开关。
+      </p>
 
-      <!-- 开关：变化即保存（不再有单独的保存按钮） -->
-      <div class="video-switch-row">
+      <!-- 开关：变化即保存（不再有单独的保存按钮）；状态交给卡头徽标，开关旁不再写「已启用」 -->
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>提炼视频</strong>
+          <span>关闭后视频条目仍可保存，但不会调用模型。</span>
+        </div>
         <label class="switch-control">
           <input
             :checked="enabled"
             type="checkbox"
             :disabled="saving || !loaded"
+            aria-label="提炼视频使用视频理解模型"
             @change="onToggle"
           />
           <span aria-hidden="true"></span>
-          <em>{{ saving ? '保存中…' : enabled ? '已启用' : '未启用' }}</em>
         </label>
-        <span class="video-field-note">关闭后视频条目仍可保存，但「提炼视频」会提示先启用。</span>
-      </div>
-
-      <!-- 入口：模型与密钥都在内置 Agent 控制台的「模型」页，不再在设置页填写 -->
-      <div class="video-actions">
-        <button class="btn primary small" type="button" @click="openConsole">
-          去控制台配置模型与 API Key
-        </button>
-        <span class="video-field-note">已预置 DashScope（阿里云百炼）与 qwen3.8-omni-flash，只需要填一个 DashScope API Key。</span>
       </div>
 
       <!-- 当前配置的模型与 Key 来源：读服务端状态，页面不回显 API Key（只有来源，没有 Key 本身） -->
-      <div class="video-model">
-        <div class="video-model-row">
-          <span class="video-model-label">当前模型</span>
-          <strong v-if="modelLabel" class="video-model-name">{{ modelLabel }}</strong>
-          <span v-else class="video-model-name faint">尚未配置（去控制台选择模型并填 Key）</span>
+      <div class="value-list">
+        <div class="value-row">
+          <span class="value-label">当前模型</span>
+          <span v-if="!loaded" class="value-text is-muted">—</span>
+          <span v-else-if="modelLabel" class="value-text">{{ modelLabel }}</span>
+          <span v-else class="value-text is-muted">未配置</span>
         </div>
-        <div v-if="keySourceLabel" class="video-model-row">
-          <span class="video-model-label">API Key 来源</span>
-          <strong class="video-model-name" :class="keySourceClass">{{ keySourceLabel }}</strong>
+        <div v-if="keySourceLabel" class="value-row">
+          <span class="value-label">API Key 来源</span>
+          <span class="value-text is-muted">{{ keySourceLabel }}</span>
+        </div>
+      </div>
+
+      <!-- 入口：模型与密钥都在内置 Agent 控制台的「模型」页，不再在设置页填写 -->
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>模型与 API Key</strong>
+          <span>在「内置 Agent 控制台 → 模型」里配置。</span>
+        </div>
+        <div class="setting-actions">
+          <button
+            class="btn primary"
+            type="button"
+            title="去控制台配置模型与 API Key"
+            aria-label="去控制台配置模型与 API Key"
+            @click="openConsole"
+          >去配置</button>
         </div>
       </div>
 
       <!-- 手机（android-local）不跑模型：开关与配置都落在已绑定的中枢 -->
-      <p v-if="isAndroidLocal" class="faint small video-hub-note">
-        配置保存在已绑定的中枢：手机不运行模型，这里只是远程读写中枢的开关；API Key 由中枢保存、页面不回显。
+      <p v-if="isAndroidLocal" class="setting-note">
+        配置保存在已绑定的中枢：手机不运行模型，这里只远程读写中枢的开关，API Key 不落在手机。
       </p>
 
-      <p class="faint small video-note">
-        模型与 API Key 都在内置 Agent 控制台的「模型」页配置：已预置 DashScope（阿里云百炼，OpenAI 兼容地址），
-        只需要填 DashScope API Key；API Key 不回显。模型配置与相关 Key 随多端同步的「设置」分类在同步群组内下发
-        （同步数据里含 Key 明文，只给群组内的设备），本机已配置的 Key 优先；手机不持有模型 Key，配置与提炼都在中枢执行。
-        素材会发送给你在控制台配置的模型服务（OpenAI 兼容 chat/completions，视频以 video_url、图文笔记的图片以 image_url 内容块传递）；
-        模型给出的时间戳 / 章节是估计值，纪要需人工复核。音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
+      <p class="setting-note">
+        已预置 DashScope（阿里云百炼）与 qwen3.8-omni-flash，只需填一个 API Key；
+        配置随「设置」分类同步给群组内设备，本机已配置的 Key 优先，页面不回显 Key。
+      </p>
+      <p class="setting-note">
+        素材会发送给配置的模型服务；模型给出的时间戳与章节是估计值，纪要需人工复核。
       </p>
     </SettingsGroup>
   </section>
@@ -160,9 +166,6 @@ const modelLabel = computed(() => {
     || (status.value.provider === 'dashscope' ? '阿里云百炼' : status.value.provider);
   return provider ? `${model} · ${provider}` : model;
 });
-/** 服务端算好的缺失项（新接口只可能在「还没填 API Key」时非空） */
-const missingLabels = computed(() => status.value.missing.filter(Boolean));
-
 /**
  * Key 来源文案（只讲「哪来的」，永远不带 Key 本身）：
  *  - 桌面 / Docker：「本机控制台已配置」「来自多端同步（本机未配置）」「未配置」；
@@ -181,9 +184,6 @@ const keySourceLabel = computed(() => {
   }
 });
 
-/** 来源徽标配色走现有令牌：已配好（本地 / 同步）为 ok，未配置为 warn */
-const keySourceClass = computed<'ok' | 'warn'>(() => (status.value.keySource === 'none' ? 'warn' : 'ok'));
-
 /** 老服务端（status 还没有 keySource）降级：有 Key 就是本机配的，没有就是未配置，不报错也不编来源 */
 function normalizeKeySource(raw: Partial<VideoStatus> | undefined): VideoKeySource {
   const value = raw?.keySource;
@@ -191,32 +191,11 @@ function normalizeKeySource(raw: Partial<VideoStatus> | undefined): VideoKeySour
   return raw?.hasKey === true ? 'local' : 'none';
 }
 
-const stateTone = computed(() => {
-  if (!enabled.value) return '';
-  return configured.value ? 'tone-ok' : 'tone-warn';
-});
-
-const stateTitle = computed(() => {
-  if (!enabled.value) return '未启用';
-  return configured.value ? '已启用' : '待配置';
-});
-
-const stateDetail = computed(() => {
-  if (!enabled.value) return '视频条目仍可保存；打开开关后收集箱的「提炼视频」才会调用模型。';
-  if (!configured.value) {
-    // 预置了 DashScope 与模型，唯一缺的通常是 Key；其它缺失项（老数据）按服务端清单列出来
-    if (!missingLabels.value.length || missingLabels.value.includes('API Key')) {
-      return '还缺 API Key：去控制台填 DashScope API Key（模型与地址已预置）。';
-    }
-    return `还缺：${missingLabels.value.join('、')}——去控制台补齐后才能提炼视频。`;
-  }
-  return modelLabel.value ? `当前模型 ${modelLabel.value}` : '收集箱视频条目可以直接点「提炼视频」。';
-});
-
+/** 卡头徽标：状态只在这里出现一处（开关旁不再写「已启用 / 未启用」） */
 const badge = computed(() => {
   if (!loaded.value) return '';
   if (!enabled.value) return '未启用';
-  return configured.value ? '已启用' : '待配置';
+  return configured.value ? '已启用' : '未配置 API Key';
 });
 
 const badgeTone = computed<'ok' | 'warn' | 'muted'>(() => {
@@ -310,114 +289,3 @@ onMounted(() => {
 });
 </script>
 
-<style scoped>
-.video-loading {
-  margin: 0 0 12px;
-}
-
-/* 手机端：配置不在本机，说明它存在已绑定的中枢（真实来源） */
-.video-hub-note {
-  margin: 10px 0 0;
-  line-height: 1.6;
-}
-
-.video-state {
-  align-items: flex-start;
-  margin: 0 0 14px;
-}
-
-.video-state-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.video-state-text strong {
-  color: var(--text);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.video-switch-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 0 0 12px;
-}
-
-.video-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: 0 0 14px;
-}
-
-.video-field-note {
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-/* 当前配置的模型 + Key 来源：只读展示，与状态条同一个视觉层级（不是说明文字） */
-.video-model {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  font-size: 12px;
-}
-
-.video-model-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.video-model-label {
-  color: var(--text-faint);
-}
-
-.video-model-name {
-  color: var(--text);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-/* Key 来源用语义色标出「已配好 / 未配置」；色值只走令牌，不写字面色（见 platform-parity / 设计债） */
-.video-model-name.ok {
-  color: var(--success);
-}
-
-.video-model-name.warn {
-  color: var(--warning);
-}
-
-.video-note {
-  margin: 14px 0 0;
-  line-height: 1.7;
-}
-
-@media (max-width: 640px) {
-  /* 窄屏单列：开关说明落到开关下面，主按钮独占一行 */
-  .video-switch-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
-  }
-  .video-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .video-actions .btn {
-    width: 100%;
-  }
-}
-</style>

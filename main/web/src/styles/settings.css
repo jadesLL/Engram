@@ -496,6 +496,7 @@
 }
 .state-strip.tone-ok .state-dot { background: var(--success); }
 .state-strip.tone-warn .state-dot { background: var(--warning); }
+.state-strip.tone-danger .state-dot { background: var(--danger); }
 .state-strip.tone-busy .state-dot { background: var(--accent); }
 
 /* 危险分组：警示色常驻可见（色带、图标、描边都是红的） */
@@ -1251,4 +1252,210 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-group.is-target-flash > .group-card { animation: none; }
   .settings-skip { transition: none; }
+}
+
+/* ==========================================================================
+   2026-11 第二轮：卡片内容细节基元
+   行 = 标签 + 一句说明 + 右侧控件/值；值列表去卡中卡；状态只留一处。
+   只做「内容呈现」的统一，不改壳层骨架与信息架构。
+   ========================================================================== */
+
+/* ---------- 行内右侧的值 / 状态（不再是链接蓝，也不再和开关重复） ---------- */
+.settings-native .setting-value {
+  flex: none;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.settings-native .setting-value.is-strong {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.settings-native .setting-value.is-muted { color: var(--text-secondary); font-weight: 400; }
+.settings-native .setting-value.tone-ok { color: var(--success); }
+.settings-native .setting-value.tone-warn { color: var(--warn); }
+.settings-native .setting-value.tone-danger { color: var(--danger); }
+.settings-native .setting-value.tone-accent { color: var(--accent); }
+
+/* ---------- 整行可点的勾选行：行面任何位置都能点，悬停时整行铺浅底 ---------- */
+.settings-native .setting-row { position: relative; }
+.settings-native .setting-row-toggle { cursor: pointer; }
+.settings-native .setting-row-toggle::before {
+  position: absolute;
+  /* 下缘留 1px：行间细线不被悬停底色盖住 */
+  inset: 1px -12px 0;
+  z-index: 0;
+  border-radius: 8px;
+  background: transparent;
+  content: "";
+  transition: background 0.12s ease;
+}
+.settings-native .setting-row-toggle:hover::before { background: var(--bg-hover); }
+.settings-native .setting-row-toggle:active::before { background: var(--bg-tertiary); }
+.settings-native .setting-row-toggle > * { position: relative; z-index: 1; }
+
+/* ---------- 值列表：卡内 label → value 成对信息，无外框、无灰底，只留行间细线 ---------- */
+.settings-native .value-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-native .value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.settings-native .value-row:first-child { border-top: 0; }
+.settings-native .value-label {
+  flex: none;
+  color: var(--text-secondary);
+}
+.settings-native .value-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-weight: 550;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.settings-native .value-text.is-muted { color: var(--text-secondary); font-weight: 400; }
+
+/* ---------- 卡内备注：只承载「必须多说一句」的风险/范围/默认值，最多两行 ---------- */
+.settings-native .setting-note {
+  margin: 10px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+/* 备注是卡片最后一项时，给卡片底边留一档呼吸（卡体 padding-bottom 只有 2px） */
+.settings-native .setting-note:last-child { margin-bottom: 12px; }
+.settings-native .setting-note.tone-ok { color: var(--success); }
+.settings-native .setting-note.tone-warn { color: var(--warn); }
+.settings-native .setting-note.tone-danger { color: var(--danger); }
+.settings-native .group-body > .setting-note:first-child { margin-top: 2px; }
+/* flush 卡片（行自带贴边间距）里，value-list 的第一行也要有一条与卡头分隔的细线 */
+.settings-native .group-body.flush > .value-list { border-top: 1px solid var(--border); }
+
+/* ---------- 操作区：一行多个按钮右对齐、可换行；手机档按钮铺满便于点按 ---------- */
+.settings-native .setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ---------- 表单控件基础：单行输入 / 下拉统一 32px 高；组件仍可按需覆盖 ---------- */
+.settings-native :where(
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="number"],
+  input[type="search"],
+  input[type="time"],
+  input:not([type]),
+  select
+) {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border-strong);
+  border-radius: 8px;
+  background: var(--control-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+.settings-native :where(
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="number"],
+  input[type="search"],
+  input[type="time"],
+  input:not([type]),
+  select
+):hover {
+  background: var(--control-bg-hover);
+}
+.settings-native :where(
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="number"],
+  input[type="search"],
+  input[type="time"],
+  input:not([type]),
+  select
+):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.settings-native textarea {
+  padding: 9px 11px;
+  border: 1px solid var(--control-border-strong);
+  border-radius: 10px;
+  background: var(--control-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.65;
+  resize: vertical;
+}
+.settings-native textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.settings-native .btn { min-height: 32px; font-size: 12.5px; }
+
+/* 卡内容区里的空态：去掉面板级外边距，改成行组下方的自然留白 */
+.settings-native .group-body .empty-panel {
+  margin: 10px 0 4px;
+}
+
+/* ---------- 左栏：当前大类的图标点亮；二级项用 2px 主色竖条标出「正在读这一组」 ---------- */
+.settings-nav-item.active svg { color: var(--accent); }
+.settings-nav-subitem { position: relative; }
+.settings-nav-subitem::before {
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  width: 2px;
+  height: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+  transform: translateY(-50%);
+  transition: height 0.14s ease;
+}
+.settings-nav-subitem.active::before { height: 14px; }
+.settings-nav-subitem.danger::before { background: var(--danger); }
+
+/* ---------- 手机档：行内控件落到下一行后，按钮保持可点面积 ---------- */
+@media (max-width: 768px) {
+  .settings-native .setting-actions { justify-content: stretch; }
+  .settings-native .setting-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+  .settings-native .setting-row .btn:not(.btn.icon):not(.btn.ghost) { min-height: 40px; }
+  .settings-native .setting-row-toggle::before { inset: 1px -8px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-native .setting-row-toggle::before,
+  .settings-nav-subitem::before { transition: none; }
 }
