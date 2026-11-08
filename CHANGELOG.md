@@ -9,6 +9,65 @@
 - **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（推完 `v*` 标签后必须 dispatch `binaries` 补产 APK/exe）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.5.10（2026-11-08）
+
+**本版主线是 Agent 接入换底层：MCP 整体下线，内置与外置 Agent 一律改走 engram CLI + skill（15 个 /api/agent/* 端点、一键接入只装 skill 与 CLI 包装脚本，对话内提问由 engram ask 长轮询替代 MCP ask_user）；内置 Agent 的模型配置与相关 API Key 纳入多端同步，视频理解在本机缺 Key 时用同步配置补上，聊天运行时也改为显式使用控制台默认模型，目录里勾了「图片」的模型终于能读图与截图。外观上主题与软件图标合一，不再有独立的图标开关。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
+
+**Agent 接入：MCP 下线，改为 engram CLI + skill**
+
+- 彻底删除 MCP：服务端 /mcp 端点、@modelcontextprotocol/sdk 依赖与 server/src/mcp 整目录一并移除，codexConfig / dshConfig / externalMcpConfig / kimiWorkConfig / customerResearchSkill 等写客户端 MCP 配置的模块删除，不再向任何客户端写 mcpServers 配置。
+- 新增 engram CLI 全量命令面与 15 个 /api/agent/* 端点（ask / skills / pages tree+related / asset / file / inbox items+read+add+write+convert / raw-material / research begin+submit / cli / info）：命令覆盖 pages、files、inbox、names、research、chat、guide、skill、login、status、config、ask，全局 --json 输出机器可读结果、--url/--token/--allow-private 支持临时连接；端点复用既有 pipeline 内核（agentWrite / agentDelete / pageEvidence / inboxConvert / research 等），不复制实现。
+- engram ask 替代 MCP ask_user：内置 Agent 在 Engram 对话里弹选项、CLI 阻塞长轮询等用户答复（超时或本轮结束返回原因），图片类内容由 CLI 落临时文件交 Agent 自带图片工具读取。
+- 一键接入只写 skill 与 CLI 包装脚本：新增 cliShim / agentAccess / agentSkill，在 `%USERPROFILE%\.engram\bin\engram(.cmd)` 写包装脚本，把 engram 与 engram-customer-research 两份 skill 装到 Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder；dist/cli/cli.js 为自包含单文件，远程设备可下载后 `node engram.js login`。内置 Agent 去掉 MCP 覆盖层并清理旧 patch、PATH 注入 shim，系统提示词 / 梦境调度 / 名称核验文案全部改 CLI 口径；Kimi Work 插件入口下线（无 shell，跑不了命令）。
+- Web「设置 → Agent 与自动化 → 外部接入」改为 CLI + skill：CLI 运行时状态条（命令、PATH 包装脚本、连接配置）、客户端卡片（已检测到 / skill 已接入 / CLI 可用 + 一键接入、移除接入）、Agent 令牌，以及「工具与手册」由 MCP 工具清单改为 35 条 CLI 命令参考（可一键复制命令清单）。
+- 能力位 `mcp` → `agentAccess` 在 server / web / Android 三处同步改名，语义不变（手机恒 false，Agent 令牌不下发手机）；文档、AGENTS 与 Android 契约同步去 MCP。
+
+**聊天运行时：显式使用控制台默认模型（恢复图片能力）**
+
+- 修掉「控制台里给模型勾的图片输入对聊天抽屉不生效」：dsh SDK 的 initialize 不带 provider/model 时兜底成 `deepseek-v4-flash`，该 id 不在 dsh 模型目录里，dsh 对目录外模型一律按纯文本处理（inputModalities=['text']），工具返回的图片被投影成占位文本，切默认模型也等于空操作。
+- 新增 assistant/agentModelRoute.ts：启动前用 `dsh --profile web --dump-config` 按控制台同一口径解析「有效默认模型」（你在控制台保存的 agent-default-model 条目，没保存过则用 bundle 默认值），再显式传给 DeepSeekHarness；读不到时回退 SDK 默认路由，聊天照常可用、不阻断。
+- 解析结果按配置指纹（profile patch / bundle 列表 / 凭据 / home patch）缓存：控制台改默认模型或模型目录 → 指纹变化 → 运行时下一轮自动重开；平时不重复起子进程（实测约 0.4s）。
+- 运行时配置指纹纳入模型路由；AGENT-CONSOLE.md 补「聊天运行时的模型路由」一节，说明为什么 SDK 不读控制台设置、以及「勾图片」与「默认模型」的关系。
+
+**内置 Agent 模型配置与视频理解 Key：多端同步**
+
+- 新增 lib/agentModelConfig.ts 与 sync/agentModelSync.ts：读取本机 dsh 模型配置（llm-pi-ai 提供商 / llm-deepseek 官方 / agent-default-model，以及这些提供商引用到的凭据），作为偏好项 `agent_model_config` 走既有 preference 管道（归「设置」分类），任一端填一次即下发到同步群组内其他设备；收到后直接写回本机 dsh，聊天 Agent 与视频理解下一轮即可用。
+- 合并口径为并集：本机独有内容保留、同 provider id 与同 Key 引用远端胜、official / default 只在远端有值时才覆盖，**删除不跨端**（一端删掉的提供商会因并集被别人带回来）。写回 dsh 采用文本级保守写回——只动 llm-pi-ai / llm-deepseek / agent-default-model 三个顶层条目与 .credentials.yaml 的 refs 段，其余顶层条目、注释、records 逐字保留；写前各留一份 `.engram-bak`，凭据文件收紧到 600（供 dsh credentials-local 启动校验）。
+- 回声抑制与容错：用稳定 digest（设置 `agent_model_sync_digest`）判断「本机是否有独有内容」，只有合并结果与远端不同才回推一次、收敛即停；写失败不打断同步轮，payload 暂存 `agent_model_sync_pending` 下次重试；控制台在跑则写后重启让它重读配置。
+- 视频理解侧回退：本机缺 Key（或本机根本没有 dashscope 提供商）时用同步下来的模型配置补上，status 新增 `keySource`（local / synced / none），面板显示「本机控制台已配置 / 来自多端同步（本机未配置）/ 未配置」，只显示来源不显示 Key。
+- 修掉两处存量问题：旧 `video_config` JSON 先归一化为 `{ enabled }`（清掉历史 baseUrl/apiKey，避免陈旧 Key 被当设置发出去）；`video_config` 登记进 PREFERENCE_KEYS，修掉「视频理解开关从未同步」的 bug。
+- 同步详情：中枢收到偏好推送时写一条「同步设置「内置 Agent 模型配置」」，opText 只输出固定中文名，不含 Key 明文；任何接口都不回显 Key。新增 docs/AGENT-MODEL-SYNC.md 记录数据契约与设计，AGENT-CONSOLE / USER-GUIDE / ANDROID / PLATFORM-PARALLEL-DEV / MOBILE-SYNC-LEDGER / SESSION-SYNC-DESIGN / README 同步更新。
+
+**外观：主题与软件图标合一**
+
+- 设置 → 界面与检索 → 外观 原来有「主题」与「软件图标」两行，图标偏好与主题常常被理解成同一件事、默认也是跟随主题；现在合成一个设置：选主题即决定软件图标——网页标签页 favicon、应用内 logo（标题栏 / 导航 rail / 登录页 / 欢迎页）、Windows 桌面窗口 / 任务栏 / 托盘 / 快捷方式图标全部跟随，不再单独指定。
+- 旧的本机偏好（localStorage `iconAppearance`）升级时自动清理；品牌文档与图标生成脚本的说明表同步改为「跟随界面主题」。
+
+**发布与 CI（内部）**
+
+- 修掉重启后 Gitea runner 长期离线（两个「启动」文件夹入口同时拉起 daemon，第二个实例抢 .runner 锁报错退出、常驻看门狗循环没活下来）：启动入口收敛为 HKCU Run 项 `EngramGiteaRunner` 登录即拉起 + 计划任务 `GiteaRunnerWatchdog` 每 5 分钟重试，两者共用幂等 runner-watchdog.ps1（命名互斥量防登录瞬时双启、PATH 前置 Git\bin、DOCKER_CONTEXT=default），旧 .cmd 备份到 startup-backup。
+- GITEA-CI.md 补 runner 部署与运维检查：当前 runner 为 id=4 dev-pc-scnml1a（旧 id=3 闲置）、启动 / 看门狗 / 运维检查三件套、runner 上线≠能跑 job（Docker 未就绪时 job 会失败），以及 gitea.com 504 导致 mirror 失败的处置。不影响功能。
+
+**测试与回归**
+
+- `bash main/scripts/platform-parity-check.sh --since v1.5.9 --strict` 通过：三端契约 9/9（版本号三处一致、Android 版本派生、能力位键集与语义、原生桥、设置域手机可达、滞后清单、文档覆盖），区间内 4 条涉及三端源码的提交平台影响声明齐全，手机滞后清单无待办（`agent_model_config` 登记为「不适用」，不算待办）。
+- server 新增单测：agentModelRoute（dump 多图层解析 / 只写 model 的脏 patch / 引号与 CRLF / 缺字段回退 / dump 失败返回 undefined / 缓存键随 patch 变化）、agentModelConfig 13 条、agentModelSync 5 条、cli、cliShim、agentSkill、agentAccess、agentTools、search；改造 agentPatch / dshRuntime / prompts / questions / playbooks / dreamBoard / videoConfig / categories / opText 与 sync e2e（hub→成员落盘、成员→hub 并集保留、状态接口不回显 Key）。
+- 随 MCP 下线删除对应测试：mcp/tools、mcp/server、mcp 工具用例与 codexConfig / dshConfig / externalMcpConfig / customerResearchSkill 测试。
+- web 新增 cliReference 与 videoPanel 单测，settingsLayout / settingsDomains / platformParity 断言同步更新（外部接入页结构、命令参考分组、外观不再有独立图标行）。
+- 安卓侧区间无 Kotlin 单测变化；本机无 Android SDK，未在本地编译 APK，本次 APK 由 CI 基于发版标签构建。
+
+**安卓端：自 v1.5.9 以来的累计更新**
+
+- 本区间安卓原生改动只有一行：`EngramLocalServer.kt` 能力位键 `mcp` → `agentAccess`（与 server / web 三处一致；手机侧恒 false，Agent 令牌与外部接入不在手机出现）。
+- Web 侧随同一份 Web 构建同源生效：设置 → Agent 与自动化 的外部接入页改为 CLI + skill（手机仍不出现该组）、工具与手册改为 CLI 命令参考、主题即决定软件图标（favicon 与应用内 logo 跟随明暗）、视频理解面板显示 Key 来源；Android 绑定中枢后仍可经窄代理改中枢的模型配置。
+- 手机不跑 dsh、不落模型 Key：`agent_model_config` 这类未知 preference key 按现有逻辑跳过，手机读到的只是中枢那份配置与状态；滞后清单已登记「不适用」。
+- APK 基于本次发版标签重新构建并签名，versionName 1.5.9→1.5.10、versionCode 由 main/desktop/package.json 推导；从 v1.5.9 覆盖安装即可，本机知识库数据不受影响。
+
+**Windows exe、Docker 与发布交付**
+
+- Docker 镜像 1.5.10 + latest 用同一标签源码构建；Windows exe 与已签名 APK 由同一标签产出（exe 内含 dist/cli/cli.js，内置 Agent 与本机一键接入用的是同一份 CLI）。
+- exe、APK 与 sha256 挂 Gitea Release 并同步公开仓库同名 Release，归档至 releases/1.5.10/。
+
 ## v1.5.9（2026-11-08）
 
 **本版主线是更新链：覆盖升级不再卡在「卸载旧版本」，安装包固定「仅当前用户」、应用内自动更新不再触发 UAC；服务器更新补上成功反馈与「更新中」连接状态，自动更新失败一次后暂停本版本并提示重试，更新状态区固定高度不再上下跳、自动与手动下载彻底分道。另含公开仓库产物补传的 CI 容错修复。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
