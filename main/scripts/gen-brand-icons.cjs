@@ -27,7 +27,7 @@
  *
  * 亮暗规则（见 docs/brand/README.md）：
  *   安装包 exe 内嵌图标 / Android 启动图标 —— 亮色版；
- *   桌面运行时图标与软件内 Logo —— 默认跟随主题，亦可在本机手动选亮/暗。
+ *   桌面运行时图标与软件内 Logo —— 跟随主题（与主题合一，不提供单独开关）。
  *
  * 用法（宿主机 Node，非 Docker）：
  *   node main/scripts/gen-brand-icons.cjs
@@ -641,9 +641,9 @@ ${[64, 48, 32, 16].map((size) => chip('light', size, `light ${size}`)).join('\n'
   <table>
     <tr><th>位置</th><th>版本</th></tr>
     <tr><td>Windows exe 内嵌图标 / 安装包</td><td>亮色</td></tr>
-    <tr><td>桌面快捷方式 / 开始菜单 / 窗口 / 托盘</td><td>本机图标设置（默认跟随主题）</td></tr>
+    <tr><td>桌面快捷方式 / 开始菜单 / 窗口 / 托盘</td><td>跟随界面主题</td></tr>
     <tr><td>Android 启动图标（含自适应前景、圆形图标）</td><td>始终亮色</td></tr>
-    <tr><td>网页标签 favicon、应用内 logo（标题栏 / rail / 登录 / 欢迎）</td><td>本机图标设置（默认跟随主题）</td></tr>
+    <tr><td>网页标签 favicon、应用内 logo（标题栏 / rail / 登录 / 欢迎）</td><td>跟随界面主题</td></tr>
     <tr><td>Android 启动屏（白底，当前不随系统暗色）</td><td>亮色图形</td></tr>
   </table>
 </body>

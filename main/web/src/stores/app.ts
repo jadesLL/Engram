@@ -18,12 +18,6 @@ import {
 } from '../lib/pageTrail';
 
 type Theme = 'light' | 'dark' | 'system';
-export type IconAppearance = 'auto' | 'light' | 'dark';
-
-function savedIconAppearance(): IconAppearance {
-  const value = localStorage.getItem('iconAppearance');
-  return value === 'light' || value === 'dark' ? value : 'auto';
-}
 
 /** 内置 Agent 聊天抽屉的形态：dock=右侧悬浮卡片，full=满窗铺满内容区 */
 export type ChatDrawerMode = 'dock' | 'full';
@@ -40,6 +34,8 @@ localStorage.removeItem('sidebarStyle');
 localStorage.removeItem('readingMode');
 localStorage.removeItem('htmlPreview');
 localStorage.removeItem('aiDrawerWidth');
+// 软件图标不再是独立偏好（2026-11 与主题合一）：图标一律跟随主题，清掉旧的本机选择。
+localStorage.removeItem('iconAppearance');
 
 export const useAppStore = defineStore('app', {
   state: () => {
@@ -55,8 +51,6 @@ export const useAppStore = defineStore('app', {
       sidebarFull: false,
       theme,
       dark: resolveDarkTheme(theme),
-      /** 图标是本机偏好；同一账户在不同设备可选不同外观。 */
-      iconAppearance: savedIconAppearance(),
       /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
       editorMode: (localStorage.getItem('editorMode') as 'ir' | 'sv') || 'ir',
       /** 沉浸阅读状态：默认开启，会话内切换页面保持（不写本地偏好） */
@@ -128,11 +122,9 @@ export const useAppStore = defineStore('app', {
       // Android 本地端：状态栏/导航栏图标明暗也跟着应用主题（系统深色而应用浅色时不能反色）
       reportThemeToNative(this.dark);
     },
-    iconIsDark(): boolean {
-      return this.iconAppearance === 'dark' || (this.iconAppearance === 'auto' && this.dark);
-    },
+    /** 软件图标与界面内 logo 一律跟随主题（2026-11 与主题合一，不再提供单独设置）。 */
     applyIconAppearance() {
-      const dark = this.iconIsDark();
+      const dark = this.dark;
       const favicon = document.getElementById('app-favicon') as HTMLLinkElement | null;
       if (favicon) {
         const href = `/brand/icon-${dark ? 'dark' : 'light'}.svg`;
@@ -140,11 +132,6 @@ export const useAppStore = defineStore('app', {
       }
       const wd = (window as any).wikiDesktop;
       if (wd?.setIconAppearance) return wd.setIconAppearance(dark ? 'dark' : 'light');
-    },
-    setIconAppearance(value: IconAppearance) {
-      this.iconAppearance = value;
-      localStorage.setItem('iconAppearance', value);
-      return this.applyIconAppearance();
     },
     setTheme(t: Theme) {
       this.theme = t;
