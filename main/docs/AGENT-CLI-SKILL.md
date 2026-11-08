@@ -143,7 +143,7 @@ export function ensureLocalAgentCli(): { cli: CliRuntime; env: NodeJS.ProcessEnv
 | dsh | DeepSeek Harness | $DSH_HOME 或 ~/.dsh | <home>/skills |
 | zcode | ZCode | ~/.zcode 或引擎路径 | ~/.zcode/skills |
 | kimi-code | Kimi Code CLI | $KIMI_CODE_HOME 或 ~/.kimi-code | <home>/skills |
-| workbuddy | WorkBuddy | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | ~/.codebuddy/skills |
+| workbuddy | WorkBuddy | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | <配置目录>/skills |
 | qoder | Qoder | ~/.qoder / ~/.qoder-cn | <config>/skills |
 
 - `AgentAccessStatus = { id, title, installed, skillsInstalled, skillPath, cliAvailable, cliCommand }`；

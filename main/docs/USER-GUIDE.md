@@ -164,7 +164,7 @@ Docker：node /app/server/dist/cli/cli.js <command>
 | DeepSeek Harness（dsh） | `$DSH_HOME/skills/engram/SKILL.md` | `$DSH_HOME 或 ~/.dsh` |
 | ZCode 桌面端 | `~/.zcode/skills/engram/SKILL.md` | `~/.zcode 或引擎路径` |
 | Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram/SKILL.md` | `默认 ~/.kimi-code` |
-| WorkBuddy | `~/.codebuddy/skills/engram/SKILL.md` | `~/.workbuddy / ~/.workbuddy-ai（环境变量优先）` |
+| WorkBuddy | `~/.workbuddy/skills/engram/SKILL.md`（`~/.workbuddy-ai` 变体同构） | `~/.workbuddy / ~/.workbuddy-ai（环境变量优先）` |
 | Qoder | `<配置目录>/skills/engram/SKILL.md` | `~/.qoder / ~/.qoder-cn` |
 
 > **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 条目已失效，可自行清理。各客户端只装 skill + CLI 包装脚本，不再写 `mcpServers` / `[mcp_servers.*]` 之类的 MCP 配置。

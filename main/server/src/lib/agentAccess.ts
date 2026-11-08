@@ -136,7 +136,7 @@ function qoderConfigDir(home: string, env: NodeJS.ProcessEnv, isDir: (dir: strin
  * | dsh         | $DSH_HOME 或 ~/.dsh      | <home>/skills           |
  * | zcode       | ~/.zcode 或引擎路径      | ~/.zcode/skills         |
  * | kimi-code   | $KIMI_CODE_HOME 或 ~/.kimi-code | <home>/skills   |
- * | workbuddy   | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | ~/.codebuddy/skills |
+ * | workbuddy   | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | <配置目录>/skills |
  * | qoder       | ~/.qoder / ~/.qoder-cn   | <config>/skills         |
  */
 const CLIENTS: AgentClientDef[] = [
@@ -184,8 +184,16 @@ const CLIENTS: AgentClientDef[] = [
       if (fromEnv) return io.isDir(fromEnv);
       return io.isDir(path.join(home, '.workbuddy')) || io.isDir(path.join(home, '.workbuddy-ai'));
     },
-    // WorkBuddy 的 skill 根与配置目录无关，固定 ~/.codebuddy/skills
-    skillRoot: (home) => path.join(home, '.codebuddy', 'skills'),
+    // WorkBuddy 的用户级 skill 根就是配置目录下的 skills：运行时 SkillsVersionEmitter 监视
+    // <配置目录>/skills 与 <配置目录>/connectors/skills（2026-11 版实测），不是旧的 ~/.codebuddy/skills。
+    skillRoot: (home, env, io) => {
+      const fromEnv = envValue(env, ['WORKBUDDY_CONFIG_DIR', 'CODEBUDDY_CONFIG_DIR']);
+      if (fromEnv) return path.join(fromEnv, 'skills');
+      if (!io.isDir(path.join(home, '.workbuddy')) && io.isDir(path.join(home, '.workbuddy-ai'))) {
+        return path.join(home, '.workbuddy-ai', 'skills');
+      }
+      return path.join(home, '.workbuddy', 'skills');
+    },
   },
   {
     id: 'qoder',

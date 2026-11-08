@@ -127,7 +127,7 @@
 | DeepSeek Harness（dsh） | `$DSH_HOME/skills/engram-customer-research/SKILL.md` |
 | ZCode | `~/.zcode/skills/engram-customer-research/SKILL.md` |
 | Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram-customer-research/SKILL.md`（默认 `~/.kimi-code`） |
-| WorkBuddy | 用户级 `~/.codebuddy/skills/engram-customer-research/SKILL.md`（兼容其 CodeBuddy 配置） |
+| WorkBuddy | 用户级 `~/.workbuddy/skills/engram-customer-research/SKILL.md`（配置目录下的 skills；`~/.workbuddy-ai` 变体同构） |
 | Qoder | 配置目录 `skills/engram-customer-research/SKILL.md`（`~/.qoder` / `~/.qoder-cn`） |
 
 > **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 插件条目已失效，可自行清理。
