@@ -14,20 +14,6 @@
         <span>搜索设置</span>
       </button>
 
-      <button
-        class="settings-mobile-account"
-        type="button"
-        data-mobile-domain="account"
-        @click="openMobileSection('account')"
-      >
-        <span class="settings-mobile-avatar" aria-hidden="true">{{ accountInitial }}</span>
-        <span class="settings-mobile-account-main">
-          <span class="settings-mobile-account-name">{{ accountName }}</span>
-          <span class="settings-mobile-account-sub">{{ accountSyncLine }}</span>
-        </span>
-        <Icon name="chevron-right" :size="18" class="settings-mobile-chevron" />
-      </button>
-
       <div class="settings-mobile-group">
         <button
           v-for="row in mobileRows"
@@ -38,7 +24,10 @@
           @click="openMobileSection(row.id)"
         >
           <span class="settings-mobile-row-icon"><Icon :name="row.icon" :size="19" /></span>
-          <span class="settings-mobile-row-label">{{ row.label }}</span>
+          <span class="settings-mobile-row-main">
+            <span class="settings-mobile-row-label">{{ row.label }}</span>
+            <span class="settings-mobile-row-sub">{{ row.summary }}</span>
+          </span>
           <span v-if="row.status" class="settings-mobile-row-status">{{ row.status }}</span>
           <Icon name="chevron-right" :size="18" class="settings-mobile-chevron" />
         </button>
@@ -324,16 +313,6 @@ function toggleHaptics(event: Event) {
   notify.success(on ? '触觉反馈：已开启' : '触觉反馈：已关闭');
 }
 
-/** 手机端分组列表的固定顺序与手机端叫法 */
-const MOBILE_GROUPS: ReadonlyArray<{ id: SettingsDomainId; label: string; icon: string }> = [
-  { id: 'sync', label: '多端同步', icon: 'cloud-check' },
-  { id: 'interface', label: '外观', icon: 'sun' },
-  { id: 'agent', label: 'Agent 与自动化', icon: 'ai' },
-  { id: 'data', label: '知识库数据', icon: 'archive' },
-  { id: 'update', label: '版本与更新', icon: 'download' },
-  { id: 'app', label: '关于', icon: 'activity' },
-];
-
 const app = useAppStore();
 const sync = useSyncStore();
 const serverUpdate = useServerUpdateStore();
@@ -348,14 +327,6 @@ const syncStatus = computed(() => syncStatusView(sync.status, {
   androidLocal: capabilities.value.runtime === 'android-local',
   updating: serverUpdate.updating,
 }));
-
-const accountName = computed(() => (sync.status?.deviceLabel || '').trim() || 'Engram 本机');
-const accountInitial = computed(() => Array.from(accountName.value)[0] || 'E');
-const accountSyncLine = computed(() => {
-  const state = syncStatus.value;
-  if (!state) return '本机知识库 · 未配置多端同步';
-  return state.detail ? state.label + ' · ' + state.detail : state.label;
-});
 
 function syncRowStatus(): string {
   const state = syncStatus.value;
@@ -382,6 +353,7 @@ function agentRowStatus(): string {
 }
 
 function mobileStatusOf(id: SettingsDomainId): string {
+  if (id === 'account') return '已登录';
   if (id === 'sync') return syncRowStatus();
   if (id === 'interface') return themeLabel.value;
   if (id === 'agent') return agentRowStatus();
@@ -453,16 +425,20 @@ function domainOf(id: SettingsDomainId): SettingsDomain | undefined {
   return domains.value.find((domain) => domain.id === id);
 }
 
-const mobileRows = computed(() => MOBILE_GROUPS
-  .filter((row) => domains.value.some((domain) => domain.id === row.id))
-  .map((row) => ({ ...row, status: mobileStatusOf(row.id) })));
+/* 手机列表与桌面共用同一套分类：名字、顺序、可见性都来自 visibleSettingsDomains（2026-11 版式评审 P0-2）。
+   二级在列表行里以「N 个分组」暴露，点进子页就是这些分组。 */
+const mobileRows = computed(() => domains.value.map((domain) => ({
+  id: domain.id,
+  label: domain.label,
+  icon: domain.icon,
+  status: mobileStatusOf(domain.id),
+  summary: domain.groups.length + ' 个分组',
+})));
 
 const mobileSectionLabel = computed(() => {
   const id = mobileSection.value;
   if (!id) return '';
-  return MOBILE_GROUPS.find((row) => row.id === id)?.label
-    ?? domainOf(id)?.label
-    ?? '设置';
+  return domainOf(id)?.label ?? '设置';
 });
 
 function pageScroller(): HTMLElement | Window {

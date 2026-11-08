@@ -1681,6 +1681,21 @@ onUnmounted(() => {
 }
 
 /*
+ * 设置页（2026-11 版式评审 P0-1）：进入设置后收起知识库栏。
+ * 设置有自己的左栏导航，再并排一棵知识库树会把内容压到 750px 左右，
+ * 读起来像「知识库旁边挂了个设置面板」。收起只影响设置路由，离开即恢复。
+ */
+@media (min-width: 769px) {
+  .layout.settings-open .sidebar,
+  .layout.settings-open .resizer {
+    display: none;
+  }
+  .layout.settings-open .content {
+    padding-left: 64px;
+  }
+}
+
+/*
  * 知识库目录满窗（2026-10-03）：与内置 Agent 满窗（.chat-drawer.full）同一套落位，
  * 方向相反——贴边铺满正文区、保留左侧图标栏、不再留玻璃边距与圆角。
  * 几何写成具体长度（left / width / top / bottom 都可插值），点一下才是「拉过去」而不是跳过去。
