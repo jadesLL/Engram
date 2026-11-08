@@ -22,7 +22,7 @@
 
 ## 验收与合并
 
-- 提交信息末行写平台影响声明（`平台影响: A` / `B,F` / `none`，见 [`docs/PLATFORM-PARALLEL-DEV.md`](./docs/PLATFORM-PARALLEL-DEV.md) §4.3）；verify 已包含 `web/src/lib/platformParity.test.ts` 契约检查；手机有影响的按滞后清单处理；发版前跑 `bash scripts/platform-parity-check.sh --strict`。
+- 提交信息末行写平台影响声明（`平台影响: A` / `B,F` / `none`，见 [`docs/PLATFORM-PARALLEL-DEV.md`](./docs/PLATFORM-PARALLEL-DEV.md) §4.3）；verify 已包含 `web/src/lib/platformParity.test.ts` 契约检查，ci.yml 每次推送/PR 还会跑 `verify-release --rehearse --strict` 发版彩排；手机有影响的按滞后清单处理；发版前跑 `bash scripts/platform-parity-check.sh --strict` 与 `node scripts/release/verify-release.mjs --rehearse --strict`（完整流程见 [`docs/RELEASE.md`](./docs/RELEASE.md)）。
 - 完成后先按真实使用路径自行验收并截取界面/终端画面（截图必须直接发给用户，不能只给路径）；通过后再提交，向用户报告 worktree、分支、提交信息和检查结果，随后按下一行走自动合并与弹窗提问（提问通道见根 [`AGENTS.md`](../AGENTS.md) 规则 8）。
 - **验收通过即自动合并进 main，合并后检查通过即自动清理**（不再请示「是否合并/是否清理」，见根 [`AGENTS.md`](../AGENTS.md) 规则 4/10；合并前确认工作区干净、无其他 Agent 在合并，冲突且双方意图不明时停下问用户）。执行 `main/scripts/merge-feature.sh --cleanup <feature>`，立即删除已合并功能分支、worktree、该任务全部 Docker 容器/镜像/数据卷/网络及 Git `safe.directory` 记录，并复验零残留；不得等用户答复是否推送才清理。清理失败不得报告"已完成"。未合并、未提交或检查失败时保留资源并报告；用户明确要求保留预览时才暂缓。保留主环境、主数据、ONLYOFFICE 数据卷、共享基础镜像与构建缓存及其他任务资源。**推送 gitea、发版和部署仍须明确批准**。
 - 合并必须串行；冲突且无法确认双方意图时，停止并询问用户。

@@ -6,8 +6,19 @@
 
 - 每次功能合并进 main 后，同步把新功能整合进 [`README.md`](./README.md)。
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
-- **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（推完 `v*` 标签后必须 dispatch `binaries` 补产 APK/exe）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量。
+- 合并功能时在顶部 `## 未发布` 区按分类加一行（带 `[平台影响: A-F|none]`），发版时用 `node main/scripts/release/release-notes.mjs --render --write` 聚合生成版本段落；操作手册见 [`main/docs/RELEASE.md`](./main/docs/RELEASE.md)。
+- **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（2026-11-09 起推 `v*` 标签会自动构建三件套并挂到 Release，不再需要第二次 dispatch）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量——该累计段由 `node main/scripts/release/release-notes.mjs --render --write` 从 `## 未发布` 区聚合生成后人工校订。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
+
+## 未发布
+
+<!-- 合并功能时在这里按分类加一行，格式：- [平台影响: A|B|C|D|E|F|none] 描述（可带需求/PR 号）。
+     发版时运行 node scripts/release/release-notes.mjs --render --write 生成本版段落
+     （自动带上「安卓端自上一版本以来的累计更新」），不要手写版本段落。 -->
+
+### 内部
+
+- [平台影响: none] 发版链路改为 DSH 式：脚本化 bump 版本、发版彩排门禁、tag 自动构建三件套并生成带附件的 Release、发布收据与归档脚本（见 main/docs/RELEASE.md）。
 
 ## v1.5.10（2026-11-08）
 

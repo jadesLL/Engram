@@ -1,9 +1,20 @@
-# Engram 发布流程（2026-09-27 起：发版固定三件套 = Android APK + Windows exe + Docker 镜像，三件缺一不算发版完成）：
-#   推送 v* 标签 = 发版第一步：CHANGELOG 校验 → verify 门禁 → 构建推送 Docker 镜像（:<版本> + :latest）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件）
-#   手动 workflow_dispatch = 发版第二步（必做，不是按需）：verify 门禁 → 勾选 binaries 构建 Windows exe + Android APK → 补挂到对应版本 Release（offline_image 离线 tar.gz 按需）
+# Engram 发布流程（2026-11-08 起：推 v* 标签 = 一次完整发版）
+#   tag 路径自动完成：版本/说明校验（verify-release --tag --strict）→ verify 门禁（build+typecheck+test，
+#     含发版就绪测试）→ 构建 Docker 镜像并先 smoke（18099 /health，最多 90 秒）再推送 :<版本> + :latest
+#     → 构建 Windows exe + Android APK（tag 路径自动构建，不再需要「发版第二步」dispatch）
+#     → 组装 release-out + sha256 → 创建带附件的 Gitea Release（正文=CHANGELOG 段落 + 发版产物清单）
+#     → 同步公开仓库（GitHub）同名 Release。三件套同一次运行产出；Release 只在产物齐备后才创建
+#     （创建步骤放在「整理产物」之后，保证 Release 一旦存在就带着 exe/APK/sha256 附件）。
+#   workflow_dispatch 只用于 tag 运行失败后的补发/重跑、补镜像、离线包与公开仓库回填，不再是发版必做步骤：
+#     image=补镜像；binaries=补/重跑 exe+APK；offline_image=离线 tar.gz；github_backfill=公开仓库回填。
+#   tag 路径失败语义：**绝不重推/移动已推标签**。修复后用 Actions → Release → Run workflow 输入该标签并勾选对应项：
+#     - 镜像失败/缺失 → 勾 image（按该标签源码重建，同样先 smoke 再推 :<版本> + :latest）
+#     - exe/APK 失败/缺失 → 勾 binaries（重建并补挂；Release 不存在时一并创建）
+#     - 公开仓库同步失败 → 用 Repair Public Release workflow（.gitea/workflows/repair-public-release.yml）
+#     - 离线包 → 勾 offline_image
 #   安卓端：APK 必须基于本次发版提交构建、版本号与发版一致，发版说明要补齐自上一个 Android 版本以来累积的全部更新内容
-#   公开下载入口（2026-09-30 起）：勾选 binaries 时，产物同时同步到公开仓库（GitHub）同名 Release，
-#     外部用户不必访问私有 Gitea；历史版本用 github_backfill 输入回填（从 Gitea Release 拉已有附件再传到 GitHub）。
+#   公开下载入口（2026-09-30 起）：tag 发版产物自动同步到公开仓库（GitHub）同名 Release，外部用户不必访问私有 Gitea；
+#     历史版本用 github_backfill 输入回填（从 Gitea Release 拉已有附件再传到 GitHub）。
 #     公开仓库的 Release 正文仍由 public-mirror 用脱敏后的 CHANGELOG 填写，这里只补附件、不碰正文。
 # 版本 tag 的 Docker 镜像仍是发版线（NAS 部署 + 应用内一键更新的版本信号源）
 # 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
@@ -16,11 +27,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '本次发版的标签（如 v1.2.4，须与该提交的 package.json 版本一致）'
+        description: '要补发/重跑的版本标签（如 v1.2.4，须与该提交的 package.json 版本一致）'
         required: true
         type: string
+      image:
+        description: '补镜像：按该标签源码构建 Docker 镜像，先 smoke 再推送 :<版本> + :latest（tag 运行后镜像失败/缺失时勾选）'
+        type: boolean
+        default: false
       binaries:
-        description: '构建 Windows exe + Android APK 并补挂 Release（每次发版必勾，三件套之一）'
+        description: '补/重跑 Windows exe + Android APK 并补挂 Release（tag 路径会自动构建，仅失败或缺产物时勾选）'
         type: boolean
         default: false
       offline_image:
@@ -50,7 +65,7 @@ jobs:
   release:
     runs-on: windows
     steps:
-      - name: 检出代码（dispatch 按输入标签检出）
+      - name: 检出代码（tag 推送按标签检出；dispatch 按输入标签检出）
         uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.tag || github.ref }}
@@ -91,15 +106,18 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.tag }}
 
-      - name: 校验 dispatch 参数（至少勾选一项产物）
+      - name: 校验 dispatch 参数（补发/补镜像/离线包/回填至少选一项）
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          if [ "$INPUT_BINARIES" != "true" ] && [ "$INPUT_OFFLINE" != "true" ] && [ -z "$INPUT_BACKFILL" ]; then
-            echo "dispatch 必须至少勾选 binaries / offline_image 之一，或填写 github_backfill；发版补齐三件套请勾选 binaries（Windows exe + Android APK）"
+          if [ "$INPUT_IMAGE" != "true" ] && [ "$INPUT_BINARIES" != "true" ] && [ "$INPUT_OFFLINE" != "true" ] && [ -z "$INPUT_BACKFILL" ]; then
+            echo "dispatch 只用于 tag 运行失败后的补发/重跑，必须至少选一项："
+            echo "  image=补镜像；binaries=补/重跑 exe+APK；offline_image=离线包；github_backfill=公开仓库回填"
+            echo "正常发版只需推送 v* 标签（tag 路径会自动完成三件套与 Release），不需要 dispatch"
             exit 1
           fi
         env:
+          INPUT_IMAGE: ${{ inputs.image }}
           INPUT_BINARIES: ${{ inputs.binaries }}
           INPUT_OFFLINE: ${{ inputs.offline_image }}
           INPUT_BACKFILL: ${{ inputs.github_backfill }}
@@ -133,6 +151,8 @@ jobs:
         run: |
           VER="${{ steps.ver.outputs.version }}"
           # 提取 "## v<版本>（日期）" 到下一个 "## " 之间的段落
+          # 版本段落由 node scripts/release/release-notes.mjs --render --write 生成（tag 前已 render，
+          # 未发布区应清空）；缺失即失败，防止「版本号 bump 了但说明没写」
           BODY=$(awk -v ver="## v${VER}" '
             $0 ~ "^## " {
               if (found) exit
@@ -142,7 +162,7 @@ jobs:
           ' CHANGELOG.md)
           if [ -z "$BODY" ]; then
             echo "CHANGELOG.md 中缺少 v${VER} 版本段落（格式：## v${VER}（YYYY-MM-DD））"
-            echo "发版前必须把距上次发布以来的所有新功能写入 CHANGELOG.md 对应版本段落"
+            echo "发版前先运行 node scripts/release/release-notes.mjs --render --write 生成版本段落（详见 main/docs/RELEASE.md）"
             exit 1
           fi
           # 写入多行输出（%0A 转义换行）
@@ -159,27 +179,98 @@ jobs:
             if [ "$shown" -ge 5 ]; then break; fi
           done <<< "$BODY"
 
-      - name: verify 门禁（build + typecheck + test，与 ci.yml 同标准）
+      - name: verify 门禁（build + typecheck + test + 发版就绪检查）
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSH_REF_NAME: ${{ github.ref_name }}
         run: |
           # 发版门禁：任何产物构建/推送前先完整 verify。main 连红期间 release 曾照常
-          # 发版（v1.1.22~v1.1.28），此步骤保证带标签的产物只能来自测试通过的代码
+          # 发版（v1.1.22~v1.1.28），此步骤保证带标签的产物只能来自测试通过的代码。
+          # 上下文用 . 而非 main：Windows runner 上 docker CLI 解析相对路径上下文时
+          # 对 Git Bash 的 UNC cwd 处理有问题，cd 进 main 后用 . 稳定可靠。
           cd main
           docker build --target verify -t engram:release-verify .
+          cd ..
+          # 发版脚本层检查走宿主 node（runner 已装 Node 22）：verify 镜像的构建上下文是 main/，
+          # 仓库根的 CHANGELOG.md 不会进镜像，所以彩排/标签校验必须在检出目录上跑。
+          command -v node > /dev/null 2>&1 || { echo "runner 上找不到 node（发版脚本需要 Node >=20）"; exit 1; }
+          if [ ! -f main/scripts/release/verify-release.mjs ]; then
+            # 历史标签（早于 2026-11-08 的树）没有发版脚本；dispatch 补发历史版本时不能因此失败，
+            # 只保留上面的完整 verify 门禁（旧流程口径），脚本层检查跳过。
+            echo "::warning::检出的树里没有 scripts/release/verify-release.mjs（历史标签），跳过脚本层发版检查"
+            exit 0
+          fi
+          TAG="${PUSH_REF_NAME}"
+          if [ -n "$INPUT_TAG" ]; then TAG="$INPUT_TAG"; fi
+          if [ "$EVENT_NAME" = "push" ]; then
+            # tag 路径：标签必须等于 v<版本>、未发布区必须已清空、安卓累计段齐备，WARN 也算失败
+            node main/scripts/release/verify-release.mjs --tag "$TAG" --strict
+          else
+            # dispatch 补发/重跑：按彩排口径校验（历史标签的旧说明允许 WARN）
+            node main/scripts/release/verify-release.mjs --rehearse
+          fi
 
-      - name: 构建并推送 Docker 镜像（发版）
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: 构建 Docker 镜像（:<版本>，先不推 :latest）
+        # tag 路径恒构建；dispatch 只有勾选 image（tag 运行后镜像失败/缺失的补镜像路径）才构建。
+        # 与 tag 路径复用同一套 build → smoke → push 三步，不写第二份构建脚本。
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.image == true)
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          # ENGRAM_GIT_SHA 烤进镜像 /app/GIT_SHA：镜像内没有 .git，应用内靠它显示提交号。
+          # 用上面按检出结果取的 SHA（dispatch 按 inputs.tag 检出，github.sha 是触发分支）
+          docker build --build-arg ENGRAM_GIT_SHA="${{ steps.srcsha.outputs.sha }}" \
+            --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
+
+      - name: 镜像 smoke（18099 健康检查，最多等 90 秒）
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.image == true)
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          # latest 是部署机「应用内一键更新」的信号源：先起容器验 /health 再推送，
+          # 坏镜像（如原生模块 ABI 事故）绝不能进 :latest，否则跟 latest 的机器会集体更新失败。
+          # 18099 为发版 smoke 专用端口（避开 18080/18180 主环境与本地模式）。
+          docker rm -f engram-release-smoke > /dev/null 2>&1 || true
+          docker run -d --name engram-release-smoke \
+            -e DATA_DIR=/tmp/engram-smoke -p 18099:8080 "$IMAGE:$VER"
+          OK=0
+          WAITED=0
+          # 不用 seq/管道，便于在 Git Bash 与容器日志不会互相干扰的情况下计时
+          while [ "$WAITED" -lt 90 ]; do
+            if curl -fsS http://127.0.0.1:18099/health > /dev/null 2>&1; then
+              OK=1
+              break
+            fi
+            WAITED=$((WAITED + 1))
+            sleep 1
+          done
+          if [ "$OK" != "1" ]; then
+            echo "镜像 smoke 失败：${WAITED} 秒内 http://127.0.0.1:18099/health 未返回 200（$IMAGE:$VER）"
+            echo ">> 容器日志（docker logs engram-release-smoke）："
+            docker logs engram-release-smoke || true
+            docker rm -f engram-release-smoke > /dev/null 2>&1 || true
+            exit 1
+          fi
+          docker rm -f engram-release-smoke > /dev/null
+          echo "镜像 smoke 通过：$IMAGE:$VER（${WAITED} 秒）"
+
+      - name: 推送 Docker 镜像（:<版本> + :latest，smoke 通过后）
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.image == true)
         shell: bash
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          # ENGRAM_GIT_SHA 烤进镜像 /app/GIT_SHA：镜像内没有 .git，应用内靠它显示提交号。
-          # 用上面按检出结果取的 SHA（dispatch 按 inputs.tag 检出，github.sha 是触发分支）
-          docker build --build-arg ENGRAM_GIT_SHA="${{ steps.srcsha.outputs.sha }}" \
-            --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" -t "$IMAGE:latest" main
           echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+          # smoke 通过后才把 :latest 指向本版（latest = 正式发版线/部署机更新信号）
+          docker tag "$IMAGE:$VER" "$IMAGE:latest"
           docker push "$IMAGE:$VER"
           docker push "$IMAGE:latest"
 
@@ -189,11 +280,16 @@ jobs:
         run: |
           VER="${{ steps.ver.outputs.version }}"
           # 同发版路径：提交号取检出结果（dispatch 时 github.sha 是触发分支，不是标签源码）
-          docker build --build-arg ENGRAM_GIT_SHA="${{ steps.srcsha.outputs.sha }}" \
-            --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
+          if docker image inspect "$IMAGE:$VER" > /dev/null 2>&1; then
+            echo "镜像已由补镜像步骤构建，直接用于离线包"
+          else
+            docker build --build-arg ENGRAM_GIT_SHA="${{ steps.srcsha.outputs.sha }}" \
+              --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
+          fi
 
       - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
-        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true
+        # tag 发版路径恒构建（三件套之一）；dispatch 只在勾选 binaries（补发/重跑）时构建
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.binaries == true)
         shell: bash
         env:
           # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
@@ -228,7 +324,7 @@ jobs:
         # checkout 保留同仓库 Git 凭据；修复仅从本仓库按不可变 SHA 取得。
 
       - name: 构建 Android APK（Linux 容器内打包，签名密钥经环境变量注入）
-        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.binaries == true)
         shell: bash
         env:
           MSYS_NO_PATHCONV: '1'
@@ -253,18 +349,25 @@ jobs:
           echo ">> 构建产物："
           ls -la mobile-apk-dist
 
-      - name: 整理产物并计算校验值（dispatch，构造产物时）
-        # 只回填（github_backfill 且不勾 binaries/offline_image）时没有任何产物：
-        # 这一步跑下去会对空目录 sha256sum 直接失败，后面的回填步骤也就永远到不了。
-        if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
+      - name: 整理产物并计算校验值（tag 发版 / dispatch 构造产物时）
+        # tag 路径恒执行（exe/APK 是发版固定交付）；dispatch 只在勾 binaries 或 offline_image 时执行。
+        # 只回填（github_backfill 且不勾产物）或只补镜像时没有任何产物：
+        # 这一步跑下去会对空目录 sha256sum 直接失败，后面的回填/补挂步骤也就永远到不了。
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true))
         shell: bash
         env:
           INPUT_BINARIES: ${{ inputs.binaries }}
           INPUT_OFFLINE: ${{ inputs.offline_image }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
+          # tag 路径恒有 exe/APK；dispatch 按勾选决定。
+          # 用 bash 层 GITHUB_REF 判断是否为 tag 推送（不依赖 if 表达式的布尔序列化写法）。
+          BUILD_BINARIES="$INPUT_BINARIES"
+          case "$GITHUB_REF" in
+            refs/tags/*) BUILD_BINARIES="true" ;;
+          esac
           mkdir -p release-out
-          if [ "$INPUT_BINARIES" = "true" ]; then
+          if [ "$BUILD_BINARIES" = "true" ]; then
             EXE="desktop-dist/Engram Setup ${VER}.exe"
             if [ ! -f "$EXE" ]; then
               echo "未找到安装包: $EXE"
@@ -295,34 +398,43 @@ jobs:
           sha256sum ./* > "sha256-${VER}.txt"
           cat "sha256-${VER}.txt"
 
-      - name: 上传产物到 Artifact（dispatch，保底下载入口）
-        if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
+      - name: 上传产物到 Artifact（tag 发版 / dispatch 构造产物时，保底下载入口）
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true))
         uses: https://gitea.com/actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: engram-release-${{ steps.ver.outputs.version }}
           path: release-out/
           retention-days: 7
 
-      - name: 创建 Release（发版，正文=CHANGELOG 段落）
+      - name: 创建 Release（tag 发版：正文=CHANGELOG 段落 + 发版产物清单，附件=release-out）
+        # 放在「整理产物」之后：Release 一旦创建就带着完整的 exe/APK/sha256 附件，
+        # 不会出现「Release 已发布但三件套还没构建」的中间态。
         if: startsWith(github.ref, 'refs/tags/')
         uses: https://gitea.com/actions/gitea-release-action@5a83c90484ef4355121df5eb60558c8ce66e81ac # v1
         env:
           NODE_OPTIONS: --experimental-fetch
         with:
           token: ${{ secrets.RELEASE_TOKEN }}
+          files: release-out/*
           draft: false
+          # 显式指定目标标签：用版本号推导（v<版本>，前面的「校验标签与版本号一致」已保证与标签相同），
+          # 不依赖 ref_name 上下文（Gitea 对 ref_name 的 context 支持未验证，bash 层 GITHUB_REF_NAME 才可靠）
+          tag_name: v${{ steps.ver.outputs.version }}
           name: v${{ steps.ver.outputs.version }}
           body: |
             ${{ steps.changelog.outputs.body }}
 
             ---
 
-            - Docker 镜像: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}（私有，需先 docker login）
-            - Windows exe / Android APK 是本次发版必备产物（三件套之一）：到 Actions → Release → Run workflow 输入本标签、勾选 binaries 构建，产物自动补挂到本 Release；三件缺一不算发版完成
-            - 离线 tar.gz（offline_image）与 sha256 校验文件按需构建
+            ### 发版产物
+            - Docker 镜像：`${{ env.IMAGE }}:${{ steps.ver.outputs.version }}`（`:latest` 同步指向本版；私有 Registry，需先 docker login）
+            - Windows 安装包：`Engram Setup ${{ steps.ver.outputs.version }}.exe`（本 Release 附件，由本标签源码构建）
+            - Android 安装包：`Engram ${{ steps.ver.outputs.version }}.apk`（本 Release 附件，签名构建）
+            - 校验文件：`sha256-${{ steps.ver.outputs.version }}.txt`
+            - 公开下载：公开仓库（GitHub）同名 Release 已同步同样附件
 
-      - name: 补挂产物到已发布 Release（dispatch，构造产物时）
-        # 同上：只回填时 release-out 是空的，这一步没有产物可挂（否则会把空校验文件挂上 Release）
+      - name: 补挂产物到已发布 Release（dispatch 补发/重跑时）
+        # 同上：只回填或只补镜像时 release-out 是空的，这一步没有产物可挂（否则会把空校验文件挂上 Release）
         if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
         uses: https://gitea.com/actions/gitea-release-action@5a83c90484ef4355121df5eb60558c8ce66e81ac # v1
         env:
@@ -335,12 +447,20 @@ jobs:
           # 不传 tag_name 会按 main 找/建 Release——曾把产物误挂到 stray main 标签的 Release（#325）
           tag_name: ${{ inputs.tag }}
           name: v${{ steps.ver.outputs.version }}
-          # 正文重新传 CHANGELOG 段落，避免 action 把已发布正文覆盖为空
+          # 正文重新传 CHANGELOG 段落 + 产物清单，避免 action 把已发布正文覆盖为空
           body: |
             ${{ steps.changelog.outputs.body }}
 
+            ---
+
+            ### 发版产物（补发）
+            - Docker 镜像：`${{ env.IMAGE }}:${{ steps.ver.outputs.version }}`（`:latest` 同步指向本版；私有 Registry，需先 docker login）
+            - Windows 安装包 / Android 安装包 / 校验文件：本 Release 附件
+            - 公开下载：公开仓库（GitHub）同名 Release 已同步同样附件
+
       - name: 同步产物到公开仓库 Release（GitHub 公开下载入口）
-        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true
+        # tag 发版路径恒同步（公开下载入口）；dispatch 只在勾选 binaries 时同步
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.binaries == true)
         shell: bash
         env:
           MSYS_NO_PATHCONV: '1'

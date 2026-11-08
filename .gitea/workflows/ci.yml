@@ -34,6 +34,18 @@ jobs:
       - name: 检出代码
         uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: 发版彩排检查（版本号三处一致 / CHANGELOG 当前版本段 / 未发布区格式）
+        # 与 release.yml 的 tag 门禁同一套脚本：把「版本号漏 bump、发版说明没写或写错」
+        # 提前到合 main 前发现（Docker verify 镜像构建上下文是 main/，不含仓库根 CHANGELOG，
+        # 所以这一步在宿主 node 上跑）。
+        shell: bash
+        run: |
+          if [ ! -f main/scripts/release/verify-release.mjs ]; then
+            echo "本分支尚无发版脚本（历史分支），跳过"
+            exit 0
+          fi
+          node main/scripts/release/verify-release.mjs --rehearse --strict
+
       - name: verify 阶段（build + typecheck + test）
         shell: bash
         run: docker build --target verify -t engram:ci-verify main
