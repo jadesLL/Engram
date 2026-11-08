@@ -12,7 +12,7 @@ export interface RuntimeCapabilities {
   features: {
     /** Agent 聊天交互面（聊天抽屉 / 会话）：服务端 / 桌面端 true；手机绑定中枢后也为 true（会话经中枢代理） */
     agent: boolean;
-    /** 能管 Agent 的「管理面」（外部接入 / MCP Token 等 owner 级配置）：服务端 / 桌面端 true，手机端（android-local）false */
+    /** 能管 Agent 的「管理面」（外部 Agent 接入 / Agent 令牌等 owner 级配置）：服务端 / 桌面端 true，手机端（android-local）false */
     agentAdmin: boolean;
     /**
      * 内置 Agent 控制台（模型 / 插件 / Agent 预设 / 高级）：
@@ -22,7 +22,8 @@ export interface RuntimeCapabilities {
     agentConsole: boolean;
     /** 视频理解模型配置（GET/PUT /api/settings/video-config）：服务端 / 桌面端 true；手机绑定中枢后 true（同样写中枢） */
     videoConfig: boolean;
-    mcp: boolean;
+    /** 外部 Agent 接入能力位（engram CLI + skill 的一键接入 / Agent 令牌等 owner 级配置面；MCP 已下线） */
+    agentAccess: boolean;
     jobs: boolean;
     onlyOffice: boolean;
     serverUpdate: boolean;
@@ -45,7 +46,7 @@ const fullCapabilities: RuntimeCapabilities = {
     agentAdmin: true,
     agentConsole: true,
     videoConfig: true,
-    mcp: true,
+    agentAccess: true,
     jobs: true,
     onlyOffice: true,
     serverUpdate: true,

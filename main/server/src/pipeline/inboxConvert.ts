@@ -30,7 +30,7 @@ import { decodeHtmlBytes, extractHtmlArticle, htmlArticleToPrompt } from '../lib
 /**
  * 收集箱 → Markdown 的语义转换（服务端通道）。
  *
- * 与 Agent 通道（MCP write_inbox_markdown）共用同一份规范：
+ * 与 Agent 通道（CLI `engram inbox write`）共用同一份规范：
  * `content/skills/inboxSemanticToMd.ts` 的正文就是这里的 system prompt。
  * 两条通道产出必须落在同一位置、同一套结构，用户看不出差别。
  *

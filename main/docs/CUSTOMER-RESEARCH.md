@@ -65,7 +65,7 @@
 
 ## 重复客户：生成新版本 / 覆盖旧报告
 
-发起保存型调研前，服务端会先在知识库 `原始资料/文档/` 里查该客户已有的调研报告（`POST /api/customer-research/existing`；`begin_customer_research` 的返回里也带 `existingReports`）。识别按报告文件名里的客户名做**全名/简称互相包含**匹配（忽略空格、括号与大小写），兼容 v1 的 `YYYY.MM.DD_<客户>_客户调研_xxx.md` 命名；只看知识库文档，**删调研记录不影响命中**，回收站里的报告不算。每条返回 `path` / `title` / `customerName` / `reportDate` / `kind`（完整报告或简报）/ `updatedAt`，最近更新在前。
+发起保存型调研前，服务端会先在知识库 `原始资料/文档/` 里查该客户已有的调研报告（`POST /api/customer-research/existing`；`engram research begin` 的返回里也带 `existingReports`）。识别按报告文件名里的客户名做**全名/简称互相包含**匹配（忽略空格、括号与大小写），兼容 v1 的 `YYYY.MM.DD_<客户>_客户调研_xxx.md` 命名；只看知识库文档，**删调研记录不影响命中**，回收站里的报告不算。每条返回 `path` / `title` / `customerName` / `reportDate` / `kind`（完整报告或简报）/ `updatedAt`，最近更新在前。
 
 界面在发起调研时先查已有报告：有就弹出「知识库里已有该客户的报告」选择框，默认选中最近更新的一份，可以「生成新版本（保留旧报告）」或「覆盖选中的报告」；覆盖前明确提示旧文档内容不再保留。
 
@@ -106,29 +106,34 @@
 
 ## 外部 Agent
 
-统一 MCP 入口 `begin_customer_research(customer, scope, client?, timeZone?, save?, saveMode?, overwritePath?)`：返回任务 ID、流程正文、模板版本、`identityContract`（主体核验要求）、`reportContract`（三种模式的章节、每章上限、来源格式）、`modeRules`（何时用哪种模式），以及 `existingReports`（知识库里该客户已有报告）与 `saveMode`（本次的保存方式，未选为空串）；`submit_customer_research` 校验通过后才算完成。客户端入口 skill 只说明何时调用，契约以服务端返回为准，不在客户端复制一份。
+外部 Agent 必须是**能跑 shell 的客户端**（Claude Code / Codex / DeepSeek Harness / ZCode / Kimi Code CLI / WorkBuddy / Qoder），交互统一走 `engram` CLI + skill：服务端不再提供 MCP 端点，也没有 `mcp__engram__*` 工具。
 
-`submit_customer_research(taskId, identity, sections, sources, save?, saveMode?, overwritePath?)`：
+统一命令 `engram research begin --customer <客户> [--scope knowledge-web|knowledge-only] [--save] [--save-mode new|overwrite] [--overwrite-path <path>] [--client <客户端>] [--timezone <时区>]`：返回任务 ID、流程正文、模板版本、`identityContract`（主体核验要求）、`reportContract`（三种模式的章节、每章上限、来源格式）、`modeRules`（何时用哪种模式），以及 `existingReports`（知识库里该客户已有报告）与 `saveMode`（本次的保存方式，未选为空串）；`engram research submit` 校验通过后才算完成。客户端入口 skill 只说明何时使用与如何调用，契约以服务端返回为准，不在客户端复制一份。
+
+`engram research submit --task <taskId> --file report.json`（报告 JSON 字段 `identity` / `sections` / `sources` / `save` / `saveMode` / `overwritePath`）：
 
 - **identity 必填**（v1 的 `companyFullName` 会被明确拒绝）：`status`=verified / kb-docs / not-found，`method`=registry / official-site / kb-documents / none，`attempts` 1–12 条检索记录，`evidence` 指向 sources 里的来源编号；verified 还要 `fullName`（可带 `registrationId`）。
-- **模式由 status + 章节集合推断**：not-found 只接受 `summary`/`gaps` 两章；完整报告除 8 章外还要满足上面的来源与引用门槛；其余为三章简报。模式不符会返回明确的修正提示，按提示改交对应模式，不要绕过校验改用 `create_raw_material`。
+- **模式由 status + 章节集合推断**：not-found 只接受 `summary`/`gaps` 两章；完整报告除 8 章外还要满足上面的来源与引用门槛；其余为三章简报。模式不符会返回明确的修正提示，按提示改交对应模式，不要绕过校验改用 `engram files add`。
 - **sources** 每条 `{id, title, url 或 path（只能二选一）, kind: registry|official|media|kb-doc|kb-page, publishedAt, accessedAt}`；「仅知识库资料」不能带 url；kb-docs 证据必须含 `原始资料/` 下的原始文档且不得掺外部网页；verified 仅限「知识库 + 联网调研」。
-- **保存语义**：内置「调研并保存」按钮已授权保存——完整报告自动入库，资料不足简报只留页面反馈、不自动入库（不要声称已保存），主体核验不落文件；外部对话只有在用户明确要求保存时才传 `save=true`（显式 save 时简报也可入库），其余默认只出报告预览（可在客户洞察翻阅）。not-found 永不保存文件。结构校验不证明事实真伪，网页来源仍需 Agent 实际阅读核查。
-- **保存方式**：`save=true` 且 `existingReports` 非空时，必须带 `saveMode=new` 或 `saveMode=overwrite + overwritePath`（取 `existingReports[].path`）；不先问用户就直接提交会被拒收。详见「重复客户：生成新版本 / 覆盖旧报告」与「自动入库策略」。
+- **保存语义**：内置「调研并保存」按钮已授权保存——完整报告自动入库，资料不足简报只留页面反馈、不自动入库（不要声称已保存），主体核验不落文件；外部对话只有在用户明确要求保存时才传 `--save`（显式保存时简报也可入库），其余默认只出报告预览（可在客户洞察翻阅）。not-found 永不保存文件。结构校验不证明事实真伪，网页来源仍需 Agent 实际阅读核查。
+- **保存方式**：`--save`（或报告 JSON 里的 `save=true`）且 `existingReports` 非空时，必须带 `--save-mode new` 或 `--save-mode overwrite --overwrite-path`（取 `existingReports[].path`）；不先问用户就直接提交会被拒收。详见「重复客户：生成新版本 / 覆盖旧报告」与「自动入库策略」。
 
-在「设置 → Agent 与自动化 → 外部 Agent 接入」重新注册：
+在「设置 → Agent 与自动化 → 外部接入」一键接入（只装 CLI 包装脚本 + skill，**不再改客户端的 MCP 配置**）：
 
-| 客户端 | 客户调研触发入口 |
+| 客户端 | 客户调研触发入口（skill 目录） |
 | --- | --- |
-| Codex | 用户级 `.agents/skills/engram-customer-research/SKILL.md` |
-| ZCode | `.zcode/skills/engram-customer-research/SKILL.md` |
+| Claude Code | 用户级 `~/.claude/skills/engram-customer-research/SKILL.md` |
+| Codex | 用户级 `~/.agents/skills/engram-customer-research/SKILL.md` |
 | DeepSeek Harness（dsh） | `$DSH_HOME/skills/engram-customer-research/SKILL.md` |
-| WorkBuddy | 用户级 `.codebuddy/skills/engram-customer-research/SKILL.md`（兼容其 CodeBuddy 配置） |
-| Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram-customer-research/SKILL.md`（默认 `.kimi-code`） |
-| Kimi Work | Engram 个人插件的 `skillInstructions`；重新登记后仍需在 Kimi Work 安装插件 |
+| ZCode | `~/.zcode/skills/engram-customer-research/SKILL.md` |
+| Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram-customer-research/SKILL.md`（默认 `~/.kimi-code`） |
+| WorkBuddy | 用户级 `~/.codebuddy/skills/engram-customer-research/SKILL.md`（兼容其 CodeBuddy 配置） |
+| Qoder | 配置目录 `skills/engram-customer-research/SKILL.md`（`~/.qoder` / `~/.qoder-cn`） |
 
-入口 skill 只包含何时使用和如何调用，不复制流程与契约全文，不含 Token。重新注册不会覆盖用户自行创建的同名技能；注销只删除带 Engram 管理标记的入口。Docker 的一键注册只作用于服务端所在机器，不能替远程电脑改配置；远程客户端使用配置片段，并复制或导入入口 SKILL.md。
+> **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 插件条目已失效，可自行清理。
 
-外部聊天说「调研客户 A」时默认返回报告预览；说「调研并保存」或之后要求保存时，Agent 才提交 `save=true`；如果知识库里已有该客户报告，必须先问用户「生成新版本还是覆盖旧报告」，再带 `saveMode` 重新发起或提交。不自动更新客户实体页。自然语言自动触发依赖客户端是否加载了 skill 和模型是否遵循规则；可用客户端的显式 skill 命令减少漏选，不能把配置写入成功等同于真实模型已调用。
+入口 skill 只包含何时使用和如何调用，不复制流程与契约全文，不含 Token。重新注册不会覆盖用户自行创建的同名技能；注销只删除带 Engram 管理标记的 skill。Docker 的一键接入只作用于服务端所在机器，不能替远程电脑改配置；远程客户端先从设置页或 `GET /api/agent/cli` 下载 `cli.js`，执行 `engram login --url <服务端地址> --token <Agent 令牌>` 登记连接，再把入口 SKILL.md 复制到客户端 skills 目录。
+
+外部聊天说「调研客户 A」时默认返回报告预览；说「调研并保存」或之后要求保存时，Agent 才传 `--save`；如果知识库里已有该客户报告，必须先问用户「生成新版本还是覆盖旧报告」，再带 `--save-mode` 重新发起或提交。不自动更新客户实体页。自然语言自动触发依赖客户端是否加载了 skill 和模型是否遵循规则；可用客户端的显式 skill 命令减少漏选，不能把接入成功等同于真实模型已调用。
 
 客户端路径依据：[Codex](https://learn.chatgpt.com/docs/build-skills)、[ZCode](https://zcode.network/cn/docs/skill/)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md)、[WorkBuddy](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Setting)、[Kimi Code](https://moonshotai.github.io/kimi-code/en/customization/skills)。

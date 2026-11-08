@@ -141,7 +141,7 @@ const TABLES_TO_WIPE = [
   'files',
 ] as const;
 
-/** 清除知识正文及其所有派生数据库状态，保留配置、认证、MCP Token、系统日志和回收站。 */
+/** 清除知识正文及其所有派生数据库状态，保留配置、认证、Agent 令牌、系统日志和回收站。 */
 export async function wipeKnowledgeData(options: WipeOptions = {}): Promise<KnowledgeWipeResult> {
   const { rebuild = true } = options;
 

@@ -16,17 +16,17 @@ import {
  *
  * 为什么由 Engram 自己实现：内置 Agent 跑的是 dsh 的 sdk profile，那一层**没有**提问能力
  * （`ask_user_question` 只挂在 web profile 的 agent preset 上，sdk 的 stdio 协议既没有提问
- * 方法也没有应答通道，MCP 客户端也不支持 elicitation）。所以提问走 Engram 自己的 MCP 工具：
- * `ask_user` 落一条 pending 提问并**挂起这次工具调用**，界面在对话最下侧弹出选项，用户点选后
- * 工具调用返回答案——Agent 在同一轮里继续干活。
+ * 方法也没有应答通道，dsh 自带的客户端也不支持 elicitation）。所以提问走 Engram 自己的
+ * 通道：`engram ask` 经 REST POST /api/agent/ask 落到这里，落一条 pending 提问并**挂起这次
+ * HTTP 长轮询**，界面在对话最下侧弹出选项，用户点选后长轮询返回答案——Agent 在同一轮里继续干活。
  *
  * 三条收口路径：用户答复（answered）、超时（expired）、本轮结束/被停（cancelled）。
- * 提问与轮次绑定：没有正在跑的 Engram 对话就弹不出选项框，工具会立刻说明并让 Agent 改用正文提问。
+ * 提问与轮次绑定：没有正在跑的 Engram 对话就弹不出选项框，CLI 会立刻说明并让 Agent 改用正文提问。
  */
 
 /** 等用户答复的默认上限：超过就作废，别让 Agent（和它的工具调用）一直挂着 */
 export const ASK_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
-/** 上限（dsh 侧 MCP 工具调用超时是 30 分钟，留出余量，别撞上） */
+/** 上限（`engram ask` 的 HTTP 长轮询要等满这段时间，留出余量，别让 CLI 先超时） */
 export const ASK_TIMEOUT_MAX_MS = 25 * 60 * 1000;
 /** 一次最多问几个问题、每题最多几个选项：弹窗要一眼看得完 */
 export const ASK_QUESTION_LIMIT = 5;
@@ -44,7 +44,7 @@ export class AgentQuestionError extends Error {
   }
 }
 
-/** 一次提问里的一项（MCP 入参） */
+/** 一次提问里的一项（CLI `engram ask --data` 的入参） */
 export interface QuestionInput {
   id?: string;
   question: string;
@@ -169,10 +169,10 @@ function waitForAnswer(id: string, timeoutMs: number): Promise<QuestionDto> {
 }
 
 /**
- * 提问并等用户点选（MCP `ask_user` / 内置 Agent 专用）。
+ * 提问并等用户点选（`engram ask` / 内置 Agent 专用；REST POST /api/agent/ask 调用）。
  *
  * 全部问题一起投递、一起等：任一问题超时就把还没答复的那些标成 expired，返回时如实说明。
- * 返回后调用方（MCP 工具）把答案写进工具结果，Agent 据此在同一轮继续。
+ * 返回后调用方（CLI 长轮询）把答案输出给 Agent，Agent 据此在同一轮继续。
  */
 export async function askUserQuestions(input: {
   questions: QuestionInput[];
@@ -282,11 +282,11 @@ function answerLine(question: QuestionDto): string {
   return `- ${question.question} → ${picked}${custom}`;
 }
 
-/** MCP `ask_user` 的工具结果文本（Agent 据此继续） */
+/** `engram ask` 的结果文本（Agent 据此继续） */
 export function formatAskOutcome(outcome: AskOutcome): string {
   if (outcome.reason === 'no_active_run') {
     return '提问失败：当前没有正在运行的 Engram 对话，弹不出选项框。'
-      + '请把问题直接写进你的回复正文（选项也写成条目），让用户回复——不要空等，也不要反复重试本工具。';
+      + '请把问题直接写进你的回复正文（选项也写成条目），让用户回复——不要空等，也不要反复重试 engram ask。';
   }
   if (outcome.ok) {
     return `用户在对话里点选了答复：\n${outcome.questions.map(answerLine).join('\n')}\n`

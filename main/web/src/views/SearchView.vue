@@ -53,7 +53,7 @@
       v-else-if="searched"
       icon="search"
       title="没有找到相关内容"
-      hint="换个关键词试试；深度问答与提炼交给你的外部 Agent（MCP search 工具 / engram search）"
+      hint="换个关键词试试；深度问答与提炼交给你的外部 Agent（engram search 命令）"
     />
     <AppEmptyState
       v-else-if="!searching"

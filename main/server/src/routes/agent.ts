@@ -8,7 +8,7 @@ import { enqueuePagePipeline } from '../jobQueue.js';
 
 /**
  * 外部 Agent 的 REST 写入口（CLI `engram pages write|delete|rename|move` 使用）。
- * 与 MCP write_page / delete_page / rename_page / move_page 工具同一内核：
+ * 与 CLI `engram pages write|delete|rename|move` 同一内核：
  * 证据逐字校验 + 新建概念/实体页两来源门禁 + 自动操作日志；只允许操作 Wiki/ 下的页面，
  * 删除只做软删除入回收站。
  */
@@ -52,7 +52,7 @@ export async function agentRoutes(app: FastifyInstance) {
     }
   });
 
-  /** 单页删除（CLI `engram pages delete` 使用）：与 MCP delete_page 同一内核——只入回收站，只删 Wiki/ 页面 */
+  /** 单页删除（CLI `engram pages delete` 使用）：与 CLI `engram pages delete` 同一内核——只入回收站，只删 Wiki/ 页面 */
   app.post('/api/agent/page/delete', async (req, reply) => {
     const body = (req.body || {}) as { titleOrId?: string; id?: string; reason?: string };
     try {
@@ -66,7 +66,7 @@ export async function agentRoutes(app: FastifyInstance) {
     }
   });
 
-  /** 单页重命名（CLI `engram pages rename` 使用）：与 MCP rename_page 同一内核——改标题+移动文件+重定向双链 */
+  /** 单页重命名（CLI `engram pages rename` 使用）：与 CLI `engram pages rename` 同一内核——改标题+移动文件+重定向双链 */
   app.post('/api/agent/page/rename', async (req, reply) => {
     const body = (req.body || {}) as { titleOrId?: string; id?: string; newTitle?: string };
     try {
@@ -80,7 +80,7 @@ export async function agentRoutes(app: FastifyInstance) {
     }
   });
 
-  /** 单页移动（CLI `engram pages move` 使用）：与 MCP move_page 同一内核——只在 Wiki 树内移动，可顺带改标题 */
+  /** 单页移动（CLI `engram pages move` 使用）：与 CLI `engram pages move` 同一内核——只在 Wiki 树内移动，可顺带改标题 */
   app.post('/api/agent/page/move', async (req, reply) => {
     const body = (req.body || {}) as { titleOrId?: string; id?: string; dir?: string; newTitle?: string };
     try {

@@ -8,7 +8,7 @@ import { isPageDir, normalizeDir } from '../config.js';
 
 /**
  * 外部 Agent 页面操作（删除/重命名/移动）的确定性内核，三端共用：
- *  - MCP `delete_page` / `rename_page` / `move_page` 工具
+ *  - CLI `engram pages delete/rename/move`（与旧实现同一内核）
  *  - REST `POST /api/agent/page/delete|rename|move`（CLI `engram pages delete|rename|move` 使用）
  *  - 后续其他 Agent 入口
  *

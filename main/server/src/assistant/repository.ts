@@ -762,7 +762,7 @@ export function listToolCallBriefs(runIds: string[]): ToolCallBriefDto[] {
   }));
 }
 
-/* ---------- Agent 提问（MCP ask_user：对话最下侧弹选项，点选后那次工具调用才返回） ---------- */
+/* ---------- Agent 提问（engram ask：对话最下侧弹选项，点选后 CLI 那次长轮询才返回） ---------- */
 
 /** 提问状态：pending 等用户点选 / answered 已答复 / expired 超时作废 / cancelled 本轮被停 */
 export type QuestionStatus = 'pending' | 'answered' | 'expired' | 'cancelled';
@@ -1047,13 +1047,4 @@ export function snapshot(sessionId: string): Snapshot | null {
     subagents: listSubagents(sessionId),
     questions: listPendingQuestions(sessionId),
   };
-}
-
-/** 内置 Agent 专用的 MCP token（与「Agent 接入」给外部 harness 的 token 分开存放） */
-export function ensureAgentToken(name = 'dsh-agent'): string {
-  const existing = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = ?`).get(name) as any)?.token;
-  if (existing) return existing;
-  const token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
-  db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`).run(token, name, now());
-  return token;
 }

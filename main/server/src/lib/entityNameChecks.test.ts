@@ -68,7 +68,7 @@ test('资料库自查：页面标题里的全名直接命中，不打扰用户',
   assert.equal(result.check.outcome, 'kb_hit');
   assert.equal(result.check.stage, 'closed', '有候选即办结，不进待答复');
   assert.match(kernel.describeCheckRequest(result), /资料库里已有全名/);
-  assert.match(kernel.describeCheckRequest(result), /rename_page/);
+  assert.match(kernel.describeCheckRequest(result), /engram pages rename/);
   assert.equal(kernel.pendingEntityNameCount(), 0);
 });
 
@@ -127,7 +127,7 @@ test('资料库没有全名：登记这一问，让 Agent 在对话里问用户'
   assert.equal(kernel.pendingEntityNameCount() >= 1, true);
   assert.equal(kernel.listEntityNameChecks('pending').some((c) => c.entity === '宏远精密'), true);
   assert.match(kernel.describeCheckRequest(result), /请立刻在对话里问用户/);
-  assert.match(kernel.describeCheckRequest(result), /ask_user/);
+  assert.match(kernel.describeCheckRequest(result), /engram ask/);
 });
 
 test('同名重复登记：复用未办结的核验，不再问你第二次', () => {
@@ -184,7 +184,7 @@ test('回填的名称不像工商全名会被拒绝（全名以企查查能否�
 test('用户同意改名：服务端执行改名（保持页面 ID、重定向双链、记操作日志）', async () => {
   const id = seedPage('Wiki/实体/津亚电子.md', '津亚电子', '## 当前理解\n\n### 名称口径\n\n全称待确认。');
   const referrerId = seedPage('Wiki/概念/出货流程.md', '出货流程', '客户 [[津亚电子]] 的出货按季度对账。');
-  // 引用双链的重定向走 edges 表，edges 由索引层建立（真实运行时 write_page 后自动入队）
+  // 引用双链的重定向走 edges 表，edges 由索引层建立（真实运行时 engram pages write 后自动入队）
   await indexPage(id);
   await indexPage(referrerId);
 

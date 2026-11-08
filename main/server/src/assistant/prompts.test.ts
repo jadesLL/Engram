@@ -53,8 +53,9 @@ test('buildTask：附件路径进不可信上下文块，处理口径作为可�
 
   // 可信说明在不可信块之后：模型能分清「路径是数据」「处理方式是约定」
   assert.ok(task.indexOf('本次消息附带的是收集箱文件') > task.indexOf('</界面上下文>'));
-  assert.match(task, /list_inbox \/ read_inbox_item/);
-  assert.match(task, /convert_inbox_item/);
+  assert.match(task, /engram inbox list/);
+  assert.match(task, /engram inbox read <路径>/);
+  assert.match(task, /engram inbox convert <路径>/);
   assert.match(task, /产物留在收集箱，不要入库/);
   assert.match(task, /不要拿收集箱内容当证据/);
   // 用户原文仍在最后

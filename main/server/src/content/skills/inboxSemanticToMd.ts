@@ -6,7 +6,7 @@ export const SKILL_VERSION = 2;
  * 收集箱 → Markdown 的语义转换作业法。
  *
  * 这份正文是**服务端一键转换与 Agent 转换共用的同一份规范**：
- * 服务端 job 把它当 system prompt 内联，Agent 经 MCP `skill_guide('inbox-semantic-to-md')` 取。
+ * 服务端 job 把它当 system prompt 内联，Agent 经 `engram skill show inbox-semantic-to-md` 取。
  * 两条通道的产物必须落在同一个位置、用同一套结构，用户不该看出是哪条通道转的。
  */
 export const SKILL: SkillDoc = {
@@ -20,7 +20,7 @@ export const SKILL: SkillDoc = {
 
 ## 适用与边界
 - 输入：收集箱（\`收集箱/\`）里的一份原件，内容已经以文字形式拿到手里。
-- 输出：一份 Markdown 文档，写到 \`收集箱/转换结果/YYYY.MM.DD_核心内容.md\`（MCP 用 \`write_inbox_markdown\`，日期取转换当天的本地日期）。
+- 输出：一份 Markdown 文档，写到 \`收集箱/转换结果/YYYY.MM.DD_核心内容.md\`（CLI 用 \`engram inbox write\`，日期取转换当天的本地日期）。
 - **收集箱不是知识库**：转换产物在用户点「入库」之前不参与检索、不被引用、不得作为事实来源。
 - 本 skill 只管「把这份文件变成人能读的 Markdown」，**不**提炼概念、不写 Wiki 页面、不动证据账本。
 
@@ -49,7 +49,7 @@ export const SKILL: SkillDoc = {
 
 ## 四、交付纪律
 - 产物只写一份 Markdown，路径由服务端依据转换日期与语义标题确定，不要另外建文件。
-- 调用 \`write_inbox_markdown\` 时把从正文提炼的短语传给 \`title\`；服务端会补当天日期、清理文件名，并在成功写入后删除**同一原件**的旧转换产物。不同原件即使同名也不得互相覆盖。
+- 调用 \`engram inbox write\` 时把从正文提炼的短语传给 \`--title\`；服务端会补当天日期、清理文件名，并在成功写入后删除**同一原件**的旧转换产物。不同原件即使同名也不得互相覆盖。
 - 不要修改原件，也不要移动它。
 - 不要在产物里写「由 AI 生成」之类的自我说明；元信息写在 frontmatter（服务端会补）。
 - 内容太长被分成多段转换时，各段之间保持标题层级连续，不要重复概要。`,

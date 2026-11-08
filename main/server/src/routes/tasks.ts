@@ -10,7 +10,7 @@ import { completeTask, TaskCompletionError } from '../assistant/taskCompletion.j
  *
  * 提问本身走的是 assistant 的运行通道（同一个 dsh、同一套事件流与排队），
  * 这里只负责「看板会话 + 最近一次答案」这一层，所以鉴权口径与 assistant 面一致：
- * owner 登录态 / MCP token / 已签发的同步成员 token 都能用。
+ * owner 登录态 / Agent 令牌 / 已签发的同步成员 token 都能用。
  *
  * 间隔设置也走同一道门（不加 requireAuth）：它既不含密钥也不含路径，只是「打开看板页时要不要
  * 自动重提炼」的节奏，权限面比「让成员触发一次完整提炼」还小；而且手机端整条看板面都由本机

@@ -7,7 +7,7 @@ import { noteAppWrite } from '../lib/appWrites.js';
 import { INBOX_DIR, INBOX_DERIVED_DIR, isInboxDerivedPath } from '../lib/brainPaths.js';
 
 /**
- * 往收集箱新建一份**文本原件**（MCP `add_inbox_file` 的实现）。
+ * 往收集箱新建一份**文本原件**（CLI `engram inbox add` 的实现）。
  *
  * 与 `writeInboxMarkdown`（转换产物通道）是两条不同的路：
  *  - 本模块只新建「原件」——用户说「把这段内容先放进收集箱」时，Agent 把正文原样存成一份
@@ -24,7 +24,7 @@ export const INBOX_ADD_EXTS: readonly string[] = ['md', 'markdown', 'txt', 'csv'
 /** 单份正文上限（字符数）。远大于日常一段摘要/一份纪要，又能挡住模型误把整库内容塞进来 */
 export const INBOX_ADD_MAX_CHARS = 1_000_000;
 
-/** 可直接展示给用户的拒绝原因：MCP 侧原样作为工具错误文本返回 */
+/** 可直接展示给用户的拒绝原因：CLI 侧原样作为命令错误文本返回 */
 export class InboxAddError extends Error {
   constructor(message: string) {
     super(message);

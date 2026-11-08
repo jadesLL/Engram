@@ -7,7 +7,7 @@ import { contributionsForProjection } from './sourceLedger.js';
  * 页面证据账本的只读视图：来源（原始资料路径）→ 版本 → 事实（含逐字引文）。
  * 提炼管线已外移给外部 Agent；本模块只读取 Agent 写入与历史管线留下的
  * page_contributions / source_versions / ingest_facts，供编辑器证据抽屉与
- * MCP page_evidence 工具消费。
+ * CLI `engram pages evidence` / REST 消费。
  */
 
 export interface PageEvidenceFact {

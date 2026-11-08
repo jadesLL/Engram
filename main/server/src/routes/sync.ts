@@ -76,7 +76,7 @@ import {
 
 /**
  * 多端同步端点（同步群组模型）：
- *  - 管理面（成员增删、角色与绑定配置、状态）：owner 鉴权（登录 cookie / MCP token）
+ *  - 管理面（成员增删、角色与绑定配置、状态）：owner 鉴权（登录 cookie / Agent 令牌）
  *  - 数据面（push/events/file/changes/snapshot/page-content）：群组成员 token（sync_peers）
  *    或 owner 均可；成员身份由中枢在「添加成员」时签发的专属 token 认证
  * 角色说明：每个实例都具备中枢能力；是否作为成员绑定上级由
@@ -156,7 +156,7 @@ function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: Pu
 const snapshotLoggedAt = new Map<string, number>();
 const SNAPSHOT_LOG_INTERVAL_MS = 5 * 60_000;
 
-/** 数据面鉴权：群组成员 token 优先，其次 owner 通道（登录 cookie / MCP token） */
+/** 数据面鉴权：群组成员 token 优先，其次 owner 通道（登录 cookie / Agent 令牌） */
 export async function requireSyncAccess(req: FastifyRequest, reply: FastifyReply) {
   const auth = req.headers.authorization || '';
   const bearer = auth.startsWith('Bearer ') || auth.startsWith('bearer ')
@@ -644,7 +644,7 @@ export async function syncRoutes(app: FastifyInstance) {
       // 客户调研是 wiki.db 里的记录，与会话一样只带快照 hash/manifest，不搬报告正文
       research: syncAllowed('research', '') ? researchManifest() : [],
       // 成员端据此把「本机叫什么」对齐成中枢配置里的成员名（deviceLabel.ts）；
-      // owner 通道（浏览器/MCP）没有成员身份，返回 null，调用方按「不知道」处理
+      // owner 通道（浏览器/Agent 令牌）没有成员身份，返回 null，调用方按「不知道」处理
       device: peer ? { id: peer.id, name: peer.name } : null,
       // 同步群组共用的更新源（中枢「更新源配置」里的仓库地址，不带凭据）：手机端没手填地址时
       // 就用这一份检查 APK 更新，免得多端各填一遍；成员端手填的地址优先（见 AppUpdateConfig）

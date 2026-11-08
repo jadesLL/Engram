@@ -12,7 +12,7 @@ import { isInboxPath } from '../lib/brainPaths.js';
  *  - 新建 概念/实体 页需两来源门禁：≥2 个不同来源路径各≥1 条有效引文，
  *    或单一来源 ≥2 条有效引文（延续原提炼管线的新建页门禁）
  *  - 通过后写入 page_contributions / source_versions / ingest_facts，
- *    编辑器「来源证据」抽屉与 MCP page_evidence 继续可读
+ *    编辑器「来源证据」抽屉与 CLI `engram pages evidence` 继续可读
  *  - 服务端自动追加 AIWorks/log/log.md 操作日志，Agent 无需重复记录
  */
 

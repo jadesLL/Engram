@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>Agent 与自动化</h3>
-        <p>内置 Agent 与外部 Agent 的接入：ZCode、Codex CLI、DeepSeek Harness、WorkBuddy 与 Qoder 支持本机一键注册；Kimi Work 支持一键登记个人插件。</p>
+        <p>内置 Agent 与外部 Agent 的接入：Claude Code、Codex CLI、DeepSeek Harness、ZCode、Kimi Code CLI、WorkBuddy 与 Qoder 都通过 engram 命令读写知识库；一键接入只安装 skill 与 CLI 包装脚本。</p>
       </div>
     </div>
 
@@ -13,7 +13,7 @@
       :badge="status.bundled ? '' : '缺依赖'"
       :badge-tone="status.bundled ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
-      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 MCP 工具读写。模型与插件在下方「内置 Agent 控制台」里配置（Engram 原生界面）"
+      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 engram 命令读写。模型与插件在下方「内置 Agent 控制台」里配置（Engram 原生界面）"
     >
       <!-- 运行时摘要（dsh 版本 + profile，来自 /api/assistant/status）：右侧一键跳到下方的控制台分组 -->
       <div class="state-strip builtin-summary">
@@ -77,59 +77,41 @@
          （2026-09-27 的「导航第 2 项、页面第 4 块」就是这里顺序错位造成的）。 -->
     <slot name="after-builtin" />
 
-    <!-- 外部接入（ZCode / Codex / MCP Token）只在 Agent 管理面可用的端渲染：
-         手机（android-local）只有同步成员令牌，MCP Token 不能下发到手机，管理面能力位 features.agentAdmin
-         恒 false。注意不能用 features.agent——那是「聊天交互面」，手机绑定中枢后为 true（手机能聊天），
-         拿它门控会让手机渲染出导航里没有、接口也 404 的「外部接入」组。 -->
+    <!-- 外部接入（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder）只在 Agent 管理面
+         可用的端渲染：手机（android-local）只有同步成员令牌，Agent 令牌不能下发到手机，管理面能力位
+         features.agentAdmin 恒 false。注意不能用 features.agent——那是「聊天交互面」，手机绑定中枢后
+         为 true（手机能聊天），拿它门控会让手机渲染出导航里没有、接口也 404 的「外部接入」组。 -->
     <SettingsGroup
       v-if="capabilities.features.agentAdmin"
       anchor="agent-target"
       title="外部接入"
-      hint="选择要接入的 Agent 后，查看一键注册或对应的 MCP 接入指引"
+      hint="外置 Agent 走 engram CLI + skill：一键接入写入 skill 与命令行包装脚本，不再改客户端 MCP 配置"
     >
-      <div class="harness-picker">
-        <label for="agent-target-select">接入目标</label>
-        <AppSelect
-          id="agent-target-select"
-          v-model="target"
-          aria-label="接入目标"
-          :options="targetOptions"
-        />
-      </div>
-
-      <AgentHarnessSection v-if="target === 'zcode' || target === 'codex' || target === 'dsh'" :harness="harnessTarget" />
-      <AgentMcpSection v-else :target="target" />
+      <AgentCliSection />
     </SettingsGroup>
 
     <SettingsGroup
       anchor="agent-tools"
       title="工具与手册"
-      :hint="`只读参考：接入后 Agent 可用 ${MCP_TOOLS.length} 个 MCP 工具——读 ${readTools.length} 个不改动知识库，写 ${writeTools.length} 个带证据门禁并记入操作日志`"
+      :hint="`只读参考：Agent 通过 engram 命令读写知识库——读 ${readCommands.length} 条不改动知识库，写 ${writeCommands.length} 条带证据门禁并记入操作日志，另有 ${systemCommands.length} 条连接与说明命令`"
     >
       <p class="faint small tools-intro">
-        模型侧工具名为 <code>mcp__engram__&lt;工具名&gt;</code>；每个工具附参数、要点与 CLI 用法。
+        命令统一以 <code>engram</code> 开头（本机一键接入后 PATH 里可用；远程设备先用 <code>node engram.js</code>）；
+        每条命令附一句话功能与使用要点。
       </p>
 
       <div class="tools-groups">
-        <section v-for="group in toolGroups" :key="group.label" class="tools-group">
+        <section v-for="group in commandGroups" :key="group.label" class="tools-group">
           <h5>{{ group.label }}（{{ group.items.length }}）</h5>
-          <article v-for="tool in group.items" :key="tool.name" class="tool-row">
+          <article v-for="cmd in group.items" :key="cmd.command" class="tool-row">
             <div class="tool-title">
-              <code class="tool-name">{{ tool.name }}</code>
-              <span class="tool-summary">{{ tool.summary }}</span>
+              <code class="tool-name">{{ formatCliCommand(cmd.command) }}</code>
             </div>
+            <p class="tool-summary">{{ cmd.summary }}</p>
             <dl class="tool-meta">
               <div>
-                <dt>参数</dt>
-                <dd>{{ tool.params }}</dd>
-              </div>
-              <div>
                 <dt>要点</dt>
-                <dd>{{ tool.notes }}</dd>
-              </div>
-              <div>
-                <dt>CLI</dt>
-                <dd><code>{{ tool.cli }}</code></dd>
+                <dd>{{ cmd.notes }}</dd>
               </div>
             </dl>
           </article>
@@ -137,12 +119,12 @@
       </div>
 
       <p class="faint small tools-foot">
-        CLI（<code>engram</code>）与 MCP 共用同一套接口和 Token，另有 <code>status</code>（服务健康与连接检查）、
-        <code>import</code>（上传文件到原始资料）、<code>login</code>（保存连接配置）、<code>mcp-config</code>
-        （输出各 Agent 配置片段）等命令；作业方法论见《Agent 作业指南》，具体作业手法与纪律用
-        <code>skill_list</code> 看清单、<code>skill_guide</code> 取全文。
+        全局选项：<code v-for="(option, index) in CLI_GLOBAL_OPTIONS" :key="index">{{ option }}</code>。
+        {{ CLI_EXIT_NOTE }}。作业方法论见《Agent 作业指南》（<code>engram guide</code>），具体作业手法与纪律用
+        <code>engram skill list</code> 看清单、<code>engram skill show &lt;name&gt;</code> 取全文。
       </p>
       <div class="guide-actions">
+        <button class="btn small" type="button" @click="copyCommandSheet">复制命令清单</button>
         <button class="btn small" type="button" @click="loadGuide">
           {{ guideOpen ? '收起作业指南' : '查看《Agent 作业指南》' }}
         </button>
@@ -158,18 +140,21 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api } from '../../api';
 import { errorMessage } from '../../lib/agentConsoleApi';
 import { notify } from '../../lib/notify';
-import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
+import {
+  CLI_COMMANDS,
+  CLI_EXIT_NOTE,
+  CLI_GLOBAL_OPTIONS,
+  formatCliCommand,
+  groupedCliCommands,
+} from '../../lib/cliReference';
 import { agentRuntimeSummary } from '../../lib/agentConsole';
 import { expandGroup } from '../../lib/settingsCollapse';
-import AgentHarnessSection from './AgentHarnessSection.vue';
-import AgentMcpSection from './AgentMcpSection.vue';
+import AgentCliSection from './AgentCliSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AgentConsolePanel from './AgentConsolePanel.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSettingsBadge } from '../../lib/settingsBadges';
-
-type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimi' | 'kimiwork' | 'other';
 
 /**
  * 能力位：「外部接入」看 features.agentAdmin（管理面，手机恒 false；features.agent 是聊天交互面，
@@ -177,19 +162,7 @@ type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimi' | 
  */
 const { capabilities } = useRuntimeCapabilities();
 
-const target = ref<AgentTarget>('zcode');
-/** 接入目标选项：显式标注联合类型，AppSelect 的泛型才能推断出 AgentTarget */
-const targetOptions: Array<{ value: AgentTarget; label: string }> = [
-  { value: 'zcode', label: 'ZCode 桌面端（一键接入）' },
-  { value: 'codex', label: 'Codex CLI（一键接入）' },
-  { value: 'dsh', label: 'DeepSeek Harness / dsh（一键接入）' },
-  { value: 'workbuddy', label: 'WorkBuddy（一键接入）' },
-  { value: 'qoder', label: 'Qoder（一键接入）' },
-  { value: 'kimiwork', label: 'Kimi Work（一键登记插件）' },
-  { value: 'kimi', label: 'Kimi Code CLI（一键接入）' },
-  { value: 'other', label: '其他 Agent（MCP 接入）' },
-];
-/** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */
+/** 《Agent 作业指南》较长，默认收起在「工具与手册」分组底部 */
 const guideOpen = ref(false);
 const guide = ref('');
 
@@ -319,14 +292,17 @@ async function savePermission(mode: string): Promise<void> {
   }
 }
 
-/** 一键接入区只接受 zcode / codex / dsh（选「其他」时不渲染该组件） */
-const harnessTarget = computed<'zcode' | 'codex' | 'dsh'>(() => (
-  target.value === 'codex' || target.value === 'dsh' ? target.value : 'zcode'
-));
+/** 命令参考表：分组顺序与 lib/cliReference 的 CLI_GROUPS 一致（读 → 写 → 系统） */
+const commandGroups = groupedCliCommands();
+const readCommands = CLI_COMMANDS.filter((item) => item.group === '读');
+const writeCommands = CLI_COMMANDS.filter((item) => item.group === '写');
+const systemCommands = CLI_COMMANDS.filter((item) => item.group === '系统');
 
-const toolGroups = groupedMcpTools();
-const readTools = computed(() => MCP_TOOLS.filter((t) => t.group === '读'));
-const writeTools = computed(() => MCP_TOOLS.filter((t) => t.group === '写'));
+/** 命令清单复制：一条命令一行，便于贴进客户端说明或自己的速查表 */
+async function copyCommandSheet(): Promise<void> {
+  const lines = CLI_COMMANDS.map((item) => `${formatCliCommand(item.command)} —— ${item.summary}`);
+  await copy([`Engram CLI 命令（${CLI_COMMANDS.length} 条）`, '', ...lines].join('\n'));
+}
 
 async function loadGuide() {
   guideOpen.value = !guideOpen.value;
@@ -474,21 +450,6 @@ async function copy(text: string) {
   flex-wrap: wrap;
 }
 
-.harness-picker {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 12px 4px 4px;
-}
-.harness-picker label {
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.harness-picker .app-select {
-  min-width: 240px;
-  font-size: 13px;
-}
-
 .tools-intro {
   margin: 10px 0 0;
   line-height: 1.6;
@@ -518,11 +479,16 @@ async function copy(text: string) {
   gap: 8px;
   flex-wrap: wrap;
 }
+/* 命令较长（含参数说明）：允许换行，不要把分组卡片撑出横向滚动 */
 .tool-name {
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .tool-summary {
+  margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -576,13 +542,6 @@ async function copy(text: string) {
 }
 
 @media (max-width: 640px) {
-  .harness-picker {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .harness-picker .app-select {
-    width: 100%;
-  }
   .builtin-permission-row {
     flex-direction: column;
     align-items: stretch;

@@ -6,7 +6,7 @@ const cache = new Map<string, { data: any; ts: number }>();
 const TTL = 60_000;
 const MAX = 8;
 
-/** 页面关联数据：图谱邻居（出边+入边）与实体关联；REST /related 与 MCP related_pages 共用 */
+/** 页面关联数据：图谱邻居（出边+入边）与实体关联；REST /related 与 CLI `engram pages related` 共用 */
 export function relatedPageData(pageId: string): {
   neighbors: Array<{ id: string; title: string; path: string; type: string; direction: 'in' | 'out'; rel: string }>;
   similar: unknown[];

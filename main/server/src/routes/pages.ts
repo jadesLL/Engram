@@ -304,7 +304,7 @@ export async function pageRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** 页面关联：图谱邻居（供编辑器底部展示；与 MCP related_pages 同一查询）；语义相似随向量索引移除 */
+  /** 页面关联：图谱邻居（供编辑器底部展示；与 CLI `engram pages related` 同一查询）；语义相似随向量索引移除 */
   app.get('/api/pages/:id/related', async (req) => {
     const { id } = req.params as { id: string };
     const cached = relatedCache.get(id);

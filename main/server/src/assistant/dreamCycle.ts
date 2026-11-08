@@ -112,7 +112,7 @@ function clipSummary(text: string, limit = 4000): string {
 export function buildDreamMessage(audit: DreamAudit, now: Date = new Date()): string {
   const lines = [
     `【梦境思考】自动整理与纠错（${stamp(now)}）`,
-    `本轮待办信号：${dreamAuditSummary(audit)}。以清单工具的实时结果为准。`,
+    `本轮待办信号：${dreamAuditSummary(audit)}。以 \`engram files list --pending\` 的实时结果为准。`,
   ];
   if (audit.pendingSamples.length) {
     const more = audit.pendingFiles > audit.pendingSamples.length ? ` 等 ${audit.pendingFiles} 份` : '';
@@ -304,7 +304,7 @@ export function dreamTick(now: Date = new Date(), deps: DreamDeps = {}): DreamSt
   return startDreamRun({ trigger: 'schedule', now, deps });
 }
 
-/** 进程级启动入口：启动 30 秒后首跑（等 Fastify 监听就绪，Agent 的 MCP 工具要回调本机），此后每 30 秒 tick */
+/** 进程级启动入口：启动 30 秒后首跑（等 Fastify 监听就绪，Agent 的 engram 命令要回调本机），此后每 30 秒 tick */
 export function startDreamScheduler(): void {
   const run = () => {
     try {

@@ -176,12 +176,12 @@ export function migrate() {
   );
 
   -- 公司全名核验通道（唯一允许问用户的事，问在对话里）：Agent 登记待核名称 →
-  -- 在对话里问用户是否允许联网查企查查/天眼查（内置 Agent 经 MCP ask_user 弹底部选项、
-  -- 外部 Agent 用自己的提问能力）→ entity_name_answer 回填答复 → Agent 回填查到的工商全名 →
+  -- 在对话里问用户是否允许联网查企查查/天眼查（内置 Agent 经 engram ask 弹底部选项、
+  -- 外部 Agent 用自己的提问能力）→ engram names answer 回填答复 → Agent 回填查到的工商全名 →
   -- 用户同意后由服务端改名。
   -- 与 ingest_questions（旧内置提炼管线，已停用）无关，也不是通用提问通道：
   -- 只服务「公司类实体页标题用工商全名」这一条口径。
-  -- （通用提问通道在 assistant_questions：内置 Agent 的 ask_user 弹窗走那张表。）
+  -- （通用提问通道在 assistant_questions：内置 Agent 的 engram ask 弹窗走那张表。）
   CREATE TABLE IF NOT EXISTS entity_name_checks (
     id TEXT PRIMARY KEY,
     entity TEXT NOT NULL,                        -- 材料里的写法（待核名称，通常是简称）
@@ -553,9 +553,9 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_assistant_subagents_child
     ON assistant_subagents(child_session_id);
 
-  -- Agent 提问（内置 Agent 经 MCP ask_user 向用户提问）：一行一个问题，
+  -- Agent 提问（内置 Agent 经 engram ask 向用户提问）：一行一个问题，
   -- 界面在对话最下侧弹选项，用户点选即答复（status: pending → answered）。
-  -- 提问是「本轮阻塞」的：MCP 工具调用挂起等答复，超时 / 本轮结束由服务端收口成 expired / cancelled。
+  -- 提问是「本轮阻塞」的：CLI 提问调用挂起等答复，超时 / 本轮结束由服务端收口成 expired / cancelled。
   CREATE TABLE IF NOT EXISTS assistant_questions (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -715,7 +715,7 @@ export function migrate() {
          updated_at = ?
      WHERE status IN ('queued', 'running', 'executing')`
   ).run(now());
-  // 重启时还在等用户点选的提问一并作废：那一轮已经中断，挂起的 MCP 调用也没了等待者，
+  // 重启时还在等用户点选的提问一并作废：那一轮已经中断，挂起的 CLI 提问调用也没了等待者，
   // 留着 pending 会让弹窗永远挂着（用户点了也无人接收）。
   db.prepare(
     `UPDATE assistant_questions SET status = 'expired' WHERE status = 'pending'`

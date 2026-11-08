@@ -331,7 +331,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
       const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `engram-sync-${name}-`));
       const worker = await startServer(name, dataDir, port);
       const base = `http://127.0.0.1:${port}`;
-      // 首次设密（返回登录 cookie）→ 用 cookie 建 MCP token 供 REST/SSE 鉴权
+      // 首次设密（返回登录 cookie）→ 用 cookie 建 Agent 令牌供 REST/SSE 鉴权
       const setup = await fetch(`${base}/api/auth/setup`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -339,7 +339,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
       });
       assert.ok(setup.ok, `${name} 初始化失败`);
       const cookies = (setup.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ');
-      const tokenRes = await fetch(`${base}/api/settings/mcp-tokens`, {
+      const tokenRes = await fetch(`${base}/api/settings/agent-tokens`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', cookie: cookies },
         body: JSON.stringify({ name: 'sync-test' }),

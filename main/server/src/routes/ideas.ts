@@ -145,7 +145,7 @@ export function ideaDistillState(
  */
 export async function ideaRoutes(app: FastifyInstance, deps: IdeaRouteDeps = {}) {
   // 手机端（Android 本地服务）只有同步成员令牌，却要能用「记一条灵感」——它与收集箱同属内容面，
-  // 走 requireAssistantAccess（成员 token 或 owner / MCP token），不再是仅 owner 的 requireAuth。
+  // 走 requireAssistantAccess（成员 token 或 owner / Agent 令牌），不再是仅 owner 的 requireAuth。
   app.addHook('preHandler', requireAssistantAccess);
 
   const draft = deps.draftNote ?? draftIdeaNote;

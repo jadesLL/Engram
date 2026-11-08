@@ -1,5 +1,5 @@
 /**
- * Agent 提问（MCP ask_user）在前端的纯逻辑：快照字段解析、选项点选、答复载荷组装。
+ * Agent 提问（engram ask 长轮询）在前端的纯逻辑：快照字段解析、选项点选、答复载荷组装。
  *
  * 组件只负责渲染与调 store，规则放这里是为了能被 web 的纯单测覆盖（web 侧没有组件/DOM 测试）。
  * 提问的形状与 `server/src/assistant/questions.ts` 的 QuestionDto 一一对应。

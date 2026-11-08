@@ -39,7 +39,7 @@ import { applyEnvSyncRole, initSync } from './sync/index.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { registerAgentConsoleProxy } from './assistant/agentConsoleProxy.js';
-import { mcpRoutes } from './mcp/server.js';
+import { agentToolRoutes } from './routes/agentTools.js';
 import { assetRoutes } from './routes/assets.js';
 import { mediaRoutes } from './routes/media.js';
 import { scanVaultPages, scanVaultDeferred, readPage, writePage } from './lib/vault.js';
@@ -174,7 +174,8 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(trashRoutes);
   await app.register(syncRoutes);
   await app.register(hubUpdateRoutes);
-  await app.register(mcpRoutes);
+  // Agent 工具面（CLI + skill 的 REST 后端）：/api/agent/*，替代已删除的 /mcp 端点
+  await app.register(agentToolRoutes);
 
   // 静态托管前端构建产物 + SPA fallback（HTTP/HTTPS 实例各自缓存一份）。
   // 只预读 index.html，其余资源首次请求时再读盘（见 lib/staticAssets.ts）。
@@ -310,7 +311,7 @@ async function main() {
   hb.unref();
 
   // 梦境思考调度（按计划用内置 Agent 整理未提炼资料 + 纠错）：
-  // 必须在 listen 之后启动——Agent 的知识库工具要回调本机 /mcp，服务还没监听时首跑必失败。
+  // 必须在 listen 之后启动——Agent 的知识库命令要回调本机 REST，服务还没监听时首跑必失败。
   startDreamScheduler();
   markStartup('dream-scheduler');
 

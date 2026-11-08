@@ -7,7 +7,7 @@ import { RAW_ROOT } from '../lib/rawSections.js';
 import { distilledSourcePaths } from './sourceLedger.js';
 
 /**
- * 原始资料清单（唯一实现）：MCP `list_raw_files` 与「梦境思考」的待办统计共用。
+ * 原始资料清单（唯一实现）：CLI `engram files list` 与「梦境思考」的待办统计共用。
  *
  * 图片不算原始资料——它是 md 父项的私有资产（见 lib/pageAssets.ts），这里不出现。
  * 上限 500 条：Agent 按目录分批读取，梦境思考的待办计数也按同一口径。

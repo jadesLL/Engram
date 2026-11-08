@@ -29,4 +29,4 @@
 
 ## 作用边界
 
-本文件只约束仓库开发工作，不约束应用内 Dream Cycle、入库管线或通过 MCP 操作知识内容的 Agent（规范见 `docs/AI-CONTENT-OPERATIONS.md`）。
+本文件只约束仓库开发工作，不约束应用内 Dream Cycle、入库管线或通过 `engram` CLI 操作知识内容的 Agent（规范见 `docs/AI-CONTENT-OPERATIONS.md`）。

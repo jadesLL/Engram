@@ -9,15 +9,15 @@ import {
 /**
  * 公司全名核验通道（Agent ↔ 用户）的 HTTP 面：
  * - GET  /api/entity-names?status=pending|open|unresolved|all  核验清单（CLI `names list` 用；界面已无核验页面）
- * - POST /api/entity-names/:id/answer                          答复落地（CLI `names answer` 用，与 MCP entity_name_answer 同一内核）
- * - POST /api/agent/entity-name                                Agent/CLI 登记待核名称（与 MCP entity_name_check 同一内核）
+ * - POST /api/entity-names/:id/answer                          答复落地（CLI `names answer` 的服务端实现）
+ * - POST /api/agent/entity-name                                Agent/CLI 登记待核名称（CLI `names check` 的服务端实现）
  * - POST /api/agent/entity-name/propose                        Agent/CLI 回填联网查到的工商全名
  * - GET  /api/agent/entity-name/audit                          全库公司页名称形态盘点
  *
- * 用户侧的问答不在这里：问用户发生在对话里（内置 Agent 经 MCP ask_user 弹底部选项、外部 Agent 用自己的
+ * 用户侧的问答不在这里：问用户发生在对话里（内置 Agent 经 engram ask 弹底部选项、外部 Agent 用自己的
  * 提问能力），答复由 Agent 经 entity_name_answer 回填；这几个路由留给 CLI 与脚本。
  *
- * 鉴权同 requireAuth：用户 JWT（界面）与 MCP Bearer Token（CLI/Agent）都放行。
+ * 鉴权同 requireAuth：用户 JWT（界面）与 Agent 令牌（CLI/Agent）都放行。
  */
 export async function entityNameRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);

@@ -66,7 +66,7 @@ export function authInitialized(): boolean {
 
 /**
  * 受保护路由的前置校验：
- * 1) Bearer MCP Token（设置页生成，供 CLI / 外部 Agent 脚本访问 REST API）
+ * 1) Bearer Agent 令牌（设置页生成，供 CLI / 外部 Agent 脚本访问 REST API）
  * 2) JWT Cookie（浏览器登录态）
  */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {

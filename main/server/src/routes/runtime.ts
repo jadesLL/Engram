@@ -23,7 +23,8 @@ export async function runtimeRoutes(app: FastifyInstance) {
         // 仍保持 false（手机不跑 dsh，也不直接持有模型 Key）。
         agentConsole: true,
         videoConfig: true,
-        mcp: true,
+        // Agent 接入能力位：原先的 mcp（/mcp 端点）已删除，改为 CLI + skill 接入。
+        agentAccess: true,
         jobs: true,
         onlyOffice: officeConfigured(),
         serverUpdate: true,

@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { agentPermissionMode, agentWorkspaceDir, bundledDshExecutable, bundledDshHome, bundledDshVersion, getAgentConfig } from './config.js';
 import { CONSOLE_PROFILE } from './agentSettings.js';
 import { ensureAgentNodeRuntime } from './agentNode.js';
+import { cleanupLegacyMcpPatches } from './agentPatch.js';
+import { ensureLocalAgentCli } from '../lib/cliShim.js';
 
 /**
  * 内置 Agent 控制台：DeepSeek Harness 原生的网页界面（插件页 + 设置 → 模型 / 内置插件）。
@@ -23,6 +26,9 @@ import { ensureAgentNodeRuntime } from './agentNode.js';
  * 运行时：dsh 必须用「真实 Node」拉起来——桌面端 server 跑在 Electron 36 的纯 Node 模式里，
  * dsh 的 node-addon-require-builtin 不支持这个 Electron 指纹（详见 agentNode.ts 顶部注释），
  * 直接 spawn(process.execPath) 会让控制台进程 code 1 提前退出。
+ *
+ * 知识库访问与聊天运行时同一口径：PATH 里注入 `engram` shim（同一个 DSH_HOME，skill 已装好），
+ * 不再写 MCP 配置；旧版本留下的 MCP 覆盖层在启动时清掉（见 agentPatch.cleanupLegacyMcpPatches）。
  */
 
 /** 反向代理前缀（前端 iframe 也用这个路径） */
@@ -192,8 +198,23 @@ function startConsole(origin: string): Promise<ConsoleStatus> {
     const home = bundledDshHome();
     fs.mkdirSync(agentWorkspaceDir(), { recursive: true });
     const originHost = new URL(origin).host;
+    // 升级清理 + 知识库 = PATH 里的 engram 命令：与控制台共用同一个 DSH_HOME，skill/令牌都现成。
+    // CLI 初始化失败不阻断控制台启动（控制台只是 dsh 原生界面，Agent 跑到命令时才报错）。
+    let cliEnv: NodeJS.ProcessEnv = {};
+    try {
+      cleanupLegacyMcpPatches(home);
+      // 控制台与聊天共用同一个 DSH_HOME：skill 根按实际 home 显式给出
+      const local = ensureLocalAgentCli(os.homedir(), { skillRoot: path.join(home, 'skills') });
+      cliEnv = local.env;
+      if (!local.cli.available) {
+        console.warn(`[agent] 控制台 engram CLI 不可用：${local.cli.error || '未找到 cli.js'}`);
+      }
+    } catch (error) {
+      console.warn('[agent] 控制台 engram CLI 初始化失败', error);
+    }
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...cliEnv,
       DSH_HOME: home,
       // 权限模式：完全访问 / 工作区写入 / 只读（设置页可改；改完路由会重启控制台）
       DSH_PERMISSION_MODE: agentPermissionMode(),

@@ -75,7 +75,7 @@ export interface DreamBoard {
   limit: number;
 }
 
-/** 去掉 MCP 前缀，只留工具本名（mcp__engram__write_page → write_page） */
+/** 去掉旧会话里的 MCP 前缀，只留工具本名（mcp__engram__write_page → write_page；现在的命令类工具名原样返回） */
 function bareToolName(name: string): string {
   return String(name || '').replace(/^mcp__[a-z0-9_-]+__/i, '');
 }
@@ -105,9 +105,183 @@ function isoOf(value: string): number {
   return Number.isFinite(at) ? at : 0;
 }
 
+/* ---------------------------------------------------------------- CLI 轮次（现在的作业方式） */
+
+/** 命令组（`engram pages write ...` 的第一个词） */
+const CLI_GROUPS = new Set(['pages', 'files', 'inbox', 'names', 'research', 'search', 'chat', 'status', 'config', 'guide', 'skill', 'ask', 'login']);
+/** 带值的全局选项：解析命令时要连同它的值一起跳过 */
+const CLI_GLOBAL_VALUE_FLAGS = new Set(['--url', '--token', '--timeout-ms']);
+
+/** 极简 shell 分词：处理引号与反斜杠转义，够解析 `engram ...` 一行命令即可（不追求完整 shell 语义） */
+function shellTokens(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = '';
+      } else if (ch === '\\' && quote === '"' && i + 1 < command.length) {
+        current += command[++i];
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    if (ch === '\\' && i + 1 < command.length) {
+      current += command[++i];
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+/** 从 shell 工具参数里取命令行（dsh 的 shell 工具把命令放在 command 字段；兼容 cmd/commandLine 命名） */
+function commandOf(args: Record<string, unknown>): string {
+  for (const key of ['command', 'cmd', 'commandLine', 'script']) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '';
+}
+
+export interface CliInvocation {
+  group: string;
+  action: string;
+  positionals: string[];
+  options: Record<string, string>;
+}
+
+/** 把一行命令按 shell 分隔符（换行 / ; / && / ||）切成多段，引号内的不切 */
+function shellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote) {
+      if (ch === quote) {
+        // 成对保留引号：下一步分词靠它判断「空格是词内还是词间」
+        current += ch;
+        quote = '';
+      } else if (ch === '\\' && quote === '"' && i + 1 < command.length) {
+        current += command[++i];
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '\\n' || ch === '\r' || ch === ';' || (ch === '&' && command[i + 1] === '&') || (ch === '|' && command[i + 1] === '|')) {
+      if (ch === '&' || ch === '|') i++;
+      segments.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter(Boolean);
+}
+
+/** 解析单段命令里的 `engram <组> <动作> [位置参数] [--选项 值]`；不是 engram 命令返回 null */
+export function parseEngramInvocation(command: string): CliInvocation | null {
+  const tokens = shellTokens(command);
+  // 认两种调用形态：PATH 里的 `engram`（内置 Agent 用）与 `"<node>" ".../cli.js" ...`（完整命令）
+  const start = tokens.findIndex((token) => /(^|[\\/])engram(\.cmd|\.exe|\.ps1)?$/i.test(token) || /(^|[\\/])cli\.js$/i.test(token));
+  if (start < 0) return null;
+  let index = start + 1;
+  // 跳过开头的全局开关（`--json` / `--url <v>` / `--token <v>` / `--allow-private`）
+  while (index < tokens.length && /^-/.test(tokens[index])) {
+    if (CLI_GLOBAL_VALUE_FLAGS.has(tokens[index])) index++;
+    index++;
+  }
+  const groupToken = tokens[index] || '';
+  if (!CLI_GROUPS.has(groupToken)) return null;
+  const group = groupToken;
+  index++;
+  let action = '';
+  if (index < tokens.length && !/^-/.test(tokens[index])) {
+    action = tokens[index];
+    index++;
+  }
+  const positionals: string[] = [];
+  const options: Record<string, string> = {};
+  for (; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token.startsWith('--')) {
+      const eq = token.indexOf('=');
+      if (eq > 0) {
+        options[token.slice(0, eq)] = token.slice(eq + 1);
+        continue;
+      }
+      const next = tokens[index + 1];
+      if (next !== undefined && !next.startsWith('-')) {
+        options[token] = next;
+        index++;
+      } else {
+        options[token] = '';
+      }
+      continue;
+    }
+    if (/^-[\w]/.test(token)) continue; // 短开关（-h / -q 等）
+    positionals.push(token);
+  }
+  return { group, action, positionals, options };
+}
+
+/** 一次工具调用里的所有 engram 命令（Agent 常把几条命令串成一行执行） */
+export function parseEngramInvocations(args: Record<string, unknown>): CliInvocation[] {
+  const command = commandOf(args);
+  if (!command) return [];
+  const found: CliInvocation[] = [];
+  for (const segment of shellSegments(command)) {
+    const invocation = parseEngramInvocation(segment);
+    if (invocation) found.push(invocation);
+  }
+  return found;
+}
+
+/** 把 `engram ...` 命令折成旧工具名 + 等价参数，明细归并逻辑只维护一份 */
+function legacyShapeOf(cli: CliInvocation): { name: string; args: Record<string, unknown> } | null {
+  const first = cli.positionals[0] || '';
+  if (cli.group === 'pages') {
+    if (cli.action === 'write') return { name: 'write_page', args: { path: first, title: cli.options['--title'] } };
+    if (cli.action === 'rename') return { name: 'rename_page', args: { titleOrId: first, newTitle: cli.options['--title'] } };
+    if (cli.action === 'move') return { name: 'move_page', args: { titleOrId: first, dir: cli.options['--dir'] } };
+    if (cli.action === 'delete') return { name: 'delete_page', args: { titleOrId: first, reason: cli.options['--reason'] } };
+    return null;
+  }
+  if (cli.group === 'files') {
+    if (cli.action === 'raw' || cli.action === 'read') return { name: 'read_raw_file', args: { path: first } };
+    if (cli.action === 'add') return { name: 'create_raw_material', args: { path: first } };
+  }
+  return null;
+}
+
 /**
  * 把一轮的工具调用压成「写过哪些页、读过哪些资料、改过什么」。
  * 同一个目标在一次轮次里出现多次（Agent 反复改同一页）只算一条，但调用总数照实算。
+ * 新轮次走 CLI：工具卡是 shell 工具（bash/pwsh），明细从命令行的 `engram ...` 里解析；
+ * 历史轮次里的 MCP 工具名照旧认（旧数据仍要看板能显示）。
  */
 function collectItems(calls: repo.ToolCallBriefDto[]): {
   pages: DreamBoardItem[];
@@ -119,42 +293,54 @@ function collectItems(calls: repo.ToolCallBriefDto[]): {
   const changes: DreamBoardItem[] = [];
   const seen = new Set<string>();
 
-  for (const call of calls) {
-    const name = bareToolName(call.name);
-    const args = parseArgs(call.args);
+  const push = (name: string, shape: Record<string, unknown>, ok: boolean): void => {
     if (name === 'write_page') {
-      const path = text(args.path);
-      const title = text(args.title) || fileTitle(path);
-      const key = `page:${path || title}`;
-      if (!title || seen.has(key)) continue;
+      const pagePath = text(shape.path);
+      const title = text(shape.title) || fileTitle(pagePath);
+      const key = `page:${pagePath || title}`;
+      if (!title || seen.has(key)) return;
       seen.add(key);
-      pages.push({ kind: 'page', label: title, note: path === title ? '' : path, ok: call.ok });
+      pages.push({ kind: 'page', label: title, note: pagePath === title ? '' : pagePath, ok });
     } else if (name === 'read_raw_file') {
-      const path = text(args.path);
-      if (!path || seen.has(`src:${path}`)) continue;
-      seen.add(`src:${path}`);
-      sources.push({ kind: 'source', label: path, note: '', ok: call.ok });
+      const sourcePath = text(shape.path);
+      if (!sourcePath || seen.has(`src:${sourcePath}`)) return;
+      seen.add(`src:${sourcePath}`);
+      sources.push({ kind: 'source', label: sourcePath, note: '', ok });
     } else if (name === 'create_raw_material') {
-      const path = text(args.path);
-      if (!path || seen.has(`new:${path}`)) continue;
-      seen.add(`new:${path}`);
-      changes.push({ kind: 'create', label: fileTitle(path), note: path, ok: call.ok });
+      const createdPath = text(shape.path);
+      if (!createdPath || seen.has(`new:${createdPath}`)) return;
+      seen.add(`new:${createdPath}`);
+      changes.push({ kind: 'create', label: fileTitle(createdPath), note: createdPath, ok });
     } else if (name === 'rename_page') {
-      const target = text(args.titleOrId);
-      if (!target || seen.has(`rename:${target}`)) continue;
+      const target = text(shape.titleOrId);
+      if (!target || seen.has(`rename:${target}`)) return;
       seen.add(`rename:${target}`);
-      changes.push({ kind: 'rename', label: target, note: `改用 ${text(args.newTitle) || '新标题'}`, ok: call.ok });
+      changes.push({ kind: 'rename', label: target, note: `改用 ${text(shape.newTitle) || '新标题'}`, ok });
     } else if (name === 'move_page') {
-      const target = text(args.titleOrId);
-      if (!target || seen.has(`move:${target}`)) continue;
+      const target = text(shape.titleOrId);
+      if (!target || seen.has(`move:${target}`)) return;
       seen.add(`move:${target}`);
-      changes.push({ kind: 'move', label: target, note: text(args.dir) ? `移到 ${text(args.dir)}` : '换位置', ok: call.ok });
+      changes.push({ kind: 'move', label: target, note: text(shape.dir) ? `移到 ${text(shape.dir)}` : '换位置', ok });
     } else if (name === 'delete_page') {
-      const target = text(args.titleOrId);
-      if (!target || seen.has(`delete:${target}`)) continue;
+      const target = text(shape.titleOrId);
+      if (!target || seen.has(`delete:${target}`)) return;
       seen.add(`delete:${target}`);
-      changes.push({ kind: 'delete', label: target, note: text(args.reason) || '移入回收站', ok: call.ok });
+      changes.push({ kind: 'delete', label: target, note: text(shape.reason) || '移入回收站', ok });
     }
+  };
+
+  for (const call of calls) {
+    const args = parseArgs(call.args);
+    const invocations = parseEngramInvocations(args);
+    if (invocations.length) {
+      for (const cli of invocations) {
+        const folded = legacyShapeOf(cli);
+        if (folded) push(folded.name, folded.args, call.ok);
+      }
+      continue;
+    }
+    // 历史轮次：旧 MCP 工具名 + 参数
+    push(bareToolName(call.name), args, call.ok);
   }
   return { pages, sources, changes };
 }

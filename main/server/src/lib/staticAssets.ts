@@ -194,7 +194,7 @@ export async function registerStaticAssetCache(
     const asset = await loadAsset(urlPath === '/' ? '/index.html' : urlPath);
     if (asset) return sendAsset(request, reply, asset);
     const indexAsset = cache.assets.get('/index.html');
-    if (!urlPath.startsWith('/api') && !urlPath.startsWith('/mcp') && indexAsset) {
+    if (!urlPath.startsWith('/api') && indexAsset) {
       return sendAsset(request, reply, indexAsset);
     }
     return reply.code(404).send({ error: '资源不存在' });

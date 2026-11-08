@@ -102,7 +102,7 @@ test('能力开关关掉时，对应的大类与分组一起消失', () => {
 });
 
 test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出现「外部接入」', () => {
-  // 手机（android-local）：agentAdmin=false（只有同步成员令牌，MCP Token 不能下发到手机），
+  // 手机（android-local）：agentAdmin=false（只有同步成员令牌，Agent 令牌不能下发到手机），
   // 但绑定中枢后 agentConsole / videoConfig=true（经本地服务窄代理远程配置中枢）。
   const mobile = visibleSettingsDomains({
     agent: false,
@@ -114,7 +114,7 @@ test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出
   assert.deepEqual(
     mobile.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
     ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-tools'],
-    '手机端「外部接入」不该出现（MCP Token 不能下发到手机），其余 Agent 分组都应可用',
+    '手机端「外部接入」不该出现（Agent 令牌不能下发到手机），其余 Agent 分组都应可用',
   );
   // 未绑定中枢：两个新能力位都是 false → Agent 整类不登记（导航里不留点不动的空大类）
   const unbound = visibleSettingsDomains({ agent: false, serverUpdate: true, apkUpdate: true });

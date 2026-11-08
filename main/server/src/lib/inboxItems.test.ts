@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * 收集箱列表状态口径（/api/inbox/items 与 MCP list_inbox 共用）：
+ * 收集箱列表状态口径（/api/inbox/items 与 CLI engram inbox list 共用）：
  * 产物在磁盘上就是「已转换」，失败任务不能盖住后来补写的产物（Agent 通道写产物没有 job 行）。
  */
 
