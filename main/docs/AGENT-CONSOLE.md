@@ -93,6 +93,27 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 - **视频管线**：`pipeline/inboxVideo.ts` 用解析到的模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块），`maxTokens=4096`；B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
 - **相关文件**：`lib/videoModel.ts`（只读解析 + 默认提供商常量）、`assistant/videoModelDefaults.ts`（幂等播种）、`lib/videoConfig.ts`（`video_config` 只存 `{ enabled }`，默认开启；status 汇总）、`routes/videoConfig.ts`、`routes/inbox.ts`（video-status / video-test）、`lib/videoModelClient.ts`、`pipeline/inboxVideo.ts`；前端面板 `web/src/components/settings/VideoPanel.vue`。
 
+## 聊天运行时的模型路由（2026-11-08）
+
+聊天抽屉走 dsh 的 SDK（`@deepseek-ai/dsh-sdk-client`），而 SDK 的 `initialize` **必须**显式带
+`provider` / `model`：不带时它会兜底成 `deepseek-official` + `deepseek-v4-flash`。那个 id
+不在模型目录里，dsh 对目录外模型一律按纯文本处理（`inputModalities: ['text']`），于是
+MCP/工具结果里的图片被投影成占位文本（`model "..." does not declare image input`），控制台里
+给模型勾的「图片」也永远不生效——控制台的 `agent-default-model` 设置只被 dsh 网页端与 headless 读，
+0.2.1-rc.2 的 SDK 会话不读它。
+
+因此聊天运行时启动前会用 `dsh --profile web --dump-config` 读一次「有效默认模型」，再显式交给 SDK
+（`assistant/agentModelRoute.ts`）：
+
+- 用户在控制台保存过默认模型 → profile patch 顶层 `agent-default-model` 的 config 生效；
+- 没保存过 → dsh 自带 bundle 默认值（`deepseek-flash`，目录里声明了文本 + 图片）；
+- 读不到（dsh 版本变化 / dump 失败）→ 回退 SDK 默认路由，聊天照常可用，只是没有目录里的能力位；
+- 控制台改了默认模型或模型目录 → profile patch 内容变化 → 运行时配置指纹变化 → 下一轮自动重开
+  （dump 结果按指纹缓存，不会每轮起子进程）。
+
+所以「模型目录里勾图片」只对目录中的模型条目有效，**还要把控制台的默认模型指向该条目**，
+聊天抽屉才会真的能读图片与截图。
+
 ## DSH 侧用到的 Remote endpoint
 
 - 设置：`settings/describe|update|mutate|replace`

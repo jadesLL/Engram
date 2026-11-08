@@ -15,6 +15,7 @@ import {
 import { normalizeAgentPermissionMode } from './permissionMode.js';
 import { ensureAgentNodeRuntime } from './agentNode.js';
 import { CONSOLE_PROFILE, agentSettingsStateFingerprint } from './agentSettings.js';
+import { resolveAgentModelRoute, type AgentModelRoute } from './agentModelRoute.js';
 import { cleanupLegacyMcpPatches, writeChatPatch } from './agentPatch.js';
 import { ensureLocalAgentCli } from '../lib/cliShim.js';
 import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
@@ -29,6 +30,12 @@ import { mapNotification, type AgentEvent } from './mapping.js';
  *  - 聊天 = 同一 profile + 一层 sdk 覆盖层（stdio JSON-RPC），见 agentPatch.chatPatchText()。
  * 这样用户在控制台里配的模型、开关的插件，聊天运行时直接吃同一份配置（profile patch /
  * bundle 列表 / 凭据文件），不需要 Engram 再维护一套模型表单。
+ *
+ * 模型路由：dsh SDK 的 `initialize` 必须显式带 provider/model，不带就兜底成
+ * `deepseek-official` + `deepseek-v4-flash`——那个 id 不在模型目录里，dsh 会把目录外模型
+ * 一律当纯文本（图片/截图进不了上下文，控制台里勾的「图片」也不生效）。所以这里用
+ * agentModelRoute.ts 按控制台同一口径读出有效默认模型（dump-config：bundle 默认值或用户在
+ * 控制台保存的 `agent-default-model`），显式交给 SDK；读不到才回退 SDK 默认路由。
  *
  * 事件面：`onNotification` 按会话日志顺序推 `session.event`（turn/step/assistant.message/
  * tool.call/tool.result）；粒度是"按步提交"，没有逐字增量。映射逻辑在 mapping.ts。
@@ -72,7 +79,13 @@ interface RuntimeEntry {
  * 控制台里改了模型或插件、或设置页改了权限 → 指纹变化 → 下一轮 acquireRuntime 关闭旧进程重开。
  * 权限模式是进程级环境变量（DSH_PERMISSION_MODE），只在启动时生效，必须算进指纹。
  */
-function runtimeConfigKey(config: AgentConfig, home: string, nodePath: string, dshBin: string): string {
+function runtimeConfigKey(
+  config: AgentConfig,
+  home: string,
+  nodePath: string,
+  dshBin: string,
+  route: AgentModelRoute | undefined
+): string {
   return JSON.stringify([
     config.dshPath || '',
     dshBin,
@@ -80,6 +93,7 @@ function runtimeConfigKey(config: AgentConfig, home: string, nodePath: string, d
     bundledDshVersion() || '',
     normalizeAgentPermissionMode(config.permissionMode),
     agentSettingsStateFingerprint(home),
+    route ? `${route.provider}/${route.model}` : '',
   ]);
 }
 
@@ -123,9 +137,12 @@ function acquireRuntime(key: string): RuntimeEntry {
   const home = bundledDshHome();
   const dshBin = config.dshPath || bundledDshExecutable();
   if (!dshBin) throw new AgentRuntimeUnavailableError('未找到随包 dsh 运行时（@deepseek-ai/dsh 依赖缺失）');
-  const configKey = runtimeConfigKey(config, home, node.path, dshBin);
+  const routeOptions = { node: node.path, dshBin, home, version: bundledDshVersion() };
   const existing = runtimes.get(key);
   if (existing) {
+    // 控制台保存默认模型会重写 profile patch → 指纹（含路由）变化 → 回收旧进程重开；
+    // 复用期间这次 resolve 命中缓存，不会每次对话都起 dump 子进程。
+    const configKey = runtimeConfigKey(config, home, node.path, dshBin, resolveAgentModelRoute(routeOptions));
     if (existing.configKey === configKey) {
       if (existing.idleTimer) clearTimeout(existing.idleTimer);
       return existing;
@@ -150,6 +167,15 @@ function acquireRuntime(key: string): RuntimeEntry {
   } catch (error) {
     console.warn('[agent] engram CLI 初始化失败（本轮 Agent 将无法访问知识库）', error);
   }
+  // 有效默认模型（控制台口径）：显式交给 SDK，否则它会兜底成目录外的 deepseek-v4-flash（纯文本）
+  const route = resolveAgentModelRoute(routeOptions);
+  if (route) {
+    console.info(`[agent] 聊天运行时模型路由：${route.provider} / ${route.model}（控制台默认模型）`);
+  } else {
+    console.warn('[agent] 读不到控制台默认模型，聊天运行时回退 dsh SDK 默认路由（目录外模型没有图片能力）');
+  }
+  const configKey = runtimeConfigKey(config, home, node.path, dshBin, route);
+
   const workspace = agentWorkspaceDir();
   fs.mkdirSync(workspace, { recursive: true });
 
@@ -177,6 +203,8 @@ function acquireRuntime(key: string): RuntimeEntry {
     initializeTimeoutMs: INITIALIZE_TIMEOUT_MS, // SDK 默认 10s 扛不住升级后的冷启动
     // 显式给 dsh 入口：安装包里是 app.asar.unpacked 的真实路径（真实 Node 读不了 asar）
     dshBin,
+    // 控制台的默认模型（见 agentModelRoute.ts）；读不到时不传，SDK 用自带兜底路由
+    ...(route ? { provider: route.provider, model: route.model } : {}),
   });
 
   const entry: RuntimeEntry = { harness, dshSessionId: `session-${randomUUID()}`, configKey };
