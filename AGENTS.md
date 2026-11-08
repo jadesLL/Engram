@@ -13,13 +13,13 @@
 
 官方远端为 `gitea`（`https://github.com/jadesLL/Engram.git`，私有）。开发、验收与合并都在本地完成（验收通过后**自动合并**进 main，见「验收与合并」与项目规则 4/10）；**推送 gitea 与发版必须经用户明确批准**，未批准不推送、不打 tag。不经批准不推其他远端，不强推或改写远端历史。
 
-推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送跑 verify（build+typecheck+test）并构建推送**主分支滚动镜像 `:main`**（发版前的测试通道，合 main 即更新）；版本 tag 与 `:latest` 只在 `v*` 发版时由 release.yml 构建推送并创建 Release（正文=CHANGELOG 段落）；exe/APK 是每次发版的固定交付，推完 tag 后必须 dispatch release.yml（输入本次标签+勾选 binaries）构建并补挂到对应 Release（2026-09-27 起，取代 2026-09-08 的「二进制不随发版、按需分发」口径，见项目规则 9）；同一趟 dispatch 还会把产物同步到**公开仓库（GitHub）同名 Release** 作为公开下载入口（2026-09-30 起，历史版本用 `github_backfill` 回填，见 GITEA-CI.md 的「公开仓库产物同步」）；离线 tar.gz 等额外产物仍按需分发。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
+推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送跑 verify（build+typecheck+test）并构建推送**主分支滚动镜像 `:main`**（发版前的测试通道，合 main 即更新）；版本 tag 与 `:latest` 只在 `v*` 发版时由 release.yml 构建推送；**推 `v*` 标签即一次完整发版**：verify → 镜像 smoke 后推 `:<版本>`+`:latest` → 自动构建 exe/APK → 创建带附件的 Release → 同步公开仓库（GitHub）同名 Release（2026-11-09 起，取代 2026-09-27 的「推 tag 后手动 dispatch binaries 补产」口径，见项目规则 9 与 [`main/docs/RELEASE.md`](./main/docs/RELEASE.md)）；`workflow_dispatch` 只用于历史标签补发、离线 tar.gz、公开仓库回填（`github_backfill`）。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
 
-发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求发版时执行，日常迭代不发版；一旦发版就必须按项目规则 9 交付三件套（Android 端 + Windows 桌面版 + Docker 镜像）：
+发版流程（操作手册见 [`main/docs/RELEASE.md`](./main/docs/RELEASE.md)，CI 细节见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求发版时执行，日常迭代不发版；一旦发版就必须按项目规则 9 交付三件套（Android 端 + Windows 桌面版 + Docker 镜像）：
 
 1. 功能合并 main 后推送：`git push gitea main` → ci.yml 跑 verify 并推送滚动镜像 `:main`（测试部署可切「更新通道 → main」跟主分支）。
-2. 发版：先跑 `bash main/scripts/platform-parity-check.sh --strict` 并确认手机滞后清单目标版本已清零（规范见 `main/docs/PLATFORM-PARALLEL-DEV.md`）；然后同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（正文=CHANGELOG 段落）。
-3. **补齐三件套的另外两件（每次发版必做，不是按需）**：Actions → Release → Run workflow，输入本次标签 + 勾选 `binaries`（Windows exe + Android APK，构建后自动补挂到对应 Release，并同步到公开仓库 GitHub 同名 Release）；Windows exe 也可按下方「Windows 桌面端打包」本地打包。APK 必须基于本次发版提交构建、版本号与发版一致（禁止复用旧包），并发版说明要按项目规则 9 补齐安卓端自上次更新以来的全部内容。产物归档到 `releases/<版本>/`（含 release.json）。离线 tar.gz（`offline_image`）属额外产物，仍按需 dispatch。
+2. 发版准备：跑 `bash main/scripts/platform-parity-check.sh --strict`（不传 `--since` 会自动取最近 tag）并确认手机滞后清单目标版本已清零（规范见 `main/docs/PLATFORM-PARALLEL-DEV.md`）→ `node main/scripts/release/bump-version.mjs <版本>` 一次改三处版本号 → 把距上次发布的**全部新功能**写入 `CHANGELOG.md` 的 `## 未发布` 区（每条带 `[平台影响: X]`），再 `node main/scripts/release/release-notes.mjs --render --write` 生成 `## v<版本>（YYYY-MM-DD）` 段落与安卓累积段 → `node main/scripts/release/verify-release.mjs --rehearse --strict` 复核 → 提交推送。
+3. 打标签即完成发版：`git tag v<版本> && git push gitea v<版本>` → release.yml 自动完成 verify、镜像（先 smoke 再推 `:<版本>`+`:latest`）、Windows exe、Android APK、带附件 Release 与公开仓库同步；失败按 [`main/docs/RELEASE.md`](./main/docs/RELEASE.md) §6 用单项 dispatch 补发（`image` / `binaries` / `offline_image` / `github_backfill`），**不重推标签**。产物归档到 `releases/<版本>/`（`archive.mjs` 生成带 schema 的 `release.json`）。
 4. 镜像地址固定三层路径 `gitea.example.com/example/engram/engram:<版本>`（两层 `owner/image` 形式 NAS 拉取异常，勿改回）。
 5. 部署 compose 不得写 `pull_policy: never`。
 
@@ -36,7 +36,7 @@ Engram 是「一套产品内核 + 三个运行壳」：`main/server` + `main/web
 - **先分类再动手**：按规范 §4.1 把功能标为 A–F（纯服务端+窄代理 / Web 通用 / 移动布局手势返回 / 原生桥 / 手机不做 / 同步数据面）；A/C/D/F 必须有手机侧动作。
 - **适配尽量同分支**：Android 适配与共享代码尽量在同一个 `feat/<feature>` 完成；确实滞后的登记 [`main/docs/MOBILE-SYNC-LEDGER.md`](./main/docs/MOBILE-SYNC-LEDGER.md) 并写目标版本，最迟下次发版前清零。
 - **提交声明**：提交信息末行写 `平台影响: A`（跨类用 `平台影响: B,F`；无平台影响写 `none`）。未声明按 C 处理。
-- **每周巡检 + 发版门禁**：每周跑一次 `bash main/scripts/platform-parity-check.sh --since <上次 ref>`；发版前用 `--strict` 并完成规范 §5.5 全量对齐门禁。
+- **每周巡检 + 发版门禁**：每周跑一次 `bash main/scripts/platform-parity-check.sh --since <上次 ref>`；发版前用 `--strict`（不传 `--since` 会自动取最近 tag）并完成规范 §5.5 全量对齐门禁。
 - **验收分工**：Windows 主验收（桌面形态）、Docker 同源验证、Android 真机/模拟器验收；三端清单见规范 §4.4–4.6。
 
 ## 项目规则
@@ -53,11 +53,11 @@ Engram 是「一套产品内核 + 三个运行壳」：`main/server` + `main/web
 10. **自动合并与自动清理**：已验收、已提交的功能分支合并进 main，并且合并后检查通过后，必须立即自动删除已合并的功能分支、对应 worktree，以及该任务的全部 Docker 容器、镜像、数据卷、网络和 Git `safe.directory` 记录；不得等待用户确认推送，不再询问是否清理。worktree 任务执行 `main/scripts/merge-feature.sh --cleanup <feature>`；补清理旧任务执行 `main/scripts/cleanup-feature.sh <feature>`。清理后必须复验，任一资源残留都要报告「清理失败/尚未完成」，不能只删分支就结束。合并仍串行执行，工作区须干净；未合并、未提交、检查失败或冲突意图不明时保留资源并报告原因。仅当用户明确要求继续保留某个预览环境供检查时才暂缓该任务清理。主运行环境、主数据、ONLYOFFICE 数据卷、共享基础镜像和构建缓存、其他任务资源不属于清理范围，禁止使用全局 prune。推送 gitea、bump 三处版本号、打 `v*` tag、发版与补齐 APK/exe、部署（`--deploy` / 刷新主环境）仍必须先弹窗取得明确批准。
 11. **三端并行与单一事实源**：Windows 桌面端与 Docker 共用同一份 `main/server` + `main/web` 源码，Docker 不得另起实现；Android 复用同一份 Web 构建并在壳层适配。设计语言（令牌、图标、信息架构）只有一个来源；平台差异只能落在能力位 / 窗口尺寸档 / 页面断点 / 原生桥 / 同步协议五类显式契约上，禁止 UA、平台字符串或宽度猜测造成的隐式分叉。完整规范见 [`main/docs/PLATFORM-PARALLEL-DEV.md`](./main/docs/PLATFORM-PARALLEL-DEV.md)。
 12. **平台影响声明与手机对齐**：任何合并进 main 的功能（纯文档/CI 除外）必须在提交信息末行声明 `平台影响:`；标为 A/C/D/F 的必须在同一分支或紧邻 follow-up 完成手机适配，未完成的登记 [`main/docs/MOBILE-SYNC-LEDGER.md`](./main/docs/MOBILE-SYNC-LEDGER.md)，最迟下次发版前清零。每周做一次手机端巡检，每次发版做全量对齐（含安卓累积更新说明）。
-13. **三端一致性与产物门禁**：verify 必须通过（含 `web/src/lib/platformParity.test.ts` 的版本号/能力位/原生桥/构建链/设置域/滞后清单检查）；发版前必须跑 `bash main/scripts/platform-parity-check.sh --strict`；打 exe/APK 前必须用本次源码重新构建 web 产物（禁止复用旧 `dist`）；三件套与安卓累积更新说明缺一不发（见规则 9）。
+13. **三端一致性与产物门禁**：verify 必须通过（含 `web/src/lib/platformParity.test.ts` 的版本号/能力位/原生桥/构建链/设置域/滞后清单检查），ci.yml 的发版彩排步骤（`verify-release --rehearse --strict`）必须通过；发版前必须跑 `bash main/scripts/platform-parity-check.sh --strict` 与 `node main/scripts/release/verify-release.mjs --rehearse --strict`（tag 后 CI 自动跑 `--tag --strict`）；打 exe/APK 前必须用本次源码重新构建 web 产物（禁止复用旧 `dist`）；三件套与安卓累积更新说明缺一不发（见规则 9，说明由 `release-notes.mjs` 聚合生成后人工校订）。
 
 ## Windows 桌面端打包
 
-**发版时必须打包（三件套之一，见项目规则 9），非发版的日常迭代一律不打包**：exe 不随 CI 发版自动构建（2026-09-08 起），发版时走 CI dispatch（勾选 `binaries`）或本节手动流程二选一；自用机器日常更新走源码模式（`powershell -File main/scripts/update-from-source.ps1`，合 main 即更新，见脚本头部说明），不产生安装包。
+**发版时必须打包（三件套之一，见项目规则 9），非发版的日常迭代一律不打包**：推 `v*` 标签后 CI 自动构建 exe（2026-11-09 起；此前需手动 dispatch），本节流程保留为本地打包/排障路径；自用机器日常更新走源码模式（`powershell -File main/scripts/update-from-source.ps1`，合 main 即更新，见脚本头部说明），不产生安装包。
 
 安装包版本号与发布版本对齐（`desktop/package.json`），产物写入 `releases/<version>/`。因 Windows Defender 实时扫描锁定 `electron.exe` 导致 `EPERM rename`，不走 `pnpm build:desktop`，分两步手动打包：
 

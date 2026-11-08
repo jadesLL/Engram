@@ -10,6 +10,7 @@
 #   bash main/scripts/platform-parity-check.sh
 #   bash main/scripts/platform-parity-check.sh --since v1.5.6
 #   bash main/scripts/platform-parity-check.sh --since v1.5.6 --strict   # 发版/巡检严格模式：缺声明即失败
+#   bash main/scripts/platform-parity-check.sh --strict                 # 自动取最近 v* tag 作为 --since（不再空转）
 #
 set -euo pipefail
 
@@ -24,12 +25,13 @@ usage() {
 
   （无参数）        只跑三端契约检查（与 verify 内 platformParity.test.ts 相同）
   --since <ref>     额外审计 ref..HEAD 之间涉及三端源码的提交是否写了「平台影响:」声明
-  --strict          --since 审计中只要有提交缺声明就以非零退出（发版前置）
+  --strict          --since 审计中只要有提交缺声明就以非零退出（发版前置）；
+                    未给 --since 时自动取最近一个 v* tag（发版前不再需要手记上次版本号）
 
 示例:
   bash main/scripts/platform-parity-check.sh
   bash main/scripts/platform-parity-check.sh --since v1.5.6
-  bash main/scripts/platform-parity-check.sh --since v1.5.6 --strict
+  bash main/scripts/platform-parity-check.sh --strict          # 自动 --since 最近 tag
 
 说明:
   契约定义与同步节奏见 docs/PLATFORM-PARALLEL-DEV.md；手机滞后清单见 docs/MOBILE-SYNC-LEDGER.md。
@@ -60,6 +62,17 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+# 发版前置常用 --strict：未显式给 --since 时自动取最近发布 tag，避免「带了 --strict
+# 但审计整段没跑」的空转（2026-11-08 审计发现的语义漂移）。
+if [ -z "$SINCE" ] && [ "$STRICT" -eq 1 ]; then
+  SINCE="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+  if [ -n "$SINCE" ]; then
+    echo ">> --strict 未指定 --since，自动使用最近发布 tag：$SINCE"
+  else
+    echo ">> 警告：--strict 未指定 --since，且仓库没有 v* tag；跳过平台影响声明审计" >&2
+  fi
+fi
 
 if [ -n "$SINCE" ]; then
   if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "$SINCE" >/dev/null; then

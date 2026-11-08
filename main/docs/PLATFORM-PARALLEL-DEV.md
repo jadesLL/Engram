@@ -97,10 +97,10 @@ Engram 不是一个产品抄三份，而是**一套产品内核 + 三个运行�
 ### 1.3 版本号与发版链
 
 - **版本号唯一权威源**：`main/desktop/package.json` 的 `version`。
-- 发版时**三处同步 bump**：`main/desktop/package.json`、`main/web/src/version.ts`（`APP_VERSION`，界面显示）、`main/docker-compose.yml`（`image: engram:<版本>`）。Android `versionName/versionCode` 自动从 `desktop/package.json` 派生（`mobile/android/app/build.gradle`），Docker 镜像内 `/app/VERSION` 也由它生成。
-- 发版两步、缺一不算完成：① 推送 `v*` 标签 → `release.yml` 校验 tag=版本、CHANGELOG 段落存在、verify 通过 → 构建推送 `:<版本>` + `:latest` → 创建 Gitea Release；② 手动 dispatch `release.yml` 勾选 `binaries` → 构建 Windows exe + 签名 APK → 补挂同一 Release → 同步公开仓库同名 Release。
+- 发版时用 **`node main/scripts/release/bump-version.mjs <版本>` 一次同步三处**（`main/desktop/package.json`、`main/web/src/version.ts` 的 `APP_VERSION`、`main/docker-compose.yml` 的 `image: engram:<版本>`），脚本回读校验；手工改仍会被契约测试拦下。Android `versionName/versionCode` 自动从 `desktop/package.json` 派生（`mobile/android/app/build.gradle`），Docker 镜像内 `/app/VERSION` 也由它生成。
+- 发版一条命令、缺一不算完成：**推送 `v*` 标签即完整发版** → `release.yml` 校验 tag=版本与发版说明 → verify（含 `scripts/release/tests/` 就绪测试）→ 构建镜像并先 smoke 再推 `:<版本>` + `:latest` → 自动构建 Windows exe + 签名 APK → 创建带附件的 Gitea Release → 同步公开仓库同名 Release（2026-11-09 起；`workflow_dispatch` 仅用于补发/回填/离线包）。
 - 日常推送 main（需用户批准）：`ci.yml` 跑 verify + 构建推送滚动镜像 `:main`（发版前测试通道，部署机可切「更新通道 → main」跟主分支）。
-- **现状缺口**：三处版本号此前没有自动校验；CHANGELOG 只在 tag 推送时校验；Kotlin 编译/单测不在日常 verify 里（只在发版 dispatch 的 Android 构建容器跑）。本次已补版本号/契约门禁（§6），Kotlin 门禁列入阶段二。
+- **现状缺口**：Kotlin 编译/单测不在日常 verify 里（只在发版 APK 构建容器跑）；产物身份戳（build-info）未落地。版本号/CHANGELOG/安卓累积说明已改由 `scripts/release/` 下的脚本与就绪测试覆盖（§6）。
 
 ### 1.4 能力位现状（12 枚 feature）
 
@@ -478,9 +478,9 @@ bash main/scripts/platform-parity-check.sh --since v1.5.6
 
 发版（用户明确要求时）必须全部满足，缺一不发：
 
-1. `bash main/scripts/platform-parity-check.sh --strict` 通过（版本号三处一致、能力位键集、桥、构建链、设置域、滞后清单无当前版本待办）。
+1. `bash main/scripts/platform-parity-check.sh --strict` 通过（未传 `--since` 时自动取最近 tag；覆盖版本号三处一致、能力位键集、桥、构建链、设置域、滞后清单无当前版本待办）。
 2. `MOBILE-SYNC-LEDGER.md` 中目标版本 ≤ 本次版本的待办清零（或改「不适用」并写原因）。
-3. CHANGELOG 有 `## v<版本>（YYYY-MM-DD）` 段落，且**安卓段写全自上一个 Android 版本以来的累积改动**。
+3. CHANGELOG 有 `## v<版本>（YYYY-MM-DD）` 段落，且**安卓段写全自上一个 Android 版本以来的累积改动**；两者由 `node main/scripts/release/release-notes.mjs --render --write` 从 `## 未发布` 区聚合生成后人工校订，发版前用 `node main/scripts/release/verify-release.mjs --rehearse --strict` 复核。
 4. 三件套齐全：APK（本次发版提交构建、签名一致）+ Windows exe + Docker 镜像（`:<版本>` + `:latest`）。
 5. 手机端已对齐：本版本区间的 A/C/D/F 类改动都有手机侧实现或明确的"不适用"记录。
 6. 真机/模拟器冒烟通过（§4.6）；发布说明已写清安卓用户如何升级（OTA/覆盖安装）。
@@ -538,22 +538,21 @@ bash main/scripts/platform-parity-check.sh --since v1.5.6
 ```bash
 bash main/scripts/platform-parity-check.sh                 # 只跑契约检查
 bash main/scripts/platform-parity-check.sh --since v1.5.6  # + 列出该区间缺平台影响声明的提交
-bash main/scripts/platform-parity-check.sh --since v1.5.6 --strict   # 发版前：缺声明即失败
+bash main/scripts/platform-parity-check.sh --strict         # 发版前：自动取最近 tag，缺声明即失败
 ```
 
 用途：每周巡检、发版前置、合并前自查（verify 内已跑契约部分，脚本用于人工快速复核与提交声明审计）。
 
 ### 6.3 发版门禁
 
-- release.yml 既有门禁：tag=版本、CHANGELOG 段落、verify、未签名 APK 失败。
-- 新增人工门禁（发版操作卡）：`platform-parity-check.sh --strict` + 滞后清单清零 + 安卓累积更新核对 + 三件套归档（记录提交 ID、构建时间、sha256）。
-- 阶段二可将 strict 检查接入 release.yml 的 verify 前置步骤（届时另开任务实现并验证）。
+- release.yml 自动门禁（2026-11-09 起）：tag=版本、`verify-release.mjs --tag --strict`（版本三处一致/版本段/未发布区已清空/安卓累积段）、verify（含 `scripts/release/tests/` 就绪测试）、镜像 `/health` smoke 通过才推 `:latest`、未签名 APK 失败、Release 只在三件套齐备后创建。
+- 人工门禁（发版操作卡，见 [`RELEASE.md`](./RELEASE.md)）：`platform-parity-check.sh --strict` + 滞后清单清零 + 安卓累积段人工校订 + `archive.mjs` 生成发版收据（记录提交 ID、构建时间、sha256）。
 
 ### 6.4 阶段二/三可选的自动化增强（不在本次范围，登记为改进项）
 
 1. **Kotlin 编译门禁**：ci.yml 在 main 推送且改动含 `main/mobile/**` 时，用 `mobile/Dockerfile.ci` 跑 `testDebugUnitTest`（gradle 依赖已预热，离线可行）。
 2. **产物身份戳**：Web 构建写 `build-info.json {version, sha, builtAt}`，prepare 脚本复制后断言版本一致；exe/APK 内可读，解决"APK 是否来自本次提交"无法验证的问题。
-3. **release.json 自动生成**：release.yml 整理产物时产出（版本/commit/run/sha256），替代人工归档。
+3. ~~**release.json 自动生成**~~（2026-11-09 已落地：`main/scripts/release/archive.mjs` 核对附件并生成带 schema 的收据；CI 产物清单仍以 Release 附件为准）。
 4. **协议版本字段**：`/api/sync/snapshot` 增加只读 `syncProtocol`，手机可提示"中枢协议较新，请升级 App"。
 5. **桌面桥契约测试**：preload 暴露方法与 Web 调用集合的双向校验（先做 warning）。
 6. **设计令牌 debt 清理**：补 spacing/type/motion 标尺，收敛 322 处 hex / 854 处裸 px；统一 768 与 600/840 两套断点。
