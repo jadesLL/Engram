@@ -27,10 +27,20 @@
 name: Public Mirror
 
 on:
+  # 2026-11-08 起不再随每次 main 推送运行：它与 CI 共用同一台单并发 runner，
+  # 每次 main push 都要多排 2 分钟以上，且公开快照滞后一天不影响使用。
+  # 需要立即同步时用 Actions → Public Mirror → Run workflow。
   push:
-    branches: [main]
     tags: ['v*']
+  schedule:
+    # 每天 18:30 UTC（Asia/Hong_Kong 次日 02:30）同步一次；Gitea Actions 的 cron 默认按 UTC 解释。
+    - cron: '30 18 * * *'
   workflow_dispatch:
+
+# 同一 ref 只保留最新一次（定时/手动重复触发时取消旧 run；标签推送与定时任务 ref 不同、互不取消）
+concurrency:
+  group: public-mirror-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # Windows runner 的 Git Bash 会做 MSYS 路径转换，必须禁用

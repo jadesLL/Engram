@@ -285,6 +285,9 @@ grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的
 
 ## 已知注意事项
 
+- **CI 并发取消（2026-11-08 起）**：`ci.yml` 与 `public-mirror.yml` 加 `concurrency`（按 `github.ref` 分组、`cancel-in-progress: true`），同分支连续推送只跑最新一次，旧 run 自动取消（Gitea 1.26+ 支持 workflow concurrency，本实例 1.27.1）。`release.yml` 故意不加，避免取消进行中的发版。
+- **Public Mirror 触发方式（2026-11-08 起）**：不再随每次 `main` 推送运行——它与 CI 共用同一台单并发 runner（`capacity: 1`，全局共享），每次 push 都要多排 2 分钟以上；改为**每天 18:30 UTC 定时 + `v*` 标签推送 + 手动 dispatch**。要立即同步公开仓库：Actions → Public Mirror → Run workflow。日常一次 push 只触发 CI（verify + `:main` 镜像）。
+- **减少排队**：多个提交尽量攒成一次 `git push gitea main`，一次 push 只产生一个 CI run；`release.yml` 的 binaries 构建（exe/APK）动辄 40 分钟以上，属发版专属，不要与日常推送混在同一时段。
 - **Release 附件大小**：exe 约 110MB、docker tar.gz 约 160MB。上传返回 413 时需调大 Gitea `app.ini` 的 `[attachment] MAX_SIZE` 后重启 Gitea。
 - **镜像只随发版更新**：main 日常推送不构建镜像（2026-08-20 起）；Registry 版本 tag 只对应发版产物。发版前想提前验证 main 最新代码需本地构建（BUILDING.md 路径 B/C），dispatch release.yml 不推镜像、只补二进制产物。
 - **本地开发 compose**（`docker-compose.yml`）仍用本地构建镜像；生产 pull 部署用 `docker-compose.pull.yml`。
