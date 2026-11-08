@@ -21,7 +21,7 @@ Gitea 自带的 Push Mirror 推的是 `refs/heads/*` + 标签的**原样对象**
 
 ```
 Gitea 仓库（私有，原样不动）
-        │  push main / v* 标签 触发
+        │  v* 标签推送 / 每日 18:30 UTC 定时 / 手动 dispatch 触发
         ▼
 Public Mirror workflow（Windows runner）
         │  1. 克隆到临时裸仓库（mktemp）
@@ -34,6 +34,8 @@ GitHub 公开仓库（脱敏快照）
 
 脚本：`main/scripts/make-public-snapshot.sh`
 Workflow：`.gitea/workflows/public-mirror.yml`
+
+> 2026-11-08 起 `main` 推送**不再**触发本 workflow：它与 CI 共用同一台单并发 runner，每次都要多排 2 分钟以上。改为每天 18:30 UTC 定时同步 + `v*` 标签推送 + 手动 dispatch；需要立即同步时在 Actions 里手动运行 Public Mirror。
 
 ### 无交互推送与超时
 

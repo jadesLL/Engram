@@ -13,6 +13,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支 / 同一 PR 只保留最新一次运行：连续推送时自动取消排队与进行中的旧 run。
+# 单 runner（capacity=1，且与另一仓库共用）跑不完历史 run 是 CI 排队长的根因（2026-11-08 起；
+# Gitea 1.26+ 支持 workflow concurrency，本实例 1.27.1）。release.yml 故意不加，避免取消发版。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
   MSYS_NO_PATHCONV: '1'
