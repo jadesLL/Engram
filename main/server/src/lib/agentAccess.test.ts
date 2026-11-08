@@ -105,15 +105,25 @@ test('检测：WorkBuddy / Qoder 变体目录与 Codex 的 PATH 探测', () => {
   const home = tempHome();
   try {
     const runtime = runtimeFor(home);
-    // WorkBuddy 只装了海外版目录：skill 根固定 ~/.codebuddy/skills
+    // WorkBuddy 标准安装：skill 根是配置目录下的 skills（运行时监视该目录）
     const workbuddy = agentClientStatus('workbuddy', home, {
+      runtime,
+      env: {},
+      isDir: onlyDir(path.join(home, '.workbuddy')),
+      exists: () => false,
+    });
+    assert.equal(workbuddy.installed, true);
+    assert.equal(workbuddy.skillPath, path.join(home, '.workbuddy', 'skills', 'engram', 'SKILL.md'));
+
+    // 只装了海外版目录：skill 根跟随该变体
+    const workbuddyAi = agentClientStatus('workbuddy', home, {
       runtime,
       env: {},
       isDir: onlyDir(path.join(home, '.workbuddy-ai')),
       exists: () => false,
     });
-    assert.equal(workbuddy.installed, true);
-    assert.equal(workbuddy.skillPath, path.join(home, '.codebuddy', 'skills', 'engram', 'SKILL.md'));
+    assert.equal(workbuddyAi.installed, true);
+    assert.equal(workbuddyAi.skillPath, path.join(home, '.workbuddy-ai', 'skills', 'engram', 'SKILL.md'));
 
     // Qoder 只装了国内版目录：skill 根落在该变体下
     const qoder = agentClientStatus('qoder', home, {
