@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { ensureVideoProviderSeeded } from '../assistant/videoModelDefaults.js';
-import { applyVideoConfigInput, videoConfigForClient, videoConfigStatus } from '../lib/videoConfig.js';
+import { applyVideoConfigInput, normalizeStoredVideoConfig, videoConfigForClient, videoConfigStatus } from '../lib/videoConfig.js';
+import { mirrorAgentModelConfig } from '../sync/agentModelSync.js';
 import { requestOrigin } from '../lib/requestOrigin.js';
 import { stampPreference } from '../sync/preferences.js';
 import { currentNodeId } from '../sync/store.js';
@@ -27,6 +28,14 @@ export async function videoConfigRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAssistantAccess);
 
   app.get('/api/settings/video-config', async (req) => {
+    // 旧版 video_config 里还有 baseUrl/apiKey 等字段：先归一化成 { enabled } 再 stamp/同步，
+    // 否则陈旧 Key 会被当「设置」发到群里（本次修复的隐患之一）
+    if (normalizeStoredVideoConfig()) {
+      stampPreference('video_config', currentNodeId());
+      recordLocalChange('preference', 'video_config');
+    }
+    // 手机窄代理也打这里：顺带把中枢本机的模型配置镜像进同步（digest 没变时零开销）
+    mirrorAgentModelConfig();
     // 默认提供商播种：已播种/已有提供者时零成本返回；控制台没起来时把原因带回面板（不阻塞读）
     const seed = await ensureVideoProviderSeeded(requestOrigin(req));
     const status: Record<string, unknown> = { ...videoConfigStatus() };

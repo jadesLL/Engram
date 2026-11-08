@@ -290,6 +290,8 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 - 同步对象（`SyncKind`）：`page`、`file`、`delete`、`move`、`session`、`board`、`preference`、`research`。手机镜像 `page/file/delete/move/preference`；`session/board/research` 不落本地副本，读走窄代理。
 - **未知 kind**：手机记 warn 并**照常推进水位**（不卡死，但内容会静默缺失）→ **新增 SyncKind 必须同时改手机 `SyncEngine.applyOp`，否则旧 APK 会"看得见同步成功、看不见内容"**。
 - 字段兼容：只增不改语义；手机对未知键跳过（`skipValue`）；服务端对旧手机降级（`missing`、`resync`、快照字段）。
+- **preference 新键（2026-11）**：`agent_model_config`（内置 Agent 的模型配置与相关 API Key，JSON 字符串）与 `video_config`（视频理解总开关）都归「设置」分类，走既有 preference 管道。Android 对未知 preference key 按现有逻辑跳过、不落盘（手机不持有模型 Key，视频提炼与聊天都在中枢执行），**因此本功能 `平台影响: B,F`、Kotlin 零改动**；新增 preference 键不得要求手机侧改 `SyncEngine` 才算兼容。
+- **删除语义**：preference 合取按并集，删除不跨端（一端删掉提供商会被另一端的并集带回），文档与界面文案都写清，避免用户以为「删一处全端删」。
 - 旧中枢兼容：手机对缺失端点（如 `/api/sync/distilled`）只记一次 warn 并照旧走全量对账。
 - 文件与页面冲突：页面由中枢三方合并；**文件不可合并，按 mtime 较新者胜**（全量清单条目带 `mtime`，成员有未推送改动时仍以本端为准推送；旧中枢不带该字段时退回旧行为）。
 - 增量回放：`sync_oplog` 的 file op 带内容 `hash`（重连补拉据此判断是否要拉文件；旧行 hash 为空时成员端无条件拉一次）。

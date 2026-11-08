@@ -35,6 +35,12 @@ export const VIDEO_MODEL_API = 'openai-completions';
 export interface DshProviderModel {
   id: string;
   name?: string;
+  /** 上下文窗口（dsh 设置页可填；只读解析，写回时按原样保留） */
+  contextWindow?: number;
+  /** pi-ai 的输入能力字段 `input`（text / image / …）；与官方 inputModalities 同义、字段名不同 */
+  input?: string[];
+  /** 官方 DeepSeek 模型条目的输入能力字段名 */
+  inputModalities?: string[];
 }
 
 export interface DshProvider {
@@ -57,6 +63,21 @@ export interface ResolvedVideoModel {
   keyRef: string;
 }
 
+/**
+ * 同步下来的模型配置回退（多端同步的 agent_model_config）。
+ *
+ * 本机 dsh 还没配上（或根本没配 dashscope）时，视频理解可以直接用同步群组里
+ * 其他设备的提供商与 Key，不必等 dsh 重读配置或控制台启动。
+ */
+export interface VideoModelFallback {
+  providers?: DshProvider[];
+  /** ref → 明文 Key（只在本进程内用于发请求，绝不回显） */
+  keys?: Record<string, string>;
+}
+
+/** Key 的来源：本机 dsh 配置 / 多端同步 / 都没有（前端据此显示「来自多端同步」） */
+export type VideoKeySource = 'local' | 'synced' | 'none';
+
 /** 一次解析的完整结果：resolved + 缺项（缺什么就提示什么） */
 export interface VideoModelResolution {
   provider: ResolvedVideoModel;
@@ -64,20 +85,23 @@ export interface VideoModelResolution {
   /** 是否找到了 dsh 里的提供者（默认预置值不算「已配置」） */
   providerFound: boolean;
   configured: boolean;
+  keySource: VideoKeySource;
 }
 
-function indentOf(line: string): number {
+/** 行首缩进宽度（空格数；配置由 dsh / 界面写入，不会出现 tab 缩进） */
+export function indentOf(line: string): number {
   const match = /^\s*/.exec(line);
   return match ? match[0].length : 0;
 }
 
-function isSkippable(line: string): boolean {
+/** 空行与纯注释行：解析时跳过，不算结构 */
+export function isSkippable(line: string): boolean {
   const trimmed = line.trim();
   return trimmed === '' || trimmed.startsWith('#');
 }
 
 /** 去掉 YAML 标量两侧的引号（单引号里的 '' 是一个单引号；双引号做常见转义还原） */
-function unquoteScalar(raw: string): string {
+export function unquoteScalar(raw: string): string {
   const value = raw.trim().replace(/\s+#.*$/, '');
   if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
     return value.slice(1, -1).replace(/''/g, "'");
@@ -92,8 +116,19 @@ function unquoteScalar(raw: string): string {
   return value;
 }
 
+/** 解析 YAML 流式字符串数组（`[text, image]`）；不是流式写法时返回空数组（块状序列另行处理） */
+export function parseStringList(raw: string): string[] {
+  const value = raw.trim();
+  if (!value.startsWith('[') || !value.endsWith(']')) return [];
+  return value
+    .slice(1, -1)
+    .split(',')
+    .map((item) => unquoteScalar(item))
+    .filter((item) => item.length > 0);
+}
+
 /** 找顶层 loader patch 条目（- id: <id>）的行区间 [start, end)（缩进的 - id: 是子项，不算） */
-function findTopLevelEntry(lines: string[], entryId: string): { start: number; end: number } | null {
+export function findTopLevelEntry(lines: string[], entryId: string): { start: number; end: number } | null {
   for (let index = 0; index < lines.length; index += 1) {
     const match = /^-\s+id:\s*(.+?)\s*$/.exec(lines[index]);
     if (!match || unquoteScalar(match[1]) !== entryId) continue;
@@ -178,11 +213,52 @@ export function parseDshProviders(patchText: string): DshProvider[] {
             const modelMatch = /^-\s+id:\s*(.+)$/.exec(modelText);
             if (modelMatch) {
               provider.models.push({ id: unquoteScalar(modelMatch[1]) });
-            } else if (modelIndent > providersIndent + 4 && provider.models.length) {
-              const nameMatch = /^name:\s*(.+)$/.exec(modelText);
-              if (nameMatch) {
-                const last = provider.models[provider.models.length - 1];
-                last.name = unquoteScalar(nameMatch[1]);
+              index += 1;
+              continue;
+            }
+            if (modelIndent > providersIndent + 4 && provider.models.length) {
+              const last = provider.models[provider.models.length - 1];
+              const field = /^([A-Za-z0-9_]+):\s*(.*)$/.exec(modelText);
+              if (!field) {
+                index += 1;
+                continue;
+              }
+              const fieldKey = field[1];
+              const rawValue = field[2];
+              if (fieldKey === 'name') {
+                last.name = unquoteScalar(rawValue);
+              } else if (fieldKey === 'contextWindow') {
+                const parsed = Number(unquoteScalar(rawValue));
+                if (Number.isFinite(parsed)) last.contextWindow = parsed;
+              } else if (fieldKey === 'input' || fieldKey === 'inputModalities') {
+                const inline = parseStringList(rawValue);
+                if (inline.length) {
+                  if (fieldKey === 'input') last.input = inline;
+                  else last.inputModalities = inline;
+                } else if (!unquoteScalar(rawValue)) {
+                  // 块状序列：后续以 '-' 开头的行（缩进不小于本字段）是能力项
+                  const items: string[] = [];
+                  let cursor = index + 1;
+                  while (cursor < block.end) {
+                    const itemLine = lines[cursor];
+                    if (isSkippable(itemLine)) {
+                      cursor += 1;
+                      continue;
+                    }
+                    if (indentOf(itemLine) < modelIndent) break;
+                    const itemText = itemLine.trim();
+                    if (!itemText.startsWith('-')) break;
+                    const item = unquoteScalar(itemText.replace(/^-\s*/, ''));
+                    if (item) items.push(item);
+                    cursor += 1;
+                  }
+                  if (items.length) {
+                    if (fieldKey === 'input') last.input = items;
+                    else last.inputModalities = items;
+                    index = cursor;
+                    continue;
+                  }
+                }
               }
             }
             index += 1;
@@ -247,10 +323,25 @@ export function parseCredentialRefs(text: string): Record<string, string> {
   return out;
 }
 
-function credentialRefFor(provider: DshProvider): string {
-  const named = (provider.apiKeyEnv || '').trim();
+/**
+ * dsh 的凭据引用名约定：写了 apiKeyEnv 就用它，否则 <PROVIDER_ID>_API_KEY。
+ * 导出给 lib/agentModelConfig.ts 复用（只同步被引用到的 Key，推导规则必须只有一份）。
+ */
+export function modelKeyRef(providerId: string, apiKeyEnv?: string): string {
+  const named = (apiKeyEnv || '').trim();
   if (named) return named;
-  return provider.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY';
+  return providerId.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY';
+}
+
+function credentialRefFor(provider: DshProvider): string {
+  return modelKeyRef(provider.id, provider.apiKeyEnv);
+}
+
+/** 视频提供商优先 dashscope，其次含 qwen3.8-omni-flash 的那个 */
+function pickVideoProvider(providers: DshProvider[]): DshProvider | null {
+  return providers.find((provider) => provider.id === VIDEO_PROVIDER_ID)
+    ?? providers.find((provider) => provider.models.some((model) => model.id === VIDEO_MODEL_ID))
+    ?? null;
 }
 
 function fallbackModel(providerId: string): ResolvedVideoModel {
@@ -293,26 +384,41 @@ function readText(file: string): string {
  * 解析视频理解模型（纯读文件，不启动 dsh）。
  *
  * @param home dsh 的 DSH_HOME（Engram 随包运行时是 <数据目录>/dsh）
+ * @param fallback 多端同步下来的提供商与 Key：本机缺 Key（或根本没有视频提供商）时兜底，
+ *                 让「另一台设备配过、这台还没同步落盘」的场景也能直接提炼视频
  */
-export function resolveVideoModel(home: string): VideoModelResolution {
-  const providers = parseDshProviders(readText(profilePatchPath(home)));
-  const byId = providers.find((provider) => provider.id === VIDEO_PROVIDER_ID) ?? null;
-  const byModel = providers.find((provider) => provider.models.some((model) => model.id === VIDEO_MODEL_ID)) ?? null;
-  const provider = byId || byModel;
+export function resolveVideoModel(home: string, fallback: VideoModelFallback = {}): VideoModelResolution {
+  const localProviders = parseDshProviders(readText(profilePatchPath(home)));
   const refs = parseCredentialRefs(readText(path.join(home, '.credentials.yaml')));
+  const fallbackProviders: DshProvider[] = fallback.providers ?? [];
+  const fallbackKeys: Record<string, string> = fallback.keys ?? {};
+
+  const localProvider = pickVideoProvider(localProviders);
+  const syncedProvider = localProvider ? null : pickVideoProvider(fallbackProviders);
+  const provider = localProvider || syncedProvider;
 
   if (!provider) {
-    const fallback = fallbackModel(VIDEO_PROVIDER_ID);
+    const fallbackModelValue = fallbackModel(VIDEO_PROVIDER_ID);
     return {
-      provider: fallback,
+      provider: fallbackModelValue,
       missing: ['视频模型提供商'],
       providerFound: false,
       configured: false,
+      keySource: 'none',
     };
   }
 
   const keyRef = credentialRefFor(provider);
-  const apiKey = (refs[keyRef] || process.env[keyRef] || '').trim();
+  const localKey = (refs[keyRef] || process.env[keyRef] || '').trim();
+  // 本机有 provider 但缺 Key 时：优先按本机 ref 找同步 Key；对端同名 provider 若用了不同的
+  // apiKeyEnv，也按它推导出的 ref 再试一次（两台设备的 dsh 设置可能不同名）
+  const syncedProviderForKey = pickVideoProvider(fallbackProviders);
+  const fallbackKeyRef = syncedProviderForKey ? credentialRefFor(syncedProviderForKey) : keyRef;
+  const syncedKey = localKey
+    ? ''
+    : String(fallbackKeys[keyRef] ?? fallbackKeys[fallbackKeyRef] ?? '').trim();
+  const apiKey = localKey || syncedKey;
+  const keySource: VideoKeySource = localKey ? 'local' : syncedKey ? 'synced' : 'none';
   const model = pickModel(provider);
   const baseUrl = (provider.baseURL || (provider.id === VIDEO_PROVIDER_ID ? VIDEO_PROVIDER_BASE_URL : '')).trim();
   const api = (provider.api || VIDEO_MODEL_API).trim();
@@ -326,7 +432,7 @@ export function resolveVideoModel(home: string): VideoModelResolution {
     keyRef,
   };
   const missing = missingVideoModelFields(resolved);
-  return { provider: resolved, missing, providerFound: true, configured: missing.length === 0 };
+  return { provider: resolved, missing, providerFound: true, configured: missing.length === 0, keySource };
 }
 
 /** 预置提供商的 profile 内容（播种到 dsh 设置里；与 dsh 设置页保存的字段同名） */

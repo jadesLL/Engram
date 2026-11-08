@@ -275,7 +275,9 @@
     <!-- 运行状态的位置见卡片顶部（中枢与成员共用同一行摘要） -->
 
     <div v-if="status && status.role !== 'none'" class="sync-role-note">
-      <p>同步范围：页面、附件图片、原始资料文件、证据账本、内置 Agent 会话与任务看板、客户洞察记录。各端密码、令牌、模型配置保持独立。
+      <p>同步范围：页面、附件图片、原始资料文件、证据账本、内置 Agent 会话与任务看板、客户洞察记录。
+        内置 Agent 的模型配置与相关 API Key 随「设置」分类同步（明文随群组下发，只给群组内的设备；删除不同步，手机不持有模型 Key）；
+        各端登录密码、绑定令牌等仍各端独立。
         两端同时修改同一页面时按字符级智能合并；无法自动合并的冲突以修改时间最新的一方为准：
         普通页面中被取代的旧版本以「原名-时间」重命名保留在原目录（可删除），AI 工作区直接以最新为准覆盖，不产生新文件。</p>
       <p>会话只在一轮回复结束后同步（正在对话中的内容留在本机），消息按条合并、各端看到的历史一致；
@@ -544,7 +546,7 @@ const canBeHub = computed(() => capabilities.value.syncRoles.includes('hub'));
 const status = ref<SyncStatus | null>(null);
 const syncCategoryItems = [
   { key: 'homeCards', label: '主页卡片多端同步', hint: '卡片种类、顺序、尺寸和布局；默认关闭' },
-  { key: 'settings', label: '设置多端同步', hint: '主题、编辑模式、搜索同义词、专名勘误、AI 工作区显示偏好；默认关闭。账户凭据、绑定和本机配置不参与' },
+  { key: 'settings', label: '设置多端同步', hint: '主题、编辑模式、搜索同义词、专名勘误、AI 工作区显示偏好、内置 Agent 模型配置与相关 API Key（明文随群组下发）；默认关闭。登录凭据、绑定和本机配置不参与' },
   { key: 'knowledge', label: '知识库多端同步', hint: '知识页面、普通附件和收集箱' },
   { key: 'materials', label: '原始资料多端同步', hint: '文档、对话、灵感碎片及提炼状态' },
   { key: 'customerResearch', label: '客户洞察多端同步', hint: '调研记录、报告正文与流程模板；默认开启' },

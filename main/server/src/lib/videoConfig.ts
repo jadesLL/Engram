@@ -1,11 +1,15 @@
 import { getSetting, setSetting } from './db.js';
 import { bundledDshHome } from '../assistant/config.js';
+import { AGENT_MODEL_CONFIG_KEY, parseAgentModelConfig, type SyncedAgentModelConfig } from './agentModelConfig.js';
 import {
   missingVideoModelFields,
   resolveVideoModel,
+  type DshProvider,
   type ResolvedVideoModel,
+  type VideoModelFallback,
   type VideoModelResolution,
 } from './videoModel.js';
+import { preferenceValue } from '../sync/preferences.js';
 
 /**
  * 视频理解模型的总开关 + 状态（2026-11 起）。
@@ -104,9 +108,46 @@ export function applyVideoConfigInput(input: unknown): { changed: boolean; next:
   return { changed: JSON.stringify(next) !== before, next };
 }
 
-/** 当前解析到的视频模型（每次实时读 dsh 配置；文件很小，读盘成本可忽略） */
+/**
+ * 同步下来的模型配置 → 视频回退数据（多端同步的 agent_model_config）。
+ *
+ * 直接读偏好值而不是走 sync/agentModelSync：这里只做只读展示/调用，没必要把同步队列模块拉进来；
+ * 合并后的偏好值就是本机已知的最新一份（应用远端后会把合并结果写回偏好）。
+ */
+function syncedModelConfig(): SyncedAgentModelConfig | null {
+  try {
+    const preference = preferenceValue(AGENT_MODEL_CONFIG_KEY);
+    return parseAgentModelConfig(preference?.value ?? getSetting(AGENT_MODEL_CONFIG_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function syncedVideoFallback(): VideoModelFallback {
+  const config = syncedModelConfig();
+  if (!config) return {};
+  const providers: DshProvider[] = Object.entries(config.providers).map(([id, provider]) => ({
+    id,
+    ...(provider.displayName ? { displayName: provider.displayName } : {}),
+    ...(provider.api ? { api: provider.api } : {}),
+    ...(provider.baseURL ? { baseURL: provider.baseURL } : {}),
+    ...(provider.apiKeyEnv ? { apiKeyEnv: provider.apiKeyEnv } : {}),
+    models: provider.models.map((model) => ({ ...model })),
+  }));
+  return { providers, keys: config.keys };
+}
+
+/**
+ * 当前解析到的视频模型（每次实时读 dsh 配置；文件很小，读盘成本可忽略）。
+ *
+ * 本机已配置（provider + Key 齐全）时一律用本机；缺 Key 或本机根本没提供商时，
+ * 用同步下来的同款配置兜底——对端只同步到了配置、dsh 还没重读时视频理解也能直接用。
+ */
 export function videoModelConfig(): VideoModelResolution {
-  return resolveVideoModel(bundledDshHome());
+  const home = bundledDshHome();
+  const local = resolveVideoModel(home);
+  if (local.configured) return local;
+  return resolveVideoModel(home, syncedVideoFallback());
 }
 
 /** 缺哪一项就点哪一项：面板与错误文案共用这一个判定 */
@@ -136,11 +177,37 @@ export function videoConfigHint(config: VideoConfig = getVideoConfig(), model?: 
   return resolution.missing.length ? '视频理解模型还缺：' + resolution.missing.join('、') + where : '';
 }
 
-/** 给前端的状态摘要：永远不返回 API Key，只给 hasKey */
+/**
+ * 把库里旧的 video_config JSON 归一化成只含 enabled（清掉 v1.5.x 的 baseUrl/apiKey/model 等字段）。
+ *
+ * 必须在 stampPreference / recordLocalChange 之前跑：否则旧 JSON 里的陈旧 Key 会被当设置同步出去。
+ * @returns 是否真的改写了设置（调用方据此 stamp + 入队一次）
+ */
+export function normalizeStoredVideoConfig(): boolean {
+  const raw = getSetting(VIDEO_CONFIG_KEY) || '';
+  if (!raw) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // 坏 JSON 按默认值归一化：旧面板写坏的配置不再阻塞同步
+    parsed = {};
+  }
+  const normalized = JSON.stringify(normalize(parsed));
+  if (normalized === raw) return false;
+  setSetting(VIDEO_CONFIG_KEY, normalized);
+  return true;
+}
+
+/**
+ * 给前端的状态摘要：永远不返回 API Key，只给 hasKey + keySource。
+ * keySource：local=本机控制台配了 Key / synced=来自多端同步 / none=未配置（前端据此显示 Key 来源）。
+ */
 export function videoConfigStatus() {
   const config = getVideoConfig();
   const resolution = videoModelConfig();
   const model = resolution.provider;
+  const syncedPreference = resolution.keySource === 'synced' ? preferenceValue(AGENT_MODEL_CONFIG_KEY) : null;
   return {
     configured: config.enabled && resolution.configured,
     enabled: config.enabled,
@@ -149,6 +216,8 @@ export function videoConfigStatus() {
     baseUrl: model.baseUrl,
     model: model.model,
     hasKey: Boolean(model.apiKey),
+    keySource: resolution.keySource,
+    ...(syncedPreference ? { keyFromNode: syncedPreference.nodeId } : {}),
     missing: config.enabled ? resolution.missing : [],
     // 旧面板字段：固定值，保持旧客户端能正常渲染（v1.5.x APK 里的旧 Web 包）
     maxTokens: VIDEO_MAX_TOKENS,

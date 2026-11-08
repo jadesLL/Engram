@@ -3,7 +3,8 @@
     <header class="panel-head">
       <div>
         <h3>模型</h3>
-        <p>选择聊天 Agent 新会话默认使用的模型；配置 DeepSeek 官方与第三方模型提供商。保存后聊天 Agent 下一轮对话生效。</p>
+        <p>选择聊天 Agent 新会话默认使用的模型；配置 DeepSeek 官方与第三方模型提供商。保存后聊天 Agent 下一轮对话生效。
+          模型配置与相关 API Key 随多端同步的「设置」分类下发到群组内其他设备（本机已配置的 Key 优先）。</p>
       </div>
       <span v-if="payload && !payload.writable" class="readonly-badge">只读</span>
     </header>

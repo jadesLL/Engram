@@ -12,6 +12,15 @@ import {
 import { ConsoleRpcError, createConsoleRpc } from '../assistant/agentConsoleRpc.js';
 import { bundledDshHome, bundledDshVersion } from '../assistant/config.js';
 import { DEFAULT_OFFICIAL_INPUT_MODALITIES, normalizeInputModalities } from '../assistant/modelCapabilities.js';
+import { mirrorAgentModelConfig } from '../sync/agentModelSync.js';
+
+/**
+ * 控制台的模型保存接口是**唯一拿到 Key 明文**的入口：保存成功后顺带把本机模型配置镜像进同步。
+ * 镜像内部按 digest 抑制重复，且异常只记日志，不影响接口返回。
+ */
+function mirrorModelConfigAfterSave(): void {
+  mirrorAgentModelConfig();
+}
 
 /**
  * 内置 Agent 控制台的 BFF（原生控制台专用）。
@@ -791,7 +800,10 @@ export async function agentConsoleRoutes(app: FastifyInstance) {
 
   app.get('/api/agent-console/models', async (req, reply) => {
     try {
-      return await modelsPayload(await ensureOrigin(req));
+      const payload = await modelsPayload(await ensureOrigin(req));
+      // 控制台页面打开时顺带镜像：用户在原生控制台里改的配置也能尽快进同步
+      mirrorModelConfigAfterSave();
+      return payload;
     } catch (error) {
       return sendConsoleError(reply, error);
     }
@@ -799,7 +811,9 @@ export async function agentConsoleRoutes(app: FastifyInstance) {
 
   app.put('/api/agent-console/models/default', async (req, reply) => {
     try {
-      return await saveDefaultModel(await ensureOrigin(req), req.body ?? {});
+      const payload = await saveDefaultModel(await ensureOrigin(req), req.body ?? {});
+      mirrorModelConfigAfterSave();
+      return payload;
     } catch (error) {
       return sendConsoleError(reply, error);
     }
@@ -807,7 +821,10 @@ export async function agentConsoleRoutes(app: FastifyInstance) {
 
   app.put('/api/agent-console/models/official', async (req, reply) => {
     try {
-      return await saveOfficialModel(await ensureOrigin(req), req.body ?? {});
+      const payload = await saveOfficialModel(await ensureOrigin(req), req.body ?? {});
+      // BFF 这里刚拿到明文 Key 并写进 dsh：保存即镜像
+      mirrorModelConfigAfterSave();
+      return payload;
     } catch (error) {
       return sendConsoleError(reply, error);
     }
@@ -816,7 +833,9 @@ export async function agentConsoleRoutes(app: FastifyInstance) {
   app.put('/api/agent-console/models/providers/:id', async (req, reply) => {
     try {
       const id = (req.params as { id?: string }).id ?? '';
-      return await saveProvider(await ensureOrigin(req), id, req.body ?? {});
+      const payload = await saveProvider(await ensureOrigin(req), id, req.body ?? {});
+      mirrorModelConfigAfterSave();
+      return payload;
     } catch (error) {
       return sendConsoleError(reply, error);
     }

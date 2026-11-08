@@ -20,6 +20,7 @@ import {
   summarizeFileChange,
   summarizeMove,
   summarizePageChange,
+  summarizePreferenceChange,
   stripLeadingFrontmatter,
 } from './opText.js';
 
@@ -279,4 +280,14 @@ test('字节格式化：B / KB / MB 三档', () => {
   assert.equal(formatBytes(512), '512 B');
   assert.equal(formatBytes(2048), '2.0 KB');
   assert.equal(formatBytes(1258291), '1.2 MB');
+});
+
+test('偏好条目：中枢收到的设置同步写成中文人话，模型配置只写固定名（不带 Key）', () => {
+  const model = summarizePreferenceChange('agent_model_config');
+  assert.equal(isNoteworthyOp(model), true);
+  // 模型配置的偏好值里含 Key 明文：描述与结构化字段都不能把它带进同步记录
+  assert.equal(describeOpSummary(model), '同步设置「内置 Agent 模型配置」');
+  assert.equal(JSON.stringify(model).includes('sk-'), false);
+  assert.equal(describeOpSummary(summarizePreferenceChange('video_config')), '同步视频理解开关「video_config」');
+  assert.equal(describeOpSummary(summarizePreferenceChange('theme')), '同步设置「theme」');
 });

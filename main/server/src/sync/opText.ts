@@ -426,10 +426,23 @@ export function summarizeResearchChange(taskId: string, customer: string): SyncO
   return { kind: 'research', verb: 'update', path: taskId, title: customer || '' };
 }
 
+/**
+ * 偏好（设置项）条目：用户认的是设置名，不是内部 key。
+ *
+ * 只有「确实改了」才由调用方产出这一条（中枢收到成员推送的偏好时用）：
+ * 同步详情里能直接看到「成员「X」同步设置「内置 Agent 模型配置」」，
+ * 而不是一条看不出所以然的推送汇总。模型配置含 Key 明文，描述里只写固定中文名。
+ */
+export function summarizePreferenceChange(key: string): SyncOpSummary {
+  return { kind: 'preference', verb: 'update', path: key };
+}
+
 /** 偏好条目的主体名：用户认的是「主页卡片 / 客户调研流程模板 / 设置」，不是内部 key */
 function preferenceLabel(path: string): string {
   if (path === 'home_layout') return '主页卡片';
   if (path === 'customer_research_rules') return '客户调研流程模板';
+  if (path === 'agent_model_config') return '内置 Agent 模型配置';
+  if (path === 'video_config') return '视频理解开关';
   return '设置';
 }
 
@@ -452,7 +465,11 @@ export function describeOpSummary(item: SyncOpSummary): string {
     const count = Number(item.added || 0);
     return `同步会话「${item.title || item.path}」${count > 0 ? `（${count} 条消息）` : ''}`;
   }
-  if (item.kind === 'preference') return `同步${preferenceLabel(item.path)}「${item.path}」`;
+  if (item.kind === 'preference') {
+    // 模型配置含 Key 明文：日志只写固定中文名，不带值也不带内部 key
+    if (item.path === 'agent_model_config') return '同步设置「内置 Agent 模型配置」';
+    return `同步${preferenceLabel(item.path)}「${item.path}」`;
+  }
   if (item.kind === 'board') return '同步任务看板（全端取最新一版）';
   if (item.kind === 'research') return `同步客户调研「${item.title || item.path}」`;
 

@@ -39,7 +39,7 @@ import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
 import { withJobsStopped } from '../jobs.js';
-import { applyVideoConfigInput, videoConfigForClient } from '../lib/videoConfig.js';
+import { applyVideoConfigInput, normalizeStoredVideoConfig, videoConfigForClient } from '../lib/videoConfig.js';
 import {
   DDNS_SETTINGS_KEY,
   clampInterval,
@@ -101,6 +101,11 @@ export async function settingsRoutes(app: FastifyInstance) {
       // v1.5.1 起视频配置另有独立读写口 /api/settings/video-config（手机成员令牌可用），
       // 这里保留旧口径兼容旧客户端。
       if (k === 'video_config') {
+        // 旧 JSON 归一化（清掉 baseUrl/apiKey 等历史字段）：必须先归一化再 stamp，避免旧 Key 被同步出去
+        if (normalizeStoredVideoConfig()) {
+          stampPreference(k, currentNodeId());
+          recordLocalChange('preference', k);
+        }
         out[k] = videoConfigForClient();
       } else {
         out[k] = raw;

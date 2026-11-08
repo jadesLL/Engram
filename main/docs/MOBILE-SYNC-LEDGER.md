@@ -11,8 +11,9 @@
 
 | 日期 | 来源提交 | 类型 | 要补什么 | 手机侧改动点 | 状态 | 目标版本 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-08 | feat/agent-model-sync | F | 新增 preference 键 `agent_model_config`（内置 Agent 模型配置与相关 Key）与 `video_config`（视频理解开关）的跨端同步 | 无：Android 不跑 dsh、不持有模型 Key，未知 preference key 按现有逻辑跳过；视频提炼与聊天都在中枢执行 | 不适用 | v1.6.x | 见 docs/AGENT-MODEL-SYNC.md「平台影响」与 docs/ANDROID.md「Agent 与自动化配置」 |
 
-（暂无待办）
+（暂无待办；上面一行是确认「不适用」的登记，不算待办）
 
 ## 历史
 
