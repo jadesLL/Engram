@@ -167,7 +167,7 @@
   min-height: 28px;
   padding: 4px 8px;
   border-radius: 6px;
-  color: var(--text-faint);
+  color: var(--text-secondary);
   font-size: 12.5px;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
@@ -359,19 +359,21 @@
   gap: 1px;
 }
 .group-title {
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 600;
   letter-spacing: -0.004em;
   line-height: 1.35;
   color: var(--text);
 }
 .group-hint {
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.45;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  /* 卡头副标题不再单行截断（Agent 卡曾把句子切成「…模型与插…」） */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .group-body {
   padding: 2px 22px 8px;
@@ -772,7 +774,7 @@
   /* 窄屏没有左栏目录：退回「整页滚动」，内容列不再自己滚（滚动权交回 Home 的 .content） */
   .settings-view {
     height: auto;
-    padding: 20px 14px 72px;
+    padding: 20px 16px 72px;
   }
   .settings-content {
     overflow: visible;
@@ -801,6 +803,9 @@
   .group-body {
     padding: 2px 16px 6px;
   }
+  .group-body.flush {
+    padding: 0 16px 2px;
+  }
   .settings-native .setting-row {
     padding: 12px 0;
   }
@@ -814,7 +819,7 @@
     grid-template-columns: 1fr;
     gap: 12px;
     min-height: 0;
-    padding: 16px 18px;
+    padding: 12px 0;
   }
   .settings-native .setting-row .setting-message {
     grid-column: auto;
@@ -826,8 +831,8 @@
 
 @media (max-width: 640px) {
   .settings-view {
-    padding-right: 12px;
-    padding-left: 12px;
+    padding-right: 16px;
+    padding-left: 16px;
   }
   .settings-native.settings-panel,
   .settings-native .settings-panel {
@@ -899,54 +904,6 @@
     letter-spacing: -0.015em;
     line-height: 1.25;
   }
-  .settings-mobile-account {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--card-bg);
-    text-align: left;
-  }
-  .settings-mobile-account:active {
-    background: var(--bg-hover);
-  }
-  .settings-mobile-avatar {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--on-accent);
-    font-size: 16px;
-    font-weight: 600;
-  }
-  .settings-mobile-account-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .settings-mobile-account-name {
-    font-size: 15px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .settings-mobile-account-sub {
-    font-size: 12.5px;
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .settings-mobile-group {
     overflow: hidden;
     border: 1px solid var(--border);
@@ -980,11 +937,24 @@
     background: var(--bg-tertiary);
     color: var(--text-secondary);
   }
-  .settings-mobile-row-label {
+  .settings-mobile-row-main {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .settings-mobile-row-label {
     min-width: 0;
     font-size: 14.5px;
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-mobile-row-sub {
+    font-size: 11.5px;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1008,7 +978,6 @@
     font-size: 12.5px;
     line-height: 1.6;
   }
-  .settings-mobile-account:focus-visible,
   .settings-mobile-row:focus-visible,
   .settings-mobile-back:focus-visible {
     outline: 2px solid var(--accent);
@@ -1024,7 +993,7 @@
     /* 出血到内容区左右两边与顶部：子页没有页头，返回栏就是这一屏的 app bar。
        不做吸顶：手机上系统返回键/侧滑已接管这一层，吸顶还要额外让开状态栏与底栏，
        对一屏就能看完的设置子页收益不大。 */
-    margin: -20px -14px 0;
+    margin: -20px -16px 0;
     padding: 4px 8px;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
@@ -1055,6 +1024,10 @@
   /* 子页底部让开底部导航与安全区（.content 的滚动留给 Home，这里只补一档内边距） */
   .settings-view.is-mobile-subpage {
     padding-bottom: 96px;
+  }
+  /* 子页首卡与返回栏之间留一档呼吸（评审：首卡贴着分隔线像被裁掉一截） */
+  .settings-view.is-mobile-subpage .settings-content {
+    padding-top: 12px;
   }
 }
 /* ==========================================================================
@@ -1106,7 +1079,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--text-secondary);
   font-size: 11.5px;
   white-space: nowrap;
   text-align: left;
@@ -1115,7 +1088,7 @@
 .settings-status-item:hover { background: var(--bg-hover); color: var(--text-secondary); }
 .settings-status-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-status-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
-.settings-status-label { color: var(--text-faint); }
+.settings-status-label { color: var(--text-secondary); }
 .settings-status-value { margin-left: auto; font-weight: 500; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .settings-status-item.tone-warn .settings-status-value { color: var(--warning); }
 .settings-status-item.tone-ok .settings-status-dot { background: var(--success); }

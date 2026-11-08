@@ -243,10 +243,16 @@ test('手机端：分组列表 + 子页 push（行高 ≥56、返回键回列表
     /class="settings-mobile-row-status"/,
     '分组行行尾没有状态文字：跟「跟随系统 / 下载 64%」同款的行状态丢了',
   );
+  // 2026-11 版式评审 P0-2：手机列表与桌面同源（7 类同名同序），不再单列一张账户卡
   assert.match(
     view,
-    /class="settings-mobile-account"[\s\S]{0,200}?openMobileSection\('account'\)/,
-    '账户卡没有接到「账户与访问」子页：手机上没有入口改登录凭据 / 连接通道',
+    /const mobileRows = computed\(\(\) => domains\.value\.map\(/,
+    '手机分组列表没有从 domains 派生：手机又和桌面不是同一套分类了',
+  );
+  assert.match(
+    view,
+    /class="settings-mobile-row"[\s\S]{0,220}?data-mobile-domain="row\.id"/,
+    '手机分组行缺少 data-mobile-domain：返回时找不到该把焦点交回哪一行',
   );
 
   // ② mobileSection=null 是分组列表，有值是该大类子页

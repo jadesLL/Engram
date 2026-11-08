@@ -169,18 +169,18 @@ test('原生桥契约：Web 使用的每个 __engram* 桥都能在 Android 源�
   }
 });
 
-test('设置域手机可达：SETTINGS_DOMAINS 每个大类都在手机 MOBILE_GROUPS 中（account 由账户卡特判）', () => {
+test('设置域手机可达：手机列表与桌面同源（同一套 SETTINGS_DOMAINS，不另维护手机分类）', () => {
   const domainsSrc = readMain('web/src/lib/settingsDomains.ts');
   const domainIds = [...domainsSrc.matchAll(/^\s{4}id: '([a-z]+)',$/gm)].map((m) => m[1]);
   assert.ok(domainIds.length >= 7, '设置大类数量异常：' + domainIds.length);
   const settingsView = readMain('web/src/views/SettingsView.vue');
-  const mobileBlock = section(settingsView, /const MOBILE_GROUPS[\s\S]*?\];/);
-  const mobileIds = [...mobileBlock.matchAll(/\{ id: '([a-z]+)'/g)].map((m) => m[1]);
-  const reachable = new Set([...mobileIds, 'account']);
-  for (const id of domainIds) {
-    assert.ok(reachable.has(id), '设置大类 ' + id + ' 不在手机 MOBILE_GROUPS 里（手机永久不可达：补手机分组，或在 SettingsView 里明确例外）');
-  }
-  assert.deepEqual(sorted(reachable), sorted(new Set(domainIds)), '手机设置分组与 SETTINGS_DOMAINS 不一致（多出或缺少大类）');
+  /* 2026-11 版式评审 P0-2：手机不再自己维护一张 6 类表（改名 / 换序 / 漏「账户与访问」），
+     列表直接由 visibleSettingsDomains 派生——桌面上有的大类，手机必然可达。 */
+  const mobileBlock = section(settingsView, /const mobileRows = computed[\s\S]*?\}\)\)\);/);
+  assert.match(mobileBlock, /domains\.value\.map\(/, '手机分组列表没有从 domains 派生：手机与桌面又各有一套分类');
+  assert.match(mobileBlock, /label: domain\.label/, '手机分类名不是桌面大类名：跨端要重新找');
+  assert.match(mobileBlock, /icon: domain\.icon/, '手机分类图标没有跟随大类定义');
+  assert.doesNotMatch(settingsView, /MOBILE_GROUPS/, '又出现第二套手机分类表：跨端分类会再次走偏');
 });
 
 test('手机滞后清单存在；当前版本的待办必须在本版本发版前清零', () => {
