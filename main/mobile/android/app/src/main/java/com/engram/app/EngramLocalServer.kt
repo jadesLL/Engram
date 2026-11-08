@@ -127,7 +127,7 @@ class EngramLocalServer private constructor(private val context: Context) {
                 .put("features", JSONObject()
                     // jobs：手机端没有任务队列，但 /api/jobs 桩会发「灵感提炼」状态（见该路由注释），
                     // 前端要靠这个能力位轮询它，否则侧栏的「提炼中 / 提炼失败」徽标永远不显示
-                    .put("agent", remoteAgent).put("agentAdmin", false).put("mcp", false).put("jobs", true)
+                    .put("agent", remoteAgent).put("agentAdmin", false).put("agentAccess", false).put("jobs", true)
                     // v1.5.1：绑定了中枢的手机端也要能用「设置 → Agent 与自动化」（内置 Agent 摘要/控制台、
                     // 视频理解模型、自动整理、任务看板、工具与手册）。手机不跑 dsh、不存模型 Key：配置经
                     // 成员令牌窄代理读写中枢，Key 存在中枢且不回显，所以两枚能力位与「已绑定中枢」联动。

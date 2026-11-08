@@ -48,7 +48,7 @@ const DREAM_REASON_TEXT: Record<string, string> = {
 
 /**
  * 内置 Agent（聊天抽屉）的 HTTP 面：会话 CRUD + 运行 + SSE 事件流 + 停止/重试/沉淀。
- * 与「Agent 接入」（给外部 harness 注册 MCP）不是一回事：这里驱动的是 Engram 随包的 dsh。
+ * 与「Agent 接入」（给外部 harness 装 CLI + skill）不是一回事：这里驱动的是 Engram 随包的 dsh。
  */
 export async function assistantRoutes(app: FastifyInstance) {
   // Android 成员使用同步 token 代理会话；配置路由再叠 owner 鉴权，避免成员读取模型密钥。
@@ -159,7 +159,7 @@ export async function assistantRoutes(app: FastifyInstance) {
   /**
    * 状态：配置、下次运行时刻、上次运行结果与当前待办快照。
    * v1.5.1 起手机（绑定中枢后）也能在 设置 → Agent 与自动化 里看/改这套配置：
-   * 继承插件级 requireAssistantAccess（owner / MCP token / 同步成员令牌），
+   * 继承插件级 requireAssistantAccess（owner / Agent 令牌 / 同步成员令牌），
    * 手机改的是中枢上真正跑梦境思考的那一份配置。
    */
   app.get('/api/assistant/dream', async () => dreamStatus());
@@ -384,7 +384,7 @@ export async function assistantRoutes(app: FastifyInstance) {
 
   /**
    * 答复 Agent 的提问（对话最下侧弹窗点选）。
-   * 答复会立刻唤醒挂起的那次 MCP ask_user 工具调用——Agent 在同一轮里拿到答案继续，
+   * 答复会立刻唤醒挂起的那次 engram ask 长轮询——Agent 在同一轮里拿到答案继续，
    * 所以这里不回「已送达」这种空话，直接把收口后的提问（含用户口径）回给前端。
    */
   app.post('/api/assistant/questions/:id/answer', async (req, reply) => {

@@ -103,7 +103,7 @@ function publishSnapshot(sessionId: string, runId: string): void {
  */
 const DELEGATION_TOOLS = new Set(['subagent', 'subagent_fork', 'workflow', 'ralph', 'task']);
 
-/** 去掉 MCP 前缀，只留工具本名（mcp__engram__search → search） */
+/** 去掉旧会话里的 MCP 前缀，只留工具本名（mcp__engram__search → search；现在的命令类工具名原样返回） */
 function bareToolName(name: string): string {
   return name.replace(/^mcp__[a-z0-9_-]+__/i, '');
 }
@@ -577,7 +577,7 @@ function beginRun(input: {
       // 到了就照常改回 completed/failed（卡片不会一直假装在跑）。
       markSubagentsBackground(run.id);
     }
-    // 还在等用户点选的提问随本轮一起作废：不然挂起的那次 MCP 工具调用会一直等到超时
+    // 还在等用户点选的提问随本轮一起作废：不然挂起的那次 engram ask 长轮询会一直等到超时
     closeQuestionsForRun(run.id, cancelled ? 'cancelled' : 'expired');
     // 收口：本轮最后一段正文（可能压根没有——纯工具轮或起手就失败）
     const lastId = getRun(run.id)?.assistantMessageId;

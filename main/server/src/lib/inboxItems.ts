@@ -11,7 +11,7 @@ import { capabilityHint, convertCapability, type ConvertCapability } from '../pi
 /**
  * 收集箱的条目清单（目录实时扫描 + 转换任务状态）。
  *
- * 界面（/api/inbox/items）与 MCP（list_inbox）读的是同一份，避免两边对
+ * 界面（/api/inbox/items）与 CLI（`engram inbox list`）读的是同一份，避免两边对
  * 「什么算已转换」「什么时候算转换中」给出不同答案。
  * 状态以磁盘为准：转换产物在 → converted（即便上一次任务失败、或产物是 Agent 通道补写的）；
  * 只有正在跑的任务才显示 converting；没有产物时失败任务才显示 failed。

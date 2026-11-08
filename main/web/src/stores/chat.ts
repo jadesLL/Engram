@@ -519,7 +519,7 @@ export const useChatStore = defineStore('chat', {
         }
         message.content += data.text;
       });
-      // Agent 提问（MCP ask_user 挂起等你点选）：立刻弹在对话最下侧，不等下一次快照
+      // Agent 提问（engram ask 挂起等你点选）：立刻弹在对话最下侧，不等下一次快照
       source.addEventListener('question', (event) => {
         let incoming: ChatQuestion | null = null;
         try {
@@ -688,7 +688,7 @@ export const useChatStore = defineStore('chat', {
     },
     /**
      * 答复 Agent 的提问（对话最下侧弹窗点选）。
-     * 服务端据此唤醒挂起的 MCP ask_user 工具调用——Agent 在同一轮里拿到答复继续往下做，
+     * 服务端据此唤醒挂起的 engram ask 长轮询——Agent 在同一轮里拿到答复继续往下做，
      * 随后推来的快照会让这条提问从列表里消失。
      */
     async answerQuestion(questionId: string, selected: string[], custom = '') {

@@ -425,7 +425,7 @@
     </div>
 
     <footer class="chat-composer">
-      <!-- Agent 提问：对话最下侧的选项弹窗（贴着输入区上方，MCP ask_user 正挂起等这次点选） -->
+      <!-- Agent 提问：对话最下侧的选项弹窗（贴着输入区上方，engram ask 正挂起等这次点选） -->
       <section v-if="chat.pendingQuestions.length" class="ask-pop" role="group" aria-label="Agent 提问">
         <header class="ask-head">
           <Icon name="ai" :size="13" />

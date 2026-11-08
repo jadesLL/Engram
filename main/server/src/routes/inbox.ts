@@ -65,7 +65,7 @@ function uniqueInboxPath(dirRel: string, name: string): string {
 export async function inboxRoutes(app: FastifyInstance) {
   // 收集箱是「知识库的内容面」，不是中枢的配置面：Android 本地服务只持同步成员令牌（lsync_），
   // 它把收集箱整套窄代理到中枢，挂在 requireAuth 上会让手机端全部 401。这里与 /api/assistant/**
-  // 同一道门（成员 token 或 owner / MCP token）；中枢的配置面仍然只有 owner 能进。
+  // 同一道门（成员 token 或 owner / Agent 令牌）；中枢的配置面仍然只有 owner 能进。
   app.addHook('preHandler', requireAssistantAccess);
 
   /**

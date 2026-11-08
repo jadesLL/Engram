@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client';
 import {
@@ -13,10 +15,10 @@ import {
 import { normalizeAgentPermissionMode } from './permissionMode.js';
 import { ensureAgentNodeRuntime } from './agentNode.js';
 import { CONSOLE_PROFILE, agentSettingsStateFingerprint } from './agentSettings.js';
-import { writeAgentPatch, writeChatPatch } from './agentPatch.js';
+import { cleanupLegacyMcpPatches, writeChatPatch } from './agentPatch.js';
+import { ensureLocalAgentCli } from '../lib/cliShim.js';
 import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
 import { mapNotification, type AgentEvent } from './mapping.js';
-import { ensureAgentToken } from './repository.js';
 
 /**
  * 内置 Agent 的 dsh 运行时封装（官方 SDK 驱动）。
@@ -31,8 +33,9 @@ import { ensureAgentToken } from './repository.js';
  * 事件面：`onNotification` 按会话日志顺序推 `session.event`（turn/step/assistant.message/
  * tool.call/tool.result）；粒度是"按步提交"，没有逐字增量。映射逻辑在 mapping.ts。
  *
- * 姿态：独立空壳工作目录（**不是**知识库目录）+ 知识库只经 MCP 工具；文件/命令工具的沙箱
- * 策略由 dsh 的 web profile 配置决定，控制台里能看到也能改。
+ * 姿态：独立空壳工作目录（**不是**知识库目录）+ 知识库只经 PATH 里的 `engram` 命令
+ * （见 lib/cliShim.ts：启动时写 shim、装 skill，并把 shim 目录注入 dsh 的 PATH）；
+ * 文件/命令工具的沙箱策略由 dsh 的 web profile 配置决定，控制台里能看到也能改。
  *
  * 握手：SDK 默认只给 `initialize` 10s，冷启动会超时；这里显式放宽预算并重试一次（见 handshake.ts）。
  */
@@ -130,14 +133,30 @@ function acquireRuntime(key: string): RuntimeEntry {
     // 控制台改过模型/插件、或 dsh 入口变了：池里的旧进程还按旧配置跑，直接回收重开
     closeRuntime(key);
   }
-  // 覆盖层：MCP 条目（控制台与聊天都用得上）+ 聊天专用 sdk 应用
-  const mcpPatch = writeAgentPatch(home, { token: ensureAgentToken() });
+  // 升级清理：MCP 端点已删除，旧版本写的 MCP 覆盖层与 home patch 条目必须清掉（幂等）
+  cleanupLegacyMcpPatches(home);
+  // 覆盖层只剩聊天专用 sdk 应用（知识库走 PATH 里的 engram 命令，不再有 MCP 条目）
   const chatPatch = writeChatPatch(home);
+  // 本机 CLI 接入：写 <home>/.engram/bin/engram(.cmd) 包装脚本 + 装 engram skill，
+  // 并把 shim 目录放进 dsh 进程的 PATH。失败不阻断运行时——聊天照常能答，只是没有知识库命令。
+  let cliEnv: NodeJS.ProcessEnv = {};
+  try {
+    // 内置 Agent 的 DSH_HOME 是数据目录下的 dsh（不在 process.env 里），skill 根要显式给出
+    const local = ensureLocalAgentCli(os.homedir(), { skillRoot: path.join(home, 'skills') });
+    cliEnv = local.env;
+    if (!local.cli.available) {
+      console.warn(`[agent] engram CLI 不可用：${local.cli.error || '未找到 cli.js'}`);
+    }
+  } catch (error) {
+    console.warn('[agent] engram CLI 初始化失败（本轮 Agent 将无法访问知识库）', error);
+  }
   const workspace = agentWorkspaceDir();
   fs.mkdirSync(workspace, { recursive: true });
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // PATH 里带上 shim 目录：Agent 直接跑 `engram status` / `engram search ...` 即可
+    ...cliEnv,
     DSH_HOME: home,
     // 权限模式：完全访问 / 工作区写入 / 只读（设置页可改，改完由路由回收整个运行时池重开）
     DSH_PERMISSION_MODE: agentPermissionMode(),
@@ -150,10 +169,10 @@ function acquireRuntime(key: string): RuntimeEntry {
 
   const harness = new DeepSeekHarness({
     profile: CONSOLE_PROFILE,
-    patches: [chatPatch, mcpPatch],
+    patches: [chatPatch],
     dshHome: home,
     processCwd: workspace, // dsh 进程自己的工作目录：独立空目录
-    cwd: workspace,        // 会话记录的工作目录：同上，知识库只经 MCP 工具访问
+    cwd: workspace,        // 会话记录的工作目录：同上，知识库只经 engram 命令访问
     env,
     initializeTimeoutMs: INITIALIZE_TIMEOUT_MS, // SDK 默认 10s 扛不住升级后的冷启动
     // 显式给 dsh 入口：安装包里是 app.asar.unpacked 的真实路径（真实 Node 读不了 asar）

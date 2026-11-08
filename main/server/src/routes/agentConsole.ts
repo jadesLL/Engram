@@ -20,7 +20,7 @@ import { DEFAULT_OFFICIAL_INPUT_MODALITIES, normalizeInputModalities } from '../
  * （settings / credentials / llm / pluginManager / agentPresets），
  * 前端只看到归一化后的 Engram 口径，不再有 iframe，也不需要浏览器拿 dsh token。
  *
- * 鉴权：requireAssistantAccess —— owner 登录态 / MCP token / **同步成员令牌**（手机）都能进。
+ * 鉴权：requireAssistantAccess —— owner 登录态 / Agent 令牌 / **同步成员令牌**（手机）都能进。
  * v1.5.1 起手机端经本地服务窄代理到这里远程配置中枢的内置 Agent（模型/插件/预设/高级）：
  * 手机不跑 dsh，也没有自己的 dsh 配置，改的始终是中枢这一份；凭据只写不读（credentials/describe
  * 只回 configured，不回明文 Key）。反代 /agent-console/* 仍是 owner-only，BFF 只做配置读写。
@@ -762,7 +762,7 @@ async function saveSessionLog(origin: string, body: any): Promise<any> {
  * ------------------------------------------------------------------ */
 
 export async function agentConsoleRoutes(app: FastifyInstance) {
-  // 控制台配置面：owner / MCP token / 同步成员令牌（手机远程配置）都放行；
+  // 控制台配置面：owner / Agent 令牌 / 同步成员令牌（手机远程配置）都放行；
   // 只读写中枢本机 dsh 的配置，不回显任何模型 Key 明文。
   app.addHook('preHandler', requireAssistantAccess);
 

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * 往收集箱新建文本原件（MCP add_inbox_file 的服务端实现）：
+ * 往收集箱新建文本原件（CLI engram inbox add 的服务端实现）：
  * 只写收集箱、绝不覆盖、不建页面、不进检索。
  */
 

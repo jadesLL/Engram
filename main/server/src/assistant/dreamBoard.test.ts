@@ -135,23 +135,25 @@ test('dreamBoard：老轮次没有记账快照时 before/after 留空，其余�
   assert.equal(board.rounds[0].summary, '上个版本跑的轮次');
 });
 
-test('dreamBoard：明细提取——写页去重、读资料、改名/删除算纠错', () => {
+test('dreamBoard：CLI 轮次的明细提取——写页去重、读资料、改名/删除算纠错', () => {
   const session = dreamSession();
+  const sh = (command: string, ok?: boolean): { name: string; args: Record<string, unknown>; ok?: boolean } =>
+    ({ name: 'bash', args: { command }, ...(ok === false ? { ok } : {}) });
   const round = addRound(session.id, {
     createdAt: '2026-09-27T03:00:00.000Z',
     completedAt: '2026-09-27T03:30:00.000Z',
     text: '本轮小结',
     calls: [
-      { name: 'mcp__engram__list_raw_files', args: { pending: true } },
-      { name: 'mcp__engram__read_raw_file', args: { path: '原始资料/文档/甲.md' } },
-      { name: 'mcp__engram__read_raw_file', args: { path: '原始资料/文档/甲.md' } },
-      { name: 'mcp__engram__read_raw_file', args: { path: '原始资料/文档/乙.pdf' } },
-      { name: 'mcp__engram__write_page', args: { path: 'Wiki/概念/甲概念.md', title: '甲概念' } },
-      { name: 'mcp__engram__write_page', args: { path: 'Wiki/概念/甲概念.md', title: '甲概念' } },
-      { name: 'mcp__engram__write_page', args: { path: 'Wiki/实体/乙公司.md', title: '乙公司' } },
-      { name: 'mcp__engram__create_raw_material', args: { path: '原始资料/文档/2026.09.27_调研.md' } },
-      { name: 'mcp__engram__rename_page', args: { titleOrId: '乙公司', newTitle: '乙公司有限公司' } },
-      { name: 'mcp__engram__delete_page', args: { titleOrId: '重复页', reason: '疑似重复' }, ok: false },
+      sh('engram files list --pending'),
+      sh('engram files read 原始资料/文档/甲.md'),
+      // 同一个 shell 调用里串两条命令：两条都要算进明细
+      sh('engram files read 原始资料/文档/甲.md && engram files raw 原始资料/文档/乙.pdf --out /tmp/乙.pdf'),
+      sh('engram pages write Wiki/概念/甲概念.md --title 甲概念 --evidence "原始资料/文档/甲.md::甲概念是甲。"'),
+      sh('engram pages write Wiki/概念/甲概念.md --title 甲概念'),
+      sh('engram pages write Wiki/实体/乙公司.md --title 乙公司'),
+      sh('engram files add 原始资料/文档/2026.09.27_调研.md --file -'),
+      sh('engram pages rename 乙公司 --title 乙公司有限公司'),
+      sh('engram pages delete 重复页 --reason 疑似重复', false),
     ],
   });
   configKernel.recordDreamRun(snapshot(round.runId));
@@ -162,8 +164,53 @@ test('dreamBoard：明细提取——写页去重、读资料、改名/删除算
   assert.deepEqual(item.changes.map((change) => change.kind), ['create', 'rename', 'delete']);
   assert.equal(item.changes[1].note, '改用 乙公司有限公司');
   assert.equal(item.changes[2].ok, false, '失败的调用要标出来');
-  assert.deepEqual(item.counts, { pages: 2, sources: 2, changes: 3, calls: 10 });
+  assert.deepEqual(item.counts, { pages: 2, sources: 2, changes: 3, calls: 9 });
   assert.equal(item.trigger, 'schedule');
+});
+
+test('dreamBoard：历史轮次的 MCP 工具卡仍然认（升级后旧数据照样显示）', () => {
+  const session = dreamSession();
+  const round = addRound(session.id, {
+    createdAt: '2026-09-20T03:00:00.000Z',
+    completedAt: '2026-09-20T03:05:00.000Z',
+    text: 'MCP 时代的一轮',
+    calls: [
+      { name: 'mcp__engram__read_raw_file', args: { path: '原始资料/文档/甲.md' } },
+      { name: 'mcp__engram__write_page', args: { path: 'Wiki/概念/甲概念.md', title: '甲概念' } },
+      { name: 'mcp__engram__delete_page', args: { titleOrId: '重复页', reason: '疑似重复' } },
+    ],
+  });
+  configKernel.recordDreamRun(snapshot(round.runId));
+
+  const item = kernel.dreamBoard(session.id).rounds[0];
+  assert.deepEqual(item.pages.map((page) => page.label), ['甲概念']);
+  assert.deepEqual(item.sources.map((source) => source.label), ['原始资料/文档/甲.md']);
+  assert.deepEqual(item.changes.map((change) => change.kind), ['delete']);
+  assert.equal(item.counts.calls, 3);
+});
+
+test('parseEngramInvocations：从 shell 工具的命令行里解析命令组/动作/位置参数/选项', () => {
+  const [first] = kernel.parseEngramInvocations({
+    command: 'engram pages write "Wiki/概念/甲 概念.md" --title "甲 概念" --type concept',
+  });
+  assert.equal(first.group, 'pages');
+  assert.equal(first.action, 'write');
+  assert.deepEqual(first.positionals, ['Wiki/概念/甲 概念.md']);
+  assert.equal(first.options['--title'], '甲 概念');
+  assert.equal(first.options['--type'], 'concept');
+
+  // 全局开关（--json / --url …）在命令组之前、等号写法的选项都要认
+  const [second] = kernel.parseEngramInvocations({
+    command: 'engram --json --url http://127.0.0.1:18180 pages delete 重复页 --reason=疑似重复',
+  });
+  assert.equal(second.group, 'pages');
+  assert.equal(second.action, 'delete');
+  assert.deepEqual(second.positionals, ['重复页']);
+  assert.equal(second.options['--reason'], '疑似重复');
+
+  // 不是 engram 命令：返回空
+  assert.deepEqual(kernel.parseEngramInvocations({ command: 'git status --short' }), []);
+  assert.deepEqual(kernel.parseEngramInvocations({ command: 'echo engram' }), []);
 });
 
 test('dreamBoard：正在跑的那一轮用 state 里的起点计数', () => {

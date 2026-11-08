@@ -271,7 +271,7 @@ function pickModel(provider: DshProvider): string {
   return (preferred || provider.models[0])?.id || '';
 }
 
-/** 缺哪一项就点哪一项：设置页状态、任务报错与 MCP 提示共用这一个判定 */
+/** 缺哪一项就点哪一项：设置页状态、任务报错与错误提示共用这一个判定 */
 export function missingVideoModelFields(model: ResolvedVideoModel): string[] {
   const missing: string[] = [];
   if (!model.model) missing.push('模型名');

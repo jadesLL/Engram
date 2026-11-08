@@ -49,7 +49,7 @@ export interface DreamAudit {
   outdatedSamples: OutdatedSample[];
 }
 
-/** 样例条数上限：给 Agent 的是线索不是全量清单（全量让它自己用 MCP 工具查） */
+/** 样例条数上限：给 Agent 的是线索不是全量清单（全量让它自己用 engram 命令查） */
 const SAMPLE_LIMIT = 5;
 
 /** 标题归一化：去空白与常见中英标点后比大小写无关的写法（只用来发现「疑似重复」） */

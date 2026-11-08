@@ -1572,7 +1572,7 @@ watch(
   }
 );
 
-// 服务端 SSE 推送：当前页内容被任意来源（本会话/Dream/MCP/多标签）改动时即时重载
+// 服务端 SSE 推送：当前页内容被任意来源（本会话/Dream/外部 Agent/多标签）改动时即时重载
 watch(
   () => app.pageVersion,
   () => {

@@ -38,10 +38,10 @@ copyDir(path.join(mainRoot, 'web', 'dist'), path.join(desktopRoot, 'web', 'dist'
 // 3. 生成 desktop/server/package.json：仅运行时依赖，--prod 安装可得到精简 node_modules
 const serverPkg = JSON.parse(fs.readFileSync(path.join(mainRoot, 'server', 'package.json'), 'utf8'));
 const deps = { ...serverPkg.dependencies };
-// 固定 zod 版本：server/package.json 约束 ^3.24.1，但 @modelcontextprotocol/sdk@1.30 的 zod-compat
-// import 'zod/v3'，zod 3.24.1 无 ./v3 exports 致 ESM 崩溃；锁文件解析到 3.25.76，这里对齐。
-// 写精确版本（不是 ^3.25.76）：desktop/server 没有锁文件（下面的 install 带 --no-frozen-lockfile），
-// caret 会在装依赖时解析到更新的 3.x，pin 的意义就没了——打包产物必须可复现。
+// 固定 zod 版本：server 的调研报告校验（research/customerResearch.ts）在用 zod，
+// 锁文件解析到 3.25.76；desktop/server 没有锁文件（下面的 install 带 --no-frozen-lockfile），
+// caret 会在装依赖时解析到更新的 3.x，与验证环境行为不一致，这里对齐到锁文件版本。
+// 写精确版本（不是 ^3.25.76）才能让打包产物可复现。
 if (deps.zod) deps.zod = '3.25.76';
 fs.writeFileSync(
   path.join(desktopRoot, 'server', 'package.json'),

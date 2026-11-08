@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * Agent 提问通道（MCP ask_user ↔ 对话最下侧弹窗）：钉住这几条规则——
+ * Agent 提问通道（engram ask ↔ 对话最下侧弹窗）：钉住这几条规则——
  *   - 提问落在「最近开跑的那一轮」上：没有正在跑的对话就明说弹不出来，让 Agent 改用正文提问；
  *   - ask 挂起等答复：用户在弹窗里点选（answerAgentQuestion）后同一个 Promise 拿到答案；
  *   - 超时（expired）与本轮结束/被停（cancelled）都要唤醒等待者，绝不把工具调用挂死；

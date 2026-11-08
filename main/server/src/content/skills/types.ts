@@ -1,15 +1,15 @@
 /**
  * 内置 skill 的类型定义。
  *
- * skill 与《Agent 作业指南》同级：都由服务端内置、经 MCP 下发给外部 Agent，
- * Agent 读到的是工具返回值，不是安装目录里的文件。
- * 与指南的区别是「按需」——skill_list 只回元数据，Agent 需要时才 skill_guide 取全文，
+ * skill 与《Agent 作业指南》同级：都由服务端内置、经 CLI（engram skill show）与 REST 下发给 Agent，
+ * Agent 读到的是命令返回值，不是安装目录里的文件。
+ * 与指南的区别是「按需」——engram skill list 只回元数据，Agent 需要时才 engram skill show 取全文，
  * 因此 skill 增多不会一次性灌满上下文。
  */
 
 /** 一份内置 skill：元数据 + 正文 */
 export interface SkillDoc {
-  /** kebab-case 标识，MCP 工具与界面清单共用；一经发布即对外契约，不改名 */
+  /** kebab-case 标识，CLI 子命令与界面清单共用；一经发布即对外契约，不改名 */
   name: string;
   /** 中文标题 */
   title: string;

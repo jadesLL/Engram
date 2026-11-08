@@ -88,8 +88,8 @@ test('手册文本：给出今天、下周窗口、翻库次序与逐条出处�
   const text = findPlaybook(WEEKLY_TASKS_QUESTION)!.build(SATURDAY);
   assert.match(text, /今天是 2026-09-26（周六）/);
   assert.match(text, /「下周」= 2026-09-28（周一） 至 2026-10-04（周日）/);
-  assert.match(text, /list_raw_files/);
-  assert.match(text, /search/);
+  assert.match(text, /engram files list/);
+  assert.match(text, /engram search/);
   assert.match(text, /Wiki\/实体\//);
   assert.match(text, /时间待定或逾期/);
   assert.match(text, /资料缺口/);

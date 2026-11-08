@@ -9,8 +9,8 @@ import { normalizeAgentPermissionMode, type AgentPermissionMode } from './permis
 /**
  * 内置 Agent（聊天抽屉）配置与路径。
  *
- * 与「Agent 接入」（给用户自己安装的 harness 注册 MCP）互不相干：这里是 Engram 随包
- * 内置的 dsh 运行时，DSH_HOME 放在数据目录下，凭据与知识库一起走持久卷。
+ * 与「Agent 接入」（给用户自己安装的 harness 装 skill + CLI 包装脚本）互不相干：这里是 Engram
+ * 随包内置的 dsh 运行时，DSH_HOME 放在数据目录下，凭据与知识库一起走持久卷。
  */
 
 export interface AgentConfig {
@@ -53,7 +53,7 @@ export function setAgentConfig(patch: Partial<AgentConfig>): AgentConfig {
 /**
  * 内置 Agent 的权限模式（启动 dsh 时注入 DSH_PERMISSION_MODE）。
  *
- * 默认「完全访问」：内置 Agent 跑在独立空壳工作目录、知识库只经 MCP 工具访问，
+ * 默认「完全访问」：内置 Agent 跑在独立空壳工作目录、知识库只经 PATH 里的 engram 命令访问，
  * 不逐次弹审批更顺手；读不懂的旧配置值退回默认，避免脏值把运行时卡住。
  */
 export function agentPermissionMode(): AgentPermissionMode {
@@ -67,8 +67,8 @@ export function bundledDshHome(): string {
 
 /**
  * Agent 的工作目录：独立空目录，**不是**知识库目录。
- * 姿态是空壳工作目录（不是知识库目录）+ 知识库只经 MCP 工具；文件/命令工具的沙箱策略
- * 以 dsh 的 sdk profile 实际配置为准（设置页「内置 Agent 运行时」按 dump 如实展示）。
+ * 姿态是空壳工作目录（不是知识库目录）+ 知识库只经 PATH 里的 engram 命令；文件/命令工具的沙箱
+ * 策略以 dsh 的 sdk profile 实际配置为准（设置页「内置 Agent 运行时」按 dump 如实展示）。
  */
 export function agentWorkspaceDir(): string {
   return path.join(bundledDshHome(), 'workspace');

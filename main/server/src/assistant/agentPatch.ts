@@ -1,15 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { engramPatchBlock } from '../lib/dshConfig.js';
-import { zcodeMcpUrl } from '../lib/zcodeConfig.js';
 import { cleanupLegacyRoute, profileDir, CONSOLE_PROFILE } from './agentSettings.js';
 
 /**
- * 内置 Agent 的 dsh 覆盖层（两个文件，都由 Engram 生成、通过 SDK 的 --patch 显式叠加）：
+ * 内置 Agent 的 dsh 覆盖层（由 Engram 生成、通过 SDK 的 --patch 显式叠加）：
  *
- *  1. engram.cordis.yml      —— 知识库 MCP 条目（mcp-engram）；
- *  2. engram-chat.cordis.yml —— 聊天运行时专用：把 sdk 应用（stdio JSON-RPC）叠到
- *     web profile 上，并关掉 Web UI 相关条目。
+ *  engram-chat.cordis.yml —— 聊天运行时专用：把 sdk 应用（stdio JSON-RPC）叠到
+ *  web profile 上，并关掉 Web UI 相关条目。
+ *
+ * 知识库不再经 MCP 接入：内置 Agent 改用 PATH 里的 `engram` 命令（shim 与 skill 由
+ * lib/cliShim.ts 负责）。旧版本写入的 MCP 覆盖层（engram.cordis.yml）与 home 层 patch 里的
+ * mcp-engram 条目必须清掉——MCP 端点已删除，留着只会让 dsh 叠加一个连不上的 MCP 客户端。
  *
  * 为什么聊天跑 web profile：模型与插件由 DSH 原生控制台（web profile 的设置/插件页）管理，
  * 聊天运行时必须和它共用同一个 profile，控制台里的改动才会对聊天生效。聊天进程只需要再加
@@ -19,23 +20,20 @@ import { cleanupLegacyRoute, profileDir, CONSOLE_PROFILE } from './agentSettings
  * --patch 再叠一次，重复条目会让启动失败；专属文件只走显式叠加。
  */
 
-export const AGENT_PATCH_FILE = 'engram.cordis.yml';
+/** 旧版本（MCP 时代）写入的覆盖层文件名：升级时删掉 */
+export const LEGACY_AGENT_PATCH_FILE = 'engram.cordis.yml';
 export const CHAT_PATCH_FILE = 'engram-chat.cordis.yml';
-
-const HEADER = [
-  '# Engram 内置 Agent 的 dsh 覆盖层（自动生成，重新写入会整块替换；不要手工编辑）。',
-  '# 由 Engram 的「内置 Agent 控制台」与聊天运行时共用：知识库 MCP 条目 + 聊天专用 stdio 应用。',
-];
+/** home 层 patch（dsh 自动叠加）：旧版本曾把 MCP 条目写在这里 */
+export const HOME_PATCH_FILE = 'cordis.patch.yml';
+/** 旧 MCP 条目的 loader entry id / serverName（清理时按这两个标记识别本方条目） */
+const LEGACY_ENTRY_ID = 'mcp-engram';
 
 const CHAT_HEADER = [
   '# Engram 聊天运行时的 dsh 覆盖层（自动生成，重新写入会整块替换；不要手工编辑）。',
   '# 作用：在 web profile 上叠一层 sdk 应用（stdio JSON-RPC），并关掉 Web UI 相关条目。',
   '# 模型与插件由 DSH 控制台管理（同一 profile），这里不改它们。',
+  '# 知识库访问走 PATH 里的 engram 命令（不写 MCP 条目）。',
 ];
-
-export function agentPatchPath(home: string): string {
-  return path.join(home, AGENT_PATCH_FILE);
-}
 
 export function chatPatchPath(home: string): string {
   return path.join(home, CHAT_PATCH_FILE);
@@ -73,51 +71,99 @@ export function chatPatchText(): string {
   ].join('\n') + '\n';
 }
 
-export interface AgentPatchInput {
-  /** 知识库 MCP 的 Bearer token（运行时注入） */
-  token: string;
-  /** 知识库 MCP 地址；默认取当前服务地址 */
-  mcpUrl?: string;
-}
-
-/** 生成 MCP 覆盖层全文（末尾恰好一个换行） */
-export function agentPatchText(input: AgentPatchInput): string {
-  const url = input.mcpUrl || zcodeMcpUrl;
-  return `${[...HEADER, '', engramPatchBlock(url, input.token)].join('\n').replace(/\n+$/, '')}\n`;
-}
-
-/**
- * 清理早期版本遗留：曾把 Engram 条目写进 `$DSH_HOME/cordis.patch.yml`（home 层）。
- * 该文件若还在，home 层会自动叠加一次，与显式 `--patch` 合成重复 id，dsh 直接启动失败。
- * 只删含本方标记的文件，托管目录里的其它内容不动。
- */
-function dropLegacyHomePatch(home: string): void {
-  const legacy = path.join(home, 'cordis.patch.yml');
-  try {
-    if (!fs.existsSync(legacy)) return;
-    const text = fs.readFileSync(legacy, 'utf8');
-    if (text.includes('mcp-engram')) fs.rmSync(legacy, { force: true });
-  } catch {
-    /* 删不掉时下次启动再试 */
-  }
-}
-
-/** 写控制台/聊天共用的 MCP 覆盖层，并顺带做升级清理 */
-export function writeAgentPatch(home: string, input: AgentPatchInput): string {
-  fs.mkdirSync(home, { recursive: true });
-  dropLegacyHomePatch(home);
-  cleanupLegacyRoute(home);
-  const file = agentPatchPath(home);
-  fs.writeFileSync(file, agentPatchText(input), 'utf8');
-  return file;
-}
-
-/** 写聊天运行时覆盖层（stdlib JSON-RPC + 关 Web UI）；目录不存在时创建 profile 目录 */
+/** 写聊天运行时覆盖层（stdio JSON-RPC + 关 Web UI）；目录不存在时创建 profile 目录 */
 export function writeChatPatch(home: string): string {
   fs.mkdirSync(profileDir(home), { recursive: true });
+  // 顺带做升级清理：0.2.x 遗留的 settings.yaml 与 dsh 导入到 profile patch 的旧模型路由
+  cleanupLegacyRoute(home);
   const file = chatPatchPath(home);
   fs.writeFileSync(file, chatPatchText(), 'utf8');
   return file;
+}
+
+/* ---------------------------------------------------------------- 旧 MCP 覆盖层清理 */
+
+const TOP_LEVEL_ITEM = /^-(\s|$)/;
+
+/** 匹配旧 MCP 条目行（id 行或 serverName 行）；识别与删除共用 */
+function isLegacyMcpEntryLine(line: string): boolean {
+  return new RegExp(`^\\s*-\\s+id:\\s*${LEGACY_ENTRY_ID}(\\s|$)`).test(line)
+    || /^\s*serverName:\s*['"]?engram['"]?(\s|$)/.test(line);
+}
+
+/** 定位旧 MCP 条目所属顶层块 [start, end)，start 为列 0 的 “- ” 行；找不到返回 null */
+function findEntryRange(lines: string[]): [number, number] | null {
+  for (let i = 0; i < lines.length; i++) {
+    if (!isLegacyMcpEntryLine(lines[i])) continue;
+    let start = i;
+    while (start > 0 && !TOP_LEVEL_ITEM.test(lines[start])) start--;
+    if (!TOP_LEVEL_ITEM.test(lines[start])) return null;
+    let end = start + 1;
+    while (end < lines.length && !TOP_LEVEL_ITEM.test(lines[end])) end++;
+    return [start, end];
+  }
+  return null;
+}
+
+/** 块上方紧邻（无空行间隔）的连续注释行属于该块，一并删掉 */
+function blockStartWithComment(lines: string[], start: number): number {
+  let s = start;
+  while (s > 0 && /^\s*#/.test(lines[s - 1])) s--;
+  return s;
+}
+
+/**
+ * 升级清理（每次启动运行时都跑一遍，幂等）：
+ *  1. 删旧版本生成的 MCP 覆盖层 `<home>/engram.cordis.yml`；
+ *  2. 清 `<home>/cordis.patch.yml` 里含 mcp-engram 的条目（只删本方块，用户手写的其它条目与注释逐字保留；
+ *     删完没有顶层条目了就把整个文件删掉——空的 home patch 对 dsh 没有意义）。
+ */
+export function cleanupLegacyMcpPatches(home: string): {
+  removedAgentPatch: boolean;
+  cleanedHomePatch: boolean;
+} {
+  let removedAgentPatch = false;
+  const legacy = path.join(home, LEGACY_AGENT_PATCH_FILE);
+  try {
+    if (fs.existsSync(legacy)) {
+      fs.rmSync(legacy, { force: true });
+      removedAgentPatch = true;
+    }
+  } catch {
+    /* 删不掉时下次启动再试 */
+  }
+
+  let cleanedHomePatch = false;
+  const patch = path.join(home, HOME_PATCH_FILE);
+  try {
+    if (fs.existsSync(patch)) {
+      const lines = fs.readFileSync(patch, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/);
+      let changed = false;
+      let range = findEntryRange(lines);
+      while (range) {
+        const start = blockStartWithComment(lines, range[0]);
+        lines.splice(start, range[1] - start);
+        changed = true;
+        range = findEntryRange(lines);
+      }
+      if (changed) {
+        // 没有顶层条目了就删文件（剩下的只有本方写的文件头注释）
+        if (!lines.some((line) => TOP_LEVEL_ITEM.test(line))) {
+          fs.rmSync(patch, { force: true });
+        } else {
+          fs.writeFileSync(
+            patch,
+            lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '') + '\n',
+            'utf8',
+          );
+        }
+        cleanedHomePatch = true;
+      }
+    }
+  } catch {
+    /* 读不了/写不了时下次启动再试 */
+  }
+  return { removedAgentPatch, cleanedHomePatch };
 }
 
 const ANY_ENTRY_ID = /^ {0,4}-\s+id:\s*(\S+)\s*$/;

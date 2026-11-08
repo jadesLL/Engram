@@ -46,7 +46,7 @@
       </div>
 
       <p class="settings-mobile-footnote">
-        手机上改的是中枢那份配置；模型 / 视频 Key 只写不读，外部接入与 MCP Token 只在桌面端与中枢生成。
+        手机上改的是中枢那份配置；模型 / 视频 Key 只写不读，外部接入与 Agent 令牌只在桌面端与中枢生成。
       </p>
     </div>
 
@@ -417,7 +417,7 @@ function onMobileChange(event: MediaQueryListEvent) {
  * 保证「导航里有的都能渲染出来」。
  */
 const domains = computed(() => visibleSettingsDomains({
-  // agent = 外部接入 / MCP Token 这类管理面（手机恒 false）；agentConsole / videoConfig 是
+  // agent = 外部接入 / Agent 令牌这类管理面（手机恒 false）；agentConsole / videoConfig 是
   // v1.5.1 给手机放开的远程配置位（绑定中枢后为 true），桌面端三者恒 true、导航不变。
   agent: capabilities.value.features.agentAdmin,
   agentConsole: capabilities.value.features.agentConsole,

@@ -4,7 +4,7 @@ import { customRoute } from '../assistant/agentSettings.js';
 /**
  * 服务端直接调模型的最小客户端。
  *
- * 内置 Agent 走的是 dsh 子进程（MCP 工具那套），但「点一下就把这份文件转成 Markdown」
+ * 内置 Agent 走的是 dsh 子进程（知识库经 engram 命令），但「点一下就把这份文件转成 Markdown」
  * 这类确定性作业不该占用一次对话，也不该要求用户先把 Agent 打开——所以服务端自己发请求。
  * 路由复用内置 Agent 已配置的同一条（官方地址或自定义地址），没配凭据就明确失败，
  * 绝不静默降级成「只做格式转换」。

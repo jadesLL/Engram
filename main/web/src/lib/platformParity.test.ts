@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
  *  2. Android 版本号从 desktop/package.json 派生，不写死
  *  3. 三端内嵌 Web 都来自同一次 web 构建（桌面/Android/Docker 构建链）
  *  4. 能力位三处键集一致（web / server / Kotlin），漏改会让手机 fail-open
- *  5. 能力位语义（apkUpdate / agentAdmin / mcp / onlyOffice / serverUpdate / ddns / runtime / syncRoles）
+ *  5. 能力位语义（apkUpdate / agentAdmin / agentAccess / onlyOffice / serverUpdate / ddns / runtime / syncRoles）
  *  6. 原生桥契约：Web 用到的每个 __engram* 桥都能在 Android 源码找到实现
  *  7. 设置域手机可达（SETTINGS_DOMAINS ⊆ MOBILE_GROUPS ∪ {account}）
  *  8. 手机滞后清单无「当前版本目标」的待办
@@ -147,7 +147,7 @@ test('能力位语义：手机专属/桌面专属能力位取值正确', () => {
   assert.match(kotlinSrc, /\.put\("runtime", "android-local"\)/, 'Android runtime 不再是 android-local');
   assert.match(kotlinSrc, /\.put\("apkUpdate", true\)/, 'Android 端 apkUpdate 应为 true');
   assert.match(kotlinSrc, /\.put\("agentAdmin", false\)/, 'Android 端 agentAdmin 必须为 false（管理面不下发成员令牌）');
-  assert.match(kotlinSrc, /\.put\("mcp", false\)/, 'Android 端 mcp 必须为 false');
+  assert.match(kotlinSrc, /\.put\("agentAccess", false\)/, 'Android 端 agentAccess 必须为 false（手机不跑 CLI）');
   assert.match(kotlinSrc, /\.put\("onlyOffice", false\)/, 'Android 端 onlyOffice 必须为 false');
   assert.match(kotlinSrc, /\.put\("serverUpdate", false\)/, 'Android 端 serverUpdate 必须为 false');
   assert.match(kotlinSrc, /\.put\("ddns", false\)/, 'Android 端 ddns 必须为 false');

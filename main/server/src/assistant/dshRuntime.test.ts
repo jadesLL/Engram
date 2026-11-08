@@ -119,14 +119,14 @@ test('tool/call：名称与原始参数字符串进工具卡', () => {
     turn: 1,
     step: 1,
     callId: 'call-1',
-    name: 'mcp__engram__search',
-    arguments: '{"query":"同步"}',
+    name: 'bash',
+    arguments: '{"command":"engram search 同步 --limit 5"}',
   });
   assert.deepEqual(events, [{
     kind: 'tool-call',
     callId: 'call-1',
-    name: 'mcp__engram__search',
-    args: '{"query":"同步"}',
+    name: 'bash',
+    args: '{"command":"engram search 同步 --limit 5"}',
   }]);
 });
 
@@ -275,14 +275,14 @@ test('mapNotification：子会话事件收成子代理过程，不进主对话�
   assert.deepEqual(
     mapNotification('session.event', {
       sessionId: child,
-      event: { type: 'tool/call', data: { callId: 'c1', name: 'mcp__engram__search', arguments: '{"query":"同步"}' } },
+      event: { type: 'tool/call', data: { callId: 'c1', name: 'bash', arguments: '{"command":"engram search 同步"}' } },
     }, root),
     [{
       kind: 'subagent-activity',
       childSessionId: child,
       callId: 'c1',
-      name: 'mcp__engram__search',
-      summary: '同步',
+      name: 'bash',
+      summary: 'engram search 同步',
       status: 'running',
       text: '',
     }]
@@ -345,7 +345,10 @@ test('briefArgs：参数摘要取第一个非空字符串字段，坏 JSON 退�
 
 test('buildTask：约定与用户消息同时在场，界面上下文按不可信标注', () => {
   const bare = buildTask('列出待提炼的文件');
-  assert.match(bare, /mcp__engram__/);
+  // 知识库访问口径已从 MCP 工具改成 PATH 里的 engram 命令
+  assert.match(bare, /engram/);
+  assert.match(bare, /engram guide/);
+  assert.equal(bare.includes('mcp__engram__'), false);
   assert.match(bare, /列出待提炼的文件$/);
 
   const withContext = buildTask('总结这页', {

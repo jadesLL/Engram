@@ -11,7 +11,7 @@
  *
  * 判定必须只从这里取：目录常量（config）、文件列表与上传/新建（routes/files）、
  * 收集箱入库（pipeline/inboxConvert）、对话沉积（lib/chat）、
- * Agent 写入规范（pipeline/rawMaterial、mcp/server）、目录树顺序（lib/vault）。
+ * Agent 写入规范（pipeline/rawMaterial、routes/agentTools）、目录树顺序（lib/vault）。
  * 避免把 '文档' 字面量散落到各处——漏一处就是分类不一致。
  */
 

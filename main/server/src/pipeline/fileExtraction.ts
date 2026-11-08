@@ -11,7 +11,7 @@ import { isInboxPath } from '../lib/brainPaths.js';
 /**
  * 文件文本层提取（纯确定性，无模型）：
  * PDF 提取内嵌文字层；无文字层的扫描页与图片文件不再内置 OCR，
- * 由外部 Agent 通过 MCP read_raw_file / CLI 读取原文件自行识别。
+ * 由外部 Agent 通过 `engram files raw` / 直接读原文件自行识别。
  */
 
 export const PDF_EXTENSIONS = new Set(['pdf']);

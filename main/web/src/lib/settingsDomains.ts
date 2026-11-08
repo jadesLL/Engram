@@ -25,10 +25,14 @@
  *
  * 2026-11-01（v1.5.1 安卓补齐）：手机（android-local）绑定中枢后也能用这一大类——内置 Agent 摘要 /
  * 控制台 / 视频理解模型 / 自动整理 / 看板提炼 / 工具与手册都经成员令牌窄代理读写中枢，
- * 只有「外部接入」（MCP Token）仍只在桌面端 / 中枢：令牌不能下发到手机。于是分组从
+ * 只有「外部接入」（Agent 令牌）仍只在桌面端 / 中枢：令牌不能下发到手机。于是分组从
  * need 'agent'（= 能管 Agent 管理面）细分为 'agentConsole'（内置 Agent 与自动化，手机绑定中枢后可用）
  * 与 'videoConfig'（视频模型，手机绑定中枢后可用）；'agent-target' 仍挂 'agent'。
  * 桌面端两个能力位恒 true，导航与页面顺序完全不变。
+ *
+ * 2026-11-08（agent-cli-skill）：MCP 整体下线，外部 Agent 一律通过 engram CLI + skill 读写知识库。
+ * 「外部接入」组仍按管理面能力位只在桌面端 / 中枢出现（Agent 令牌不能下发到手机），
+ * 「工具与手册」由 MCP 工具清单改为 CLI 命令参考（数据源 lib/cliReference.ts），锚点与顺序不变。
  *
  * **导航顺序 = 页面渲染顺序**（SettingsView.vue 里各大类的分组必须按本文件登记顺序渲染）。
  * 2026-09-27 用户报的「导航里第 2 项、页面上第 4 块」（梦境思考插在两个 Agent 分组中间）
@@ -49,7 +53,7 @@ export type SettingsDomainId =
   | 'agent';
 
 /** 分组依赖的能力开关（缺省表示始终可见）。
- *  `agent` = Agent 管理面（外部接入 / MCP Token），手机只有成员令牌、恒 false；
+ *  `agent` = Agent 管理面（外部接入 / Agent 令牌），手机只有成员令牌、恒 false；
  *  `agentConsole` = 内置 Agent 与自动化配置，手机绑定中枢后 true（窄代理写中枢）；
  *  `videoConfig` = 视频理解模型配置，手机绑定中枢后 true（窄代理写中枢）。
  *  `desktop` = 桌面端运行时（服务端回报 runtime==='desktop'，含用浏览器打开桌面本地服务的情形）：
@@ -87,7 +91,7 @@ export interface SettingsDomain {
 
 export interface SettingsFeatures {
   /**
-   * Agent 管理面（外部接入 / MCP Token）：服务端 / 桌面端 true，手机（只有同步成员令牌）false。
+   * Agent 管理面（外部接入 / Agent 令牌）：服务端 / 桌面端 true，手机（只有同步成员令牌）false。
    * ⚠ SettingsView 传的是 capabilities.features.agentAdmin——不是 capabilities.features.agent
    * （后者是「聊天交互面」，手机绑定中枢后为 true，不能拿来判断能不能管 Agent）。
    */
@@ -208,8 +212,9 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       // 任务看板提炼：看板不在后台定时跑，间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
       // 只决定「打开看板页时要不要自动重新提炼一次」。与梦境思考同属「按计划的自动化」，排在它后面。
       { id: 'agent-board', label: '任务看板提炼', icon: 'board', need: 'agentConsole' },
-      // 外部接入（ZCode / Codex / MCP Token）仍只在能管 Agent 管理面的端出现：手机只有同步成员
-      // 令牌，MCP Token 不能下发到手机，所以这一组挂 agent（android-local 为 false）且不渲染。
+      // 外部接入（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder）仍只在能管
+      // Agent 管理面的端出现：手机只有同步成员令牌，Agent 令牌不能下发到手机，所以这一组挂 agent
+      // （android-local 为 false）且不渲染。
       { id: 'agent-target', label: '外部接入', icon: 'plug', need: 'agent' },
       { id: 'agent-tools', label: '工具与手册', icon: 'wrench', need: 'agentConsole' },
     ],

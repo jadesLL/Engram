@@ -196,7 +196,7 @@ test('新成员接入：不产生幽灵页，也不复活中枢已删/已改名�
       });
       assert.ok(setup.ok, `${name} 初始化失败`);
       const cookies = (setup.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ');
-      const tokenRes = await fetch(`${base}/api/settings/mcp-tokens`, {
+      const tokenRes = await fetch(`${base}/api/settings/agent-tokens`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', cookie: cookies },
         body: JSON.stringify({ name: 'join-test' }),

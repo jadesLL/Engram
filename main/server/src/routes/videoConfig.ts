@@ -20,7 +20,7 @@ import { recordLocalChange } from '../sync/index.js';
  * （见 lib/videoModel.ts）。GET 会顺带幂等播种默认 DashScope 提供商（用户只需去控制台填
  * 一个 API Key），并把解析到的模型状态一起返回给面板展示。
  *
- * 鉴权：requireAssistantAccess —— owner 登录态 / MCP token / 同步成员令牌（手机）都可。
+ * 鉴权：requireAssistantAccess —— owner 登录态 / Agent 令牌 / 同步成员令牌（手机）都可。
  * 读：不回显任何 API Key（只有 hasKey）；写：只认 enabled，旧客户端的 baseUrl/apiKey/model 字段忽略。
  */
 export async function videoConfigRoutes(app: FastifyInstance) {

@@ -10,31 +10,22 @@ import bcrypt from 'bcryptjs';
 // JSZip 只在整库备份/恢复时用：类型走 import type，实例与 loadAsync 在 handler 里动态 import
 import type JSZip from 'jszip';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
-import { atomicWrite } from '../lib/vault.js';
 import { DATA_DIR, BRAIN_DIR } from '../config.js';
 import { RESTORE_STAGING_NAME } from '../lib/stagedRestore.js';
 import {
-  getZcodeConfig,
-  zcodeInstalled,
-  resolveZcodeEnginePath,
-  zcodeCliConfigPath,
-  zcodeMcpUrl,
-} from '../lib/zcodeConfig.js';
-import { getDshStatus, registerDshMcp, unregisterDshMcp } from '../lib/dshConfig.js';
+  agentClients,
+  isAgentClientId,
+  registerAgentAccess,
+  unregisterAgentAccess,
+} from '../lib/agentAccess.js';
+import { cliConfigPath, resolveCliRuntime } from '../lib/cliShim.js';
 import {
-  getCodexStatus,
-  registerCodexMcp,
-  unregisterCodexMcp,
-} from '../lib/codexConfig.js';
-import {
-  externalMcpStatus,
-  registerExternalMcp,
-  unregisterExternalMcp,
-  type ExternalMcpTarget,
-} from '../lib/externalMcpConfig.js';
-import { getKimiWorkStatus, registerKimiWorkPlugin } from '../lib/kimiWorkConfig.js';
-import { installCustomerResearchSkill, removeCustomerResearchSkill, customerResearchSkillInstalled, assertCustomerResearchSkillWritable } from '../lib/customerResearchSkill.js';
-import { CUSTOMER_RESEARCH_SKILL_FILE } from '../content/customerResearch.js';
+  CUSTOMER_RESEARCH_SKILL,
+  CUSTOMER_RESEARCH_SKILL_NAME,
+  ENGRAM_SKILL,
+  ENGRAM_SKILL_NAME,
+  renderSkillText,
+} from '../content/agentSkill.js';
 import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -81,16 +72,6 @@ export async function settingsRoutes(app: FastifyInstance) {
   /** DDNS 只在中枢设备上有意义（只有中枢能把自己的公网 IP 写进域名）：UI 已按角色隐藏，这里兜底拦 API 直调 */
   function isHubDevice(): boolean {
     return getSetting('sync_role') === 'hub';
-  }
-
-  /** 一键接入用的专属 Token：按 Agent 名取用，缺失则生成并入库 */
-  function harnessToken(name: string): string {
-    const existing = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = ?`).get(name) as any)?.token;
-    if (existing) return existing;
-    const token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
-    db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`)
-      .run(token, name, now());
-    return token;
   }
 
   app.get('/api/settings', async () => {
@@ -288,14 +269,15 @@ export async function settingsRoutes(app: FastifyInstance) {
     };
   });
 
-  // ---------- MCP tokens（同时授权 /mcp 端点与 REST API Bearer）----------
+  // ---------- Agent 令牌（沿用 mcp_tokens 表：历史表名不改，避免迁移风险；语义已泛化为「Agent 令牌」） ----------
 
-  app.get('/api/settings/mcp-tokens', async () => {
+  /** Agent 令牌：CLI / 外部 Agent 访问 REST API 的 Bearer Token（表名与旧版一致，仅界面文案改「Agent 令牌」） */
+  app.get('/api/settings/agent-tokens', async () => {
     const rows = db.prepare(`SELECT id, token, name, created_at FROM mcp_tokens ORDER BY id`).all();
     return { tokens: rows };
   });
 
-  app.post('/api/settings/mcp-tokens', async (req) => {
+  app.post('/api/settings/agent-tokens', async (req) => {
     const { name } = (req.body || {}) as { name?: string };
     const token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
     const r = db
@@ -304,152 +286,75 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { id: Number(r.lastInsertRowid), token };
   });
 
-  app.delete('/api/settings/mcp-tokens/:id', async (req) => {
+  app.delete('/api/settings/agent-tokens/:id', async (req) => {
     const { id } = req.params as { id: string };
     db.prepare(`DELETE FROM mcp_tokens WHERE id = ?`).run(id);
     return { ok: true };
   });
 
-  // ---------- ZCode / Agent 接入（一键把 Engram MCP 注册进 ZCode）----------
+  // ---------- Agent 接入（CLI + skill；不再写任何客户端的 MCP 配置） ----------
 
-  /** 检测本机 ZCode 安装/登录状态与 MCP 注册状态 */
-  app.get('/api/settings/zcode-status', async () => {
-    const config = getZcodeConfig();
-    const installed = zcodeInstalled(config);
-    let loggedIn = false;
-    try {
-      const credentials = JSON.parse(fs.readFileSync(
-        path.join(os.homedir(), '.zcode', 'v2', 'credentials.json'), 'utf8'
-      ) as string);
-      loggedIn = Object.keys(credentials).some((key) => key.startsWith('oauth:'));
-    } catch { /* 无凭据文件视为未登录 */ }
-    let registered = false;
-    try {
-      const cliConfig = JSON.parse(fs.readFileSync(zcodeCliConfigPath(), 'utf8') as string);
-      registered = Boolean(cliConfig?.mcp?.servers?.engram);
-    } catch { /* 无配置文件视为未注册 */ }
-    return { installed, loggedIn, registered, path: resolveZcodeEnginePath(config), researchSkill: customerResearchSkillInstalled(path.join(os.homedir(), '.zcode', 'skills')) };
-  });
-
-  /** 把 Engram MCP（回环地址 + Bearer token）注册进 ZCode 的 cli/config.json */
-  app.post('/api/settings/zcode-register', async () => {
-    assertCustomerResearchSkillWritable(path.join(os.homedir(), '.zcode', 'skills'));
-    const token = harnessToken('zcode');
-    const configPath = zcodeCliConfigPath();
-    let cliConfig: any = {};
-    try {
-      cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    } catch (error) {
-      // 没有配置文件是正常首次注册；存在却读不出来（坏 JSON / 权限）必须留痕，
-      // 否则接下来会把用户的整份配置当空对象覆盖掉
-      if (fs.existsSync(configPath)) {
-        app.log.warn(`[zcode] 读取 ${configPath} 失败，将按新配置写入：${String((error as any)?.message || error)}`);
-      }
-    }
-    cliConfig.mcp = cliConfig.mcp || {};
-    cliConfig.mcp.servers = cliConfig.mcp.servers || {};
-    cliConfig.mcp.servers.engram = {
-      url: zcodeMcpUrl,
-      headers: { Authorization: `Bearer ${token}` },
+  /**
+   * 本机 CLI 运行时 + 各客户端检测 + 两份 skill 正文。
+   * skills 里的 {{ENGRAM}} 已换成实际调用命令，供设置页「复制入口 skill」与展示；正文不含令牌。
+   */
+  app.get('/api/settings/agent-access', async () => {
+    const cli = resolveCliRuntime();
+    const command = cli.available ? cli.command : 'engram';
+    return {
+      clients: agentClients(os.homedir(), { runtime: cli }),
+      cli,
+      configPath: cliConfigPath(),
+      skillCommand: command,
+      skills: {
+        engram: { name: ENGRAM_SKILL_NAME, body: renderSkillText(ENGRAM_SKILL, command) },
+        customerResearch: {
+          name: CUSTOMER_RESEARCH_SKILL_NAME,
+          body: renderSkillText(CUSTOMER_RESEARCH_SKILL, command),
+        },
+      },
     };
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    // 原子写：ZCode CLI 可能同时在写这份配置，裸 writeFileSync 截断会让用户丢掉整个 MCP 配置
-    atomicWrite(configPath, JSON.stringify(cliConfig, null, 2));
-    installCustomerResearchSkill(path.join(os.homedir(), '.zcode', 'skills'));
-    return { ok: true, mcpUrl: zcodeMcpUrl };
   });
 
-  app.post('/api/settings/zcode-unregister', async () => {
-    removeCustomerResearchSkill(path.join(os.homedir(), '.zcode', 'skills'));
-    const configPath = zcodeCliConfigPath();
+  /** 一键接入：写本机 engram 包装脚本 + 安装 skill（不写客户端 MCP 配置） */
+  app.post('/api/settings/agent-access/register', async (req, reply) => {
+    const { id } = (req.body || {}) as { id?: string };
+    if (!id || !isAgentClientId(id)) return reply.code(400).send({ error: '未知客户端' });
     try {
-      const cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8') as string);
-      if (cliConfig?.mcp?.servers?.engram) {
-        delete cliConfig.mcp.servers.engram;
-        atomicWrite(configPath, JSON.stringify(cliConfig, null, 2));
-      }
+      return { ok: true, ...registerAgentAccess(id) };
     } catch (error) {
-      // 无配置文件时无需移除；存在却处理失败（坏 JSON / 权限）不能静默假装已注销
-      if (fs.existsSync(configPath)) {
-        app.log.warn(`[zcode] 处理 ${configPath} 失败：${String((error as any)?.message || error)}`);
-      }
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
-    db.prepare(`DELETE FROM mcp_tokens WHERE name = 'zcode'`).run();
-    return { ok: true };
   });
 
-  app.get('/api/settings/customer-research-skill', async (_req, reply) => {
-    return reply.header('Content-Type', 'text/markdown; charset=utf-8').send(CUSTOMER_RESEARCH_SKILL_FILE);
-  });
-
-  // ---------- DeepSeek Harness（dsh）接入（写 $DSH_HOME/cordis.patch.yml）----------
-
-  app.get('/api/settings/dsh-status', async () => getDshStatus());
-
-  app.post('/api/settings/dsh-register', async () => {
-    const token = harnessToken('dsh');
-    const patchPath = registerDshMcp(zcodeMcpUrl, token);
-    return { ok: true, mcpUrl: zcodeMcpUrl, patchPath };
-  });
-
-  app.post('/api/settings/dsh-unregister', async () => {
-    unregisterDshMcp();
-    db.prepare(`DELETE FROM mcp_tokens WHERE name = 'dsh'`).run();
-    return { ok: true };
-  });
-
-  // ---------- Codex CLI 接入（写 $CODEX_HOME/config.toml）----------
-
-  app.get('/api/settings/codex-status', async () => getCodexStatus());
-
-  app.post('/api/settings/codex-register', async () => {
-    const token = harnessToken('codex');
-    const configPath = registerCodexMcp(zcodeMcpUrl, token, undefined, path.join(os.homedir(), '.agents', 'skills'));
-    return { ok: true, mcpUrl: zcodeMcpUrl, configPath };
-  });
-
-  app.post('/api/settings/codex-unregister', async () => {
-    unregisterCodexMcp(undefined, path.join(os.homedir(), '.agents', 'skills'));
-    db.prepare(`DELETE FROM mcp_tokens WHERE name = 'codex'`).run();
-    return { ok: true };
-  });
-
-  // ---------- WorkBuddy / Qoder 用户级 MCP 配置 ----------
-
-  for (const target of ['workbuddy', 'qoder', 'kimi'] as ExternalMcpTarget[]) {
-    app.get(`/api/settings/${target}-status`, async () => externalMcpStatus(target));
-
-    app.post(`/api/settings/${target}-register`, async (_req, reply) => {
-      if (!externalMcpStatus(target).installed) {
-        return reply.code(400).send({ error: `未检测到本机 ${target} 客户端` });
-      }
-      const token = harnessToken(target);
-      let configPaths: string[];
-      try {
-        // 客户端国内版 / 海外版读不同目录，这里会把检测到的变体全部写上，返回实际写入的文件
-        configPaths = registerExternalMcp(target, zcodeMcpUrl, token);
-      } catch (e: any) {
-        return reply.code(500).send({ error: `写入 ${target} 配置失败：${e?.message ?? e}` });
-      }
-      return { ok: true, mcpUrl: zcodeMcpUrl, configPath: configPaths[0], configPaths };
-    });
-
-    app.post(`/api/settings/${target}-unregister`, async () => {
-      unregisterExternalMcp(target);
-      db.prepare(`DELETE FROM mcp_tokens WHERE name = ?`).run(target);
-      return { ok: true };
-    });
-  }
-
-  // Kimi Work 的个人插件市场由客户端 CLI 管理；登记后须在 Kimi Work 中点击安装。
-  app.get('/api/settings/kimiwork-status', async () => getKimiWorkStatus());
-  app.post('/api/settings/kimiwork-register', async (_req, reply) => {
-    if (!getKimiWorkStatus().installed) {
-      return reply.code(400).send({ error: '未检测到本机 Kimi Work 桌面端' });
+  /** 移除接入：只删带 Engram 管理标记的 skill，不改客户端其他配置 */
+  app.post('/api/settings/agent-access/unregister', async (req, reply) => {
+    const { id } = (req.body || {}) as { id?: string };
+    if (!id || !isAgentClientId(id)) return reply.code(400).send({ error: '未知客户端' });
+    try {
+      return { ok: true, ...unregisterAgentAccess(id) };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
-    const token = harnessToken('kimiwork');
-    const pluginPath = registerKimiWorkPlugin(zcodeMcpUrl, token);
-    return { ok: true, pluginPath, installUrl: getKimiWorkStatus().installUrl };
+  });
+
+  /** 远程接入：下载 cli.js（保存为 engram.js 后 `node engram.js login --url ... --token ...`） */
+  app.get('/api/settings/agent-cli-source', async (_req, reply) => {
+    const cli = resolveCliRuntime();
+    if (!cli.available) {
+      return reply.code(500).send({ error: 'CLI 尚未构建：' + (cli.error || cli.scriptPath) });
+    }
+    let source: string;
+    try {
+      source = fs.readFileSync(cli.scriptPath, 'utf8');
+    } catch (error) {
+      return reply
+        .code(500)
+        .send({ error: '读取 CLI 源文件失败：' + (error instanceof Error ? error.message : String(error)) });
+    }
+    reply.header('Content-Type', 'text/javascript; charset=utf-8');
+    reply.header('Content-Disposition', 'attachment; filename="engram.js"');
+    return reply.send(source);
   });
 
   /** 一键清除：删除知识正文、整理报告、入库记录与派生索引，保留配置/认证/系统日志。清除后后台全量重建索引，接口快速返回，避免长耗时操作阻塞容器健康探针。 */

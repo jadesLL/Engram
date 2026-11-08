@@ -33,7 +33,7 @@ Engram 不是一个产品抄三份，而是**一套产品内核 + 三个运行�
 
 | 端 | 产品角色 | 代码构成 | 开发定位 |
 | --- | --- | --- | --- |
-| **Windows 桌面端** | 个人本机主力形态，owner 级管理面（外部接入 / MCP Token / 本机数据与端口 / 桌面壳能力） | `main/server` + `main/web` + `main/desktop`（Electron 壳） | **主开发与主验收环境**：新功能先在桌面形态跑通，再评估另两端影响 |
+| **Windows 桌面端** | 个人本机主力形态，owner 级管理面（外部 Agent 接入 / Agent 令牌 / 本机数据与端口 / 桌面壳能力） | `main/server` + `main/web` + `main/desktop`（Electron 壳） | **主开发与主验收环境**：新功能先在桌面形态跑通，再评估另两端影响 |
 | **Docker 服务端** | 24h 在线中枢 / NAS / 公网部署，owner 级管理面 + 服务器更新 / DDNS / ONLYOFFICE（可选） | 与 Windows **完全同一份** `main/server` + `main/web` | **同源并行端**：不做代码移植；差异只在容器运行配置、能力位与更新通道 |
 | **Android 本地端** | 随身成员端：本地库离线可用，绑定中枢后做成员同步与窄代理 | 同一份 `main/web` 构建 + `main/mobile`（Capacitor 壳 + Kotlin/Ktor 本地服务 + 原生桥） | **适配端**：操作逻辑按触屏重做；Web 改动自动共享，数据面/壳层需单独对齐 |
 
@@ -92,7 +92,7 @@ Engram 不是一个产品抄三份，而是**一套产品内核 + 三个运行�
 | 能力位来源 | `server/src/routes/runtime.ts`（`runtime=desktop`，`localFirst=true`） | 同一路由（`runtime=server`，`localFirst=false`） | `EngramLocalServer.kt`（`runtime=android-local`，窄集） |
 | 桌面壳能力 | 标题栏融合、托盘、开机自启、本地数据目录/端口、系统程序打开文件、exe/源码模式更新、快捷方式 | 无（浏览器） | 系统分享入口、生物解锁、返回键、系统栏 insets、OTA |
 | 更新方式 | 源码模式：拉源码重建重启；安装包模式：下载 exe 静默安装；应用内自动更新 | 拉镜像 `:latest` / `:main` + switcher 重建容器（失败回滚）；应用内一键更新 | 仅 OTA：下载 APK → 系统安装器确认 → 覆盖安装 |
-| 跨端角色 | 可 `none/hub/member`，owner 级管理面全开 | 同 Windows（常驻中枢首选） | 只能 `none/member`；owner 级（成员邀请/DDNS/TLS/外部接入/MCP Token）不下发 |
+| 跨端角色 | 可 `none/hub/member`，owner 级管理面全开 | 同 Windows（常驻中枢首选） | 只能 `none/member`；owner 级（成员邀请/DDNS/TLS/外部 Agent 接入/Agent 令牌）不下发 |
 
 ### 1.3 版本号与发版链
 
@@ -107,10 +107,10 @@ Engram 不是一个产品抄三份，而是**一套产品内核 + 三个运行�
 | 能力位 | server / desktop | android-local | 用途 |
 | --- | --- | --- | --- |
 | `agent` | true | 绑定中枢后 true | Agent 聊天交互面 |
-| `agentAdmin` | true | **false** | 外部接入 / MCP Token 等 owner 管理面 |
+| `agentAdmin` | true | **false** | 外部 Agent 接入 / Agent 令牌等 owner 管理面 |
 | `agentConsole` | true | 绑定中枢后 true | 内置 Agent 控制台（手机写中枢配置） |
 | `videoConfig` | true | 绑定中枢后 true | 视频理解模型配置（手机写中枢） |
-| `mcp` | true | **false** | MCP 服务/Token |
+| `agentAccess` | true | **false** | 外部 Agent 接入 / Agent 令牌 |
 | `jobs` | true | true（桩） | 任务队列状态徽标 |
 | `onlyOffice` | 按配置 | **false** | ONLYOFFICE 在线编辑 |
 | `serverUpdate` | true | **false** | 服务器镜像更新 |
@@ -280,7 +280,7 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | --- | --- | --- | --- |
 | 本地实现 | 只读写本机 `brain/` 或 `wiki.db` | auth、pages、files/assets、search、graph、trash、settings、backup/restore、sync config/status/log/pairing/reconcile、app-update | Kotlin/Ktor 路由实现 |
 | 窄代理到中枢 | 中枢做实事，手机只转发（成员令牌） | assistant 会话/run/events、agent-console 18 条、video-config、dream、guide、customer-research、tasks/board、inbox、ideas | `EngramLocalServer.kt` 的 `proxyHub` / `proxyAgent` + 未绑定中枢时 409 中文提示 |
-| 不代理（owner 级） | 成员令牌不能做 | 成员邀请/peers、DDNS、TLS、外部接入、MCP Token 发放 | 能力位 false，UI 不出现；直接访问给可读说明 |
+| 不代理（owner 级） | 成员令牌不能做 | 成员邀请/peers、DDNS、TLS、外部 Agent 接入、Agent 令牌发放 | 能力位 false，UI 不出现；直接访问给可读说明 |
 | 手机专属 | 只有壳层能做 | `/api/app-update/*`（OTA）、本机分享落袋 | Kotlin 实现 |
 
 **规则**：新增 server 接口时，必须判断手机端属于哪一类；窄代理类要在 `EngramLocalServer` 加一行代理并在能力位/文案上说明「由中枢执行」；owner 级必须继续报 false。
@@ -521,7 +521,7 @@ bash main/scripts/platform-parity-check.sh --since v1.5.6
 2. **Android 版本派生**：`build.gradle` 引用 `desktop/package.json`，不写死 `versionName/versionCode`。
 3. **内嵌 Web 构建链**：`prepare-desktop.js` 复制 `web/dist`、`prepare-mobile-web.cjs` 复制 `../web/dist`、Dockerfile 构建 `@engram/web`、`desktop/package.json` 的 `files` 含 `web/dist/**`、Capacitor `webDir=web-dist`。
 4. **能力位三处键集一致**：web `fullCapabilities`、server `runtime.ts`、Kotlin `EngramLocalServer.kt` 的 feature 键集合相等。
-5. **能力位语义**：`apkUpdate` 仅 Android true；`agentAdmin/mcp/onlyOffice/serverUpdate/ddns` 在 Android 侧 false；`syncRoles`、`runtime` 取值符合契约。
+5. **能力位语义**：`apkUpdate` 仅 Android true；`agentAdmin/agentAccess/onlyOffice/serverUpdate/ddns` 在 Android 侧 false；`syncRoles`、`runtime` 取值符合契约。
 6. **平台绑定契约**：Web 侧使用的每个 `__engram*` 桥名都能在 Android 源码找到实现。
 7. **设置域手机可达性**：`SETTINGS_DOMAINS` 的每个大类都在手机 `MOBILE_GROUPS` 中（`account` 由账户卡特判），防止新增设置大类在手机永久不可达。
 8. **滞后清单**：文件存在；无「目标版本 = 当前版本」的待办行。
@@ -676,8 +676,8 @@ bash main/scripts/platform-parity-check.sh --since v1.5.6 --strict   # 发版前
 
 ### B. 能力位矩阵（速查，详细见 §1.4 / §3.1）
 
-- 桌面/Docker 端：`agent/agentAdmin/agentConsole/videoConfig/mcp/jobs/onlyOffice/serverUpdate/ddns/backup/fileExtraction=true`，`apkUpdate=false`；`onlyOffice` 受配置影响。
-- Android 端：`agent/agentConsole/videoConfig` 随「已绑定中枢」；`agentAdmin/mcp/onlyOffice/serverUpdate/ddns=false`；`jobs/apkUpdate/backup/fileExtraction=true`。
+- 桌面/Docker 端：`agent/agentAdmin/agentConsole/videoConfig/agentAccess/jobs/onlyOffice/serverUpdate/ddns/backup/fileExtraction=true`，`apkUpdate=false`；`onlyOffice` 受配置影响。
+- Android 端：`agent/agentConsole/videoConfig` 随「已绑定中枢」；`agentAdmin/agentAccess/onlyOffice/serverUpdate/ddns=false`；`jobs/apkUpdate/backup/fileExtraction=true`。
 - 运行形态：`runtime ∈ {server, desktop, android-local}`；`localFirst` 桌面/手机 true；`agentMode ∈ {local, hub, unavailable}`。
 
 ### C. 命令速查

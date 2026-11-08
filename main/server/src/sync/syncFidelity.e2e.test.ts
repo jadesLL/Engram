@@ -97,7 +97,7 @@ async function startInstance(name: string): Promise<Instance> {
   });
   assert.ok(setup.ok, name + ' 初始化失败');
   const cookies = (setup.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ');
-  const tokenRes = await fetch(base + '/api/settings/mcp-tokens', {
+  const tokenRes = await fetch(base + '/api/settings/agent-tokens', {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie: cookies },
     body: JSON.stringify({ name: 'sync-fidelity' }),
