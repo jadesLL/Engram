@@ -220,7 +220,6 @@ import SettingsGroup from './SettingsGroup.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 import { useAppUpdateStore } from '../../stores/appUpdate';
 import { parseRepoUrl } from '../../lib/repoSourceUrl';
 import {
@@ -304,8 +303,6 @@ const badge = computed<{ text: string; tone: 'accent' | 'ok' | 'warn' | 'danger'
   if (current.hasUpdate) return { text: '有新版', tone: 'warn' };
   return { text: '', tone: 'muted' };
 });
-useSettingsBadge('panel-update-android', computed(() => badge.value.text));
-
 /** 主按钮三态：没检查过/没新版 → 检查；有新版本 → 下载；下好了 → 安装 */
 async function runPrimary() {
   message.value = '';

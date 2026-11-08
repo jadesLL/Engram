@@ -70,13 +70,11 @@
               :class="{ active: activeDomain === domain.id }"
               :aria-current="activeDomain === domain.id ? 'page' : undefined"
               :tabindex="activeDomain === domain.id ? 0 : -1"
-              :title="domainHasAlert(domain) ? '有需要处理的设置项' : undefined"
               @click="selectDomain(domain.id)"
             >
               <Icon :name="domain.icon" :size="17" />
               <span class="nav-label">{{ domain.label }}</span>
               <span v-if="navMetaOf(domain.id)" class="settings-nav-meta">{{ navMetaOf(domain.id) }}</span>
-              <span v-if="domainHasAlert(domain)" class="settings-nav-alert" aria-hidden="true" />
             </button>
             <!-- 二级目录：只展开当前大类；点击定位，滚动内容列时实时反亮当前分组（scrollspy） -->
             <div v-if="activeDomain === domain.id" class="settings-nav-sub" role="group" :aria-label="domain.label + '的分组'">
@@ -243,7 +241,6 @@ const DataPanel = defineAsyncComponent(() => import('../components/settings/Data
 const DataDangerSection = defineAsyncComponent(() => import('../components/settings/DataDangerSection.vue'));
 const SearchPanel = defineAsyncComponent(() => import('../components/settings/SearchPanel.vue'));
 import { useRuntimeCapabilities } from '../lib/capabilities';
-import { settingsBadges } from '../lib/settingsBadges';
 import { hiddenSettingsAnchors } from '../lib/settingsNavVisibility';
 import {
   domainOfAnchor,
@@ -385,11 +382,6 @@ function navMetaOf(id: SettingsDomainId): string {
   if (id === 'account') return '已登录';
   if (id === 'interface') return themeLabel.value;
   return '';
-}
-
-/** 有大类里某个分组登记了状态徽标（settingsBadges）就在目录行尾点一个警示点 */
-function domainHasAlert(domain: SettingsDomain): boolean {
-  return domain.groups.some((group) => Boolean(settingsBadges[group.id]));
 }
 
 let syncSubscribed = false;

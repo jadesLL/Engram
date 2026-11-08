@@ -206,7 +206,6 @@ import { useChatStore } from '../../stores/chat';
 import { useAppStore } from '../../stores/app';
 import SettingsGroup from './SettingsGroup.vue';
 import AppSelect from '../ui/AppSelect.vue';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 
 /**
  * 梦境思考的设置面板：开关 + 每天/每隔 N 天 + 时间点，上次结果、当前待办，以及提炼看板。
@@ -382,13 +381,6 @@ const auditDetail = computed(() => {
   const unreadable = s.audit.pendingUnreadable > 0 ? `（其中 ${s.audit.pendingUnreadable} 份等提取完成）` : '';
   return `待提炼 ${s.audit.pendingFiles} 份${unreadable} · 待核查 ${issues} 处（死链 ${s.audit.deadLinks} · 疑似重复 ${s.audit.duplicates} · 规则落后 ${s.audit.outdatedPages}）`;
 });
-
-/** 二级导航徽标：正在跑 / 待配凭据 */
-useSettingsBadge('agent-dream', computed(() => {
-  if (status.value?.running) return '运行中';
-  if (status.value?.config.enabled && status.value && !status.value.agentReady) return '待配置';
-  return '';
-}));
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');

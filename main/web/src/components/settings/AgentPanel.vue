@@ -156,7 +156,6 @@ import AppSelect from '../ui/AppSelect.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AgentConsolePanel from './AgentConsolePanel.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 
 /**
  * 能力位：「外部接入」看 features.agentAdmin（管理面，手机恒 false；features.agent 是聊天交互面，
@@ -178,9 +177,6 @@ const status = ref<any>({
   profile: '',
   console: { running: false },
 });
-
-// 设置页二级导航徽标：随包运行时缺失时提示「缺依赖」，其余不打扰
-useSettingsBadge('agent-builtin', computed(() => (status.value.bundled ? '' : '缺依赖')));
 
 /**
  * 「模型与插件」行尾的「配置」：跳到同页「内置 Agent 控制台」分组（anchor: agent-console）。

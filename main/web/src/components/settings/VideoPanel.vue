@@ -93,7 +93,6 @@ import { useRouter } from 'vue-router';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 import SettingsGroup from './SettingsGroup.vue';
 
 /**
@@ -202,11 +201,6 @@ const badgeTone = computed<'ok' | 'warn' | 'muted'>(() => {
   if (!enabled.value) return 'muted';
   return configured.value ? 'ok' : 'warn';
 });
-
-/** 二级导航徽标：开了开关却还没配好时才提示「待配置」，默认未启用不打扰 */
-useSettingsBadge('panel-video', computed(() => (
-  status.value.enabled && !status.value.configured ? '待配置' : ''
-)));
 
 function normalizeStatus(raw: Partial<VideoStatus> | undefined): VideoStatus {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_STATUS };

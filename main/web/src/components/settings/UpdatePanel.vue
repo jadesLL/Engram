@@ -474,7 +474,6 @@ import AppSpinner from '../ui/AppSpinner.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
@@ -691,9 +690,8 @@ const hubTimeout = ref(false);
 const hubLog = ref<string[]>([]);
 
 /*
- * 分组状态徽标（「强调分组」）：把「这个组要不要动手」写在标题行上，
- * 同时经 lib/settingsBadges 供设置页二级导航显示。检查过才知道的（hasUpdate）
- * 只在已有检查结果时提示，没检查过就不虚报「已是最新」。
+ * 分组状态徽标（「强调分组」）：把「这个组要不要动手」写在标题行上。
+ * 检查过才知道的（hasUpdate）只在已有检查结果时提示，没检查过就不虚报「已是最新」。
  */
 const serverBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' | 'accent' | 'danger' }>(() => {
   if (updating.value || hubUpdating.value) return { text: '更新中', tone: 'accent' };
@@ -718,20 +716,6 @@ const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' | 'a
   if (r?.ok) return { text: '已是最新', tone: 'ok' };
   return { text: '', tone: 'muted' };
 });
-useSettingsBadge(
-  'panel-update-server',
-  computed(() => serverBadge.value.text),
-);
-useSettingsBadge(
-  'panel-update-desktop',
-  computed(() => desktopBadge.value.text),
-);
-// 开机自启徽标（panel-app）不在这里：随「桌面端应用」分组拆到 DesktopAppSection.vue
-useSettingsBadge(
-  'panel-update-source',
-  computed(() => (configLoaded.value && !state.value.giteaConfigured ? '未配置' : '')),
-);
-
 async function loadSync() {
   try {
     const { data } = await api.get('/api/sync/status');

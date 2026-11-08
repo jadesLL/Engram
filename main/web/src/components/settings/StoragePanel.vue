@@ -150,7 +150,6 @@ import Icon from '../Icon.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { confirmDialog } from '../../lib/confirm';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 
 interface TrashEntry {
   id: string;
@@ -369,10 +368,6 @@ const orphanList = computed<OrphanAsset[]>(() => [
   ...orphanAssets.value.unassigned.map((item) => ({ ...item, unassigned: true })),
   ...orphanAssets.value.unreferenced.map((item) => ({ ...item, unassigned: false })),
 ]);
-
-// 设置页二级导航的状态徽标：有多少项等着清理，不用进分类就知道
-useSettingsBadge('storage-trash', computed(() => (trashItems.value.length ? `${trashItems.value.length} 项` : '')));
-useSettingsBadge('storage-assets', computed(() => (orphanTotal.value ? `${orphanTotal.value} 张` : '')));
 
 async function loadAssets() {
   assetLoading.value = true;

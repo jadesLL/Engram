@@ -500,7 +500,6 @@ import SettingsGroup from './SettingsGroup.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import QrCode from '../ui/QrCode.vue';
 import QrScannerOverlay from '../ui/QrScannerOverlay.vue';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 import { expandGroup, isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { copyText } from '../../lib/contextMenu';
@@ -715,17 +714,6 @@ const inviteNoticeTone = ref<'ok' | 'bad'>('ok');
 const scanning = ref(false);
 /** 当前打开方式能不能调摄像头：浏览器只允许 https / localhost 用摄像头（局域网 http 页面调不了） */
 const scanSupported = cameraScanSupport().supported;
-
-// 设置页二级导航的状态徽标：一眼看出本机是中枢、成员还是尚未参与同步
-useSettingsBadge(
-  'panel-sync',
-  computed(() => {
-    const role = status.value?.role;
-    if (role === 'hub') return `中枢 · ${peers.value.length} 成员`;
-    if (role === 'member') return '已绑定';
-    return '未配置';
-  }),
-);
 
 /** DDNS 直连域名：中枢专属（只有中枢能把自己的公网 IP 写进域名），且服务端要开着 DDNS 能力 */
 const showDdns = computed(() => status.value?.role === 'hub' && capabilities.value.features.ddns);

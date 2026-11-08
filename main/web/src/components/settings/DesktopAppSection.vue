@@ -79,7 +79,6 @@ import Icon from '../Icon.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
 import { notify } from '../../lib/notify';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
-import { useSettingsBadge } from '../../lib/settingsBadges';
 import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 
@@ -133,12 +132,6 @@ const launchAtLoginBusy = ref(false);
 const launchAtLoginMessage = ref('');
 const launchAtLoginError = ref(false);
 let offLaunchAtLogin: (() => void) | null = null;
-
-// 开机自启是「离开设置页也在后台生效」的状态：二级导航上直接写出开关，免得用户为看一眼跑一趟
-useSettingsBadge(
-  'panel-app',
-  computed(() => (launchAtLoginSupported.value ? (launchAtLogin.value.enabled ? '开机自启已开' : '开机自启已关') : '')),
-);
 
 async function doRebuildShortcut() {
   const wd = wikiDesktop();
