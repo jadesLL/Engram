@@ -69,6 +69,17 @@
         <Icon name="square" :size="12" /> {{ stopping ? '停止中…' : '停止' }}
       </button>
       <span class="chat-spacer" />
+      <!-- 内置 Agent 设置：聊天抽屉与内置 Agent 工作台共用同一份 dsh 配置（模型/插件/预设） -->
+      <button
+        v-if="capabilities.features.agentConsole"
+        class="btn icon agent-settings"
+        type="button"
+        v-tooltip="'内置 Agent 设置：模型 / 插件 / Agent 预设'"
+        aria-label="内置 Agent 设置"
+        @click="openAgentSettings"
+      >
+        <Icon name="settings" :size="15" />
+      </button>
       <button
         class="btn icon session-toggle"
         type="button"
@@ -1470,6 +1481,15 @@ const stopping = ref(false);
 /** 排队中的消息条数：标题胶囊与贴底状态条都标一下，运行中发过消息就看得到它在等 */
 const queuedCount = computed(() => chat.queuedRuns.length);
 
+/**
+ * 打开内置 Agent 设置（模型 / 插件 / Agent 预设）：聊天抽屉与工作台共用同一份 dsh 配置
+ * （同一个 web profile），所以齿轮直接跳工作台整页；满窗形态由 router.afterEach 的
+ * minimizeChatForNavigation 收回，并排形态留在右侧、不挡设置页。
+ */
+function openAgentSettings() {
+  void router.push('/settings/agent-console');
+}
+
 async function stopRun() {
   if (stopping.value || !chat.currentRun) return;
   stopping.value = true;
@@ -1571,6 +1591,20 @@ const TOOL_ICONS: Record<string, string> = {
   write_inbox_markdown: 'file-plus',
   convert_inbox_item: 'ai',
   add_inbox_file: 'file-plus',
+  // dsh 原生工具：聊天抽屉与内置 Agent 工作台同一套工具面（v1.5.10 起）
+  pwsh: 'wrench',
+  bash: 'wrench',
+  read: 'file',
+  write: 'file-plus',
+  edit: 'pencil',
+  read_image: 'eye',
+  glob: 'search',
+  grep: 'search',
+  skill: 'book-open',
+  web_search: 'globe',
+  web_fetch: 'globe',
+  job_output: 'activity',
+  todo_write: 'check',
 };
 
 function toolIcon(name: string): string {

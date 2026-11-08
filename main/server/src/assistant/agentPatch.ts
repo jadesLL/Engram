@@ -30,9 +30,47 @@ const LEGACY_ENTRY_ID = 'mcp-engram';
 
 const CHAT_HEADER = [
   '# Engram 聊天运行时的 dsh 覆盖层（自动生成，重新写入会整块替换；不要手工编辑）。',
-  '# 作用：在 web profile 上叠一层 sdk 应用（stdio JSON-RPC），并关掉 Web UI 相关条目。',
+  '# 作用：在 web profile 上叠一层 sdk 应用（stdio JSON-RPC）、关掉 Web UI 相关条目，',
+  '# 并把聊天会话需要的 host 级工具行（命令 / 文件 / skill / 联网 / 压缩）重新启用。',
   '# 模型与插件由 DSH 控制台管理（同一 profile），这里不改它们。',
   '# 知识库访问走 PATH 里的 engram 命令（不写 MCP 条目）。',
+];
+
+/**
+ * 聊天会话由 SDK 直接创建，**不会挂 web 层的 agent preset**；而 web 层把 agent 相关工具
+ * （命令 / 文件 / skill / 联网 / 压缩）全移进了 preset，于是聊天会话只剩 host 级工具
+ * （团队 / 会话检索 / working_directory），`engram` CLI 与 skill 根本没有入口。
+ * 这里把控制台 preset 里同一批 host 工具行在聊天进程重新启用：聊天进程不跑 Web UI，
+ * 不存在「preset 与 host 双份工具」的冲突；工具面即与内置 Agent 工作台（控制台）一致。
+ */
+const CHAT_HOST_TOOL_PATCHES = [
+  // 命令：engram CLI 只能经 shell 跑（PATH 里的 shim 目录由 dshRuntime 注入）
+  '- id: tool-bash',
+  "  disabled: !!js process.platform === 'win32'",
+  '- id: tool-pwsh',
+  "  disabled: !!js process.platform !== 'win32'",
+  '- id: tool-jobs',
+  '  disabled: false',
+  // 文件：read_image 是图片/扫描件的唯一入路，write/edit 供临时文件与产物
+  '- id: tool-fs',
+  '  disabled: false',
+  '- id: tool-fs-search',
+  '  disabled: false',
+  '- id: tool-todo',
+  '  disabled: false',
+  // skill：$DSH_HOME/skills 下已装 engram / engram-customer-research（cliShim 负责）
+  '- id: skill-filesystem',
+  '  disabled: false',
+  '- id: tool-skill',
+  '  disabled: false',
+  // 联网：公司全名核验与 knowledge-web 调研要 Agent 自己检索
+  '- id: tool-web',
+  '  disabled: false',
+  // 长会话：控制台有压缩，聊天抽屉也要有，否则超长对话会先撞上下文上限
+  '- id: tool-result-pruner',
+  '  disabled: false',
+  '- id: compaction-basic',
+  '  disabled: false',
 ];
 
 export function chatPatchPath(home: string): string {
@@ -40,11 +78,13 @@ export function chatPatchPath(home: string): string {
 }
 
 /**
- * 聊天运行时覆盖层：插入 sdk-app（stdio JSON-RPC），关掉 Web UI 相关条目。
+ * 聊天运行时覆盖层：插入 sdk-app（stdio JSON-RPC），关掉 Web UI 相关条目，
+ * 并重新启用聊天会话需要的 host 级工具行（见 CHAT_HOST_TOOL_PATCHES）。
  *
  * - sdk-jsonrpc-server 拥有 stdout（新行分隔 JSON-RPC）；Web 服务会往 stdout 打 URL 行，
  *   两条流混在一起虽然协议能容忍坏行，但没必要，所以聊天进程里关掉 webserver / web-runtime；
- * - hmr 与 session-title-llm 跟 sdk profile 一样关掉：Engram 自己管自动命名与热更新。
+ * - hmr 与 session-title-llm 跟 sdk profile 一样关掉：Engram 自己管自动命名与热更新；
+ * - 工具行必须逐条在 host 层启用，SDK 会话不挂 preset（原因见 CHAT_HOST_TOOL_PATCHES 注释）。
  */
 export function chatPatchText(): string {
   return [
@@ -68,6 +108,8 @@ export function chatPatchText(): string {
     '  disabled: true',
     '- id: session-title-llm',
     '  disabled: true',
+    // 内置 Agent 的 host 级工具行：没有它们，聊天抽屉里的 Agent 既跑不了 engram 命令也读不到 skill
+    ...CHAT_HOST_TOOL_PATCHES,
   ].join('\n') + '\n';
 }
 

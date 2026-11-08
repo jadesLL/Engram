@@ -34,6 +34,16 @@
         <button class="ab-iconbtn" type="button" aria-label="新对话" @click="onNewSession">
           <Icon name="plus" :size="20" />
         </button>
+        <!-- 内置 Agent 设置（模型 / 插件 / 预设）：与工作台共用同一份 dsh 配置 -->
+        <button
+          v-if="capabilities.features.agentConsole"
+          class="ab-iconbtn"
+          type="button"
+          aria-label="设置"
+          @click="openSettings"
+        >
+          <Icon name="settings" :size="20" />
+        </button>
       </div>
     </header>
 
@@ -151,6 +161,11 @@ function toggleSessions(): void {
 /** 新建会话：走抽屉自己的实现（清草稿与附件、聚焦输入框），这一页不重复一遍 */
 async function onNewSession(): Promise<void> {
   await drawerRef.value?.newSession();
+}
+
+/** 内置 Agent 设置（模型 / 插件 / 预设）：聊天抽屉与工作台共用同一份 dsh 配置，直接跳整页 */
+function openSettings(): void {
+  void router.push('/settings/agent-console');
 }
 
 async function onStop(): Promise<void> {
