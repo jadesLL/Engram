@@ -6,22 +6,9 @@
   >
     <a class="settings-skip" href="#settings-main">跳到设置内容</a>
 
-    <header v-if="!mobileLayout || !mobileSection" class="settings-page-head">
-      <div class="settings-page-title">
-        <h2>设置</h2>
-      </div>
-      <div class="settings-page-actions">
-        <button class="settings-search-trigger" type="button" aria-label="搜索设置项（Ctrl K）" @click="openSearch">
-          <Icon name="search" :size="16" />
-          <span>搜索设置</span>
-          <kbd>Ctrl K</kbd>
-        </button>
-      </div>
-    </header>
-
-    <SettingsStatusStrip v-if="!mobileLayout || !mobileSection" @jump="jumpToDomain" />
-
     <div v-if="mobileListVisible" class="settings-mobile-list" role="navigation" aria-label="设置分组">
+      <h1 class="settings-mobile-title">设置</h1>
+
       <button class="settings-mobile-search" type="button" aria-label="搜索设置项" @click="openSearch">
         <Icon name="search" :size="16" />
         <span>搜索设置</span>
@@ -79,22 +66,47 @@
 
     <div class="settings-shell" v-show="!mobileListVisible">
       <nav ref="navEl" class="settings-nav" aria-label="设置分类" @keydown="onNavKeydown">
-        <button
-          v-for="domain in domains"
-          :key="domain.id"
-          class="settings-nav-item"
-          type="button"
-          :data-nav="domain.id"
-          :class="{ active: activeDomain === domain.id }"
-          :aria-current="activeDomain === domain.id ? 'page' : undefined"
-          :tabindex="activeDomain === domain.id ? 0 : -1"
-          @click="selectDomain(domain.id)"
-        >
-          <Icon :name="domain.icon" :size="18" />
-          <span class="nav-label">{{ domain.label }}</span>
-          <span v-if="navMetaOf(domain.id)" class="settings-nav-meta">{{ navMetaOf(domain.id) }}</span>
-          <span v-if="domainHasAlert(domain)" class="settings-nav-alert" aria-hidden="true" />
+        <button class="settings-nav-search" type="button" aria-label="搜索设置项（Ctrl K）" @click="openSearch">
+          <Icon name="search" :size="15" />
+          <span class="nav-search-label">搜索设置</span>
+          <kbd>Ctrl K</kbd>
         </button>
+
+        <div class="settings-nav-list">
+          <div v-for="domain in domains" :key="domain.id" class="settings-nav-domain">
+            <button
+              class="settings-nav-item"
+              type="button"
+              :data-nav="domain.id"
+              :class="{ active: activeDomain === domain.id }"
+              :aria-current="activeDomain === domain.id ? 'page' : undefined"
+              :tabindex="activeDomain === domain.id ? 0 : -1"
+              @click="selectDomain(domain.id)"
+            >
+              <Icon :name="domain.icon" :size="17" />
+              <span class="nav-label">{{ domain.label }}</span>
+              <span v-if="navMetaOf(domain.id)" class="settings-nav-meta">{{ navMetaOf(domain.id) }}</span>
+              <span v-if="domainHasAlert(domain)" class="settings-nav-alert" aria-hidden="true" />
+            </button>
+            <!-- 二级目录：只展开当前大类，点一下直接定位到该分组（不做滚动联动，见 2026-11 版式） -->
+            <div v-if="activeDomain === domain.id" class="settings-nav-sub" role="group" :aria-label="domain.label + '的分组'">
+              <button
+                v-for="group in domain.groups"
+                :key="group.id"
+                type="button"
+                class="settings-nav-subitem"
+                :class="{ active: activeGroup === group.id, danger: group.danger }"
+                :aria-current="activeGroup === group.id ? 'true' : undefined"
+                @click="jumpToGroup(group.id)"
+              >
+                <span class="nav-label">{{ group.label }}</span>
+                <span v-if="group.danger" class="nav-danger">危险</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <SettingsStatusStrip class="settings-nav-status" @jump="jumpToDomain" />
       </nav>
 
       <div ref="contentEl" class="settings-content" id="settings-main" tabindex="-1">
@@ -275,6 +287,8 @@ import { APP_VERSION } from '../version';
  * 登记的 groups 顺序一致（settingsDomains.test.ts 会锁这条不变量）。
  */
 const activeDomain = ref<SettingsDomainId>('account');
+/** 左栏二级目录里高亮的分组：只跟「点击目录 / 搜索跳转」走，不监听滚动（2026-11 版式） */
+const activeGroup = ref('');
 /**
  * 首访才挂载大类面板：面板常驻（v-show）在首屏会连带常驻各自的数据拉取与轮询；
  * 访问过一次后继续用 v-show 保留状态（切走再回来不重拉，这是既有约定）。
@@ -467,8 +481,16 @@ function scrollToTop() {
 
 function selectDomain(id: SettingsDomainId, anchor?: string) {
   activeDomain.value = id;
+  const target = anchor || domainOf(id)?.groups[0]?.id || '';
+  activeGroup.value = target;
   if (anchor) void nextTick(() => scrollToAnchor(anchor));
   else scrollToTop();
+}
+
+/** 左栏二级目录点击：定位到分组并高亮（不改变大类） */
+function jumpToGroup(anchor: string) {
+  activeGroup.value = anchor;
+  scrollToAnchor(anchor);
 }
 
 /** 状态总览 / 搜索跳转的统一入口 */
@@ -483,6 +505,7 @@ function jumpToDomain(id: SettingsDomainId) {
 /** 从搜索面板跳转：定位到分组并让分组卡闪一下，告诉用户「就是这一块」 */
 function onSearchJump(payload: { domain: SettingsDomainId; group: string }) {
   activeDomain.value = payload.domain;
+  activeGroup.value = payload.group;
   if (mobileLayout.value) mobileSection.value = payload.domain;
   void nextTick(() => {
     scrollToAnchor(payload.group);

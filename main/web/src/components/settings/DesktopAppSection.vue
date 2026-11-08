@@ -250,7 +250,7 @@ onUnmounted(() => {
 /* 分组卡片（flush 内容）内的行级消息：全局规则只覆盖面板直接子级，这里补齐边距；
    位于 setting-row 内的消息保持网格定位不加边距 */
 .setting-message {
-  margin: 0 24px 14px;
+  margin: 0 22px 12px;
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;

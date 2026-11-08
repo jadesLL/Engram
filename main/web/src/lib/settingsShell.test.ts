@@ -37,3 +37,18 @@ test('手机端有独立的搜索入口，触控尺寸 ≥44', () => {
   assert.match(css, /\.settings-mobile-search \{[\s\S]{0,220}height:\s*44px/, '手机端列表页搜索入口缺失或热区不足 44px');
   assert.match(css, /\.settings-mobile-search-btn \{[\s\S]{0,220}width:\s*44px/, '子页搜索按钮的触控热区不足 44px');
 });
+
+test('左栏承担搜索、当前大类二级分组与状态：页头不再占首屏', () => {
+  const here2 = path.dirname(fileURLToPath(import.meta.url));
+  const view = fs.readFileSync(path.resolve(here2, '..', 'views', 'SettingsView.vue'), 'utf8');
+  assert.doesNotMatch(view, /class="settings-page-head"/, '页头又回来了：设置页会重新叠一层标题 + 搜索 + 状态');
+  assert.match(view, /class="settings-nav-search"[\s\S]{0,200}?openSearch/, '左栏搜索入口没有接 openSearch');
+  assert.match(view, /class="settings-nav-subitem"[\s\S]{0,240}?jumpToGroup\(group\.id\)/, '二级分组没有接到 jumpToGroup');
+  assert.match(view, /<nav[^>]*settings-nav[\s\S]*?<SettingsStatusStrip[\s\S]*?<\/nav>/, '状态总览没有落进左栏底部');
+  assert.match(css, /\.settings-nav-search \{[^}]*height:\s*34px/, '左栏搜索入口高度变了（应与输入框同高）');
+  assert.match(css, /\.settings-nav-subitem\.active \{[^}]*background:\s*var\(--accent-soft\)/, '二级分组缺少当前项底色');
+  // 卡片式版式：卡片圆角 16px、卡头无底色带、分隔线只出现在行之间
+  assert.match(css, /\.group-card \{[^}]*border-radius:\s*16px/, '分组不再是 16px 圆角卡片');
+  assert.match(css, /\.group-band \{[^}]*background:\s*transparent/, '卡头又铺了底色带');
+  assert.match(css, /\.settings-native \.setting-row \{[^}]*border-top:\s*1px solid/, '行分隔线没有改成行间细线');
+});

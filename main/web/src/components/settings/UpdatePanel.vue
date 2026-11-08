@@ -1256,7 +1256,7 @@ onUnmounted(() => {
 /* 分组卡片（flush 内容）内的行级消息：全局规则只覆盖面板直接子级，这里补齐边距；
    位于 setting-row 内的消息保持网格定位不加边距 */
 .setting-message {
-  margin: 0 24px 14px;
+  margin: 0 22px 12px;
 }
 .setting-row .setting-message {
   margin: 0;
@@ -1372,7 +1372,7 @@ onUnmounted(() => {
    卡片底边不会上下跳（用户 2026-11-08 报「开着自动更新这块来回乱跳」）。
    行高与轨道高度写死，文字换行才可能改变高度：状态文案控制在单行，超长时省略。 */
 .auto-status-slot {
-  margin: 0 24px 14px;
+  margin: 0 22px 12px;
 }
 .auto-status-slot .auto-status-line {
   margin: 0;
