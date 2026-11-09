@@ -160,3 +160,85 @@ test('只有脚本/样式的页面提取为空正文（由转换链路给出明�
   const html = '<!doctype html><html><head><title>x</title><script>var a = 1;</script></head><body><script>var b = 2;</script></body></html>';
   assert.equal(extractHtmlArticle(html).text, '');
 });
+
+/**
+ * 知乎（2026-11 收集箱抓知乎链接）：服务端直抓被 403 挡下后，由客户端内置浏览器渲染成
+ * HTML 再上传。渲染后的页面同样带着「推荐阅读 / 相关问题 / 页头」这些站点框架，
+ * 转换时必须只取正文容器，标题也不能带「 - 知乎」站名后缀入库。
+ */
+function zhihuArticleHtml(): string {
+  const paragraph = '这段是知乎专栏正文：先把问题拆开，再给出可执行的结论和例子。';
+  return [
+    '<!doctype html><html><head><meta charset="utf-8">',
+    '<title>如何正确使用知乎？ - 知乎</title>',
+    '<meta property="og:url" content="https://zhuanlan.zhihu.com/p/123456">',
+    '<meta property="og:site_name" content="知乎">',
+    '</head><body>',
+    '<header class="AppHeader">知乎 首页 发现 等你来答</header>',
+    '<div class="Post-RichTextContainer">',
+    '<div class="RichText ztext Post-RichText">',
+    '<p>' + paragraph.repeat(3) + '</p>',
+    '<h2>一、先说结论</h2>',
+    '<p>' + paragraph + '</p>',
+    '</div>',
+    '</div>',
+    '<div class="Recommendations">',
+    '<div class="Recommendation-list">推荐阅读：另一篇专栏文章</div>',
+    '<div class="Recommendation-list">推荐阅读：再一篇专栏文章</div>',
+    '</div>',
+    '</body></html>',
+  ].join('');
+}
+
+test('知乎专栏文章：只取 Post-RichText 正文，推荐阅读/页头不进正文，标题去掉「 - 知乎」', () => {
+  const article = extractHtmlArticle(zhihuArticleHtml());
+  assert.equal(article.container, 'zhihu');
+  assert.equal(article.title, '如何正确使用知乎？');
+  assert.match(article.text, /这段是知乎专栏正文/);
+  assert.match(article.text, /^## 一、先说结论/m, '正文 h2 保留为二级标题');
+  assert.doesNotMatch(article.text, /推荐阅读|AppHeader|等你来答/, '推荐阅读与页头属于站点框架');
+  assert.ok(article.text.length < 2000, '正文长度应与文章内容量级一致，而不是整份 HTML');
+});
+
+function zhihuQuestionHtml(): string {
+  const bestAnswer = '这是获赞最多的回答正文：先列背景，再给分析和可执行建议，最后补一句边界条件。';
+  return [
+    '<!doctype html><html><head><meta charset="utf-8">',
+    '<title>如何评价 Engram 的收集箱？ - 知乎</title>',
+    '</head><body>',
+    '<div class="QuestionHeader"><h1 class="QuestionHeader-title">如何评价 Engram 的收集箱？</h1>',
+    '<div class="QuestionHeader-detail">问题描述：收集箱好不好用</div></div>',
+    '<div class="Question-main">',
+    '<div class="Question-sideColumn">',
+    '<div class="QuestionSidebar">相关问题：侧栏噪声问题一</div>',
+    '<div class="QuestionSidebar">相关问题：侧栏噪声问题二</div>',
+    '</div>',
+    '<div class="List">',
+    '<div class="List-item"><div class="RichContent">',
+    '<div class="RichContent-inner"><span class="RichText ztext">' + bestAnswer.repeat(4) + '</span></div>',
+    '</div></div>',
+    '<div class="List-item"><div class="RichContent">',
+    '<div class="RichContent-inner"><span class="RichText ztext">另一个靠后的短回答，不该被选中。</span></div>',
+    '</div></div>',
+    '</div>',
+    '</div>',
+    '</body></html>',
+  ].join('');
+}
+
+test('知乎问答页：取可见文字最多的 RichContent-inner，侧栏与问题头不进正文', () => {
+  const article = extractHtmlArticle(zhihuQuestionHtml());
+  assert.equal(article.container, 'zhihu');
+  assert.equal(article.title, '如何评价 Engram 的收集箱？');
+  assert.match(article.text, /获赞最多的回答正文/);
+  assert.match(article.text, /边界条件/);
+  assert.doesNotMatch(article.text, /侧栏噪声|问题描述|另一个靠后的短回答|QuestionHeader/);
+});
+
+test('站名后缀只对知乎去掉：其它站点标题保持原样', () => {
+  const html = '<!doctype html><html><head><title>某篇文章 - 某技术站</title></head><body><article><p>'
+    + '正文内容足够长，应该被 article 容器提取出来。'.repeat(4) + '</p></article></body></html>';
+  const article = extractHtmlArticle(html);
+  assert.equal(article.title, '某篇文章 - 某技术站');
+  assert.equal(article.container, 'article');
+});

@@ -20,7 +20,7 @@ export interface HtmlArticle {
   /** 可读正文（Markdown 风格纯文本，已去噪声） */
   text: string;
   /** 正文来自哪类容器，便于测试与排障 */
-  container: 'wechat' | 'article' | 'body';
+  container: 'wechat' | 'zhihu' | 'article' | 'body';
   /** 发布方（公众号名 / og:site_name） */
   site: string;
   /** 作者（og:article:author / meta author / 微信作者变量） */
@@ -397,6 +397,24 @@ const WECHAT_CONTENT_MATCH = (token: TagToken): boolean =>
   /\bid\s*=\s*["']?js_content\b/i.test(token.raw) ||
   /\bclass\s*=\s*["'][^"']*\brich_media_content\b[^"']*["']/i.test(token.raw);
 
+/** class 属性里是否有某个**完整**类名（Post-RichText 不能匹配到 Post-RichTextContainer） */
+function hasClassToken(raw: string, token: string): boolean {
+  const className = parseAttrs(raw).class || '';
+  return className.split(/\s+/).some((item) => item === token);
+}
+
+/** 知乎专栏文章正文：div.Post-RichText（外层 .Post-RichTextContainer 仅作为兜底） */
+const ZHIHU_POST_TEXT_MATCH = (token: TagToken): boolean => hasClassToken(token.raw, 'Post-RichText');
+const ZHIHU_POST_CONTAINER_MATCH = (token: TagToken): boolean => hasClassToken(token.raw, 'Post-RichTextContainer');
+/** 知乎问答/答案页正文：每个回答一个 .RichContent-inner，取可见文字最多的那个 */
+const ZHIHU_ANSWER_MATCH = (token: TagToken): boolean => hasClassToken(token.raw, 'RichContent-inner');
+
+/** 知乎页面 <title> 末尾带站名后缀（「如何正确使用知乎？ - 知乎」）：抽正文标题时去掉 */
+function stripZhihuSiteSuffix(title: string): string {
+  const stripped = title.replace(/\s*[-–—_|·]\s*知乎(?:网|专栏)?\s*$/u, '').trim();
+  return stripped || title;
+}
+
 const TAG_CONTENT_MATCH = (token: TagToken): boolean =>
   token.name === 'article' || token.name === 'main' ||
   /\brole\s*=\s*["']?main\b/i.test(token.raw) ||
@@ -677,13 +695,20 @@ function renderHtml(source: string, options: { stripChrome: boolean }): string {
  * 对外主入口
  * ------------------------------------------------------------------ */
 
-/** HTML → 可读正文（微信 / 通用文章 / 整页兜底；都取不到时 text 为空串） */
+/** HTML → 可读正文（微信 / 知乎 / 通用文章 / 整页兜底；都取不到时 text 为空串） */
 export function extractHtmlArticle(html: string): HtmlArticle {
   const metadata = readMetaMap(html);
   const sourceUrl = sourceUrlOf(html, metadata);
   const tokens = tokenize(html);
   const looksWechat =
     /mp\.weixin\.qq\.com/i.test(sourceUrl) || /id\s*=\s*["']?js_content\b/i.test(html) || /rich_media_content/i.test(html);
+  // 知乎判定多路兜底：来源链接、页面开头的 canonical/og:url、站名，或正文容器的特征类名
+  const looksZhihu =
+    /zhihu\.com/i.test(sourceUrl) ||
+    /zhihu\.com/i.test(html.slice(0, 4096)) ||
+    /^知乎(?:网|专栏)?$/.test((metadata.get('og:site_name') || '').trim()) ||
+    /\b(?:Post-RichText(?:Container)?|RichContent-inner)\b/.test(html) ||
+    /\bzse-ck\b/i.test(html);
 
   let container: HtmlArticle['container'] = 'body';
   let inner: string | null = null;
@@ -691,6 +716,17 @@ export function extractHtmlArticle(html: string): HtmlArticle {
   if (wechat && visibleTextLength(wechat) >= 40) {
     inner = wechat;
     container = 'wechat';
+  }
+  if (!inner && looksZhihu) {
+    // 专栏文章取 .Post-RichText（推荐阅读等都在容器外）；问答页每个回答一个 .RichContent-inner，取最长的那条。
+    const zhihu =
+      largestElementInner(html, tokens, ZHIHU_POST_TEXT_MATCH, 40) ||
+      largestElementInner(html, tokens, ZHIHU_ANSWER_MATCH, 40) ||
+      largestElementInner(html, tokens, ZHIHU_POST_CONTAINER_MATCH, 40);
+    if (zhihu) {
+      inner = zhihu;
+      container = 'zhihu';
+    }
   }
   if (!inner) {
     const article =
@@ -710,8 +746,10 @@ export function extractHtmlArticle(html: string): HtmlArticle {
     container = 'body';
   }
 
+  const title = htmlTitle(html);
   return {
-    title: htmlTitle(html),
+    // 知乎页面的 <title> 带站名后缀，只对知乎页去掉，其它站点保持原文标题
+    title: looksZhihu ? stripZhihuSiteSuffix(title) : title,
     text,
     container,
     site: siteOf(html, metadata),
