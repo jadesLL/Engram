@@ -201,7 +201,7 @@ export const CLI_COMMANDS: CliCommandDoc[] = [
     command: 'research submit --task <taskId> [--file F|-]',
     group: '写',
     summary: '提交调研报告 JSON：先校验主体核验，再按证据量落完整报告 / 资料不足简报 / 主体核验短报告。',
-    notes: '报告 JSON 含 identity / sections / sources / save / saveMode / overwritePath 等字段。完整报告自动入库；资料不足简报只留在客户洞察页、不自动导入；主体核验不保存。完整报告须 verified 且外部来源 ≥2。',
+    notes: '报告 JSON 含 identity / sections / sources / save / saveMode / overwritePath 等字段。完整报告自动入库；资料不足简报只留在客户洞察页、不自动导入；主体核验不保存。完整报告须 verified 且外部来源 ≥2。完整报告为 10 章，含「主要机型」「竞品情况」两章。',
   },
 
   /* ---------- 系统：连接、指南与交互 ---------- */

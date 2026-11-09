@@ -64,7 +64,7 @@ function briefKbDocs() {
   };
 }
 
-/** 一份合规的「完整报告」：verified + 8 章 + 3 条外部来源 */
+/** 一份合规的「完整报告」：verified + 10 章 + 3 条外部来源（含主要机型/竞品情况的引用门槛） */
 function fullVerified() {
   return {
     identity: {
@@ -78,6 +78,8 @@ function fullVerified() {
       summary: '验收科技有限公司正在评估新机型，采购预算已进入审批流程 [1][2]。',
       identity: '工商登记与官网信息一致：公司名称、注册地与主营范围均可对应 [1][2]。',
       facts: '官网披露公司主营智能设备制造 [2]；企查查显示公司的成立时间与注册资本 [1]。',
+      models: '官网产品页列出主力机型 A 系列与 B 系列，分别用于包装与检测产线 [2]；企查查登记的主营范围含智能设备制造 [1]。',
+      competitors: '行业媒体报道该客户的电气控制方案在用某竞品品牌，该品牌在同类产线的装机量领先 [3]。',
       needs: '官网招聘信息显示产线扩张，存在设备更新需求 [3]。',
       relationships: '公开信息未披露决策链成员，推断由设备部门发起、管理层审批。',
       risks: '公开资料未披露采购预算与时间表，需求规模存在不确定性。',
@@ -160,7 +162,10 @@ test('begin 下发主体核验契约、三种模式与固定章节/长度上限'
   assert.match(task.identityContract.rule, /knowledge-only/);
 
   assert.deepEqual(task.modeRules.map((mode) => mode.id), ['full', 'brief', 'identity-check']);
-  assert.equal(task.reportContract.modeSections.full.join(','), 'summary,identity,facts,needs,relationships,risks,actions,gaps');
+  assert.equal(task.reportContract.modeSections.full.join(','), 'summary,identity,facts,models,competitors,needs,relationships,risks,actions,gaps');
+  // v4：机型与竞品两章的引用门槛随契约下发（外部 Agent 不靠猜）
+  assert.match(task.reportContract.citationRules, /主要机型/);
+  assert.match(task.reportContract.citationRules, /竞品情况/);
   assert.equal(task.reportContract.modeSections.brief.join(','), 'summary,facts,gaps');
   assert.equal(task.reportContract.modeSections['identity-check'].join(','), 'summary,gaps');
   assert.equal(task.reportContract.limits.full.summary, CUSTOMER_RESEARCH_LIMITS.full.summary);
@@ -221,7 +226,7 @@ test('v1/v2 旧模板按契约版本迁移；模板编辑后新任务用新版�
     }), /章节标题/);
     assert.throws(() => research.updateCustomerResearchRules({ workflow: ' ', titles: defaultTitles }), /流程不能为空/);
 
-    // v2 旧模板带 contract=2：RULES_CONTRACT=3 时不兼容，按当前默认模板重建并 +1
+    // v2 旧模板带 contract=2：RULES_CONTRACT=4 时不兼容，按当前默认模板重建并 +1
     storage.setSetting('customer_research_rules', JSON.stringify({
       contract: 2,
       version: 7,
@@ -229,7 +234,7 @@ test('v1/v2 旧模板按契约版本迁移；模板编辑后新任务用新版�
       sections: [{ id: 'summary', title: '结论' }],
     }));
     const fromV2 = research.customerResearchRules();
-    assert.equal(fromV2.contract, 3);
+    assert.equal(fromV2.contract, 4);
     assert.equal(fromV2.version, 8);
     assert.equal(fromV2.workflow, CUSTOMER_RESEARCH_WORKFLOW);
     assert.deepEqual(fromV2.sections.map((section) => section.title), CUSTOMER_RESEARCH_SECTIONS.map((section) => section.title));
@@ -334,7 +339,7 @@ test('简报模式：三章渲染、事实引用门槛、已核实主体可退�
   assert.match(verifiedResult.verdict.reason, /公开资料不足|主体已核实/);
 });
 
-test('完整版八章：证据门槛、章节长度、标题与引用校验，不足时引导改简报', () => {
+test('完整版十章：证据门槛、章节长度、标题与引用校验，不足时引导改简报', () => {
   const task = begin('完整报告客户');
   const base = fullVerified();
   const ok = submit(task.taskId, base);
@@ -349,6 +354,8 @@ test('完整版八章：证据门槛、章节长度、标题与引用校验，�
   assert.match(ok.markdown, /主体核验：已核实（registry）/);
   assert.match(ok.markdown, /外部来源：3 条 · 库内来源：0 条/);
   for (const section of CUSTOMER_RESEARCH_SECTIONS) assert.match(ok.markdown, new RegExp('## ' + section.title));
+  assert.match(ok.markdown, /## 主要机型/);
+  assert.match(ok.markdown, /## 竞品情况/);
 
   const incomplete = patch(base, {}) as Fixture;
   delete incomplete.sections.summary;
@@ -368,8 +375,19 @@ test('完整版八章：证据门槛、章节长度、标题与引用校验，�
   assert.throws(() => submit(task.taskId, patch(base, {
     sections: { needs: '存在设备更新需求，规模待核实。' },
   })), /至少 1 处/);
+  // v4：主要机型 / 竞品情况各需至少 1 处引用——查不到依据就降级简报，不许空着凑十章
+  assert.throws(() => submit(task.taskId, patch(base, {
+    sections: { models: '官网产品页列出主力机型 A 系列与 B 系列。' },
+  })), /主要机型/);
+  assert.throws(() => submit(task.taskId, patch(base, {
+    sections: { competitors: '客户目前主要在用某竞品品牌的电气控制方案。' },
+  })), /竞品情况/);
   const twoSources = patch(base, {
-    sections: { facts: '官网披露公司主营智能设备制造 [2]；企查查显示成立时间与注册资本 [1]。', needs: '官网招聘信息显示产线扩张 [2]。' },
+    sections: {
+      facts: '官网披露公司主营智能设备制造 [2]；企查查显示成立时间与注册资本 [1]。',
+      needs: '官网招聘信息显示产线扩张 [2]。',
+      competitors: '行业媒体报道该客户在用某竞品品牌 [1]。',
+    },
     sources: [{ ...registryUrl }, { ...officialUrl }],
   });
   assert.throws(() => submit(task.taskId, twoSources), /至少需要 3 条来源/);

@@ -25,7 +25,7 @@ const RULES_KEY = 'customer_research_rules';
  * 读到的模板没有这个标记（v1 的八章 ACS 版）时按当前默认模板重建——旧章节契约与新提交
  * 校验不兼容，保留旧模板只会让每次提交都失败；用户自定义的流程正文也会一起重置。
  */
-const RULES_CONTRACT = 3;
+const RULES_CONTRACT = 4;
 const text = z.string().trim().min(1).max(40000);
 const clean = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\u0000-\u001f]+$/);
 
@@ -225,7 +225,7 @@ function validateIdentity(scope: string, identity: Identity, sources: Report['so
   if (!external.length) throw new CustomerResearchError('verified 的 evidence 必须包含至少 1 条外部工商/官方来源（url + kind=registry|official）');
 }
 
-/** 完整版证据门槛：没有外部事实就退简报，不许用行业泛论凑满八章 */
+/** 完整版证据门槛：没有外部事实就退简报，不许用行业泛论凑满十章 */
 function validateFullEvidence(sources: Report['sources'], sections: Record<string, string>): void {
   const urls = sources.filter((source) => source.url);
   if (sources.length < 3) throw new CustomerResearchError('完整报告至少需要 3 条来源（当前 ' + sources.length + ' 条）；证据不够请改交简报：summary/facts/gaps');
@@ -234,6 +234,8 @@ function validateFullEvidence(sources: Report['sources'], sections: Record<strin
     throw new CustomerResearchError('完整报告的来源里至少 1 条要是工商/官方来源（url + kind=registry|official）');
   }
   if (countCitations(sections.facts) < 2) throw new CustomerResearchError('「已核实事实」至少 2 处 [来源编号] 引用；写不到就改交简报');
+  if (countCitations(sections.models) < 1) throw new CustomerResearchError('「主要机型」至少 1 处 [来源编号] 引用：机型与产能要有可回溯来源；写不到就改交简报');
+  if (countCitations(sections.competitors) < 1) throw new CustomerResearchError('「竞品情况」至少 1 处 [来源编号] 引用：竞品品牌、份额或合作深度要有可回溯来源；写不到就改交简报');
   if (countCitations(sections.needs) < 1) throw new CustomerResearchError('「需求与机会」至少 1 处 [来源编号] 引用；只有推断而没有依据时改交简报');
 }
 
@@ -345,6 +347,7 @@ export function beginCustomerResearch(input: {
     limits: CUSTOMER_RESEARCH_LIMITS,
     sources: '{id,title,url 或 path,kind:registry|official|media|kb-doc|kb-page,publishedAt,accessedAt}',
     citations: '[来源编号]',
+    citationRules: '完整报告：「已核实事实」≥2 处、「主要机型」≥1 处、「竞品情况」≥1 处、「需求与机会」≥1 处 [来源编号] 引用；达不到先降级为简报。',
     writing: '结论先行；每章不超过 limits；禁止方法说明/能力声明/检索过程/行业泛论/「综上所述」类空话；推断标「推断」。',
     submission: 'submit_customer_research(taskId, identity, sections, sources, save)',
   };
