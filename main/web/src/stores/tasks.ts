@@ -34,7 +34,7 @@ interface BoardPayload {
   runStatus: string;
   runStartedAt: string;
   error: string;
-  /** 这份看板对应的下周窗口（按天视图铺每一天用） */
+  /** 这份看板对应的下周窗口（周视图铺每一天、月视图定位默认月份用） */
   windowStart: string;
   windowEnd: string;
 }
@@ -134,7 +134,7 @@ export const useTasksStore = defineStore('tasks', {
     /**
      * 拉一次现状；返回是否需要重新生成。
      * 三种情况都要重跑：没有答案、已到自动提炼的间隔（服务端按用户配的天数算 stale）、
-     * 或者答案是老契约的（v1 没有日期/客户/端组，按天视图与筛选都摊不开）——
+     * 或者答案是老契约的（v1 没有日期/客户/端组，周/月视图与筛选都摊不开）——
      * 老答案也照样先显示着，跑完自动换版；关闭自动时不看 stale，只有手动刷新才重跑。
      */
     async load(): Promise<boolean> {
