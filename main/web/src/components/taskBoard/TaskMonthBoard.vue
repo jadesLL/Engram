@@ -42,7 +42,10 @@
         <span class="note">本月 {{ monthTotal }} 件<template v-if="model.overdue.length"> · 逾期 {{ model.overdue.length }} 件</template></span>
       </h3>
       <div v-for="week in model.weeks" :key="week.start" class="load-row" :class="{ current: week.current }">
-        <span class="load-label">第 {{ week.index }} 周<em>{{ shortDate(week.start) }} – {{ shortDate(week.end) }}</em></span>
+        <span class="load-label">
+          第 {{ week.index }} 周<em>{{ shortDate(week.start) }} – {{ shortDate(week.end) }}</em>
+          <i v-if="week.daysInMonth < 4" class="partial">仅 {{ week.daysInMonth }} 天</i>
+        </span>
         <span class="load-track"><i :style="{ width: barWidth(week.count) }" /></span>
         <span class="load-val">{{ week.count }} 件</span>
       </div>
@@ -155,7 +158,7 @@ function ariaOf(date: string) {
   white-space: nowrap;
 }
 .cell-task.over { border-left-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
-.cell-more { font-size: 10px; color: var(--text-faint); }
+.cell-more { font-size: 10px; color: var(--text-secondary); }
 .week-load {
   margin-top: 14px;
   padding: 12px 14px 10px;
@@ -174,20 +177,32 @@ function ariaOf(date: string) {
 .week-load .note { font-size: 11.5px; font-weight: 500; color: var(--text-faint); }
 .load-row {
   display: grid;
-  grid-template-columns: 128px 1fr 46px;
+  grid-template-columns: 176px 1fr 46px;
   align-items: center;
   gap: 10px;
   padding: 4px 0;
 }
 .load-label { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-.load-label em { font-style: normal; margin-left: 6px; font-size: 11px; color: var(--text-faint); }
+.load-label em { font-style: normal; margin-left: 6px; font-size: 11px; color: var(--text-secondary); }
 .load-row.current .load-label { color: var(--accent); font-weight: 600; }
 .load-track { height: 6px; border-radius: 3px; background: var(--bg-tertiary); overflow: hidden; }
 .load-track i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
-.load-val { text-align: right; font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.load-val { text-align: right; font-size: 11.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.partial {
+  font-style: normal;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
 
-/* 手机档：7 列日历读不清，改成「有任务的日子」列表，点一行照旧进那一周 */
-@media (max-width: 640px) {
+/* 窄窗口 / 平板竖屏（与周视图同一断点 1024）：7 列日历读不清，
+   改成「有任务的日子」列表，点一行照旧进那一周 */
+@media (max-width: 1024px) {
   .weekday-row { display: none; }
   .month-grid { display: flex; flex-direction: column; gap: 6px; }
   .cell { min-height: 0; padding: 8px 10px; }
@@ -197,5 +212,8 @@ function ariaOf(date: string) {
   .cell-weekday { display: inline; }
   .load-row { grid-template-columns: 1fr 52px; }
   .load-track { display: none; }
+}
+@media (hover: none) and (pointer: coarse) {
+  .cell-btn { min-height: 44px; justify-content: center; }
 }
 </style>

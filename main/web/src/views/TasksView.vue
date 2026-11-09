@@ -61,14 +61,13 @@
     <template v-else-if="board">
       <!-- 工具条：视图切换（周 / 月）＋ 时间翻页 ＋ 条数；筛选同一套贯穿两个视图 -->
       <div class="toolbar">
-        <div class="seg" role="tablist" aria-label="看板视图">
+        <div class="seg" role="group" aria-label="看板视图">
           <button
             v-for="item in VIEWS"
             :key="item.key"
             class="seg-btn"
             type="button"
-            role="tab"
-            :aria-selected="view === item.key"
+            :aria-pressed="view === item.key"
             :class="{ on: view === item.key }"
             @click="setView(item.key)"
           >{{ item.label }}</button>
@@ -93,6 +92,15 @@
           </button>
           <button class="btn ghost small" type="button" @click="goToday">今天</button>
         </div>
+        <!-- 手机上筛选三行会吃掉首屏：收成一颗按钮，点开再选 -->
+        <button
+          class="btn ghost small filter-toggle"
+          type="button"
+          :aria-expanded="filtersOpen"
+          @click="filtersOpen = !filtersOpen"
+        >
+          <Icon name="sort" :size="13" />筛选<template v-if="activeFilterCount"> · {{ activeFilterCount }}</template>
+        </button>
         <span class="toolbar-count">
           共 {{ totalCards }} 条<template v-if="hasFilter"> · 筛后 {{ filteredCards.length }} 条</template><template v-if="panels.overdue.length"> · 逾期 {{ panels.overdue.length }}</template>
         </span>
@@ -102,7 +110,7 @@
         </button>
       </div>
 
-      <div class="filters">
+      <div class="filters" :class="{ 'mobile-collapsed': !filtersOpen }">
         <div v-for="facet in FACET_ROWS" :key="facet.key" class="filter-row">
           <span class="filter-label">{{ facet.label }}</span>
           <div class="filter-chips">
@@ -119,11 +127,20 @@
         </div>
       </div>
 
-      <!-- 周视图：周一到周日 7 列；月视图：整月日历 + 各周负载（点某天切到那一周） -->
+      <!-- 周视图：逾期条先摆出来（免得多任务那一列把它顶出首屏），再看 7 天网格；
+           月视图：整月日历 + 各周负载（点某天切到那一周） -->
+      <TaskOverdueBar
+        v-if="view === 'week'"
+        :overdue="panels.overdue"
+        :today="today"
+        :completing-keys="completingKeys"
+        @complete="completeCard"
+      />
       <TaskWeekBoard
         v-if="view === 'week'"
         :days="weekView.days"
         :today="today"
+        :completing-keys="completingKeys"
         @complete="completeCard"
         @open="openSource"
       />
@@ -136,6 +153,7 @@
         :later-title="laterTitle"
         :today="today"
         :completing-keys="completingKeys"
+        :hide-overdue="view === 'week' || panels.overdue.length === 0"
         @complete="completeCard"
       />
 
@@ -184,6 +202,7 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import TaskBoardPanels from '../components/taskBoard/TaskBoardPanels.vue';
 import TaskMonthBoard from '../components/taskBoard/TaskMonthBoard.vue';
+import TaskOverdueBar from '../components/taskBoard/TaskOverdueBar.vue';
 import TaskWeekBoard from '../components/taskBoard/TaskWeekBoard.vue';
 import { api } from '../api';
 import { useTasksStore } from '../stores/tasks';
@@ -358,6 +377,10 @@ const filteredCards = computed(() => filterCards(board.value, filter));
 const hasFilter = computed(
   () => filter.owners.length + filter.customers.length + filter.teams.length > 0
 );
+/** 手机上「筛选」按钮上的数字 */
+const activeFilterCount = computed(() => filter.owners.length + filter.customers.length + filter.teams.length);
+/** 手机档筛选默认收起（桌面档这个状态不起作用，筛选块始终展开） */
+const filtersOpen = ref(false);
 
 function toggleFacet(key: keyof BoardFilter, value: string) {
   const picked = filter[key];
@@ -720,7 +743,18 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.toolbar-count { color: var(--text-faint); font-size: 12px; }
+.toolbar-count { color: var(--text-secondary); font-size: 12px; }
+.filter-toggle { display: none; }
+@media (max-width: 768px) {
+  .filter-toggle { display: inline-flex; }
+  .filters.mobile-collapsed { display: none; }
+}
+@media (hover: none) and (pointer: coarse) {
+  .seg-btn { min-height: 44px; padding: 0 14px; }
+  .icon-btn { width: 44px; height: 44px; }
+  .fchip { min-height: 44px; padding: 0 14px; }
+  .filter-toggle { min-height: 44px; }
+}
 
 /* ===== 筛选：三档可点的小胶囊（同一档内多选＝或） ===== */
 .filters {

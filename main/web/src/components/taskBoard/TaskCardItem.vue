@@ -23,7 +23,7 @@
         v-if="card.when || card.repeat"
         class="chip when"
         :title="card.repeat ? `周期：${card.repeat}` : card.when"
-      >{{ card.when || card.repeat }}</span>
+      >{{ card.repeat && !card.when ? card.repeat : whenText }}</span>
       <span class="chip customer" :title="card.customer ? '客户' : '没有客户，按端组归到内部工作'">{{ customer }}</span>
       <span v-if="card.customer && card.team" class="chip team" v-tooltip="'端组'">{{ card.team }}</span>
       <span v-if="overdue" class="chip overdue-days">逾期 {{ overdueDays }} 天</span>
@@ -57,6 +57,22 @@ defineEmits<{ (e: 'complete', card: TaskCard): void; (e: 'open', card: TaskCard)
 
 const customer = computed(() => cardCustomer(props.card));
 const target = computed(() => taskCardTarget(props.card));
+
+/**
+ * 时间胶囊在窄列里只有约 100px：把「2026-11-16 至 2026-12-18」压成「11/16 – 12/18」，
+ * 「2026-11-16」压成「11/16」，避免区间被截成看起来像单日；完整写法留在 title。
+ */
+const whenText = computed(() => compactWhen(props.card.when));
+
+function compactWhen(text: string): string {
+  const raw = String(text || '').trim();
+  if (!raw) return raw;
+  const range = raw.match(/(\d{4})-(\d{2})-(\d{2})\s*(?:至|–|—|~|-)\s*(\d{4})-(\d{2})-(\d{2})/);
+  if (range) return `${Number(range[2])}/${Number(range[3])} – ${Number(range[5])}/${Number(range[6])}`;
+  const single = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (single) return `${Number(single[2])}/${Number(single[3])}`;
+  return raw;
+}
 </script>
 
 <style scoped>
@@ -71,8 +87,9 @@ const target = computed(() => taskCardTarget(props.card));
 .task-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-card); }
 .task-card.over { border-color: rgba(196, 43, 28, 0.3); }
 .task-card.over .card-text { color: var(--danger); }
-.card-head { display: flex; align-items: flex-start; gap: 12px; }
-.card-head .card-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.card-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.card-head .card-text { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+.card-head .complete-task { margin-left: auto; }
 .card-text {
   margin: 0;
   font-size: 13px;

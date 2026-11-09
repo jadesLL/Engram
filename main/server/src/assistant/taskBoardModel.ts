@@ -651,8 +651,9 @@ export interface WeekColumnView {
 }
 
 export interface WeekBoardModel {
-  /** 周一 → 周日，固定 7 列（没有安排的显示「本日暂无」） */
+  /** 周一 → 周日，固定 7 列（没有安排的显示「本日暂无」；落在本周的逾期卡按原日期标红放在当天） */
   days: WeekColumnView[];
+  /** 不在本周的逾期卡：本周内的逾期已经落在当天列里，不在这里重复 */
   overdue: TaskCard[];
   periodic: TaskCard[];
   /** 不在本周、也没有日期的：单独一块，避免从看板上消失 */
@@ -672,7 +673,11 @@ export function weekBoardView(
   const byDate = new Map<string, TaskCard[]>(dates.map((date) => [date, []]));
   for (const card of cards) {
     if (isOverdue(card, today)) {
-      overdue.push(card);
+      // 落在本周的逾期卡按原日期留在当天列（点了月历对应日期切过来时不会是空周）；
+      // 本周之外的逾期才进「已逾期」块
+      const bucket = card.date ? byDate.get(card.date) : undefined;
+      if (bucket) bucket.push(card);
+      else overdue.push(card);
       continue;
     }
     if (isPeriodic(card)) {
@@ -710,6 +715,8 @@ export interface MonthWeekLoad {
   index: number;
   /** 这一周里落在本月的任务数 */
   count: number;
+  /** 这一周里有几天在本月（首尾周可能只有 1–2 天，进度条要和整周区分开） */
+  daysInMonth: number;
   /** 今天是不是在这一周 */
   current: boolean;
 }
@@ -724,6 +731,7 @@ export interface MonthBoardModel {
   weeks: MonthWeekLoad[];
   /** 本月里有日期的任务（按日期分组；含逾期，界面上标红） */
   byDate: Record<string, TaskCard[]>;
+  /** 不在本月的逾期卡：本月内的逾期已经落在日历格里，不在这里重复 */
   overdue: TaskCard[];
   periodic: TaskCard[];
   /** 不在本月、也没有日期的 */
@@ -740,7 +748,7 @@ function monthEndOf(month: string): string {
 /**
  * 月视图：整月日历 + 各周负载。
  * 日历里放本月有日期的任务（周期事项不进日历，放在「周期 · 例行」块里；逾期也按原日期显示并标红）；
- * 本月之外的任务（下周、下个月）与没日期的放「本月之外」块，保证一张卡都不会从看板上消失。
+ * 本月之外的任务（下周、下个月）与没日期的放「其他时间」块，保证一张卡都不会从看板上消失。
  */
 export function monthBoardView(
   cards: TaskCard[],
@@ -757,9 +765,11 @@ export function monthBoardView(
 
   for (const card of cards) {
     if (isOverdue(card, today)) {
-      overdue.push(card);
+      // 本月内的逾期卡落在日历格里（标红），本月之外或没有日期的才进「已逾期」块
       if (card.date && card.date.startsWith(month) && !isPeriodic(card)) {
         (byDate[card.date] ||= []).push(card);
+      } else {
+        overdue.push(card);
       }
       continue;
     }
@@ -781,13 +791,17 @@ export function monthBoardView(
     const start = addDays(firstMonday, row * 7);
     const end = addDays(start, 6);
     let count = 0;
+    let daysInMonth = 0;
     for (let index = 0; index < 7; index += 1) {
       const date = addDays(start, index);
       const inMonth = date.startsWith(month);
       cells.push({ date, day: Number(date.slice(8)), inMonth, weekend: isWeekend(date) });
-      if (inMonth) count += (byDate[date] || []).length;
+      if (inMonth) {
+        daysInMonth += 1;
+        count += (byDate[date] || []).length;
+      }
     }
-    weeks.push({ start, end, index: row + 1, count, current: today >= start && today <= end });
+    weeks.push({ start, end, index: row + 1, count, daysInMonth, current: today >= start && today <= end });
   }
 
   return {
@@ -805,8 +819,8 @@ export function monthBoardView(
 
 /** 周视图「其他时间」块的标题：不在本周的卡（含没日期） */
 export const WEEK_LATER_BUCKET = '其他时间 · 待定';
-/** 月视图「本月之外」块的标题 */
-export const MONTH_LATER_BUCKET = '本月之外 · 待定';
+/** 月视图「其他时间」块的标题（不在本月、或没写具体日期） */
+export const MONTH_LATER_BUCKET = '其他时间 · 待定';
 
 /** 周视图 → 复制清单用的板块（周一到周日 + 周期 / 逾期 / 其他时间） */
 export function weekSections(view: WeekBoardModel): TaskBoardColumn[] {
