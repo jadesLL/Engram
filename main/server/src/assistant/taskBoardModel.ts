@@ -597,16 +597,248 @@ export function isWeekend(date: string): boolean {
   const day = at.getDay();
   return day === 0 || day === 6;
 }
+/**
+ * 周视图 / 月视图的数据口径（2026-11，看板从「按天 / 分列」换成「周 / 月」两种时间视图）。
+ *
+ * 纯函数、不碰 DOM：界面只负责把这里排好的日期、卡片和负载画出来。口径与旧的按天视图一致——
+ * 逾期先抽走、周期事项不铺进每一天；区别只是列按周一到周日排，并多一层「整月」。
+ */
 
-/** 收起状态的稳定标识：日期会一周一周变，按「星期几 / 固定块」存才不会每周丢偏好 */
-export function sectionKey(section: TaskBoardColumn): string {
-  if (section.bucket === 'day' && section.date) {
-    const at = new Date(`${section.date}T00:00:00`);
-    const weekday = Number.isNaN(at.getTime()) ? 0 : at.getDay();
-    return `day-${weekday}`;
-  }
-  return section.bucket === 'source' ? `source-${section.title}` : `${section.bucket}-${section.title}`;
+/** 周一（本地日，YYYY-MM-DD）：一周从周一开始 */
+export function mondayOf(date: string): string {
+  const at = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(at.getTime())) return date;
+  const offset = (at.getDay() + 6) % 7;
+  at.setDate(at.getDate() - offset);
+  return isoToday(at);
 }
+
+/** 加 / 减天数（本地日；跨月、跨年、夏令时都对） */
+export function addDays(date: string, days: number): string {
+  const at = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(at.getTime())) return date;
+  at.setDate(at.getDate() + days);
+  return isoToday(at);
+}
+
+/** 加 / 减月份（'YYYY-MM'；锚在 1 号，避免 8 月 31 日往后加一个月溢出到 10 月） */
+export function addMonths(month: string, delta: number): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return month;
+  return isoToday(new Date(Number(match[1]), Number(match[2]) - 1 + delta, 1)).slice(0, 7);
+}
+
+/** 一周的 7 天（周一 → 周日）；传入的日期不在周一时先归到那一周的周一 */
+export function weekDates(start: string): string[] {
+  const monday = mondayOf(start);
+  return Array.from({ length: 7 }, (_, index) => (index === 0 ? monday : addDays(monday, index)));
+}
+
+/** 星期几的中文名（9/28 → 周一）；坏日期返回空串 */
+export function weekdayOf(date: string): string {
+  const at = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(at.getTime())) return '';
+  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][at.getDay()] || '';
+}
+
+/** 周视图的一列（一天） */
+export interface WeekColumnView {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 9/28 周一 */
+  title: string;
+  cards: TaskCard[];
+}
+
+export interface WeekBoardModel {
+  /** 周一 → 周日，固定 7 列（没有安排的显示「本日暂无」） */
+  days: WeekColumnView[];
+  overdue: TaskCard[];
+  periodic: TaskCard[];
+  /** 不在本周、也没有日期的：单独一块，避免从看板上消失 */
+  later: TaskCard[];
+}
+
+/** 周视图：一周 7 天各一列，逾期 / 周期 · 例行 / 其他时间单独成块 */
+export function weekBoardView(
+  cards: TaskCard[],
+  weekStart: string,
+  today: string = isoToday()
+): WeekBoardModel {
+  const dates = weekDates(weekStart);
+  const overdue: TaskCard[] = [];
+  const periodic: TaskCard[] = [];
+  const later: TaskCard[] = [];
+  const byDate = new Map<string, TaskCard[]>(dates.map((date) => [date, []]));
+  for (const card of cards) {
+    if (isOverdue(card, today)) {
+      overdue.push(card);
+      continue;
+    }
+    if (isPeriodic(card)) {
+      periodic.push(card);
+      continue;
+    }
+    const bucket = card.date ? byDate.get(card.date) : undefined;
+    if (bucket) bucket.push(card);
+    else later.push(card);
+  }
+  return {
+    days: dates.map((date) => ({ date, title: dayLabel(date), cards: sortByDate(byDate.get(date) || []) })),
+    overdue: sortByDate(overdue),
+    periodic: sortByDate(periodic),
+    later: sortByDate(later),
+  };
+}
+
+/** 月历里的一格 */
+export interface MonthCellView {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 当月第几天（1–31）；补格给的是相邻月份的日号 */
+  day: number;
+  /** 是不是本月（false = 补格，界面压暗） */
+  inMonth: boolean;
+  weekend: boolean;
+}
+
+/** 月视图里的一周（与月历的行一一对应，用来画「各周负载」） */
+export interface MonthWeekLoad {
+  start: string;
+  end: string;
+  /** 第几周（1 起；含补格，所以通常是 5–6 行） */
+  index: number;
+  /** 这一周里落在本月的任务数 */
+  count: number;
+  /** 今天是不是在这一周 */
+  current: boolean;
+}
+
+export interface MonthBoardModel {
+  /** 'YYYY-MM' */
+  month: string;
+  monthStart: string;
+  monthEnd: string;
+  /** 固定 6 行 × 7 列（周一开头），前后补格压暗 */
+  cells: MonthCellView[];
+  weeks: MonthWeekLoad[];
+  /** 本月里有日期的任务（按日期分组；含逾期，界面上标红） */
+  byDate: Record<string, TaskCard[]>;
+  overdue: TaskCard[];
+  periodic: TaskCard[];
+  /** 不在本月、也没有日期的 */
+  later: TaskCard[];
+}
+
+/** 某月的最后一天（'YYYY-MM' → YYYY-MM-DD） */
+function monthEndOf(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return month;
+  return isoToday(new Date(Number(match[1]), Number(match[2]), 0));
+}
+
+/**
+ * 月视图：整月日历 + 各周负载。
+ * 日历里放本月有日期的任务（周期事项不进日历，放在「周期 · 例行」块里；逾期也按原日期显示并标红）；
+ * 本月之外的任务（下周、下个月）与没日期的放「本月之外」块，保证一张卡都不会从看板上消失。
+ */
+export function monthBoardView(
+  cards: TaskCard[],
+  month: string,
+  today: string = isoToday()
+): MonthBoardModel {
+  const monthStart = `${month}-01`;
+  const monthEnd = monthEndOf(month);
+  const firstMonday = mondayOf(monthStart);
+  const byDate: Record<string, TaskCard[]> = {};
+  const overdue: TaskCard[] = [];
+  const periodic: TaskCard[] = [];
+  const later: TaskCard[] = [];
+
+  for (const card of cards) {
+    if (isOverdue(card, today)) {
+      overdue.push(card);
+      if (card.date && card.date.startsWith(month) && !isPeriodic(card)) {
+        (byDate[card.date] ||= []).push(card);
+      }
+      continue;
+    }
+    if (isPeriodic(card)) {
+      periodic.push(card);
+      continue;
+    }
+    if (card.date && card.date.startsWith(month)) {
+      (byDate[card.date] ||= []).push(card);
+    } else {
+      later.push(card);
+    }
+  }
+  for (const date of Object.keys(byDate)) byDate[date] = sortByDate(byDate[date]);
+
+  const cells: MonthCellView[] = [];
+  const weeks: MonthWeekLoad[] = [];
+  for (let row = 0; row < 6; row += 1) {
+    const start = addDays(firstMonday, row * 7);
+    const end = addDays(start, 6);
+    let count = 0;
+    for (let index = 0; index < 7; index += 1) {
+      const date = addDays(start, index);
+      const inMonth = date.startsWith(month);
+      cells.push({ date, day: Number(date.slice(8)), inMonth, weekend: isWeekend(date) });
+      if (inMonth) count += (byDate[date] || []).length;
+    }
+    weeks.push({ start, end, index: row + 1, count, current: today >= start && today <= end });
+  }
+
+  return {
+    month,
+    monthStart,
+    monthEnd,
+    cells,
+    weeks,
+    byDate,
+    overdue: sortByDate(overdue),
+    periodic: sortByDate(periodic),
+    later: sortByDate(later),
+  };
+}
+
+/** 周视图「其他时间」块的标题：不在本周的卡（含没日期） */
+export const WEEK_LATER_BUCKET = '其他时间 · 待定';
+/** 月视图「本月之外」块的标题 */
+export const MONTH_LATER_BUCKET = '本月之外 · 待定';
+
+/** 周视图 → 复制清单用的板块（周一到周日 + 周期 / 逾期 / 其他时间） */
+export function weekSections(view: WeekBoardModel): TaskBoardColumn[] {
+  const days: TaskBoardColumn[] = view.days.map((day) => ({
+    title: day.title,
+    cards: day.cards,
+    bucket: 'day',
+    date: day.date,
+    extra: false,
+  }));
+  return [
+    ...days,
+    { title: PERIODIC_BUCKET, cards: view.periodic, bucket: 'periodic', date: '', extra: false },
+    { title: OVERDUE_BUCKET, cards: view.overdue, bucket: 'overdue', date: '', extra: false },
+    { title: WEEK_LATER_BUCKET, cards: view.later, bucket: 'later', date: '', extra: false },
+  ];
+}
+
+/** 月视图 → 复制清单用的板块（只列有任务的日子，不铺 30 个空节） */
+export function monthSections(view: MonthBoardModel): TaskBoardColumn[] {
+  const days: TaskBoardColumn[] = Object.keys(view.byDate)
+    .sort()
+    .map((date) => ({ title: dayLabel(date), cards: view.byDate[date], bucket: 'day', date, extra: false }));
+  return [
+    ...days,
+    { title: PERIODIC_BUCKET, cards: view.periodic, bucket: 'periodic', date: '', extra: false },
+    { title: OVERDUE_BUCKET, cards: view.overdue, bucket: 'overdue', date: '', extra: false },
+    { title: MONTH_LATER_BUCKET, cards: view.later, bucket: 'later', date: '', extra: false },
+  ];
+}
+
+
 
 /** 分列视图（没有窗口信息时也能用：分列不依赖窗口） */
 export function boardColumns(board: TaskBoard | null): TaskBoardColumn[] {

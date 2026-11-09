@@ -59,7 +59,7 @@
     </div>
 
     <template v-else-if="board">
-      <!-- 工具条：视图切换（按天 / 分列）＋ 三档筛选（同一档内是「或」，档之间是「且」） -->
+      <!-- 工具条：视图切换（周 / 月）＋ 时间翻页 ＋ 条数；筛选同一套贯穿两个视图 -->
       <div class="toolbar">
         <div class="seg" role="tablist" aria-label="看板视图">
           <button
@@ -73,13 +73,30 @@
             @click="setView(item.key)"
           >{{ item.label }}</button>
         </div>
+        <div class="date-nav">
+          <button
+            class="icon-btn"
+            type="button"
+            :aria-label="view === 'week' ? '上一周' : '上个月'"
+            @click="shiftSpan(-1)"
+          >
+            <Icon name="chevron-left" :size="15" />
+          </button>
+          <span class="date-label">{{ spanLabel }}</span>
+          <button
+            class="icon-btn"
+            type="button"
+            :aria-label="view === 'week' ? '下一周' : '下个月'"
+            @click="shiftSpan(1)"
+          >
+            <Icon name="chevron-right" :size="15" />
+          </button>
+          <button class="btn ghost small" type="button" @click="goToday">今天</button>
+        </div>
         <span class="toolbar-count">
-          共 {{ totalCards }} 条<template v-if="hasFilter"> · 筛后 {{ filteredCards.length }} 条</template>
+          共 {{ totalCards }} 条<template v-if="hasFilter"> · 筛后 {{ filteredCards.length }} 条</template><template v-if="panels.overdue.length"> · 逾期 {{ panels.overdue.length }}</template>
         </span>
         <div class="spacer" />
-        <button class="btn ghost" type="button" @click="toggleAllCollapsed">
-          <Icon :name="allCollapsed ? 'unfold' : 'fold'" :size="13" />{{ allCollapsed ? '全部展开' : '全部收起' }}
-        </button>
         <button v-if="hasFilter" class="btn ghost" type="button" @click="clearFilter">
           <Icon name="x" :size="13" />清除筛选
         </button>
@@ -102,76 +119,25 @@
         </div>
       </div>
 
-      <div class="board" :class="`view-${view}`">
-        <section
-          v-for="section in sections"
-          :key="section.key"
-          class="column"
-          :class="[`bucket-${section.bucket}`, { 'is-empty': !section.cards.length, collapsed: isCollapsed(section.collapseKey) }]"
-        >
-          <!-- 整条标题就是收放开关：收起后只留标题与条数，10 多块也能一眼扫完 -->
-          <button
-            class="column-head"
-            type="button"
-            :aria-expanded="!isCollapsed(section.collapseKey)"
-            :aria-label="`${isCollapsed(section.collapseKey) ? '展开' : '收起'}${section.title}`"
-            @click="toggleSection(section.collapseKey)"
-          >
-            <Icon class="column-caret" name="chevron-right" :size="13" />
-            <span class="column-title">{{ section.title }}</span>
-            <span class="column-count">{{ section.cards.length }}</span>
-            <span v-if="section.bucket === 'overdue' && section.cards.length" class="column-alert">先补</span>
-          </button>
-          <div v-show="!isCollapsed(section.collapseKey)" class="cards">
-            <article v-for="card in section.cards" :key="card.key" class="card" :class="{ overdue: card.overdue }">
-              <div class="card-head">
-                <p class="card-text">{{ card.card.text }}</p>
-                <button
-                  v-if="card.overdue"
-                  class="complete-task"
-                  type="button"
-                  :disabled="completingKeys.has(taskCardKey(card.card))"
-                  :aria-label="`标记已完成：${card.card.text}`"
-                  v-tooltip="'手动完成，并把点击日期写入 Markdown 文档'"
-                  @click="completeCard(card.card)"
-                >
-                  <AppSpinner v-if="completingKeys.has(taskCardKey(card.card))" :size="13" />
-                  <Icon v-else name="check" :size="13" />
-                  {{ completingKeys.has(taskCardKey(card.card)) ? '保存中…' : '完成' }}
-                </button>
-              </div>
-              <div class="meta">
-                <span v-if="card.card.owner" class="chip owner" v-tooltip="'责任人'">{{ card.card.owner }}</span>
-                <span
-                  v-if="card.card.when || card.card.repeat"
-                  class="chip when"
-                  v-tooltip="card.card.repeat ? `周期：${card.card.repeat}` : '材料里的时间写法'"
-                >{{ card.card.when || card.card.repeat }}</span>
-                <span
-                  class="chip customer"
-                  v-tooltip="card.card.customer ? '客户' : '没有客户，按端组归到内部工作'"
-                >{{ customerOf(card.card) }}</span>
-                <!-- 有客户时才单列端组：内部工作的客户胶囊已经写着「X 组内部工作」，再来一个端组就是重复 -->
-                <span v-if="card.card.customer" class="chip team" v-tooltip="'端组'">{{ card.card.team }}</span>
-                <span v-if="card.overdue" class="chip overdue-days">逾期 {{ card.overdueDays }} 天</span>
-              </div>
-              <button
-                v-if="targetOf(card.card).kind !== 'none'"
-                class="source"
-                type="button"
-                v-tooltip="'跳到依据的原文'"
-                @click="openSource(card.card)"
-              >
-                <Icon name="link" :size="12" />{{ targetOf(card.card).label }}
-              </button>
-              <span v-else-if="card.card.source" class="source plain">{{ card.card.source }}</span>
-            </article>
-            <p v-if="!section.cards.length" class="column-empty">
-              {{ section.bucket === 'day' ? '本日暂无' : '本列暂无' }}
-            </p>
-          </div>
-        </section>
-      </div>
+      <!-- 周视图：周一到周日 7 列；月视图：整月日历 + 各周负载（点某天切到那一周） -->
+      <TaskWeekBoard
+        v-if="view === 'week'"
+        :days="weekView.days"
+        :today="today"
+        @complete="completeCard"
+        @open="openSource"
+      />
+      <TaskMonthBoard v-else :model="monthView" :today="today" @pick="pickDay" />
+
+      <TaskBoardPanels
+        :overdue="panels.overdue"
+        :periodic="panels.periodic"
+        :later="panels.later"
+        :later-title="laterTitle"
+        :today="today"
+        :completing-keys="completingKeys"
+        @complete="completeCard"
+      />
 
       <p v-if="hasFilter && !filteredCards.length" class="filter-empty">
         当前筛选下没有任务——点「清除筛选」看全部。
@@ -216,22 +182,29 @@ import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
+import TaskBoardPanels from '../components/taskBoard/TaskBoardPanels.vue';
+import TaskMonthBoard from '../components/taskBoard/TaskMonthBoard.vue';
+import TaskWeekBoard from '../components/taskBoard/TaskWeekBoard.vue';
 import { api } from '../api';
 import { useTasksStore } from '../stores/tasks';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import {
+  addDays,
+  addMonths,
   boardCardCount,
   boardFacets,
-  boardView,
-  cardCustomer,
   cardToMarkdown,
   filterCards,
-  isOverdue,
   isoToday,
-  overdueDays,
-  sectionKey,
-  taskCardTarget,
+  mondayOf,
+  MONTH_LATER_BUCKET,
+  monthBoardView,
+  monthSections,
   taskCardKey,
+  taskCardTarget,
+  weekBoardView,
+  weekSections,
+  WEEK_LATER_BUCKET,
   type BoardFilter,
   type TaskBoardColumn,
   type TaskCard,
@@ -248,8 +221,8 @@ import { openPageStream } from '../lib/events';
  * 间隔在设置里调（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天），页头那个按钮只负责跳过去。
  * 逾期任务支持手动完成，将完成日期写回 Markdown 依据。
  *
- * 视图与筛选都在客户端做（数据已经是结构化的）：按天＝1、2、3… 每天要干什么；
- * 分列＝按来源三节。三档筛选共用，逾期单独一块放最前。
+ * 视图与筛选都在客户端做（数据已经是结构化的）：周视图＝这一周每天要干什么（周一→周日 7 列）；
+ * 月视图＝整月日历 + 各周负载。三档筛选共用，逾期 / 周期 / 其它时间单独成块。
  */
 const router = useRouter();
 const tasks = useTasksStore();
@@ -295,20 +268,80 @@ async function completeCard(card: TaskCard) {
   }
 }
 
-/* ===== 视图：按天 / 分列，选择记在本机 ===== */
-type ViewKey = 'day' | 'column';
+/* ===== 视图：周视图 / 月视图，选择记在本机（旧版「按天 / 分列」读到时统一归到周视图） ===== */
+type ViewKey = 'week' | 'month';
 const VIEWS: Array<{ key: ViewKey; label: string }> = [
-  { key: 'day', label: '按天' },
-  { key: 'column', label: '分列' },
+  { key: 'week', label: '周视图' },
+  { key: 'month', label: '月视图' },
 ];
 const VIEW_STORAGE = 'taskBoardView';
 function storedView(): ViewKey {
-  return localStorage.getItem(VIEW_STORAGE) === 'column' ? 'column' : 'day';
+  return localStorage.getItem(VIEW_STORAGE) === 'month' ? 'month' : 'week';
 }
 const view = ref<ViewKey>(storedView());
 function setView(next: ViewKey) {
   view.value = next;
   localStorage.setItem(VIEW_STORAGE, next);
+}
+
+/**
+ * 时间锚点：周视图看 weekStart 那一周，月视图看 monthAnchor 那个月。
+ * 默认跟着这份看板的窗口（服务端按答案生成时刻算好的「下周」）；用户自己翻过之后不再被刷新带跑。
+ */
+const today = computed(() => isoToday());
+const weekStart = ref(mondayOf(isoToday()));
+const monthAnchor = ref(weekStart.value.slice(0, 7));
+const manualSpan = ref(false);
+
+watch(
+  () => tasks.windowStart,
+  (value) => {
+    if (!value || manualSpan.value) return;
+    weekStart.value = mondayOf(value);
+    monthAnchor.value = weekStart.value.slice(0, 7);
+  },
+  { immediate: true }
+);
+
+function monthDay(date: string) {
+  const [, month, day] = date.split('-');
+  return `${Number(month)} 月 ${Number(day)} 日`;
+}
+
+/** 工具条上的时间范围：周视图「11 月 9 日 – 11 月 15 日」，月视图「2026 年 11 月」 */
+const spanLabel = computed(() => {
+  if (view.value === 'month') {
+    const [year, month] = monthAnchor.value.split('-').map(Number);
+    return `${year} 年 ${month} 月`;
+  }
+  return `${monthDay(weekStart.value)} – ${monthDay(addDays(weekStart.value, 6))}`;
+});
+
+/** 翻页：周视图一周一周翻，月视图一个月一个月翻；翻到别的月时周锚点落在那个月的第一个周一 */
+function shiftSpan(delta: number) {
+  manualSpan.value = true;
+  if (view.value === 'week') {
+    weekStart.value = addDays(mondayOf(weekStart.value), delta * 7);
+    monthAnchor.value = weekStart.value.slice(0, 7);
+    return;
+  }
+  monthAnchor.value = addMonths(monthAnchor.value, delta);
+  weekStart.value = mondayOf(`${monthAnchor.value}-01`);
+}
+
+function goToday() {
+  manualSpan.value = true;
+  const now = isoToday();
+  weekStart.value = mondayOf(now);
+  monthAnchor.value = now.slice(0, 7);
+}
+
+/** 月历里点某一天：切到那一周的周视图接着处理 */
+function pickDay(date: string) {
+  manualSpan.value = true;
+  weekStart.value = mondayOf(date);
+  monthAnchor.value = weekStart.value.slice(0, 7);
+  setView('week');
 }
 
 /* ===== 筛选：人物 / 客户 / 端组，同一档内「或」、档之间「且」 ===== */
@@ -339,72 +372,20 @@ function clearFilter() {
   filter.teams = [];
 }
 
-function customerOf(card: TaskCard) {
-  return cardCustomer(card);
-}
-
-/* ===== 收放：按「星期几 / 固定块」记在本机（日期一周一周变，存日期等于每周丢偏好） ===== */
-const COLLAPSE_STORAGE = 'taskBoardCollapsed';
-function storedCollapsed(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(COLLAPSE_STORAGE) || '[]');
-    return Array.isArray(raw) ? raw.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-const collapsed = ref<Set<string>>(new Set(storedCollapsed()));
-
-function isCollapsed(key: string) {
-  return collapsed.value.has(key);
-}
-
-function persistCollapsed() {
-  localStorage.setItem(COLLAPSE_STORAGE, JSON.stringify([...collapsed.value]));
-}
-
-function toggleSection(key: string) {
-  const next = new Set(collapsed.value);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  collapsed.value = next;
-  persistCollapsed();
-}
-
-const allCollapsed = computed(
-  () => sections.value.length > 0 && sections.value.every((section) => collapsed.value.has(section.collapseKey))
+/* ===== 分组：筛过的卡片 → 当前视图的每一块（口径在 taskBoardModel，界面只画） ===== */
+const weekView = computed(() => weekBoardView(filteredCards.value, weekStart.value, today.value));
+const monthView = computed(() => monthBoardView(filteredCards.value, monthAnchor.value, today.value));
+const panels = computed(() =>
+  view.value === 'week'
+    ? { overdue: weekView.value.overdue, periodic: weekView.value.periodic, later: weekView.value.later }
+    : { overdue: monthView.value.overdue, periodic: monthView.value.periodic, later: monthView.value.later }
 );
+const laterTitle = computed(() => (view.value === 'week' ? WEEK_LATER_BUCKET : MONTH_LATER_BUCKET));
 
-/** 全部收起 / 全部展开：一次改完，别让人一块一块点 */
-function toggleAllCollapsed() {
-  collapsed.value = allCollapsed.value
-    ? new Set()
-    : new Set(sections.value.map((section) => section.collapseKey));
-  persistCollapsed();
-}
-
-/* ===== 分组：筛过的卡片 → 当前视图的每一块 ===== */
-const rawSections = computed<TaskBoardColumn[]>(() => {
-  const model = boardView(filteredCards.value, { start: tasks.windowStart, end: tasks.windowEnd });
-  return view.value === 'day' ? model.day : model.column;
-});
-
-const sections = computed(() => {
-  const today = isoToday();
-  return rawSections.value.map((section) => ({
-    key: `${section.bucket}-${section.date}-${section.title}`,
-    /** 收放偏好的稳定标识：按星期几 / 固定块，不随日期变 */
-    collapseKey: sectionKey(section),
-    title: section.title,
-    bucket: section.bucket,
-    cards: section.cards.map((card, index) => ({
-      key: `${section.title}-${index}-${card.text.slice(0, 12)}`,
-      card,
-      overdue: isOverdue(card, today),
-      overdueDays: overdueDays(card, today),
-    })),
-  }));
-});
+/** 「复制清单」用当前视图的板块（周：七天 + 三块；月：有任务的日子 + 三块） */
+const currentSections = computed<TaskBoardColumn[]>(() =>
+  view.value === 'week' ? weekSections(weekView.value) : monthSections(monthView.value)
+);
 
 /** 页头「自动提炼」按钮上的档位文案（0 = 关闭自动；口径与设置页同一处：lib/boardAuto） */
 const autoLabel = computed(() => boardAutoLabel(tasks.autoDays));
@@ -543,16 +524,12 @@ async function openSource(card: TaskCard) {
   }
 }
 
-function targetOf(card: TaskCard) {
-  return taskCardTarget(card);
-}
-
 async function copyBoard() {
   const current = board.value;
   if (!current) return;
   try {
-    // 复制的是「我正在看的这一版」：视图与筛选都带上
-    await navigator.clipboard.writeText(cardToMarkdown(current, rawSections.value));
+    // 复制的是「我正在看的这一版」：视图（周/月）与筛选都带上
+    await navigator.clipboard.writeText(cardToMarkdown(current, currentSections.value));
     notify.success('清单已复制');
   } catch {
     notify.error('复制失败');
@@ -563,6 +540,11 @@ onMounted(async () => {
   // 能力位（能否就地跳设置改档位）与看板数据并行取，不互相等
   void loadCapabilities();
   const needsRefresh = await tasks.load();
+  // 进页面时看板窗口到了：没被用户翻过就跟到那一周（看板默认看「下周」）
+  if (tasks.windowStart && !manualSpan.value) {
+    weekStart.value = mondayOf(tasks.windowStart);
+    monthAnchor.value = weekStart.value.slice(0, 7);
+  }
   // 没有答案或已过期就自动重跑；正在跑的那一轮由 store 接上事件流，不重复触发
   if (needsRefresh && !tasks.running) await tasks.refresh();
   // 手机端：档位下拉的选项与初值（设置页那一类不渲染，只能就地改）
@@ -682,7 +664,7 @@ onBeforeUnmount(() => {
 .first-run-title { margin: 6px 0 0; color: var(--text-secondary); font-size: 13.5px; }
 .first-run-hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.8; }
 
-/* ===== 工具条：视图切换 + 条数 + 清除筛选 ===== */
+/* ===== 工具条：周 / 月视图切换 + 时间翻页 + 条数 ===== */
 .toolbar {
   display: flex;
   align-items: center;
@@ -713,6 +695,29 @@ onBeforeUnmount(() => {
   color: var(--text);
   font-weight: 600;
   box-shadow: var(--shadow-raised);
+}
+
+.date-nav { display: flex; align-items: center; gap: 2px; }
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.date-label {
+  min-width: 158px;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-count { color: var(--text-faint); font-size: 12px; }
@@ -775,216 +780,6 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
 }
 
-.board {
-  display: grid;
-  gap: 14px;
-  align-items: start;
-}
-
-/* 按天：一块一行、自上而下严格按顺序（周一到周五 → 周末 → 周期 / 逾期 / 待定）；
-   分列：四列并排。两块视图里卡片都在块内自动铺列 */
-.board.view-day { grid-template-columns: 1fr; }
-.board.view-column { grid-template-columns: repeat(4, minmax(220px, 1fr)); }
-
-.board.view-day .cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 8px;
-  align-items: start;
-}
-
-.column.collapsed { padding-bottom: 6px; }
-.column.collapsed .column-head { margin-bottom: 0; }
-
-/* 没安排的整天压成一行，别让「本日暂无」占掉半屏 */
-.column.is-empty { padding: 6px 12px; }
-.column.is-empty .column-empty { padding: 0; text-align: left; }
-.column.is-empty .column-title { color: var(--text-secondary); }
-
-/* 标题整条是开关：hover 给一点反馈，箭头收起时指右、展开时指下 */
-.column-head {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  padding: 2px 4px;
-  margin: -2px -4px 2px;
-  border-radius: var(--radius-control);
-  text-align: left;
-}
-
-.column-head:hover { background: var(--bg-hover); }
-
-.column-caret {
-  color: var(--text-faint);
-  transition: transform 140ms ease;
-}
-
-.column:not(.collapsed) .column-caret { transform: rotate(90deg); }
-
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
-}
-
-.column-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.column-title { font-size: 13px; font-weight: 600; }
-
-.column-count {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
-}
-
-.cards { display: flex; flex-direction: column; gap: 8px; }
-
-/* 2026-10 方案 A：更大圆角 + hover 轻浮起 */
-.card {
-  padding: 10px 11px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-raised);
-  transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
-}
-
-.card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-card);
-}
-
-.card-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text);
-}
-
-.meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-
-.chip {
-  padding: 1px 7px;
-  border-radius: 9px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 18px;
-}
-
-/* 2026-10 方案 A：四类胶囊统一走徽章色板（与首页类型徽章同一套 token） */
-.chip.owner { background: var(--accent-soft); color: var(--accent); }
-.chip.when { background: var(--badge-idea-soft); color: var(--badge-idea); }
-.chip.customer { background: var(--badge-entity-soft); color: var(--badge-entity); }
-.chip.team { background: var(--badge-note-soft); color: var(--badge-note); }
-.chip.overdue-days { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
-
-/* 逾期：整块与卡片都压一档红，扫一眼就知道先干这个 */
-.column.bucket-overdue { border-color: rgba(196, 43, 28, 0.28); background: var(--danger-soft); }
-.column.bucket-overdue .column-title { color: var(--danger); }
-.column.bucket-periodic { border-style: dashed; }
-.column.bucket-day.is-empty { opacity: 0.65; }
-.column.bucket-day.is-empty .cards { padding: 0; }
-
-.column-alert {
-  margin-left: auto;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: var(--danger);
-  color: #fff;
-  font-size: 10.5px;
-  line-height: 16px;
-}
-
-.card.overdue { border-color: rgba(196, 43, 28, 0.3); }
-.card.overdue .card-text { color: var(--danger); }
-.card-head { display: flex; align-items: flex-start; gap: 12px; }
-.card-head .card-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-
-/* 轻描边方案：完成操作常显，正文与按钮各占一格，不再给整张卡预留右侧空白。 */
-.complete-task {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  gap: 5px;
-  padding: 5px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: 16px;
-  background: var(--card-bg);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 18px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
-}
-.complete-task:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.complete-task:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.complete-task:disabled { opacity: 0.65; cursor: wait; }
-@media (hover: none) and (pointer: coarse) {
-  .complete-task { min-height: 44px; min-width: 72px; }
-}
-@media (max-width: 640px) {
-  .card-head { flex-wrap: wrap; gap: 6px; }
-  .card-head .card-text { flex-basis: 100%; }
-  .complete-task { margin-left: auto; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .complete-task { transition: none; }
-}
-
-.source {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  margin-top: 8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.source:hover { color: var(--accent); text-decoration: underline; }
-.source.plain { cursor: default; }
-.source.plain:hover { color: var(--text-faint); text-decoration: none; }
-
-.column-empty {
-  margin: 0;
-  padding: 10px 0;
-  color: var(--text-faint);
-  font-size: 12px;
-  text-align: center;
-}
-
 .gaps {
   margin-top: 18px;
   padding: 12px 14px;
@@ -1006,17 +801,14 @@ onBeforeUnmount(() => {
 .gaps ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.8; }
 .gaps-hint { margin: 8px 0 0; color: var(--text-faint); font-size: 11.5px; }
 
-/* 窄屏：所有列竖着排（手机、折叠屏内屏与窄窗口）；工具条与筛选折行。
-   断点收敛到规范三档里的 1024（原来写 900 是规范外的越档值）：900-1024 这段双列看板
-   本来就已经挤到放不下卡片，跟着紧凑档一起竖排，折叠屏/平板竖屏也不用再单独维护一档 */
+/* 窄屏：工具条与筛选折行；周/月视图内部自己按 1024 / 640 换形态 */
 @media (max-width: 1024px) {
   .tasks-view { padding: 16px 14px 32px; }
-  .board.view-column,
-  .board.view-day { grid-template-columns: 1fr; }
   .page-head { flex-wrap: wrap; }
   .running-bar { flex-wrap: wrap; }
   .running-bar .hint { margin-left: 0; }
   .toolbar { flex-wrap: wrap; }
   .filter-row { flex-direction: column; gap: 4px; }
+  .date-label { min-width: auto; }
 }
 </style>
