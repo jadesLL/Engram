@@ -47,10 +47,10 @@
           v-model="pageUrl"
           type="url"
           required
-          placeholder="粘贴网页链接，或 B站 / 抖音视频、图文链接"
+          placeholder="粘贴网页 / 知乎 / CSDN 链接，或 B站 / 抖音视频、图文链接"
           :disabled="fetchingUrl"
         />
-        <span class="tip-wrap" v-tooltip="'网页保存 HTML 原文；B站 / 抖音链接保存为占位稿，保存后点「提炼视频」——B站有 CC 字幕时优先按字幕提炼（不下载整段视频，更快更省流量），拿不到字幕再下载视频；抖音图文 / 实况笔记按多图理解；登录、验证码和依赖脚本的内容可能无法完整保存'">
+        <span class="tip-wrap" v-tooltip="'网页保存 HTML 原文；知乎 / CSDN 等有反爬校验的站点会由桌面端 / 手机端内置浏览器渲染后再保存（网页端请先在浏览器打开页面、另存为文件再拖入收集箱）；B站 / 抖音链接保存为占位稿，保存后点「提炼视频」——B站有 CC 字幕时优先按字幕提炼（不下载整段视频，更快更省流量），拿不到字幕再下载视频；抖音图文 / 实况笔记按多图理解；登录、验证码和依赖脚本的内容可能无法完整保存'">
           <button class="btn sm url-save" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
             <AppSpinner v-if="fetchingUrl" :size="14" />
             <template v-else>保存</template>

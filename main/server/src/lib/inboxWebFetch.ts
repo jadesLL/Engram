@@ -15,6 +15,10 @@ const TITLE_SCAN_BYTES = 256 * 1024;
 const MAX_URL_LENGTH = 4096;
 /** 空壳判定最多看这么多字节：大段内联脚本会把 <body>/挂载点推到 256KB 之后（实测 378KB 的分享页壳） */
 const SHELL_SCAN_BYTES = 4 * 1024 * 1024;
+/** 非 2xx 时最多读掉这么多响应体再主动断开：让连接正常收尾，又不把大页面整个下载下来 */
+const DISCARD_BODY_BYTES = 64 * 1024;
+/** 反爬拦截：这些状态码基本只出现在「请求被站点拦下」，客户端可用内置浏览器渲染后重试 */
+const ANTI_BOT_STATUSES = new Set([403, 412, 429, 451]);
 
 type ResolvedAddress = { address: string; family: number };
 type HostResolver = (hostname: string) => Promise<ResolvedAddress[]>;
@@ -157,6 +161,34 @@ function visibleTextLength(source: string): number {
     .replace(/\s+/g, '').length;
 }
 
+/** 反爬拦截页判定：可见文字低于此值才认（实测拦截页只有几十个字符，正常文章 ≥ 1740） */
+export const ANTI_BOT_TEXT_LIMIT = 1000;
+
+/**
+ * 反爬/风控拦截页的明确标记：知乎的 zse-ck 元信息、Cloudflare 挑战页的脚本与 class、
+ * 以及「安全验证 / 人机验证 / 访问异常」这类拦截页文案。
+ * 只匹配这些具体标记（正文里也会出现的「验证码」这类通用中文词不算），且必须配合
+ * 「可见文字很少」才判定，正常文章页提到这些词不会被误伤。
+ */
+const ANTI_BOT_MARKERS: RegExp[] = [
+  /\bzse-ck\b/i,
+  /\bcf-browser-verification\b/i,
+  /__cf_chl/i,
+  /当前请求存在异常/,
+  /请求存在异常/,
+  /访问异常/,
+  /安全验证/,
+  /人机验证/,
+  /\bgeetest\b/i,
+];
+
+/** HTML 源码 → 是不是一张反爬/风控拦截页（不是正文；交给客户端浏览器渲染） */
+export function isAntiBotInterstitialSource(source: string): boolean {
+  const body = source.match(/<body\b[^>]*>([\s\S]*)$/i)?.[1] ?? source;
+  if (visibleTextLength(body) >= ANTI_BOT_TEXT_LIMIT) return false;
+  return ANTI_BOT_MARKERS.some((pattern) => pattern.test(source));
+}
+
 /** 判定一个已落盘的 HTML 文件是不是「有挂载点但没有正文」（抓取路径与客户端渲染上传共用） */
 export function isScriptRenderedFile(absPath: string, textLimit = SHELL_TEXT_LIMIT): boolean {
   return isScriptRenderedSource(decodeHtmlBytes(readHead(absPath, SHELL_SCAN_BYTES)), textLimit);
@@ -196,6 +228,31 @@ function titleFromHtml(probe: Buffer, contentType: string, url: URL): string {
     return decodeURIComponent(last).replace(/\.(html?|php|aspx?)$/i, '').trim().slice(0, 120) || url.hostname;
   } catch {
     return url.hostname;
+  }
+}
+
+/**
+ * 读掉非 2xx 响应体的开头一小段再断开连接：既让 undici 正常收尾这条连接，
+ * 又不把反爬站点的整张拦截页下载下来（读满 DISCARD_BODY_BYTES 后主动 cancel）。
+ */
+async function discardResponseBody(response: Awaited<ReturnType<typeof undiciFetch>>): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+  const reader = body.getReader();
+  try {
+    let remaining = DISCARD_BODY_BYTES;
+    while (remaining > 0) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      remaining -= chunk.value.byteLength;
+    }
+  } catch {
+    /* 响应体读失败（对端断开等）：不用关心，下面照样取消 */
+  }
+  try {
+    await reader.cancel();
+  } catch {
+    /* 已经读到结尾，无需取消 */
   }
 }
 
@@ -247,8 +304,17 @@ export async function fetchInboxWebPage(
           continue;
         }
         if (!response.ok) {
-          await response.body?.cancel();
-          throw new InboxWebFetchError('网页抓取失败（HTTP ' + response.status + '）');
+          const status = response.status;
+          await discardResponseBody(response);
+          // 反爬站点（知乎等）会用 403/412/429/451 挡住服务端直连：这不是「页面不存在」，
+          // 客户端可以用内置浏览器渲染后重试，所以单独给 needs-render。
+          if (ANTI_BOT_STATUSES.has(status)) {
+            throw new InboxWebFetchError(
+              '这个站点有反爬校验（如知乎），服务端直接抓取被拒绝（HTTP ' + status + '）：桌面端/手机端会自动用内置浏览器渲染后保存，网页端可先在浏览器里打开页面、另存为文件再拖入收集箱',
+              'needs-render'
+            );
+          }
+          throw new InboxWebFetchError('网页抓取失败（HTTP ' + status + '）');
         }
         const contentType = response.headers.get('content-type') || '';
         const mime = contentType.split(';')[0].trim().toLowerCase();
@@ -276,7 +342,12 @@ export async function fetchInboxWebPage(
         await pipeline(Readable.fromWeb(response.body as any), scanTitle, fs.createWriteStream(tempPath));
         if (!bytes) throw new InboxWebFetchError('网页内容为空');
         const head = Buffer.concat(probe);
-        if (isScriptRenderedSource(decodeProbe(readHead(tempPath, SHELL_SCAN_BYTES), contentType))) {
+        const savedHead = decodeProbe(readHead(tempPath, SHELL_SCAN_BYTES), contentType);
+        // 200 也可能是反爬拦截页（知乎的验证页、Cloudflare 挑战页）：有明确标记且几乎没有可见文字，同样交给客户端渲染。
+        if (isAntiBotInterstitialSource(savedHead)) {
+          throw new InboxWebFetchError('服务端抓到的是这个站点的反爬拦截页（如知乎的验证页），不是文章正文：桌面端/手机端会自动用内置浏览器渲染后保存，网页端可先在浏览器里打开页面、另存为文件再拖入收集箱', 'needs-render');
+        }
+        if (isScriptRenderedSource(savedHead)) {
           throw new InboxWebFetchError('服务端抓到的这份 HTML 里几乎没有正文内容（这类页面的正文由 JavaScript 动态渲染）：桌面端/手机端会自动用内置浏览器渲染后保存，网页端可先在浏览器里另存为文件再拖入收集箱', 'needs-render');
         }
         // 注释放在文末，保留原网页开头的 BOM / DOCTYPE 与原始编码。

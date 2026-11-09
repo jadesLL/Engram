@@ -607,7 +607,7 @@
               type="url"
               inputmode="url"
               autocomplete="off"
-              placeholder="粘贴网页 / B站 / 抖音链接"
+              placeholder="粘贴网页 / 知乎 / CSDN / B站 / 抖音链接"
               :disabled="intakeBusy"
             />
             <button class="btn primary" type="submit" :disabled="intakeBusy || !intakeUrl.trim()">
@@ -616,7 +616,7 @@
           </form>
           <p class="mi-intake-note">
             <Icon name="info" :size="12" />
-            网页保存 HTML 原件；B站 / 抖音链接保存为占位稿，提炼时再取内容——B站有 CC 字幕时优先按字幕，拿不到字幕再取视频；抖音图文 / 实况笔记按多图理解。转换与入库仍由中枢执行。
+            网页保存 HTML 原件（知乎 / CSDN 等有反爬校验的站点先由本机内置浏览器渲染再保存）；B站 / 抖音链接保存为占位稿，提炼时再取内容——B站有 CC 字幕时优先按字幕，拿不到字幕再取视频；抖音图文 / 实况笔记按多图理解。转换与入库仍由中枢执行。
           </p>
         </section>
       </template>
