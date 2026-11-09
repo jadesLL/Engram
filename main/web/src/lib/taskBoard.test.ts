@@ -434,6 +434,18 @@ test('周视图：周一到周日 7 列，逾期 / 周期 / 其他时间各自�
     '北矿机电中空电机送样测试',
     '双周复盘两条区域级待办仍在挂账',
   ]);
+
+  // 看「本周」时，落在本周内的逾期卡按原日期留在当天列（从月历点那天切过来不会看到空周），
+  // 也不再重复进「已逾期」块：卡片总数照样守恒
+  const currentWeek = weekBoardView(boardCards(board), '2026-09-21', TODAY);
+  assert.deepEqual(currentWeek.days[4].cards.map((card) => card.text), ['锐洁确认货期（9/25 已到期）']);
+  assert.deepEqual(currentWeek.overdue, [], '本周内的逾期已经落在当天列里');
+  const currentTotal =
+    currentWeek.days.reduce((sum, day) => sum + day.cards.length, 0) +
+    currentWeek.overdue.length +
+    currentWeek.periodic.length +
+    currentWeek.later.length;
+  assert.equal(currentTotal, boardCardCount(board), '逾期卡换位置，不丢也不复制');
 });
 
 test('月视图：6×7 月历从周一开始，补格压暗；本月有日期的卡片进格子，逾期也标在原来那天', () => {
@@ -448,10 +460,11 @@ test('月视图：6×7 月历从周一开始，补格压暗；本月有日期的
   assert.ok(view.cells.some((cell) => !cell.inMonth), '前后补格是上 / 下个月的日期');
   assert.equal(view.weeks.filter((week) => week.current).length, 1, '今天所在的那一周标出来');
 
-  // 9/25 的逾期卡：既是逾期，也按原日期落在日历上（界面标红）
+  // 9/25 的逾期卡：按原日期落在日历上（界面标红），不再重复进「已逾期」块
   assert.deepEqual(view.byDate['2026-09-25'].map((card) => card.text), ['锐洁确认货期（9/25 已到期）']);
   assert.deepEqual(view.byDate['2026-09-28'].map((card) => card.text), ['经理群提交下周重点改进工作'], '周期事项不进日历');
-  assert.deepEqual(view.overdue.map((card) => card.text), ['锐洁确认货期（9/25 已到期）']);
+  assert.deepEqual(view.overdue, [], '本月内的逾期已经落在日历格里');
+  assert.equal(view.weeks[0].daysInMonth, 6, '9 月第一周从 8/31 起算，只有 6 天在 9 月');
   assert.deepEqual(view.periodic.map((card) => card.text), ['每日日课三条打卡']);
   assert.deepEqual(view.later.map((card) => card.text), [
     '汉普达样机搭平台备战工博会',
@@ -462,16 +475,24 @@ test('月视图：6×7 月历从周一开始，补格压暗；本月有日期的
   // 各周负载只数「落在本月的有日期任务」：9/25、9/28、9/29 三张
   assert.equal(view.weeks.reduce((sum, week) => sum + week.count, 0), 3);
 
-  // 10 月：9 月的两张卡进「本月之外」，10/9 与 10/15 进格子
+  // 10 月：9 月的两张卡进「其他时间」，10/9 与 10/15 进格子；
+  // 9/25 的逾期卡不在 10 月里，所以进「已逾期」块（不能从看板上消失）
   const october = monthBoardView(boardCards(board), '2026-10', TODAY);
   assert.deepEqual(october.byDate['2026-10-09'].map((card) => card.text), ['汉普达样机搭平台备战工博会']);
   assert.deepEqual(october.byDate['2026-10-15'].map((card) => card.text), ['北矿机电中空电机送样测试']);
+  assert.deepEqual(october.overdue.map((card) => card.text), ['锐洁确认货期（9/25 已到期）']);
   assert.deepEqual(october.later.map((card) => card.text), [
     '经理群提交下周重点改进工作',
     '赴湖州拉研发交流、现场考察',
     '双周复盘两条区域级待办仍在挂账',
   ]);
   assert.equal(october.weeks.reduce((sum, week) => sum + week.count, 0), 2);
+
+  // 首尾周只有 1 天落在本月时标出来（负载条不整周同轴比较）
+  const november = monthBoardView(boardCards(board), '2026-11', TODAY);
+  assert.equal(november.weeks[0].daysInMonth, 1, '10/26–11/1 只有 11/1 在 11 月');
+  assert.equal(november.weeks[5].daysInMonth, 1, '11/30–12/6 只有 11/30 在 11 月');
+  assert.ok(november.weeks.slice(1, 5).every((week) => week.daysInMonth === 7));
 });
 
 test('复制清单跟着当前视图走：周视图七节 + 逾期 / 周期 / 其他时间，月视图只列有任务的日子', () => {
@@ -489,4 +510,11 @@ test('复制清单跟着当前视图走：周视图七节 + 逾期 / 周期 / �
   assert.match(monthText, /## 9\/28 周一/);
   assert.doesNotMatch(monthText, /## 9\/30 周三/, '月视图不铺空日期');
   assert.match(monthText, new RegExp('## ' + MONTH_LATER_BUCKET));
+  assert.doesNotMatch(monthText, /## 已逾期/, '9 月的逾期卡已经在日历节里，不再单开一节');
+  assert.equal(monthText.match(/锐洁确认货期/g)?.length, 1, '逾期卡在复制清单里只出现一次');
+
+  // 10 月：9/25 的逾期卡不在本月，进「已逾期」一节
+  const octoberText = cardToMarkdown(board, monthSections(monthBoardView(boardCards(board), '2026-10', TODAY)));
+  assert.match(octoberText, /## 已逾期/);
+  assert.equal(octoberText.match(/锐洁确认货期/g)?.length, 1);
 });

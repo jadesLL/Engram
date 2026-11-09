@@ -1,7 +1,7 @@
 <template>
-  <!-- 三块收尾：已逾期（可手动完成）/ 周期 · 例行 / 不在当前视图的其它时间 -->
-  <div class="board-panels">
-    <section class="panel overdue">
+  <!-- 收尾块：已逾期（可手动完成）/ 周期 · 例行 / 其他时间；周视图会把逾期条移到看板上方，这里不重复 -->
+  <div class="board-panels" :class="{ two: hideOverdue }">
+    <section v-if="!hideOverdue" class="panel overdue">
       <h3><Icon name="alert" :size="13" />已逾期<span class="num">{{ overdue.length }} 件</span></h3>
       <ul v-if="overdue.length" class="rows">
         <li v-for="card in overdue" :key="taskCardKey(card)" class="row">
@@ -59,6 +59,8 @@ defineProps<{
   laterTitle: string;
   today: string;
   completingKeys: Set<string>;
+  /** 周视图把逾期条放到看板上方，这里就不再画一遍 */
+  hideOverdue?: boolean;
 }>();
 defineEmits<{ (e: 'complete', card: TaskCard): void }>();
 </script>
@@ -71,6 +73,7 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
   gap: 10px;
   margin-top: 12px;
 }
+.board-panels.two { grid-template-columns: 1fr 1fr; }
 .panel {
   min-width: 0;
   padding: 10px 12px 11px;
@@ -90,7 +93,7 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
   color: var(--text-secondary);
 }
 .panel.overdue h3 { color: var(--danger); }
-.panel .num { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-faint); font-weight: 600; }
+.panel .num { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-weight: 600; }
 .rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .row { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--text); }
 .row .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -107,7 +110,7 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
 .chip.over { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
 .panel.overdue .chip.over { background: var(--card-bg); }
 .chip.when { background: var(--badge-idea-soft); color: var(--badge-idea); }
-.none { margin: 0; padding: 4px 0; font-size: 11.5px; color: var(--text-faint); }
+.none { margin: 0; padding: 4px 0; font-size: 11.5px; color: var(--text-secondary); }
 .complete-task {
   flex: none;
   display: inline-flex;
@@ -131,6 +134,6 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
   .complete-task { min-height: 44px; min-width: 72px; justify-content: center; }
 }
 @media (max-width: 1024px) {
-  .board-panels { grid-template-columns: 1fr; }
+  .board-panels, .board-panels.two { grid-template-columns: 1fr; }
 }
 </style>

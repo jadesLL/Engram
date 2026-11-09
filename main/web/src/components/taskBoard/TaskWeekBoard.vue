@@ -18,9 +18,9 @@
           v-for="card in day.cards"
           :key="taskCardKey(card)"
           :card="card"
-          :overdue="false"
-          :overdue-days="0"
-          :completing="false"
+          :overdue="isOverdue(card, today)"
+          :overdue-days="overdueDays(card, today)"
+          :completing="completingKeys.has(taskCardKey(card))"
           @complete="$emit('complete', $event)"
           @open="$emit('open', $event)"
         />
@@ -32,9 +32,17 @@
 
 <script setup lang="ts">
 import TaskCardItem from './TaskCardItem.vue';
-import { isWeekend, taskCardKey, weekdayOf, type TaskCard, type WeekColumnView } from '../../lib/taskBoard';
+import {
+  isOverdue,
+  isWeekend,
+  overdueDays,
+  taskCardKey,
+  weekdayOf,
+  type TaskCard,
+  type WeekColumnView,
+} from '../../lib/taskBoard';
 
-defineProps<{ days: WeekColumnView[]; today: string }>();
+defineProps<{ days: WeekColumnView[]; today: string; completingKeys: Set<string> }>();
 defineEmits<{ (e: 'complete', card: TaskCard): void; (e: 'open', card: TaskCard): void }>();
 
 /** 11/9 */
@@ -76,6 +84,7 @@ function shortDate(date: string) {
 }
 .day-weekday { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .day-col.today .day-weekday { color: var(--accent); }
+.day-date { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .day-today {
   font-style: normal;
   font-size: 9.5px;
@@ -86,7 +95,6 @@ function shortDate(date: string) {
   color: var(--accent);
   line-height: 16px;
 }
-.day-date { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .day-count {
   margin-left: auto;
   min-width: 18px;
@@ -99,7 +107,7 @@ function shortDate(date: string) {
   text-align: center;
 }
 .day-cards { display: flex; flex-direction: column; gap: 8px; }
-.day-empty { margin: 0; padding: 12px 0; text-align: center; font-size: 11.5px; color: var(--text-faint); }
+.day-empty { margin: 0; padding: 12px 0; text-align: center; font-size: 11.5px; color: var(--text-secondary); }
 
 /* 窄窗口 / 平板竖屏：7 列放不下，改成一天一块竖排（与手机端同一口径） */
 @media (max-width: 1024px) {
