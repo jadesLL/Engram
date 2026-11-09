@@ -151,7 +151,7 @@
                   <span class="tab-n">{{ String(index + 1).padStart(2, '0') }}</span>{{ section.title }}
                 </button>
               </nav>
-              <!-- 窄容器里 9 个中文标题会折成三四行标签条，改成下拉 -->
+              <!-- 窄容器里 11 个中文标题会折成三四行标签条，改成下拉 -->
               <div class="tabs-select">
                 <AppSelect v-model="activeSectionValue" :options="sectionOptions" aria-label="报告章节" />
               </div>
@@ -252,6 +252,14 @@
         <div v-if="profileText" class="blk">
           <h4>{{ reportMode === 'brief' ? '已知事实' : '客户概况' }}</h4>
           <p class="aside-p clamp">{{ profileText }}</p>
+        </div>
+        <div v-if="modelsText" class="blk">
+          <h4>主要机型</h4>
+          <p class="aside-p clamp">{{ modelsText }}</p>
+        </div>
+        <div v-if="competitorsText" class="blk">
+          <h4>竞品情况</h4>
+          <p class="aside-p clamp">{{ competitorsText }}</p>
         </div>
         <div v-if="opportunities.length" class="blk">
           <h4>机会与风险</h4>
@@ -391,7 +399,7 @@ type ExistingReport = { path: string; title: string; customerName: string; repor
 type CustomerGroup = { name: string; tasks: Task[]; latest: Task };
 /** 报告里的一个章节：标题 + 本章正文（不含标题行） */
 type ReportSection = { id: string; title: string; body: string };
-/** 报告模式：完整 8 章 / 资料不足简报 3 章 / 主体核验 3 章（后两种章节固定，标题由服务端生成） */
+/** 报告模式：完整 10 章 / 资料不足简报 3 章 / 主体核验 3 章（后两种章节固定，标题由服务端生成） */
 type ReportMode = VerdictMode;
 const MODE_LABEL: Record<ReportMode, string> = { full: '完整报告', brief: '资料不足简报', 'identity-check': '主体核验' };
 const VERDICT_STATUS_LABEL: Record<VerdictStatus, string> = { verified: '主体已核实', 'kb-docs': '未经工商核实', 'not-found': '查无此主体' };
@@ -733,8 +741,21 @@ function listItemsOf(body: string): string[] {
 function firstText(body: string): string {
   return firstParagraph(body) || listItemsOf(body).slice(0, 2).join('；');
 }
+/** 右栏速览的短文本：优先列表条目（最多 limit 条，去掉引用角标与句末标点后连接），没有列表再退回首段——
+    避免只显示「主力机型与定位：」这类标题式引导语，也避免「。；」这种两套标点撞在一起 */
+function asidePoints(body: string, limit = 2): string {
+  return listItemsOf(body)
+    .slice(0, limit)
+    .map((item) => item.replace(/\[\d+\]/g, '').replace(/[。；;，,\s]+$/, ''))
+    .filter(Boolean)
+    .join('；') || firstText(body);
+}
 const summaryText = computed(() => firstText(bodyOf('summary', '摘要', '结论')) || firstParagraph(sections.value[0]?.body ?? ''));
 const profileText = computed(() => firstText(bodyOf('profile', '客户概况', '主体', '事实')));
+/** 机型与竞品是完整报告的两章：右栏直接亮出结论，不必先点章节。两章常写成列表，
+    首段往往只是「主力机型与定位：」这类引导语，所以优先取列表条目 */
+const modelsText = computed(() => asidePoints(bodyOf('models', '机型')));
+const competitorsText = computed(() => asidePoints(bodyOf('competitors', '竞品')));
 const opportunities = computed(() => listItemsOf(bodyOf('opportunities', '机会', '需求')).slice(0, 3));
 const gapCount = computed(() => reportMode.value === 'identity-check'
   ? (bodyOf('gaps', '确认').trim() ? 1 : 0)
@@ -1148,7 +1169,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 
 @keyframes arrive { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
 
-/* 全页唯一一处离散切换：容器放不下时，9 个中文标题的标签条会折成三四行，改成下拉。
+/* 全页唯一一处离散切换：容器放不下时，11 个中文标题的标签条会折成三四行，改成下拉。
    其余尺寸（列宽、间距、内边距、头像、档案标题字号）都由上面的 cqw + clamp 连续换算，不跳档 */
 @container (max-width:1180px) {
   .cols-main .tabs { display:none; }

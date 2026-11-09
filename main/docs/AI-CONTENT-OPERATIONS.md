@@ -8,7 +8,7 @@
 
 ## 客户调研
 
-内置与外部 Agent 的客户调研共用 `engram-customer-research` 入口 skill 与服务端 v3 契约。先 `engram research begin --customer <客户> [--scope knowledge-web|knowledge-only] [--save]` 固定任务版本并取回 `identityContract` / `reportContract` / `modeRules` / `existingReports` / `saveMode`，**第一步核验客户主体**（公开工商/官方渠道优先，其次知识库原始资料），再按证据量选报告模式（完整 8 章 / 资料不足简报 3 章 / 主体核验 2 章），最后 `engram research submit --task <taskId> --file report.json`（报告 JSON 含 `identity` / `sections` / `sources` / `save` / `saveMode` / `overwritePath`）校验。`identity` 必填（status=verified/kb-docs/not-found + method + attempts + evidence，verified 还要 fullName），v1 的 `companyFullName` 已被拒绝；公开渠道与知识库都确认不了主体时判 `not-found`，只交核验结论并质疑客户是否存在、名称是否写错，不写客户分析、不落文件；「仅知识库资料」不能声称 `verified`，kb-docs 证据必须是 `原始资料/` 下的原始文档。报告每章有长度上限、来源按工商/官方/媒体/库内分类并逐条登记，禁止方法说明、能力声明与行业泛论。
+内置与外部 Agent 的客户调研共用 `engram-customer-research` 入口 skill 与服务端 v4 契约。先 `engram research begin --customer <客户> [--scope knowledge-web|knowledge-only] [--save]` 固定任务版本并取回 `identityContract` / `reportContract` / `modeRules` / `existingReports` / `saveMode`，**第一步核验客户主体**（公开工商/官方渠道优先，其次知识库原始资料），再按证据量选报告模式（完整 10 章 / 资料不足简报 3 章 / 主体核验 2 章），最后 `engram research submit --task <taskId> --file report.json`（报告 JSON 含 `identity` / `sections` / `sources` / `save` / `saveMode` / `overwritePath`）校验。`identity` 必填（status=verified/kb-docs/not-found + method + attempts + evidence，verified 还要 fullName），v1 的 `companyFullName` 已被拒绝；公开渠道与知识库都确认不了主体时判 `not-found`，只交核验结论并质疑客户是否存在、名称是否写错，不写客户分析、不落文件；「仅知识库资料」不能声称 `verified`，kb-docs 证据必须是 `原始资料/` 下的原始文档。报告每章有长度上限、来源按工商/官方/媒体/库内分类并逐条登记，禁止方法说明、能力声明与行业泛论。完整报告固定含「主要机型」「竞品情况」两章（各需至少 1 处引用）：优先从知识库原始资料与客户官网/招投标等公开材料提炼机型、竞品品牌与份额，查不到就按证据量降级为简报。
 
 **入库与记录纪律（v3）**：
 

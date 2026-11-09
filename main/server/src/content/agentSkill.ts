@@ -169,9 +169,10 @@ ${CUSTOMER_RESEARCH_TRIGGER}
    - 只在用户要求保存时加 \`--save\`；知识库已有该客户报告（返回 existingReports）且用户要求保存时，必须先问用户「生成新版本还是覆盖旧报告」，再传 \`--save-mode new\` 或 \`--save-mode overwrite --overwrite-path <已有报告 path>\`。
    - 返回 taskId、workflow、identityContract、reportContract、modeRules；按返回执行，不要凭记忆复用流程。
 2. 先核验客户主体：用公开工商 / 官方渠道（企查查、天眼查、国家企业信用信息公示系统、公司官网、年报 / 公告）或知识库原始资料核对输入名称，记录查过的渠道与关键词（attempts）。公开渠道与知识库都确认不了主体时，identity.status 填 not-found——必须质疑客户是否存在或名称写错，只交「主体核验」短报告，不写客户分析。知识库里只有名称提法、名单条目、Wiki 页面不算主体证据。
-3. 按证据量选模式（服务端校验）：完整报告（8 章，仅 knowledge-web + verified，外部来源 ≥2、来源总数 ≥3 且至少 1 条工商 / 官方来源）／资料不足简报（summary / facts / gaps）／主体核验短报告（summary / gaps）。达不到就降级，不要用行业泛论凑章节。
+3. 按证据量选模式（服务端校验）：完整报告（10 章，含主要机型与竞品情况；仅 knowledge-web + verified，外部来源 ≥2、来源总数 ≥3 且至少 1 条工商 / 官方来源）／资料不足简报（summary / facts / gaps）／主体核验短报告（summary / gaps）。达不到就降级，不要用行业泛论凑章节。
+   - 完整报告的「主要机型」「竞品情况」两章各需 ≥1 处 [来源编号] 引用：优先查知识库原始资料（拜访/技术交流纪要、报价单、设备配置表、合同、招投标文件），再查外部（客户官网产品页、招投标与中标公告、行业媒体、专利、招聘 JD）；查不到就按证据量降级为简报，不要用行业泛论凑章节。
 4. 报告写成 JSON 后提交：\`{{ENGRAM}} research submit --task <taskId> --file report.json\`（或 \`--file -\` 从 stdin 读）
-   - sections 键随模式：完整 8 章全部；简报 summary / facts / gaps；主体核验 summary / gaps。
+   - sections 键随模式：完整 10 章全部（含 models=主要机型、competitors=竞品情况）；简报 summary / facts / gaps；主体核验 summary / gaps。
    - sources 每条写 id、title、url 或 path、kind（registry / official / media / kb-doc / kb-page）、publishedAt（未知写「未标注」）、accessedAt（YYYY-MM-DD）。
    - 校验失败按返回问题修正，不要绕过；来源不足如实降级，不声称已联网或获得最新信息。
 5. 保存与入库：完整报告自动入库；资料不足简报只留在客户洞察页、不自动导入（不要声称已保存）；主体核验不保存。外部对话只有用户明确要求保存才 save=true。
