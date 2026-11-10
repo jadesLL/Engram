@@ -426,10 +426,21 @@ function summaryOf(module: HomeModule): HomeCardSummary {
 function computeSummary(module: HomeModule): HomeCardSummary {
   const rowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:documentTitleParts(p.title || String(p.path || '').split('/').pop() || '未命名').name, detail:p.updated_at ? sinceShort(p.updated_at) : '', meta:pageBadge(p).meta,type:pageBadge(p).label, path:p.id ? `/page/${p.id}` : p.path ? `/page?file=${encodeURIComponent(p.path)}` : undefined }));
   const pageSummary = (list: any[], empty: string): HomeCardSummary => ({ value:list.length,label:'篇页面',presentation:'list',rows:rowsOf(list,limitOf(module.opts,12,20)),empty });
+  /**
+   * 近期灵感（2026-11-10 卡片美化）：跟「最近更新」并排时不能再长得一样。
+   * 最近更新按「多久以前更新」排，这里按「哪天记下的 + 灵感碎片」排；标题里的日期前缀已经由 documentTitleParts 去掉。
+   */
+  const recordedDate = (page: any): string => {
+    const matched = String(page?.title || '').match(/(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/);
+    if (matched) return `${matched[1]}.${matched[2].padStart(2,'0')}.${matched[3].padStart(2,'0')}`;
+    const stamp = page?.created_at || page?.updated_at;
+    return stamp ? String(stamp).slice(0, 10).split('-').join('.') : '';
+  };
+  const noteRowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:documentTitleParts(p.title || String(p.path || '').split('/').pop() || '未命名').name, detail:recordedDate(p), meta:'灵感碎片', type:'灵感', tone:'idea', path:p.id ? `/page/${p.id}` : undefined }));
   const facts: HomeCardRow[] = [
-    {text:'概念',detail:counts.value.concepts,amount:counts.value.concepts,path:'/search?q=概念'},
-    {text:'实体',detail:counts.value.entities,amount:counts.value.entities,path:'/search?q=实体'},
-    {text:'资料',detail:counts.value.files,amount:counts.value.files,path:'/search?q=原始资料'},
+    {text:'概念',detail:counts.value.concepts,amount:counts.value.concepts,path:'/search?q=概念',tone:'concept'},
+    {text:'实体',detail:counts.value.entities,amount:counts.value.entities,path:'/search?q=实体',tone:'entity'},
+    {text:'资料',detail:counts.value.files,amount:counts.value.files,path:'/search?q=原始资料',tone:'note'},
   ];
   switch (module.kind) {
     case 'ask': return { value:'问答', label:'向 Agent 提问', action:true };
@@ -437,7 +448,7 @@ function computeSummary(module: HomeModule): HomeCardSummary {
     case 'stats': return {value:stats.value.pages,label:'知识页面',rows:facts,chart:'bars',footer:`总计 ${words.value.toLocaleString()} 字`};
     case 'ring': { const ratios=ratioRows(props.pages,props.fileCount);return {value:ratios.total,label:'项知识与资料',rows:ratios.rows.map((r,i)=>({...facts[i],detail:`${r.value} · ${Math.round(r.ratio*100)}%`})),chart:'ring'}; }
     case 'tasks': return {value:taskCards.value.length,label:'件待办',presentation:'tasks',badge:overdueCount.value?{tone:'danger',text:`${overdueCount.value} 逾期`}:undefined,rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,meta:taskMeta(c),badge:{text:dueLabel(c),tone:isOverdueCard(c)?'danger':'plain'},path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
-    case 'notes': return pageSummary(props.ideaItems,'还没有灵感，记下一条想法');
+    case 'notes': return {value:props.ideaItems.length,label:'条灵感',presentation:'list',rows:noteRowsOf(props.ideaItems,limitOf(module.opts,12,20)),empty:'还没有灵感，记下一条想法'};
     case 'recent': return pageSummary(props.recentItems,'还没有最近更新的页面');
     case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动');
     case 'fresh': return pageSummary(freshItems.value,'最近七天还没有新增页面');

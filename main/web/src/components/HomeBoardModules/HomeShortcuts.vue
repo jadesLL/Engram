@@ -1,7 +1,7 @@
 <template>
   <!-- 快捷入口：轻量图标与文字，横条按可用宽度均分。 -->
   <div class="welcome-cards">
-    <button class="welcome-card" type="button" @click="go('/page')">
+    <button class="welcome-card primary" type="button" @click="go('/page')">
       <span class="wc-icon"><Icon name="file-plus" :size="17" /></span>
       <span class="wc-text"><strong>新建页面</strong><em>存到 Wiki</em></span>
     </button>
@@ -90,8 +90,8 @@ function go(path: string) {
   transition: background 150ms ease, color 150ms ease;
 }
 .wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wc-text strong { font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--text); }
-.wc-text em { font-style: normal; font-size: 11px; color: var(--text-faint); }
+.wc-text strong { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--text); }
+.wc-text em { font-style: normal; font-size: 11.5px; color: var(--text-muted, var(--text-faint)); }
 .short-label { display: none; }
 @container (max-width: 520px) {
   .full-label { display: none; }
@@ -119,8 +119,12 @@ function go(path: string) {
   }
   .welcome-card:hover { background: var(--bg-secondary); }
   .wc-icon { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); box-shadow: none; }
+  /* 主操作给实底：横条档也只有「新建页面」是蓝的，其余都是中性图标 */
+  .welcome-card.primary .wc-icon { background: var(--accent); color: #fff; }
+  .welcome-card.primary .wc-text strong { color: var(--text); font-weight: 600; }
   .wc-text { align-items: center; gap: 0; max-width: 100%; }
   .wc-text strong {
+    /* 横条档 328px 宽要塞 6 个入口：11.5px 会把「问 Agent」挤成省略号 */
     font-size: 11px;
     max-width: 100%;
     overflow: hidden;

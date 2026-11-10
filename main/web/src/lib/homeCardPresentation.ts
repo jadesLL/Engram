@@ -23,6 +23,8 @@ export interface HomeCardRow {
   amount?: number;
   path?: string;
   action?: 'chat' | 'capture';
+  /** 分类色（概念蓝 / 实体紫 / 资料青 / 灵感琥珀）：只给需要区分类型的统计行与徽章 */
+  tone?: 'concept' | 'entity' | 'note' | 'idea';
 }
 
 /** 状态结论的色调：ok = 正常（绿点），busy = 进行中（蓝点），warn = 需要注意（橙点），muted = 未配置 / 无数据（灰点） */
@@ -90,7 +92,8 @@ export function cardContentPlan(width: number, height: number, count: number, ch
   const chartHeight = !narrow && chart && chart !== 'bars' && remaining >= 70
     ? Math.min(180, Math.floor(remaining * 0.4))
     : 0;
-  const rowHeight = narrow ? 30 : options.list ? 66 : chart === 'bars' ? 38 : 34;
+  /* bars 行是「标签 + 进度条 + 数值」的单行，31px 才能在 328×243 的概览卡里排下三类（38 只排得下两类） */
+  const rowHeight = narrow ? 30 : options.list ? 66 : chart === 'bars' ? 31 : 34;
   const rows = Math.min(
     Math.max(0, count),
     Math.max(0, Math.floor((remaining - chartHeight - (chartHeight ? gap : 0)) / rowHeight))

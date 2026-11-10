@@ -62,18 +62,19 @@
       </div>
       <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars' }" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
         <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" :title="[row.text,row.meta,row.detail,row.badge?.text].filter(Boolean).join(' · ')" :aria-label="[row.text,row.meta,row.detail,row.badge?.text].filter(v => v !== undefined).join(' · ')" @click="activate(row)">
-          <span v-if="detailedRows && !plan.narrow && row.type" class="row-type" :class="{ idea: row.type === '灵感' }">{{ row.type.slice(0,1) }}</span>
+          <span v-if="detailedRows && !plan.narrow && row.type" class="row-type" :class="[row.tone ? `tone-${row.tone}` : '', { idea: row.type === '灵感' }]">{{ row.type.slice(0,1) }}</span>
           <span class="row-copy"><span class="row-text">{{ row.text }}</span><small v-if="detailedRows && !plan.narrow && (row.meta || row.detail !== undefined)">{{ [row.detail, row.meta].filter(v => v !== undefined && v !== '').join(' · ') }}</small></span>
           <span v-if="!plan.narrow && row.badge" class="row-badge" :class="row.badge.tone">{{ row.badge.text }}</span>
           <small v-else-if="!detailedRows && !plan.narrow && row.detail !== undefined">{{ row.detail }}</small>
-          <i v-if="summary.chart === 'bars'" class="row-track"><b :style="{ width: `${maxAmount ? Math.max(0,(row.amount || 0) / maxAmount * 100) : 0}%` }" /></i>
+          <i v-if="summary.chart === 'bars'" class="row-track"><b :class="row.tone ? `tone-${row.tone}` : ''" :style="{ width: `${maxAmount ? Math.max(0,(row.amount || 0) / maxAmount * 100) : 0}%` }" /></i>
         </button>
       </div>
       <button v-else-if="summary.empty" type="button" class="summary-empty" @click="$emit('open')">
         <span class="e-icon"><Icon :name="icon" :size="20" /></span>
         <span class="e-text">{{ summary.empty }}</span>
       </button>
-      <button v-if="hasFooter" type="button" class="summary-foot" @click="$emit('open')"><span>{{ summary.footer || (shown.length < (summary.rows?.length || 0) ? `显示 ${shown.length} / ${summary.rows?.length} 条` : '') }}</span><span class="foot-action">全部 <Icon name="arrow-up-right" :size="12" /></span></button>
+      <!-- 一卡一个出口（2026-11-10）：删掉「显示 2 / 5 条」这类报数脚注，只留可执行的去向。 -->
+      <button v-if="hasFooter" type="button" class="summary-foot" @click="$emit('open')"><span>{{ summary.footer || '' }}</span><span class="foot-action">全部 <Icon name="arrow-up-right" :size="12" /></span></button>
     </template>
   </div>
 </template>
@@ -136,7 +137,7 @@ onUnmounted(()=>observer?.disconnect());
 .tier-bar .sync-summary {flex:1;padding-right:22px}
 .sync-state {display:flex;align-items:center;gap:7px;max-width:100%;font-size:15px;font-weight:550;line-height:1.4;overflow-wrap:anywhere}
 /* 单行省略：两行说明（约 63px）会突破 cardContentPlan 数值区 46px 的预算，把下方列表行截半 */
-.sync-description {max-width:100%;font-size:11px;line-height:1.5;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sync-description {max-width:100%;font-size:11.5px;line-height:1.5;color:var(--text-muted, var(--text-secondary));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sync-arrow {position:absolute;right:0;top:50%;transform:translateY(-50%);color:var(--text-faint);transition:color 150ms ease}
 .sync-summary:hover .sync-arrow {color:var(--accent)}
 /* 与 cardContentPlan 的 gap（8px）严格对齐：超出几像素，最后一行就会被 overflow 裁掉一截 */
@@ -175,7 +176,7 @@ onUnmounted(()=>observer?.disconnect());
 /* ===== 横条（h=1, w≥2）===== */
 .tier-bar {flex-direction:row;align-items:stretch}
 .bar-main {flex:none;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 16px 0 2px;min-width:0;text-align:left;color:var(--text)}
-.bar-main .k {display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-faint);white-space:nowrap}
+.bar-main .k {display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-muted, var(--text-faint));white-space:nowrap}
 .bar-main .k :deep(svg) {color:var(--accent)}
 .bar-main .v {font-size:22px;font-weight:650;letter-spacing:-.02em;white-space:nowrap;display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums}
 .bar-main .v.stat {font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px;letter-spacing:0}
@@ -183,41 +184,45 @@ onUnmounted(()=>observer?.disconnect());
 .bar-div {flex:none;width:1px;background:var(--border);margin:12px 12px 12px 0}
 .bar-body {flex:1;min-width:0;display:flex;align-items:center;padding:0 2px 0 0;text-align:left;color:var(--text)}
 .bar-body .one {flex:1;min-width:0}
-.bar-body .t {display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bar-body .d {display:block;font-size:10.5px;color:var(--text-faint);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-body .t {display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-body .d {display:block;font-size:11.5px;color:var(--text-muted, var(--text-faint));margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ===== 竖条 / 标准 ===== */
 .summary-metric {display:flex;align-items:baseline;gap:8px;padding:0;min-width:0;flex:none;text-align:left;color:var(--text)}
 .summary-value {font-size:30px;line-height:1.2;font-weight:650;letter-spacing:-.035em;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .summary-stat {font-size:19px;font-weight:600;letter-spacing:-.01em;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden}
 .summary-act {font-size:19px;font-weight:600;color:var(--accent);white-space:nowrap}
-.summary-label {font-size:11px;line-height:1.35;color:var(--text-faint);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.summary-label {font-size:11.5px;line-height:1.35;color:var(--text-muted, var(--text-faint));min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* 列表按内容排布，只显示预算内的完整行；底部入口独立固定。 */
 .summary-rows {display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;margin-top:8px;overflow:hidden}
-.summary-row {position:relative;display:flex;align-items:center;gap:10px;flex:none;min-height:var(--summary-row-height,34px);height:var(--summary-row-height,34px);min-width:0;text-align:left;border-top:1px solid var(--border);font-size:12.5px;line-height:1.4;color:var(--text)}
+.summary-row {position:relative;display:flex;align-items:center;gap:10px;flex:none;min-height:var(--summary-row-height,34px);height:var(--summary-row-height,34px);min-width:0;text-align:left;border-top:1px solid var(--border);font-size:13px;line-height:1.4;color:var(--text)}
 .summary-row:first-child {border-top:0}
 .summary-row:hover {color:var(--accent)}
 .row-copy {flex:1;min-width:0}.row-text {display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.summary-row small {font-size:10px;line-height:1.3;color:var(--text-faint);white-space:nowrap;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis}
+.summary-row small {font-size:11.5px;line-height:1.3;color:var(--text-muted, var(--text-faint));white-space:nowrap;min-width:0;max-width:46%;overflow:hidden;text-overflow:ellipsis}
 .bars .summary-row {padding:0;border-top:0;gap:14px}
 .bars .row-copy {flex:none;width:58px}
 .bars .summary-row small {min-width:25px;text-align:right;font-size:13px;color:var(--text);margin-left:auto}
 .bars .row-track {position:static;flex:1;min-width:12px;height:5px;order:1}
 .bars .summary-row small {order:2}
-.bars .summary-row:nth-child(2) .row-track b {opacity:.55}
-.bars .summary-row:nth-child(3) .row-track b {opacity:.3}
+/* 分类色只给类型：概念蓝 / 实体紫 / 资料青 / 灵感琥珀（与徽章四色同源），不再用透明度伪造层级 */
 .detailed-rows .summary-row {align-items:flex-start;padding:9px 0;font-size:13px;line-height:1.4}
 .detailed-rows .row-text {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.detailed-rows .row-copy small {display:block;max-width:100%;margin-top:4px;font-size:11.5px;line-height:1.4}
+.detailed-rows .row-copy small {display:block;max-width:100%;margin-top:4px;font-size:11.5px;line-height:1.4;color:var(--text-muted, var(--text-faint))}
 .row-type {width:27px;height:27px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:11px;margin-top:1px}
 .row-type.idea {width:7px;height:7px;border-radius:50%;background:var(--accent);font-size:0;margin-top:6px}
-.row-badge {flex:none;border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);padding:2px 6px;font-size:11px;white-space:nowrap;margin-top:1px}
+.row-type.tone-concept {background:var(--badge-concept-soft);color:var(--badge-concept)}
+.row-type.tone-entity {background:var(--badge-entity-soft);color:var(--badge-entity)}
+.row-type.tone-note {background:var(--badge-note-soft);color:var(--badge-note)}
+.row-type.tone-idea {background:var(--badge-idea);color:var(--badge-idea)}
+.row-type.idea.tone-idea {background:var(--badge-idea)}
+.row-badge {flex:none;border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);padding:2px 6px;font-size:11.5px;white-space:nowrap;margin-top:1px}
 .row-badge.danger {color:var(--danger);background:var(--danger-soft)}
 .compact-metric .summary-label {font-size:12px}
 .compact-metric .badge {margin-left:auto}
 .detailed-rows:not(.narrow) .summary-label {font-size:12px}
-.summary-foot {display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;flex:none;margin-top:auto;padding-top:10px;height:28px;color:var(--text-faint);font-size:11.5px;text-align:left}
+.summary-foot {display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;flex:none;margin-top:auto;padding-top:10px;height:28px;color:var(--text-muted, var(--text-faint));font-size:11.5px;text-align:left}
 .summary-foot>span:first-child {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .foot-action {color:var(--accent);display:flex;gap:4px;align-items:center;flex:none}
 .narrow .summary-row {padding:0;font-size:12px;align-items:center}
@@ -227,6 +232,10 @@ onUnmounted(()=>observer?.disconnect());
 
 .row-track {position:absolute;bottom:4px;left:0;right:0;height:3px;border-radius:2px;background:var(--bg-tertiary);overflow:hidden}
 .row-track b {height:100%;display:block;background:var(--accent);opacity:.8;border-radius:2px}
+.row-track b.tone-concept {background:var(--badge-concept);opacity:1}
+.row-track b.tone-entity {background:var(--badge-entity);opacity:1}
+.row-track b.tone-note {background:var(--badge-note);opacity:1}
+.row-track b.tone-idea {background:var(--badge-idea);opacity:1}
 
 .summary-chart {display:flex;justify-content:center;flex:none;min-width:0;min-height:0;margin-top:8px}
 .summary-ring {width:100%;height:auto;aspect-ratio:1;align-self:center;max-height:100%;border-radius:50%;mask:radial-gradient(circle,transparent 48%,#000 49%)}
@@ -237,7 +246,7 @@ onUnmounted(()=>observer?.disconnect());
 /* 空状态：线性图标 + 引导，垂直居中铺满整卡 */
 .summary-empty {flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:10px;color:var(--text-faint);text-align:center}
 .summary-empty .e-icon {width:42px;height:42px;border-radius:13px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center}
-.summary-empty .e-text {font-size:12px;line-height:1.7;overflow:hidden}
+.summary-empty .e-text {font-size:13px;line-height:1.7;overflow:hidden;color:var(--text-muted, var(--text-faint))}
 
 /* 窄卡（竖条档）：数值小一号、行只留标题 */
 .narrow .summary-metric {flex-direction:column;align-items:flex-start;gap:1px}

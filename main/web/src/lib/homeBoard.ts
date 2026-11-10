@@ -113,6 +113,15 @@ export const HOME_LAYOUT_STORAGE_KEY = 'homeBoardLayout';
 /** 单页模块数上限：拖出一屏都是卡片没有意义，也防手改出的超大数组拖慢渲染 */
 export const MAX_MODULES = 32;
 
+/**
+ * 卡片材质档（2026-11-10 首页卡片美化）：决定外壳画哪种卡面，不改变布局与数据。
+ *  - data   数据卡：白底 + 柔和投影；一屏里最先被看到的块
+ *  - list   列表卡：白底 + 1px 描边、无投影；内容优先，不跟数据卡抢视线
+ *  - action 操作卡：内凹面（--surface-well）+ 无描边；记想法、快捷入口这类「随手用」的块
+ *  - status 状态卡：半透明轻卡；同步 / 运行状态只做一行结论
+ */
+export type ModuleTone = 'data' | 'list' | 'action' | 'status';
+
 export interface ModuleMeta {
   kind: ModuleKind;
   title: string;
@@ -122,6 +131,8 @@ export interface ModuleMeta {
   w: ModuleSpan;
   /** 新增时的默认高度（行数） */
   h: number;
+  /** 卡面材质档（由 TONE_BY_KIND 统一注入，登记表里不再逐条重复） */
+  tone: ModuleTone;
 }
 
 /**
@@ -130,7 +141,20 @@ export interface ModuleMeta {
  * 默认 w/h 按「加到页面上就能直接用」给：宽卡整行、统计卡三分之一、列表卡半页 + 高一点。
  * 12 列栅格下一格约 75px（板宽上限 1120px 时），所以这里的 h 是「1 格 = 一行 75px」的行数。
  */
-export const MODULE_META: ModuleMeta[] = [
+const TONE_BY_KIND: Record<ModuleKind, ModuleTone> = {
+  // 数据卡：数字与图表是主角，用浮起的一档
+  stats: 'data', heat: 'data', weekly: 'data', ring: 'data', board: 'data',
+  // 操作卡：随手记、随手点，用内凹的一档和页面底色区分
+  ask: 'action', capture: 'action', shortcuts: 'action', roam: 'action',
+  // 状态卡：只陈述「现在怎么样」
+  sync: 'status', system: 'status',
+  // 其余都是列表卡：白底贴纸、描边无投影
+  recent: 'list', notes: 'list', fresh: 'list', tasks: 'list', tags: 'list', sections: 'list',
+  inbox: 'list', queue: 'list', activity: 'list', digest: 'list',
+};
+
+/** 模块类型登记表（tone 见 TONE_BY_KIND；顺序即「添加模块」面板里的顺序） */
+const MODULE_ENTRIES: Array<Omit<ModuleMeta, 'tone'>> = [
   { kind: 'ask', title: '快速问答', hint: '小格提问、竖卡概括与查资料、横卡输入，接入当前 Agent 会话', icon: 'messages', w: 3, h: 1 },
   { kind: 'capture', title: '快速灵感机', hint: '小格入口、竖卡续写与最近灵感、横卡直接记下', icon: 'lightbulb', w: DEFAULT_THIRD, h: 4 },
   { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: DEFAULT_HALF, h: 2 },
@@ -154,6 +178,7 @@ export const MODULE_META: ModuleMeta[] = [
   { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', w: DEFAULT_HALF, h: 6 },
 ];
 
+export const MODULE_META: ModuleMeta[] = MODULE_ENTRIES.map((meta) => ({ ...meta, tone: TONE_BY_KIND[meta.kind] }));
 
 const META_BY_KIND: Record<ModuleKind, ModuleMeta> = Object.fromEntries(
   MODULE_META.map((meta) => [meta.kind, meta])

@@ -3,11 +3,11 @@
   <div class="stats-card">
     <div class="stats-hero"><strong>{{ pages }}</strong><span>篇知识页面</span></div>
     <button v-for="row in rows" :key="row.key" class="stat-row" type="button" @click="$emit('go', row.path)">
-      <span class="stat-ic" :style="{ background: 'var(--accent-soft)', color: 'var(--accent)' }">
+      <span class="stat-ic" :style="{ background: `var(--${row.badge}-soft)`, color: `var(--${row.badge})` }">
         <Icon :name="row.icon" :size="14" />
       </span>
       <span class="stat-lb">{{ row.label }}</span>
-      <span class="stat-bar"><i :style="{ width: bar(row.value), background: 'var(--accent)' }" /></span>
+      <span class="stat-bar"><i :style="{ width: bar(row.value), background: `var(--${row.badge})` }" /></span>
       <span class="stat-vl">{{ row.value }}</span>
     </button>
     <p class="stats-foot muted">
@@ -46,14 +46,14 @@ function bar(value: number) {
 .stats-card { padding: 0; }
 .stats-hero { display:flex; align-items:baseline; gap:10px; margin-bottom:18px; }
 .stats-hero strong { font-size:44px; letter-spacing:-.05em; line-height:1; }
-.stats-hero span { font-size:11px; color:var(--text-faint); }
+.stats-hero span { font-size:11.5px; color:var(--text-muted, var(--text-faint)); }
 .stat-row {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 0;
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: left;
   border-radius: 8px;
 }
@@ -81,5 +81,5 @@ function bar(value: number) {
 }
 .stat-bar i { display: block; height: 100%; border-radius: 2px; }
 .stat-vl { flex: none; min-width: 22px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
-.stats-foot { padding: 8px 0 4px; font-size: 11px; border-top: 1px solid var(--border); }
+.stats-foot { padding: 8px 0 4px; font-size: 11.5px; color: var(--text-muted, var(--text-faint)); border-top: 1px solid var(--border); }
 </style>
