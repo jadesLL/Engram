@@ -30,6 +30,22 @@ export function isInboxPath(rel: string | null | undefined): boolean {
   return normalized === INBOX_DIR || normalized.startsWith(`${INBOX_DIR}/`);
 }
 
+/** vault 根目录（DATA_DIR/brain）自身的目录名。vault 顶层再出现同名目录只可能是整库被复制/错误恢复。 */
+export const VAULT_DIR_NAME = 'brain';
+
+/**
+ * 是否是「vault 里又套了一层 vault」的异常路径（顶层目录叫 brain）。
+ *
+ * 这类路径只可能来自数据卷被整库复制（例如把整库备份解压到 brain/ 而不是数据根目录），
+ * 或被旧版本当成新页面收录后随同步传播出来。扫描、同步、备份三处都必须跳过：
+ * 一旦放行，副本会被当成新内容互相推送，每同步一轮就再套一层，直到列表里同一篇出现 2–3 次。
+ */
+export function isNestedVaultPath(rel: string | null | undefined): boolean {
+  const normalized = normalizeBrainRel(rel);
+  if (!normalized) return false;
+  return normalized.split('/')[0].toLowerCase() === VAULT_DIR_NAME;
+}
+
 /** 是否收集箱里的转换产物 */
 export function isInboxDerivedPath(rel: string | null | undefined): boolean {
   const normalized = normalizeBrainRel(rel);

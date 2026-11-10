@@ -47,6 +47,18 @@ test('分类同步：缺省、关闭隔离、偏好冲突与凭据隔离', async
     assert.equal(rejected.seq, 0);
     assert.equal(fs.existsSync(path.join(temp, 'brain/原始资料/文档/blocked.md')), false);
 
+    // vault 内嵌套的 brain/ 副本（整库复制/错误恢复残留）永远不同步：
+    // 放行会被两端当成新内容互推，每同步一轮再套一层
+    assert.equal(c.syncAllowed('page', 'brain/Wiki/概念/副本.md'), false);
+    assert.equal(c.syncAllowed('file', 'brain/assets/a/b.png'), false);
+    assert.equal(c.syncAllowed('move', 'Wiki/a.md', 'brain/Wiki/a.md'), false);
+    const nestedRejected = hub.applyPush(
+      { node_id: 'a', kind: 'page', target: 'brain/Wiki/概念/副本.md', content: '# 副本' },
+      'a'
+    );
+    assert.equal(nestedRejected.seq, 0);
+    assert.equal(fs.existsSync(path.join(temp, 'brain/brain/Wiki/概念/副本.md')), false);
+
     const layout = { value: '{"version":4,"modules":[]}', updatedAt: 100, nodeId: 'b' };
     assert.equal(p.mergePreference('home_layout', layout), true);
     assert.equal(p.mergePreference('home_layout', { ...layout, value: '旧数据', updatedAt: 99 }), false);

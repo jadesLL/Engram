@@ -1,4 +1,5 @@
 import { getSetting, setSetting } from '../lib/db.js';
+import { isNestedVaultPath } from '../lib/brainPaths.js';
 
 export const CATEGORY_DEFAULTS = {
   knowledge: true, materials: true, assets: true, aiWorkspace: true,
@@ -51,6 +52,9 @@ export function categoryFor(kind: string, target: string): SyncCategory | null {
 }
 
 export function syncAllowed(kind: string, target: string, oldPath = ''): boolean {
+  // vault 内嵌套的 brain/ 副本（整库被复制/错误恢复的残留）永远不同步：
+  // 一旦放行，两端会把副本当成新内容互相推，每同步一轮就再套一层。
+  if (isNestedVaultPath(target) || isNestedVaultPath(oldPath)) return false;
   const flags = syncCategories();
   const category = categoryFor(kind, target);
   if (!category || !flags[category]) return false;

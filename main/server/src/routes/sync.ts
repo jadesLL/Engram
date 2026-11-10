@@ -10,7 +10,7 @@ import { sse } from '../lib/sse.js';
 import { emit } from '../lib/events.js';
 import { requireAuth } from './auth.js';
 import { safeJoin } from '../lib/vault.js';
-import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
+import { classifyBrainEntry, isInboxPath, isNestedVaultPath } from '../lib/brainPaths.js';
 import {
   addNodeSubscriber,
   applyPush,
@@ -776,8 +776,10 @@ function buildSnapshotEntries(): {
     }
     for (const e of dirents) {
       if (e.name.startsWith('.')) continue;
-      const childAbs = safeJoin(rel ? `${rel}/${e.name}` : e.name);
       const childRel = rel ? `${rel}/${e.name}` : e.name;
+      // vault 内嵌套的 brain/ 副本不进入同步清单：否则成员会把它当新页面拉下来，越同步越深
+      if (isNestedVaultPath(childRel)) continue;
+      const childAbs = safeJoin(childRel);
       if (e.isDirectory()) {
         walk(childRel);
       } else if (classifyBrainEntry(childRel) === 'page') {
