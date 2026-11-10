@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
 import { BRAIN_DIR, normalizeDir, isPageDir } from '../config.js';
-import { isInboxPath } from './brainPaths.js';
+import { isInboxPath, isNestedVaultPath, VAULT_DIR_NAME } from './brainPaths.js';
 import { RAW_SECTION_NAMES } from './rawSections.js';
 import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
@@ -35,6 +35,8 @@ export interface ScanVaultPagesResult {
 /** 防路径穿越：把相对路径解析到 brain 内，越界抛错 */
 export function safeJoin(rel: string): string {
   const clean = rel.replace(/^[/\\]+/, '');
+  // vault 里又套了一层 vault（整库副本残留）：任何读写都不许碰，否则副本会再次被收录/同步
+  if (isNestedVaultPath(clean)) throw new Error('路径无效：vault 内不允许出现嵌套的 brain 目录');
   const abs = path.resolve(BRAIN_DIR, clean);
   if (abs !== BRAIN_DIR && !abs.startsWith(BRAIN_DIR + path.sep)) {
     throw new Error('路径无效');
@@ -76,6 +78,8 @@ export function listTree() {
       const rel = toRel(abs);
       // 收集箱是待纳入资产的暂存区，不是知识库目录树的一部分（入口在图标栏）
       if (isInboxPath(rel)) continue;
+      // vault 内嵌套的 brain/ 目录是整库副本（错误恢复/手工复制残留），不进目录树
+      if (isNestedVaultPath(rel)) continue;
       if (e.isDirectory()) {
         out.push({ kind: 'dir', name: e.name, path: rel, children: walk(abs, SUB_ORDER[e.name]) });
       } else if (e.name.toLowerCase().endsWith('.md')) {
@@ -527,6 +531,12 @@ export function reconcileMissingPages(): number {
   const rows = db.prepare(`SELECT id, path FROM pages WHERE deleted = 0`).all() as { id: string; path: string }[];
   let marked = 0;
   for (const row of rows) {
+    // 嵌套 brain/ 副本不是合法路径（safeJoin 会拒绝），历史行直接落删除标记，别让它把对账抛崩
+    if (isNestedVaultPath(row.path)) {
+      markPageDeleted(row.path);
+      marked++;
+      continue;
+    }
     if (fs.existsSync(safeJoin(row.path))) continue;
     markPageDeleted(row.path);
     marked++;
@@ -537,6 +547,30 @@ export function reconcileMissingPages(): number {
 /** 单个路径落删除标记（文件缺失时的兜底：对账、删除 op 找不到文件时调用；不写 updated_at） */
 export function markPageDeleted(relPath: string): void {
   db.prepare(`UPDATE pages SET deleted = 1 WHERE path = ? AND deleted = 0`).run(relPath);
+}
+
+/**
+ * 隐藏历史版本收录出来的「vault 内嵌套 brain/」页面与文件行。
+ *
+ * 旧版本会把 vault 里整库副本（brain/Wiki/…、brain/brain/…）当成正常页面收录；
+ * 新版本扫描已跳过这些路径，但旧行还停在 deleted = 0：侧栏继续列出、点开报「文件不存在」，
+ * 检索也会命中打不开的副本。这里只在本端标删（不删磁盘文件、不发同步删除），
+ * 避免把可能只是错位的真实内容广播成删除。磁盘上的副本由运维按日志提示手工清理。
+ */
+export function purgeNestedVaultRows(): { pages: number; files: number } {
+  const pattern = `${VAULT_DIR_NAME}/%`;
+  const pages = db
+    .prepare(`SELECT path FROM pages WHERE deleted = 0 AND lower(path) LIKE ?`)
+    .all(pattern) as { path: string }[];
+  for (const row of pages) markPageDeleted(row.path);
+  const fileRows = db
+    .prepare(`SELECT id, path FROM files WHERE deleted = 0 AND lower(path) LIKE ?`)
+    .all(pattern) as { id: string; path: string }[];
+  for (const row of fileRows) {
+    db.prepare(`UPDATE files SET deleted = 1 WHERE id = ?`).run(row.id);
+    db.prepare(`DELETE FROM files_fts WHERE file_id = ?`).run(row.id);
+  }
+  return { pages: pages.length, files: fileRows.length };
 }
 
 /**
@@ -566,6 +600,8 @@ export async function scanVaultPages(): Promise<ScanVaultPagesResult> {
       const rel = toRel(abs);
       // 收集箱里的 .md（原件或转换产物）不是页面：不建 pages 行、不写 FTS
       if (isInboxPath(rel)) continue;
+      // vault 内嵌套的 brain/ 目录：整库副本。绝不能当成页面收录，否则会随同步扩散、越套越深。
+      if (isNestedVaultPath(rel)) continue;
       if (e.isDirectory()) {
         walk(abs);
       } else if (e.name.toLowerCase().endsWith('.md')) {
@@ -575,8 +611,22 @@ export async function scanVaultPages(): Promise<ScanVaultPagesResult> {
       }
     }
   }
+  if (fs.existsSync(path.join(BRAIN_DIR, VAULT_DIR_NAME))) {
+    console.warn(
+      `[vault] 检测到嵌套的 brain/ 目录（整库副本），已跳过：${path.join(BRAIN_DIR, VAULT_DIR_NAME)}；`
+      + '请确认其中的文件在正常目录都有对应内容后删除该目录'
+    );
+  }
   walk(BRAIN_DIR);
+  // 先隐藏历史嵌套行，再对账缺文件：否则对账会拿嵌套路径去 safeJoin（已拒绝）而抛错
+  const purged = purgeNestedVaultRows();
   reconcileMissingPages();
+  if (purged.pages || purged.files) {
+    console.warn(
+      `[vault] 已隐藏历史嵌套副本记录：页面 ${purged.pages} 条、文件 ${purged.files} 条`
+      + '（磁盘副本仍在，可按上方路径清理）'
+    );
+  }
   return result;
 }
 

@@ -238,6 +238,31 @@ test('App 自身写入（writePage / movePage）会写回指纹，下次启动�
   assert.equal(rowByPath('Wiki/概念/自写.md'), undefined);
 });
 
+/* ---------------- vault 嵌套副本护栏 ---------------- */
+
+test('vault 内嵌套的 brain/ 副本不收录：扫描跳过、历史行标删、safeJoin 拒绝', async () => {
+  writeRaw('Wiki/概念/正常页.md', '# 正常页\n\n正文。\n');
+  const nested1 = writeRaw('brain/Wiki/概念/副本一.md', '# 副本一\n\n正文。\n');
+  const nested2 = writeRaw('brain/brain/Wiki/概念/副本二.md', '# 副本二\n\n正文。\n');
+  // 模拟旧版本已把副本收录成页面行（deleted = 0），新版本启动必须隐藏掉
+  db.prepare(
+    `INSERT INTO pages (id, path, title, type, tags, summary, created_at, updated_at, deleted, word_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
+  ).run('legacy-nested-1', 'brain/Wiki/概念/副本一.md', '副本一', 'note', '[]', '', '2026-01-01', '2026-01-01');
+
+  const res = await scanVaultPages();
+  assert.equal(res.pages, 1, '只扫描正常路径，嵌套副本不计入');
+  assert.equal(rowByPath('Wiki/概念/正常页.md').deleted, 0);
+  assert.equal(rowByPath('brain/Wiki/概念/副本一.md').deleted, 1, '历史嵌套行应被标删');
+  assert.equal(rowByPath('brain/brain/Wiki/概念/副本二.md'), undefined, '嵌套文件不应新建页面行');
+  assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE deleted = 0 AND lower(path) LIKE 'brain/%'`).get().n, 0);
+
+  // 任何按 vault 相对路径的读写都不许碰副本
+  assert.throws(() => safeJoin('brain/Wiki/概念/副本一.md'), /嵌套/);
+  assert.throws(() => safeJoin('Brain/Wiki/概念/副本一.md'), /嵌套/);
+  assert.ok(fs.existsSync(nested1) && fs.existsSync(nested2), '扫描只隐藏索引，不删磁盘文件');
+});
+
 /* ---------------- 两阶段拆分与兼容入口 ---------------- */
 
 test('scanVaultDeferred 幂等（listen 后与 startVaultWatch 并发路径）', async () => {

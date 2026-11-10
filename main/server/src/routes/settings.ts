@@ -12,6 +12,7 @@ import type JSZip from 'jszip';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
 import { DATA_DIR, BRAIN_DIR } from '../config.js';
 import { RESTORE_STAGING_NAME } from '../lib/stagedRestore.js';
+import { isNestedVaultPath } from '../lib/brainPaths.js';
 import {
   agentClients,
   isAgentClientId,
@@ -383,6 +384,8 @@ export async function settingsRoutes(app: FastifyInstance) {
           if (name === '.trash') continue; // 回收站不入备份
           const abs = path.join(dir, name);
           const rel = path.relative(BRAIN_DIR, abs).replace(/\\/g, '/');
+          // 整库副本（vault 里又套了一层 brain/）不进备份：否则备份体积翻倍，恢复时还会继续嵌套
+          if (isNestedVaultPath(rel)) continue;
           if (fs.statSync(abs).isDirectory()) walk(abs);
           else zip.file(`brain/${rel}`, fs.readFileSync(abs));
         }
@@ -436,6 +439,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     fs.rmSync(staging, { recursive: true, force: true });
     fs.mkdirSync(staging, { recursive: true });
     let extracted = 0;
+    let nested = 0;
     for (const entry of Object.values(zip.files)) {
       if (entry.dir) continue;
       // 白名单 + 越界拒绝：只接受 wiki.db 与 brain/ 前缀内的规范路径
@@ -443,11 +447,19 @@ export async function settingsRoutes(app: FastifyInstance) {
       const segments = name.split('/');
       if (segments.some((s) => s === '..' || s === '')) continue;
       if (name !== 'wiki.db' && segments[0] !== 'brain') continue;
+      // vault 里又套了一层 vault（brain/brain/…）：这种备份来自已出问题的数据卷，恢复会立刻复现重复
+      if (isNestedVaultPath(segments.slice(1).join('/'))) { nested += 1; continue; }
       const abs = path.join(staging, ...segments);
       if (!abs.startsWith(staging + path.sep)) continue;
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, await entry.async('nodebuffer'));
       extracted++;
+    }
+    if (nested > 0) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      return reply.code(400).send({
+        error: `备份里有 ${nested} 个嵌套 brain/brain/ 路径（整库副本残留），已拒绝恢复：请在来源端清理后重新导出备份`,
+      });
     }
     if (extracted === 0) {
       fs.rmSync(staging, { recursive: true, force: true });

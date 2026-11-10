@@ -13,6 +13,7 @@ import { ensureFileRecord } from '../pipeline/indexer.js';
 import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
 import { isRawPath } from './rawSections.js';
 import { isAppWrite } from './appWrites.js';
+import { isNestedVaultPath } from './brainPaths.js';
 
 /**
  * 带外文件系统监听：外部 Agent / 用户在服务端之外直接增删改 brain 目录时，
@@ -33,6 +34,8 @@ const IGNORED_SEGMENTS = new Set(['.trash', 'assets']);
 
 function isIgnoredRel(rel: string): boolean {
   if (!rel) return true;
+  // vault 内嵌套的 brain/ 目录（整库副本残留）不参与对账：收录它只会让副本随同步扩散
+  if (isNestedVaultPath(rel)) return true;
   // 原子写的临时文件（`<名字>.<id>.tmp`）不参与对账：它很快会被 rename 成正式名字
   if (rel.endsWith('.tmp')) return true;
   return rel.split('/').some((segment) => segment.startsWith('.') || IGNORED_SEGMENTS.has(segment));

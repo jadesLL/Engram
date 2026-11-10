@@ -23,8 +23,8 @@ import {
   type SyncLinkCandidate,
   type SyncLinkStatus,
 } from './link.js';
-import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
-import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
+import { safeJoin, syncPageFile, movePage, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
+import { classifyBrainEntry, isInboxPath, isNestedVaultPath } from '../lib/brainPaths.js';
 import { isRawPath } from '../lib/rawSections.js';
 import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
 import { moveToTrash } from '../lib/trash.js';
@@ -1715,7 +1715,9 @@ function localSnapshot(): { kind: 'page' | 'file'; path: string; hash: string }[
     }
     for (const e of entries) {
       if (e.name.startsWith('.')) continue;
-      const childRel = rel ? toRel(safeJoin(`${rel}/${e.name}`)) : e.name;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      // vault 内嵌套的 brain/ 副本不进清单：本端即使残留这份副本，也不该再推给中枢
+      if (isNestedVaultPath(childRel)) continue;
       if (e.isDirectory()) {
         walk(childRel);
       } else if (classifyBrainEntry(childRel) === 'page') {

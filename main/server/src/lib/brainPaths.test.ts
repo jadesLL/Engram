@@ -8,6 +8,7 @@ import {
   inboxAccessError,
   isInboxDerivedPath,
   isInboxPath,
+  isNestedVaultPath,
   normalizeBrainRel,
   stemOf,
   uniqueDerivedPath,
@@ -28,6 +29,19 @@ test('isInboxPath：只认收集箱自己与它的子路径', () => {
   // 前缀相同但不是同一个目录：不能被误判
   assert.equal(isInboxPath('收集箱备份/x.pdf'), false);
   assert.equal(isInboxPath(''), false);
+});
+
+test('isNestedVaultPath：vault 顶层又叫 brain 的路径一律视为整库副本', () => {
+  assert.equal(isNestedVaultPath('brain/Wiki/概念/x.md'), true);
+  assert.equal(isNestedVaultPath('brain/brain/Wiki/概念/x.md'), true);
+  // Windows 文件系统大小写不敏感：Brain/ 与 brain/ 是同一个目录
+  assert.equal(isNestedVaultPath('Brain/Wiki/概念/x.md'), true);
+  // 只是前缀相同或出现在子目录里，都不是副本
+  assert.equal(isNestedVaultPath('brainx/Wiki/x.md'), false);
+  assert.equal(isNestedVaultPath('Wiki/概念/brain.md'), false);
+  assert.equal(isNestedVaultPath('Wiki/brain/x.md'), false);
+  assert.equal(isNestedVaultPath(''), false);
+  assert.equal(isNestedVaultPath(undefined), false);
 });
 
 test('isInboxDerivedPath：转换产物单独成区', () => {
