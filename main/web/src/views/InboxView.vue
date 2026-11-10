@@ -988,6 +988,9 @@ onBeforeUnmount(() => {
   --inbox-accent-soft: var(--accent-soft);
   --inbox-accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
   padding: 24px 26px 64px;
+  /* 自身作容器查询宿主：窄到什么程度由「正文列实际可用宽度」决定，不看视口宽度——
+     应用侧栏 / 对话抽屉展开后正文列会比视口窄三四百像素（见文件末尾 @container 块）。 */
+  container-type: inline-size;
 }
 
 /* ===== 页头：压扁、让位给内容 ===== */
@@ -1523,18 +1526,15 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
 .review-md :deep(th) { border: 1px solid var(--border-strong); padding: 4px 10px; }
 .review-md :deep(img) { max-width: 100%; border-radius: var(--radius); }
 
-@media (max-width: 768px) {
-  .inbox-view { padding: 14px 12px 80px; }
-  .intake { flex-direction: column; }
-  .intake .divider { display: none; }
-  .row { flex-wrap: wrap; }
-  .row + .row::before { left: 12px; }
-  .status { margin-left: 49px; justify-content: flex-start; }
-  .actions { width: 100%; justify-content: flex-start; }
-
+/*
+ * 窄容器适配（2026-11）：页头/收纳区按「正文列实际可用宽度」换排版，不跟视口宽度绑定。
+ * 应用侧栏或对话抽屉展开后正文列会比视口窄三四百像素——窗口拉到 860 左右时本页只剩约
+ * 380px，「收集箱」标题与拖入说明会被 flex 一路压到 1 个字宽，竖排成单字（用户报障）。
+ */
+@container (max-width: 640px) {
   /*
-   * 页头在手机上必须换行：标题 + 说明 + 两个动作全挤在一行时，「收集箱」被压成竖排、
-   * 说明文字和按钮互相叠（2026-09-29 巡检）。排成三段：标题一行、说明一行、动作一行。
+   * 页头排成三段：标题一行、说明一行、动作一行。标题保持自身宽度、不参与收缩——
+   * CJK 在任意两字之间可断行，flex 收缩会把它压成竖排，这是本 bug 的直接根因。
    */
   .page-head {
     flex-wrap: wrap;
@@ -1542,11 +1542,22 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
     row-gap: 8px;
     margin-bottom: 14px;
   }
-  .page-head h1 { flex: 1 1 auto; font-size: 21px; }
-  .page-head .sub { order: 2; flex: 1 1 100%; font-size: 12px; }
+  .page-head h1 { flex: 0 0 auto; }
+  .page-head .sub { order: 2; flex: 1 1 100%; }
   .spacer { display: none; }
-  .head-actions { order: 3; flex: 1 1 100%; gap: 8px; }
-  .head-actions .btn { flex: 1; height: 40px; }
+  .head-actions {
+    order: 3;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  /* 收纳区：左右两半改上下，右侧输入区不再把「拖文件到这里」挤成一条竖排字 */
+  .intake { flex-direction: column; }
+  .intake .divider { display: none; }
+  .drop-half { padding: 18px; }
+  .url-half { padding: 16px 18px 18px; border-top: 1px solid var(--border); }
 
   /* 提示条：图标 + 正文一行，按钮另起一行（原来按钮被 flex 挤到正文换行处，看着像压字） */
   .notice {
@@ -1554,21 +1565,29 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
     flex-wrap: wrap;
     row-gap: 2px;
   }
-  .notice .hide-btn {
-    order: 2;
-    margin-left: 21px;
-    min-height: 32px;
-    padding: 4px 10px;
-  }
+  .notice .hide-btn { order: 2; margin-left: 21px; }
 
-  /* 视频模型提示在手机上按行折行，图标与首行对齐 */
+  /* 视频模型提示按行折行，图标与首行对齐 */
   .video-hint { align-items: flex-start; }
+}
 
-  /* 状态筛选（全部 / 待整理 / 已转换）是纯手指操作：27px 的胶囊太矮，撑到 38px，
-     「按收纳时间倒序」这类说明在手机上让位（排序不是这一屏的重点） */
-  .toolbar { flex-wrap: wrap; row-gap: 6px; }
-  .seg { flex: 1 1 100%; }
+/* 触屏（手机 / 平板）：状态筛选是纯手指操作，27px 的胶囊太矮，撑到 38px 热区。
+   放在容器查询之前：窄容器还要按 2×2 折行，后面的 @container 规则要能盖过这里的 flex/padding */
+@media (hover: none) and (pointer: coarse) {
   .seg button { flex: 1; height: 38px; padding: 0 10px; }
+}
+
+/* 再窄（侧栏展开 + 对话抽屉同时占位）：文件行与筛选也收成两行 */
+@container (max-width: 520px) {
+  .row { flex-wrap: wrap; }
+  .row + .row::before { left: 12px; }
+  .status { width: auto; margin-left: 49px; justify-content: flex-start; }
+  .actions { width: 100%; min-width: 0; justify-content: flex-start; }
+
+  /* 四个筛选胶囊在 380px 里一排摆不下，「待整理·已转换」会被折成两行字：拆成 2×2 */
+  .toolbar { flex-wrap: wrap; row-gap: 6px; }
+  .seg { flex: 1 1 100%; flex-wrap: wrap; }
+  .seg button { flex: 1 1 calc(50% - 2px); padding: 0 8px; }
   .toolbar .spacer { display: none; }
   .toolbar .hint { font-size: 11px; }
 }

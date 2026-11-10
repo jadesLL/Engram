@@ -12,6 +12,10 @@
  * 这两档**不写宽度 @media**：壳层由 Home.vue 的 .layout.size-compact/medium/expanded
  * 类切换（JS 用 windowSizeClassFor 判档），宽度媒体查询仍然只允许上面三档。
  *
+ * 正文列可能比视口窄（应用侧栏 / 对话抽屉占位，最多窄三四百像素）：这类「内容列自适应」
+ * 用 @container 按容器的实际宽度适配，不要为它新增宽度 @media——同一个窗口收/放侧栏时
+ * 排版要跟着变（2026-11 收集箱页头竖排的修复方式；宿主写法见 CustomerResearchView、InboxView）。
+ *
  * 触屏能力用 @media (hover: none) and (pointer: coarse)，不要用宽度代替触屏判断：
  * 折叠屏内屏/平板/手机横屏都超过 768px，用宽度判断会让这些设备的 hover-only 入口永远点不到。
  *
@@ -577,6 +581,16 @@ html .vditor-reset table tbody tr:nth-child(2n) {
 .vditor-ir li, .vditor-wysiwyg li, .vditor-sv li { margin: 0.25em 0; }
 .vditor-ir hr, .vditor-wysiwyg hr, .vditor-sv hr { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
 .vditor-ir img, .vditor-wysiwyg img, .vditor-sv img { max-width: 100%; border-radius: var(--radius); }
+
+/*
+ * 页面标题防压扁：flex 页头在窄容器里空间不足时，CJK 标题会被收缩到 1 个字宽、竖排成单字
+ * （2026-11 用户报障：窗口拉窄 + 应用侧栏展开后，「收集箱」标题与说明整列竖排）。
+ * 标题保持自身宽度、只占一行，让说明文字 / 动作按钮先换行；具体页面再按内容列宽度换排版。
+ */
+.page-head > h1 {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 
 /* 移动端通用 */
 @media (max-width: 768px) {
