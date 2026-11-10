@@ -59,7 +59,7 @@ const totals = computed(() =>
 }
 .week-row + .week-row { border-top: 1px solid var(--border); }
 .week-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.week-label { flex: none; width: 58px; font-size: 12.5px; color: var(--text-secondary); }
+.week-label { flex: none; width: 58px; font-size: 13px; color: var(--text-secondary); }
 .week-bar {
   flex: 1;
   min-width: 24px;
@@ -70,7 +70,7 @@ const totals = computed(() =>
 }
 .week-bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .week-counts { flex: none; display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-.week-new { font-size: 11px; font-weight: 600; color: var(--badge-idea); }
-.week-words { font-size: 11px; color: var(--text-faint); }
-.week-foot { padding: 8px 0 4px; font-size: 11px; border-top: 1px solid var(--border); }
+.week-new { font-size: 11.5px; font-weight: 600; color: var(--badge-idea); }
+.week-words { font-size: 11.5px; color: var(--text-muted, var(--text-faint)); }
+.week-foot { padding: 8px 0 4px; font-size: 11.5px; color: var(--text-muted, var(--text-faint)); border-top: 1px solid var(--border); }
 </style>

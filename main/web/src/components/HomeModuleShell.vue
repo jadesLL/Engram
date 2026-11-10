@@ -1,5 +1,5 @@
 <template>
-  <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90 }" :style="{ padding: `${padding}px` }"
+  <section ref="root" class="shell" :class="[`tone-${meta.tone}`, { managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90 }]" :style="{ padding: `${padding}px` }"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
     <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
     <header v-if="tier === 'standard' && !functional" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
@@ -124,6 +124,16 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   outline:2px solid var(--accent);
   outline-offset:-3px;
 }
+/* 三档卡面（2026-11-10 卡片美化）：材质只决定「谁浮在前面」，不改变格位、命中区与拖拽。
+   数据卡浮起（投影）、列表卡贴纸（描边无投影）、操作卡内凹（--surface-well）、状态卡轻卡。
+   深色两套材质见 main.css 的 --surface-well / --surface-status。 */
+.shell.tone-data { background:var(--card-bg); border-color:transparent; box-shadow:var(--shadow-card); }
+.shell.tone-list { background:var(--card-bg); border-color:var(--border); box-shadow:none; }
+.shell.tone-list:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
+.shell.tone-action { background:var(--surface-well); border-color:transparent; box-shadow:none; }
+.shell.tone-action:not(.managing):not(.dragging):hover { box-shadow:inset 0 0 0 1px var(--border); }
+.shell.tone-status { background:var(--surface-status); border-color:var(--border); box-shadow:none; }
+.shell.tone-status:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
 .shell-head {
   display:flex;
   gap:8px;
@@ -147,11 +157,17 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .shell-head h3 :deep(svg) {
   color:var(--accent);
   flex:none;
-  /* accent-soft 圆角方块锚点：21px 视觉块，取代裸图标 */
-  padding:3px;
+  /* 圆角方块锚点：15px 图标 + 5.5px 内边距 = 26px 视觉块，卡头的识别度不再弱于卡内数字 */
+  padding:5.5px;
   box-sizing:content-box;
   background:var(--accent-soft);
-  border-radius:6px;
+  border-radius:7px;
+}
+/* 列表 / 状态卡把主色留给数据卡：图标改中性底，只有数据卡用 Engram Blue 锚点 */
+.shell.tone-list .shell-head h3 :deep(svg),
+.shell.tone-status .shell-head h3 :deep(svg) {
+  color:var(--text-secondary);
+  background:var(--bg-tertiary);
 }
 .shell-expand {
   width:26px;
@@ -164,7 +180,14 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   background:transparent;
   border:0;
   color:var(--text-faint);
+  /* 一卡一个出口：头部 ↗ 在 hover / 键盘聚焦时才现身；触屏没有 hover，常显 */
+  opacity:0;
+  transition:opacity .15s ease, color .15s ease, background .15s ease;
 }
+.shell:hover .shell-expand,
+.shell:focus-within .shell-expand,
+.shell:focus-visible .shell-expand { opacity:1; }
+@media (hover:none), (pointer:coarse) { .shell-expand { opacity:1; } }
 .shell:hover .shell-expand {
   color:var(--accent);
   background:var(--accent-soft);

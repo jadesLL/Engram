@@ -96,22 +96,22 @@ function onKey(event: KeyboardEvent) {
 .home-action button:disabled { cursor:default;opacity:.45; }
 .home-action button:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
 .action-symbol { display:flex;align-items:center;justify-content:center;color:var(--accent);background:var(--accent-soft);border-radius:10px;width:32px;height:32px;flex:none; }
-.action-launch { flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;background:transparent;color:var(--text-secondary);font-size:11px!important;position:relative; }
+.action-launch { flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;background:transparent;color:var(--text-secondary);font-size:11.5px!important;position:relative; }
 .action-launch .action-symbol { width:30px;height:30px;border-radius:9px; }
 .draft-dot { width:5px;height:5px;background:var(--accent);border-radius:50%;position:absolute;right:2px;top:2px; }
 .column { gap:9px; }
-.action-column-head { display:flex;flex-direction:column;align-items:center;gap:5px;padding:3px 0!important;flex:none;font-size:11px!important;color:var(--text-secondary);background:transparent; }
+.action-column-head { display:flex;flex-direction:column;align-items:center;gap:5px;padding:3px 0!important;flex:none;font-size:11.5px!important;color:var(--text-secondary);background:transparent; }
 .action-column-head svg { color:var(--accent); }
 .column-actions { display:flex;flex-direction:column;gap:6px; }
-.quick-action { display:flex;align-items:center;justify-content:center;gap:4px;min-height:32px;flex:none;border-radius:8px;color:var(--text-secondary);background:var(--bg-secondary);font-size:11px!important;white-space:nowrap; }
+.quick-action { display:flex;align-items:center;justify-content:center;gap:4px;min-height:32px;flex:none;border-radius:8px;color:var(--text-secondary);background:var(--bg-secondary);font-size:11.5px!important;white-space:nowrap; }
 .quick-action.main-action { color:var(--accent);background:var(--accent-soft); }
-.recent-action { display:flex;flex-direction:column;align-items:center;gap:5px;flex:1;justify-content:center;border-top:1px solid var(--border)!important;color:var(--text-secondary);background:transparent;font-size:11px!important;overflow:hidden;min-height:44px; }
-.recent-action small { width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:10px;color:var(--text-faint); }
+.recent-action { display:flex;flex-direction:column;align-items:center;gap:5px;flex:1;justify-content:center;border-top:1px solid var(--border)!important;color:var(--text-secondary);background:transparent;font-size:11.5px!important;overflow:hidden;min-height:44px; }
+.recent-action small { width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--text-faint); }
 .column-draft { position:absolute;top:0;right:0;width:5px;height:5px;overflow:hidden;font-size:0;background:var(--accent);border-radius:50%; }
 .bar { flex-direction:row;align-items:center; }
 .action-writing { display:flex;flex:1;gap:6px;min-width:0;min-height:0;align-items:center; }
 .action-writing textarea { flex:1;width:100%;min-width:0;min-height:0;box-sizing:border-box;padding:4px 8px;border:1px solid transparent;outline:0;resize:none;background:transparent;color:var(--text);font:inherit;font-size:13px;line-height:1.6; }
-.action-writing textarea::placeholder { color:var(--text-faint); }
+.action-writing textarea::placeholder { color:var(--text-muted, var(--text-faint)); }
 /* Keep text clear of rounded corners and the focus border inside compact cards. */
 .action-writing textarea:focus { border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-soft); }
 .bar .action-writing textarea { height:32px;white-space:pre;overflow:auto;scrollbar-width:none; }
@@ -137,13 +137,13 @@ function onKey(event: KeyboardEvent) {
 .action-latest strong { flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--text-secondary);font-weight:500; }
 .action-prompts { display:flex;gap:7px;flex:none;flex-wrap:wrap;margin-top:10px; }
 .action-prompts .text-action { border:1px solid var(--border);border-radius:7px;padding:4px 8px; }
-@container (max-width:200px) { .editor .action-head>.text-action,.editor .action-foot>.text-action { display:none; } .editor .action-foot { padding:0 7px 7px; } .editor .action-hint { font-size:10px; } }
+@container (max-width:200px) { .editor .action-head>.text-action,.editor .action-foot>.text-action { display:none; } .editor .action-foot { padding:0 7px 7px; } .editor .action-hint { font-size:11px; } }
 .editor textarea { font-size:14px; }
 .action-foot { display:flex;gap:8px;align-items:center;flex:none;min-width:0;padding-top:8px;margin-top:8px;border-top:1px solid var(--border); }
-.action-hint { flex:1;font-size:11px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.action-hint { flex:1;font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .action-submit { padding:6px 11px!important;background:var(--accent);color:var(--on-accent);border-radius:8px;font-size:12px!important;flex:none; }
-.text-action { color:var(--text-secondary);background:transparent;font-size:11px!important;white-space:nowrap; }
-.action-error { color:var(--danger);font-size:11px;line-height:1.5;margin-top:6px;overflow-wrap:anywhere; }
+.text-action { color:var(--text-secondary);background:transparent;font-size:11.5px!important;white-space:nowrap; }
+.action-error { color:var(--danger);font-size:11.5px;line-height:1.5;margin-top:6px;overflow-wrap:anywhere; }
 .expanded { height:300px;min-height:220px; }
 .expanded .action-head { display:none; }
 .expanded textarea { padding:8px;font-size:15px; }

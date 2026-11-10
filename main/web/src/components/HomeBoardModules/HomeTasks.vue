@@ -62,8 +62,8 @@ const shown = computed(() => (props.cards || []).slice(0, Math.max(1, props.limi
 .mini-meta {
   display: block;
   margin-top: 2px;
-  font-size: 11px;
-  color: var(--text-faint);
+  font-size: 11.5px;
+  color: var(--text-muted, var(--text-faint));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
