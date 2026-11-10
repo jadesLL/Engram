@@ -838,7 +838,9 @@ onBeforeUnmount(() => {
 /* 窄屏：工具条与筛选折行；周/月视图内部自己按 1024 / 640 换形态 */
 @media (max-width: 1024px) {
   .tasks-view { padding: 16px 14px 32px; }
-  .page-head { flex-wrap: wrap; }
+  .page-head { flex-wrap: wrap; row-gap: 6px; }
+  /* 动作组自己也要能折行：三个按钮放不下时，「刷新」会被挤出视口右侧（360 手机实测被裁） */
+  .head-actions { flex-wrap: wrap; justify-content: flex-end; }
   .running-bar { flex-wrap: wrap; }
   .running-bar .hint { margin-left: 0; }
   .toolbar { flex-wrap: wrap; }

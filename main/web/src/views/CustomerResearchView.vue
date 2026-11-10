@@ -1187,6 +1187,10 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
   .page-head { flex-wrap:wrap; align-items:flex-start; row-gap:10px; }
   .ph-actions { flex:1 1 100%; flex-wrap:wrap; }
   .ph-actions .btn { flex:1 1 auto; min-height:36px; }
+  /* 档案头部的动作组同理：4 个动作按钮的 max-content 约 410px，360 手机上「发起新一轮」被裁到视口外。
+     让它独占一行后再自己折行，按钮均分宽度。 */
+  .cols-main .arc-actions { flex:1 1 100%; min-width:0; }
+  .cols-main .arc-actions .btn { flex:1 1 auto; }
   .cols .cust-list { display:flex; flex-wrap:wrap; gap:6px; overflow:visible; }
   .cust { width:auto; flex:1 1 auto; min-width:152px; }
   .cust-search { margin-bottom:8px; }
