@@ -25,7 +25,8 @@ test('图表与条目共享高度预算，不因空数据补出虚构条目', ()
       const plan = cardContentPlan(width, height, count, chart);
       assert.ok(plan.rows >= 0 && plan.rows <= count);
       assert.ok(plan.chartHeight >= 0 && plan.chartHeight <= height);
-      const rowHeight = plan.narrow ? 30 : chart === 'bars' ? 38 : 34;
+      // bars 行高 2026-11-10 由 38 → 31（328×243 的概览卡要排下三类）：预算校验跟着实现走
+      const rowHeight = plan.narrow ? 30 : chart === 'bars' ? 31 : 34;
       assert.ok(plan.rows * rowHeight + plan.chartHeight + 44 <= Math.max(height, 44), `预算超出 height=${height}`);
     }
   }
