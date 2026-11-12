@@ -60,12 +60,17 @@
         <div v-if="summary.chart === 'ring'" class="summary-ring" :style="{ background: ringBackground, maxWidth: `${plan.chartHeight}px` }" role="img" :aria-label="chartDescription" />
         <div v-else class="summary-trend" role="img" :aria-label="chartDescription"><i v-for="(row,i) in amounts" :key="i" :style="{ height: `${maxAmount ? Math.max(2,row / maxAmount * 100) : 2}%` }" /></div>
       </div>
-      <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars' }" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
-        <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" :title="[row.text,row.meta,row.detail,row.badge?.text].filter(Boolean).join(' · ')" :aria-label="[row.text,row.meta,row.detail,row.badge?.text].filter(v => v !== undefined).join(' · ')" @click="activate(row)">
-          <span v-if="detailedRows && !plan.narrow && row.type" class="row-type" :class="[row.tone ? `tone-${row.tone}` : '', { idea: row.type === '灵感' }]">{{ row.type.slice(0,1) }}</span>
-          <span class="row-copy"><span class="row-text">{{ row.text }}</span><small v-if="detailedRows && !plan.narrow && (row.meta || row.detail !== undefined)">{{ [row.detail, row.meta].filter(v => v !== undefined && v !== '').join(' · ') }}</small></span>
+      <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars', detailed: detailedRows }" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
+        <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" :class="{ 'row-tasks': summary.presentation === 'tasks' }" :title="[row.text,row.meta,row.detail,row.badge?.text].filter(Boolean).join(' · ')" :aria-label="[row.text,row.meta,row.detail,row.badge?.text].filter(v => v !== undefined).join(' · ')" @click="activate(row)">
+          <span v-if="summary.presentation === 'tasks' && !plan.narrow" class="row-check" aria-hidden="true" />
+          <span v-else-if="detailedRows && !plan.narrow && row.type" class="row-type" :class="[row.tone ? `tone-${row.tone}` : '', { idea: row.type === '灵感' }]">{{ row.type.slice(0,1) }}</span>
+          <span class="row-copy">
+            <span class="row-text">{{ row.text }}</span>
+            <small v-if="detailedRows && !plan.narrow && row.meta" class="row-meta">{{ row.meta }}</small>
+          </span>
           <span v-if="!plan.narrow && row.badge" class="row-badge" :class="row.badge.tone">{{ row.badge.text }}</span>
-          <small v-else-if="!detailedRows && !plan.narrow && row.detail !== undefined">{{ row.detail }}</small>
+          <small v-else-if="detailedRows && !plan.narrow && row.detail" class="row-side">{{ row.detail }}</small>
+          <small v-else-if="!detailedRows && !plan.narrow && row.detail !== undefined" class="row-value">{{ row.detail }}</small>
           <i v-if="summary.chart === 'bars'" class="row-track"><b :class="row.tone ? `tone-${row.tone}` : ''" :style="{ width: `${maxAmount ? Math.max(0,(row.amount || 0) / maxAmount * 100) : 0}%` }" /></i>
         </button>
       </div>
@@ -91,8 +96,17 @@ const detailedRows = computed(() => props.summary.presentation === 'list' || pro
 const showMetric = computed(() => props.summary.presentation !== 'list' || size.value.w < 120);
 const compactMetric = computed(() => props.summary.presentation === 'tasks' && size.value.w >= 120);
 const hasFooter = computed(() => props.tier === 'standard' && size.value.w >= 120 && size.value.h >= 160);
+/** 行高按内容类型分：列表卡 50px（标题 + 来源两行），待办卡 62px（两行标题 + 来源）；窄卡沿用默认紧凑档 */
+const rowHeight = computed(() => {
+  if (size.value.w < 120) return undefined;
+  if (props.summary.presentation === 'tasks') return 62;
+  if (!detailedRows.value) return undefined;
+  // 条目多的列表（最近更新 / 最近改动）排 42px 一行可以多显示一条，条目少的保持 50px 的呼吸感
+  return (props.summary.rows?.length || 0) >= 5 ? 42 : 50;
+});
 const plan = computed(() => cardContentPlan(size.value.w,size.value.h,props.summary.rows?.length || 0,props.summary.chart, {
-  metric: !showMetric.value ? 'hidden' : compactMetric.value ? 'compact' : 'full', list: detailedRows.value, footer: hasFooter.value,
+  /* 条形行（概览 / 本周动态）的数值行实际只有 37px：预算按紧凑档算，才排得下三类 */
+  metric: !showMetric.value ? 'hidden' : compactMetric.value || props.summary.chart === 'bars' ? 'compact' : 'full', list: detailedRows.value, footer: hasFooter.value, rowHeight: rowHeight.value,
 }));
 const displayValue = computed(() => typeof props.summary.value === 'number' && plan.value.narrow ? formatCount(props.summary.value) : props.summary.value);
 /** 磁贴只有 2 字标签，说明全交给无障碍名称（屏幕阅读器与 tooltip 都读得到） */
@@ -199,25 +213,34 @@ onUnmounted(()=>observer?.disconnect());
 .summary-row {position:relative;display:flex;align-items:center;gap:10px;flex:none;min-height:var(--summary-row-height,34px);height:var(--summary-row-height,34px);min-width:0;text-align:left;border-top:1px solid var(--border);font-size:13px;line-height:1.4;color:var(--text)}
 .summary-row:first-child {border-top:0}
 .summary-row:hover {color:var(--accent)}
-.row-copy {flex:1;min-width:0}.row-text {display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.summary-row small {font-size:11.5px;line-height:1.3;color:var(--text-muted, var(--text-faint));white-space:nowrap;min-width:0;max-width:46%;overflow:hidden;text-overflow:ellipsis}
-.bars .summary-row {padding:0;border-top:0;gap:14px}
-.bars .row-copy {flex:none;width:58px}
-.bars .summary-row small {min-width:25px;text-align:right;font-size:13px;color:var(--text);margin-left:auto}
-.bars .row-track {position:static;flex:1;min-width:12px;height:5px;order:1}
-.bars .summary-row small {order:2}
+.row-copy {flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.row-text {display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.summary-row small {font-size:11.5px;line-height:1.3;color:var(--text-muted, var(--text-faint));white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* 条形行（数据类）：标签 + 轨道 + 数值，整卡均分铺开，不再缩在卡片上半截 */
+.summary-rows.bars {justify-content:stretch}
+.bars .summary-row {flex:1;padding:0;border-top:1px solid var(--border);gap:13px}
+.bars .summary-row:first-child {border-top:0}
+.bars .row-copy {flex:none;width:62px;display:block}
+.bars .row-value {min-width:25px;text-align:right;font-size:14px;font-weight:600;color:var(--text);margin-left:auto;font-variant-numeric:tabular-nums}
+.bars .row-track {position:static;flex:1;min-width:12px;height:7px;order:1}
+.bars .row-value {order:2}
 /* 分类色只给类型：概念蓝 / 实体紫 / 资料青 / 灵感琥珀（与徽章四色同源），不再用透明度伪造层级 */
-.detailed-rows .summary-row {align-items:flex-start;padding:9px 0;font-size:13px;line-height:1.4}
-.detailed-rows .row-text {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.detailed-rows .row-copy small {display:block;max-width:100%;margin-top:4px;font-size:11.5px;line-height:1.4;color:var(--text-muted, var(--text-faint))}
-.row-type {width:27px;height:27px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:11px;margin-top:1px}
-.row-type.idea {width:7px;height:7px;border-radius:50%;background:var(--accent);font-size:0;margin-top:6px}
+/* 列表 / 待办：标题 + 来源两行，右侧时间、角标各占一列；行高由预算决定，不靠加内边距撑开 */
+.detailed-rows .summary-row {align-items:center;padding:0;gap:9px;font-size:13px}
+.detailed-rows .row-meta {display:block;max-width:100%;margin-top:2px;font-size:11.5px;line-height:1.35;color:var(--text-muted, var(--text-faint));overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* 待办标题信息量大：允许两行，62px 行高已留出预算 */
+.row-tasks .row-text {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.4}
+.row-check {width:15px;height:15px;flex:none;border:1.5px solid var(--border-strong, var(--border));border-radius:5px;transition:border-color 150ms ease}
+.row-tasks:hover .row-check {border-color:var(--accent)}
+.row-side {flex:none;min-width:0;max-width:44%;font-size:11.5px;line-height:1.3;color:var(--text-muted, var(--text-faint));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;text-align:right}
+.row-type {width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:10.5px;font-weight:600}
+.row-type.idea {width:7px;height:7px;border-radius:50%;background:var(--accent);font-size:0}
 .row-type.tone-concept {background:var(--badge-concept-soft);color:var(--badge-concept)}
 .row-type.tone-entity {background:var(--badge-entity-soft);color:var(--badge-entity)}
 .row-type.tone-note {background:var(--badge-note-soft);color:var(--badge-note)}
 .row-type.tone-idea {background:var(--badge-idea);color:var(--badge-idea)}
 .row-type.idea.tone-idea {background:var(--badge-idea)}
-.row-badge {flex:none;border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);padding:2px 6px;font-size:11.5px;white-space:nowrap;margin-top:1px}
+.row-badge {flex:none;border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);padding:2px 7px;font-size:11.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .row-badge.danger {color:var(--danger);background:var(--danger-soft)}
 .compact-metric .summary-label {font-size:12px}
 .compact-metric .badge {margin-left:auto}

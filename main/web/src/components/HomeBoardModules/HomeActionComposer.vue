@@ -22,9 +22,10 @@
       </header>
       <div class="writing-frame" :class="{ 'writing-panel': layout === 'editor' }">
       <div class="action-writing">
+        <span v-if="layout === 'bar'" class="bar-lead" aria-hidden="true"><Icon :name="icon" :size="16" /></span>
         <textarea ref="input" v-model="draft" :rows="layout === 'bar' ? 1 : 3" :wrap="layout === 'bar' ? 'off' : 'soft'" :placeholder="isAsk ? '问点什么…' : '记个想法…'" :aria-label="isAsk ? '快速问答输入' : '快速灵感输入'" :disabled="busy" @keydown="onKey" />
-        <button v-if="layout === 'bar' && width >= 3" class="bar-helper" type="button" :aria-label="isAsk ? '概括资料' : '展开续写'" :title="isAsk ? '概括资料' : '展开续写'" :disabled="busy" @click="primaryAction"><Icon :name="isAsk ? 'report' : 'restore'" :size="16" /></button>
-        <button v-if="layout === 'bar'" class="action-send" type="button" :aria-label="submitLabel" :disabled="!canSubmit || busy" @click="submit"><AppSpinner v-if="busy" :size="14" /><Icon v-else :name="isAsk ? 'send' : 'check'" :size="16" /></button>
+        <span v-if="layout === 'bar' && width >= 3 && !draft" class="bar-hint">Ctrl + Enter</span>
+        <button v-if="layout === 'bar'" class="action-send" type="button" :aria-label="submitLabel" :disabled="!canSubmit || busy" @click="submit"><AppSpinner v-if="busy" :size="14" /><Icon v-else :name="isAsk ? 'send' : 'check'" :size="16" /><span v-if="width >= 4" class="send-label">{{ submitLabel }}</span></button>
         <button v-if="layout === 'bar' && error" class="bar-error" type="button" :title="error" aria-label="查看提交错误" @click="$emit('open')"><Icon name="alert" :size="14" /></button>
       </div>
       <footer v-if="layout === 'editor'" class="action-foot">
@@ -115,7 +116,12 @@ function onKey(event: KeyboardEvent) {
 /* Keep text clear of rounded corners and the focus border inside compact cards. */
 .action-writing textarea:focus { border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-soft); }
 .bar .action-writing textarea { height:32px;white-space:pre;overflow:auto;scrollbar-width:none; }
-.action-send { display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent); }
+/* 一格高的记想法条：左侧落一个灵感图标，右侧给快捷键提示与带文字的提交按钮，整条读起来像一个输入框 */
+.bar-lead { display:flex;align-items:center;justify-content:center;width:24px;height:32px;flex:none;color:var(--accent); }
+.bar-hint { flex:none;font-size:11px;color:var(--text-faint);white-space:nowrap; }
+.action-send { display:flex;align-items:center;justify-content:center;gap:6px;min-width:32px;height:32px;padding:0 11px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent); }
+.send-label { font-size:12px;font-weight:600;line-height:1; }
+@container (max-width:340px) { .bar-hint { display:none; } .send-label { display:none; } }
 .action-send:disabled,.action-submit:disabled { background:var(--bg-tertiary);color:var(--text-faint);opacity:1!important; }
 .bar-helper,.bar-error,.action-expand { display:flex;align-items:center;justify-content:center;width:28px;height:32px;flex:none;color:var(--text-faint);background:transparent; }
 .bar-helper:hover,.action-expand:hover { color:var(--accent); }

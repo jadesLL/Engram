@@ -8,14 +8,8 @@
   >
     <div class="board-cq">
       <div class="board-inner">
-        <div class="board-date">{{ dateLine }} · ENGRAM</div>
-        <header class="board-hero">
-          <div class="board-hero-text">
-            <h2 class="board-greeting">{{ greeting }}</h2>
-            <p class="muted board-sub">
-              库中已有 <strong>{{ stats.pages }}</strong> 个页面、<strong>{{ stats.files }}</strong> 份原始资料
-            </p>
-          </div>
+        <div class="board-top">
+          <div class="board-date">{{ dateLine }} · ENGRAM</div>
           <button
             class="layout-btn"
             type="button"
@@ -27,6 +21,19 @@
             <Icon :name="store.editing ? 'check' : 'settings'" :size="14" />
             <span>{{ store.editing ? '完成' : '编辑首页' }}</span>
           </button>
+        </div>
+        <header class="board-hero">
+          <div class="board-hero-text">
+            <h2 class="board-greeting">{{ greeting }}</h2>
+            <p class="muted board-sub">
+              库中已有 <strong>{{ stats.pages }}</strong> 个页面、<strong>{{ stats.files }}</strong> 份原始资料
+            </p>
+          </div>
+          <div class="board-glance" aria-label="本周概览">
+            <span class="glance-item"><em>本周新增</em><strong>{{ glance.weekly }}</strong></span>
+            <span class="glance-item"><em>待办</em><strong>{{ glance.tasks }}</strong></span>
+            <span class="glance-item" :class="{ warn: glance.overdue > 0 }"><em>逾期</em><strong>{{ glance.overdue }}</strong></span>
+          </div>
         </header>
 
     <!-- 编辑态工具条：加模块 / 排整齐 / 紧凑 / 恢复默认 -->
@@ -329,6 +336,12 @@ const gridEl = ref<HTMLElement>();
 const gridFrameEl = ref<HTMLElement>();
 const dateLine = computed(() => homeDateLine());
 const greeting = computed(() => homeGreeting());
+/** 页头右侧本周快照：与卡片同源的数据，只做三个数字，细节点开卡片看 */
+const glance = computed(() => ({
+  weekly: weeklyRows.value.reduce((n, row) => n + row.created, 0),
+  tasks: taskCards.value.length,
+  overdue: overdueCount.value,
+}));
 const stats = computed(() => ({ pages: (props.pages || []).length, files: props.fileCount || 0 }));
 const counts = computed(() => kbCounts(props.pages, props.fileCount));
 const sections = computed(() => sectionEntries(props.pages, props.rawPaths));
@@ -425,7 +438,10 @@ function summaryOf(module: HomeModule): HomeCardSummary {
 
 function computeSummary(module: HomeModule): HomeCardSummary {
   const rowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:documentTitleParts(p.title || String(p.path || '').split('/').pop() || '未命名').name, detail:p.updated_at ? sinceShort(p.updated_at) : '', meta:pageBadge(p).meta,type:pageBadge(p).label, path:p.id ? `/page/${p.id}` : p.path ? `/page?file=${encodeURIComponent(p.path)}` : undefined }));
-  const pageSummary = (list: any[], empty: string): HomeCardSummary => ({ value:list.length,label:'篇页面',presentation:'list',rows:rowsOf(list,limitOf(module.opts,12,20)),empty });
+  const pageSummary = (list: any[], empty: string, footer = '按更新时间'): HomeCardSummary => {
+    const rows = rowsOf(list, limitOf(module.opts, 12, 20));
+    return { value:list.length, label:'篇页面', presentation:'list', rows, header:`${rows.length} 条`, footer, empty };
+  };
   /**
    * 近期灵感（2026-11-10 卡片美化）：跟「最近更新」并排时不能再长得一样。
    * 最近更新按「多久以前更新」排，这里按「哪天记下的 + 灵感碎片」排；标题里的日期前缀已经由 documentTitleParts 去掉。
@@ -447,19 +463,27 @@ function computeSummary(module: HomeModule): HomeCardSummary {
     case 'capture': return {value:'记灵感',label:'随手一句，稍后整理',action:true,rows:rowsOf(props.ideaItems),empty:'记一条灵感，稍后整理'};
     case 'stats': return {value:stats.value.pages,label:'知识页面',rows:facts,chart:'bars',footer:`总计 ${words.value.toLocaleString()} 字`};
     case 'ring': { const ratios=ratioRows(props.pages,props.fileCount);return {value:ratios.total,label:'项知识与资料',rows:ratios.rows.map((r,i)=>({...facts[i],detail:`${r.value} · ${Math.round(r.ratio*100)}%`})),chart:'ring'}; }
-    case 'tasks': return {value:taskCards.value.length,label:'件待办',presentation:'tasks',badge:overdueCount.value?{tone:'danger',text:`${overdueCount.value} 逾期`}:undefined,rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,meta:taskMeta(c),badge:{text:dueLabel(c),tone:isOverdueCard(c)?'danger':'plain'},path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
-    case 'notes': return {value:props.ideaItems.length,label:'条灵感',presentation:'list',rows:noteRowsOf(props.ideaItems,limitOf(module.opts,12,20)),empty:'还没有灵感，记下一条想法'};
+    case 'tasks': return {value:taskCards.value.length,label:'件待办',presentation:'tasks',badge:overdueCount.value?{tone:'danger',text:`${overdueCount.value} 逾期`}:undefined,footer:'按到期日',rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,meta:taskMeta(c),badge:{text:dueLabel(c),tone:isOverdueCard(c)?'danger':'plain'},path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
+    case 'notes': {
+      const rows = noteRowsOf(props.ideaItems, limitOf(module.opts, 12, 20));
+      return {value:props.ideaItems.length,label:'条灵感',presentation:'list',rows,header:`${rows.length} 条`,footer:'按记录日期',empty:'还没有灵感，记下一条想法'};
+    }
     case 'recent': return pageSummary(props.recentItems,'还没有最近更新的页面');
-    case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动');
-    case 'fresh': return pageSummary(freshItems.value,'最近七天还没有新增页面');
+    case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动','按改动时间');
+    case 'fresh': return pageSummary(freshItems.value,'最近七天还没有新增页面','近 7 天');
     // 热力卡的摘要只在 1×1 磁贴或窄卡上用：给「本周改动了多少篇」，别让磁贴显示 0
     case 'heat': return {value:weeklyRows.value.reduce((n,r)=>n+r.updated,0),label:'本周改动'};
-    case 'weekly': return {value:weeklyRows.value.reduce((n,r)=>n+r.created,0),label:'本周新增',rows:weeklyRows.value.map(r=>({text:r.label,detail:`${r.updated} 更新 · ${r.created} 新增`,amount:r.updated,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'trend',empty:'本周还没有更新记录'};
+    case 'weekly': {
+      const TONES: Record<string, 'concept'|'entity'|'note'|'idea'> = { concept:'concept', entity:'entity', note:'note', idea:'idea' };
+      const created = weeklyRows.value.reduce((n,r)=>n+r.created,0);
+      const changed = weeklyRows.value.reduce((n,r)=>n+r.updated,0);
+      return {value:changed,label:'本周改动',header:'近 7 天',chart:'bars',footer:`近 7 天新增 ${created} 篇`,rows:weeklyRows.value.map(r=>({text:r.label,detail:String(r.updated),amount:r.updated,tone:TONES[r.key],path:`/search?q=${encodeURIComponent(r.label)}`})),empty:'本周还没有更新记录'};
+    }
     case 'tags': return {value:tagList.value.length,label:'个常用标签',rows:tagList.value.map(r=>({text:r.tag,detail:r.count,path:`/search?q=${encodeURIComponent(r.tag)}`})),empty:'给页面加一个标签，这里就会显示'};
     case 'sections': return {value:sections.value.length,label:'个分区',rows:sections.value.map(r=>({text:r.label,detail:r.count,amount:r.count,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'bars'};
     case 'shortcuts': return {value:'快捷入口',label:'搜索 · 新建 · 图谱 · Agent',action:true,rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
     case 'roam': return {value:'换一篇',label:`${roamCandidates.value.length} 篇可漫游`,action:true,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
-    case 'inbox': return {value:Number(inbox.activeCount || 0),label:'份资料还没入库',presentation:'list',rows:(inbox.activeItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:item.status==='converted'?'已转换':'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
+    case 'inbox': return {value:Number(inbox.activeCount || 0),label:'份资料还没入库',presentation:'list',footer:'按入库时间',rows:(inbox.activeItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:item.status==='converted'?'已转换':'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
     case 'queue': { const candidates=pendingDistillOf(rawFiles.value,rawFiles.value.length);return {value:queueError.value && !rawFiles.value.length ? '—' : queueLoading.value && !rawFiles.value.length ? '…' : candidates.length,label:queueError.value || '份资料等待提炼',rows:candidates.map(file=>({text:documentTitleParts(file.name).name,meta:String(file.path || '').split('/').slice(0,-1).join(' / '),detail:pendingDistillLabel(file),path:rawMaterialRoute(file)})),empty:queueError.value || (queueLoading.value ? '正在读取待提炼资料…' : '没有等待提炼的资料')}; }
     case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
     case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',presentation:'list',rows:digestLines.value.map(text=>({text,action:'chat'}))};
@@ -878,8 +902,14 @@ onUnmounted(() => {
   padding: 40px 32px 64px;
 }
 
+.board-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
 .board-date {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.12em;
   color: var(--text-faint);
@@ -889,12 +919,19 @@ onUnmounted(() => {
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  margin: 6px 0 22px;
+  margin: 10px 0 18px;
 }
 .board-hero-text { min-width: 0; }
-.board-greeting { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
-.board-sub { margin-top: 6px; font-size: 13.5px; }
+.board-greeting { font-size: 28px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.2; }
+.board-sub { margin-top: 5px; font-size: 13.5px; }
 .board-sub strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* 本周快照：问候语右侧不再留一大片空白，三个数字和卡片数据同源 */
+.board-glance { flex: none; display: flex; align-items: stretch; }
+.glance-item { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 0 16px; border-left: 1px solid var(--border); }
+.glance-item:first-child { border-left: 0; }
+.glance-item em { font-style: normal; font-size: 11px; line-height: 1.2; color: var(--text-faint); white-space: nowrap; }
+.glance-item strong { font-size: 17px; line-height: 1.15; font-weight: 650; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.glance-item.warn strong { color: var(--danger); }
 
 .layout-btn {
   flex: none;
@@ -1095,6 +1132,10 @@ onUnmounted(() => {
 
 @media (max-width: 1024px) {
   .board-hero { align-items: center; gap: 12px; }
+}
+/* 手机：页头只留问候与库规模，本周快照让位给下面的卡片，避免右侧三个数字把问候语挤窄 */
+@media (max-width: 768px) {
+  .board-glance { display: none; }
 }
 @media (max-width: 768px) {
   .board { overflow-x: hidden; }

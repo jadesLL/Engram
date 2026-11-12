@@ -25,9 +25,8 @@ test('图表与条目共享高度预算，不因空数据补出虚构条目', ()
       const plan = cardContentPlan(width, height, count, chart);
       assert.ok(plan.rows >= 0 && plan.rows <= count);
       assert.ok(plan.chartHeight >= 0 && plan.chartHeight <= height);
-      // bars 行高 2026-11-10 由 38 → 31（328×243 的概览卡要排下三类）：预算校验跟着实现走
-      const rowHeight = plan.narrow ? 30 : chart === 'bars' ? 31 : 34;
-      assert.ok(plan.rows * rowHeight + plan.chartHeight + 44 <= Math.max(height, 44), `预算超出 height=${height}`);
+      // 行高以 plan.rowHeight 为准（列表/待办由调用方按内容给 50/62，条形行 32）：预算校验跟着实现走
+      assert.ok(plan.rows * plan.rowHeight + plan.chartHeight + 44 <= Math.max(height, 44), `预算超出 height=${height}`);
     }
   }
 });
@@ -43,6 +42,7 @@ test('紧凑卡片为来源、两行标题和底部入口预留空间，小卡�
     }
   }
   assert.equal(cardContentPlan(300, 50, 4, undefined, { list: true, metric: 'compact', footer: true }).rows, 0);
-  assert.equal(cardContentPlan(300, 226, 4, undefined, { list: true, metric: 'hidden', footer: true }).rows, 2);
+  // 列表行高 2026-11-12 由 66 → 50：同样高度多排一行，卡片下半截不再空着
+  assert.equal(cardContentPlan(300, 226, 4, undefined, { list: true, metric: 'hidden', footer: true }).rows, 3);
   assert.ok(cardContentPlan(300, 300, 12, undefined, { list: true, metric: 'hidden', footer: true }).rows > cardContentPlan(300, 300, 12, undefined, { list: true, metric: 'compact', footer: true }).rows);
 });

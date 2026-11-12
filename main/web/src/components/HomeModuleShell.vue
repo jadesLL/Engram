@@ -2,7 +2,7 @@
   <section ref="root" class="shell" :class="[`tone-${meta.tone}`, { managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90 }]" :style="{ padding: `${padding}px` }"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
     <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
-    <header v-if="tier === 'standard' && !functional" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
+    <header v-if="tier === 'standard' && !functional" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><span v-if="summary.header" class="shell-meta">{{ summary.header }}</span><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
     <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" :tier="tier" :icon="meta.icon" @open="openDetail" @activate="$emit('activate', $event)" />
     <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
     <Teleport to="body" :disabled="!expanded">
@@ -136,38 +136,39 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .shell.tone-status:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
 .shell-head {
   display:flex;
-  gap:8px;
+  gap:7px;
   align-items:center;
-  margin-bottom:10px;
+  margin-bottom:8px;
   flex:none;
 }
 .shell-head h3 {
   display:flex;
   align-items:center;
-  gap:8px;
+  gap:7px;
   flex:1;
   min-width:0;
   overflow:hidden;
   white-space:nowrap;
   text-overflow:ellipsis;
-  font-size:13px;
+  font-size:12.5px;
   font-weight:600;
+  letter-spacing:0.01em;
   color:var(--text);
 }
+/* 卡头不再画彩色图标块：15px 线性图标直接落在标题前，层级交给卡内数字，标题只负责识别 */
 .shell-head h3 :deep(svg) {
-  color:var(--accent);
+  color:var(--text-muted);
   flex:none;
-  /* 圆角方块锚点：15px 图标 + 5.5px 内边距 = 26px 视觉块，卡头的识别度不再弱于卡内数字 */
-  padding:5.5px;
-  box-sizing:content-box;
-  background:var(--accent-soft);
-  border-radius:7px;
 }
-/* 列表 / 状态卡把主色留给数据卡：图标改中性底，只有数据卡用 Engram Blue 锚点 */
-.shell.tone-list .shell-head h3 :deep(svg),
-.shell.tone-status .shell-head h3 :deep(svg) {
-  color:var(--text-secondary);
-  background:var(--bg-tertiary);
+.shell.tone-data .shell-head h3 :deep(svg) { color:var(--accent); }
+/* 卡头右侧一句上下文（条数 / 近 7 天 / 按到期日）：有就显示，没有不留空 */
+.shell-meta {
+  flex:none;
+  font-size:11.5px;
+  line-height:1.2;
+  color:var(--text-faint);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
 }
 .shell-expand {
   width:26px;
