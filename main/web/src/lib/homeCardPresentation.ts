@@ -46,6 +46,8 @@ export interface HomeCardSummary {
   /** 动作型卡片（漫游 / 速记 / 快捷入口）：value 是动作文案，主色小字显示，不放大 */
   action?: boolean;
   presentation?: 'list' | 'tasks' | 'sync';
+  /** 卡头右侧的一句上下文（条数 / 时间范围 / 排序口径）；空则只留标题与 hover 箭头 */
+  header?: string;
   footer?: string;
 }
 
@@ -77,6 +79,8 @@ export interface CardContentOptions {
   metric?: 'hidden' | 'compact' | 'full';
   list?: boolean;
   footer?: boolean;
+  /** 调用方按内容类型定行高：列表卡 50、待办卡 62；不传沿用下面的默认档 */
+  rowHeight?: number;
 }
 
 /**
@@ -92,8 +96,8 @@ export function cardContentPlan(width: number, height: number, count: number, ch
   const chartHeight = !narrow && chart && chart !== 'bars' && remaining >= 70
     ? Math.min(180, Math.floor(remaining * 0.4))
     : 0;
-  /* bars 行是「标签 + 进度条 + 数值」的单行，31px 才能在 328×243 的概览卡里排下三类（38 只排得下两类） */
-  const rowHeight = narrow ? 30 : options.list ? 66 : chart === 'bars' ? 31 : 34;
+  /* bars 行是「标签 + 进度条 + 数值」的单行，30px 才能在 328×243 的概览卡里排下三类 */
+  const rowHeight = options.rowHeight ?? (narrow ? 30 : options.list ? 50 : chart === 'bars' ? 30 : 34);
   const rows = Math.min(
     Math.max(0, count),
     Math.max(0, Math.floor((remaining - chartHeight - (chartHeight ? gap : 0)) / rowHeight))
