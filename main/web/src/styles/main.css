@@ -27,7 +27,23 @@
   /* color-scheme 必须显式声明：否则系统深色时原生控件（select 弹层/滚动条）会跟系统而非应用主题 */
   color-scheme: light;
   /* UI 2.0 令牌收敛：中性色由冷灰改暖灰，强调色统一为 Engram Blue（2026-10 方案 A 精修：纸色更暖、蓝色更自信） */
-  --bg: #f6f4f0;
+  --bg: #eff2f8;
+  /* 液态玻璃底：三团柔光 + 浅蓝纸底（2026-11 全局玻璃化） */
+  --app-bg:
+    radial-gradient(circle at 10% 2%, rgba(84,126,255,.55) 0, rgba(84,126,255,.18) 260px, transparent 560px),
+    radial-gradient(circle at 92% 6%, rgba(255,150,96,.42) 0, rgba(255,150,96,.14) 240px, transparent 520px),
+    radial-gradient(circle at 74% 88%, rgba(122,91,214,.34) 0, rgba(122,91,214,.12) 280px, transparent 600px),
+    radial-gradient(circle at 4% 82%, rgba(56,189,248,.34) 0, rgba(56,189,248,.12) 240px, transparent 540px),
+    linear-gradient(165deg, #eef2ff 0%, #fdf7f1 48%, #eef3fd 100%);
+  --glass-fill: rgba(255,255,255,.2);
+  --glass-sheen: linear-gradient(140deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.26) 32%, rgba(255,255,255,.1) 62%, rgba(255,255,255,.22) 100%);
+  --glass-edge: rgba(255,255,255,.62);
+  --glass-shadow:
+    0 1px 0 rgba(255,255,255,.85) inset,
+    0 -1px 0 rgba(255,255,255,.2) inset,
+    0 0 0 1px rgba(255,255,255,.16) inset,
+    0 30px 60px -32px rgba(28,32,60,.5);
+  --glass-filter: blur(32px) saturate(190%);
   --bg-secondary: #faf9f7;
   --bg-tertiary: #f0eeeb;
   --card-bg: #ffffff;
@@ -84,10 +100,14 @@
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
   --shadow-raised: 0 1px 2px rgba(31, 30, 29, 0.05), 0 2px 8px -2px rgba(31, 30, 29, 0.06);
-  --shadow-card: 0 1px 2px rgba(29, 27, 23, 0.05), 0 12px 32px -14px rgba(29, 27, 23, 0.16);
-  --shadow-card-hover: 0 2px 4px rgba(29, 27, 23, 0.06), 0 20px 44px -14px rgba(29, 27, 23, 0.22);
-  --radius: 14px;
-  --radius-control: 9px;
+  --shadow-card: var(--glass-shadow);
+  --shadow-card-hover:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -1px 0 rgba(255,255,255,.25) inset,
+    0 0 0 1px rgba(255,255,255,.22) inset,
+    0 36px 70px -34px rgba(28,32,60,.55);
+  --radius: 22px;
+  --radius-control: 12px;
   /* 类型徽章四色（方案 A：灵感=琥珀 / 概念=蓝 / 实体=紫 / 资料=青），首页「最近更新」与看板标签共用 */
   --badge-idea: #a15c07;
   --badge-idea-soft: #fbf0dd;
@@ -304,7 +324,7 @@ body {
    */
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
-  background: var(--bg);
+  background: var(--app-bg) fixed;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
@@ -363,7 +383,7 @@ button {
   background: none;
   border: none;
   cursor: pointer;
-  border-radius: var(--radius-control);
+  border-radius: 999px;
 }
 
 /* UI 2.0 聚焦态：全控件统一柔和光圈（box-shadow ring），废弃 Fluent 旧式底缘描边 */
@@ -448,12 +468,19 @@ select option {
 .link-muted { --channel: var(--text-faint); --channel-soft: var(--bg-tertiary); }
 
 .card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
+  /* 2026-11 液态玻璃：低填充 + 大模糊 + 斜向反光 + 三层边缘高光 */
+  background-color: var(--glass-fill);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
   border-radius: var(--radius);
-  padding: 16px;
-  /* 2026-10 方案 A 精修：柔和投影取代细边框感 */
+  padding: 18px;
   box-shadow: var(--shadow-card);
+}
+/* 不支持 backdrop-filter（老 WebView / 部分安卓）时退回实心卡，保证可读 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .card { background: var(--card-bg); border-color: var(--border); }
 }
 
 .muted { color: var(--text-secondary); }
@@ -462,9 +489,10 @@ select option {
 
 .tag {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 4px;
-  background: var(--bg-tertiary);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.55);
+  border: 1px solid rgba(255,255,255,.6);
   color: var(--text-secondary);
   font-size: 12px;
 }

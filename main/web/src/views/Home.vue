@@ -1421,7 +1421,8 @@ onUnmounted(() => {
    */
   overflow: hidden;
   overflow: clip;
-  background: var(--bg);
+  /* 玻璃底交给 body 渐变，壳层透明 */
+  background: transparent;
 }
 
 .rail {
@@ -1437,7 +1438,7 @@ onUnmounted(() => {
   gap: 3px;
   padding: 8px 5px;
   border: 1px solid var(--sidebar-glass-border);
-  border-radius: 8px;
+  border-radius: 18px;
   background: var(--sidebar-rail-material);
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);
@@ -1597,7 +1598,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--sidebar-glass-border);
-  border-radius: 8px;
+  border-radius: 18px;
   background: var(--sidebar-material);
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);
@@ -1653,7 +1654,7 @@ onUnmounted(() => {
   padding-bottom: var(--safe-bottom);
   /* 横屏时系统导航栏会跑到右侧（inset-right>0）：正文右侧也要让开，否则末列被导航键压住 */
   padding-right: var(--safe-right);
-  background: var(--bg);
+  background: transparent;
   /* 下拉刷新自己接管「顶部继续往下拉」：别让浏览器再叠一层 overscroll 光晕/滚动链 */
   overscroll-behavior-y: contain;
   transition: padding-left 180ms ease, padding-right 180ms ease, padding-top 180ms ease;

@@ -234,7 +234,7 @@ onUnmounted(() => {
   overflow: hidden;
   padding-bottom: var(--agent-shell-extra, 0px);
   color: var(--text);
-  background: var(--bg);
+  background: transparent;
 }
 
 /* ===== 顶栏：56px，返回 44 + 标题 20/650 + 右侧最多两颗 44px 图标按钮 ===== */
