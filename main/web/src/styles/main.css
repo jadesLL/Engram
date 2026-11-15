@@ -29,10 +29,8 @@
   /* UI 2.0 令牌收敛：中性色由冷灰改暖灰，强调色统一为 Engram Blue（2026-10 方案 A 精修：纸色更暖、蓝色更自信） */
   --bg: #f5f6f9;
   /* 液态玻璃底：三团柔光 + 浅蓝纸底（2026-11 全局玻璃化） */
-  --app-bg:
-    radial-gradient(1100px 560px at 6% -16%, rgba(43,92,230,.07) 0, transparent 62%),
-    radial-gradient(900px 520px at 98% 4%, rgba(255,150,96,.06) 0, transparent 58%),
-    #f5f6f9;
+  /* 2026-11 第六轮：底色改纯色，不再用柔光渐变（渐变会在卡片后面显出一道道色带） */
+  --app-bg: #f5f6f9;
   --glass-fill: rgba(255,255,255,.2);
   --glass-sheen: linear-gradient(140deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.26) 32%, rgba(255,255,255,.1) 62%, rgba(255,255,255,.22) 100%);
   --glass-edge: rgba(255,255,255,.62);
@@ -205,10 +203,7 @@ html.dark {
   color-scheme: dark;
   --bg: #101216;
   /* 液态玻璃深色档（2026-11 全局玻璃化）：中性色仍是暖灰，只把蓝/紫柔光压低饱和度贴上去 */
-  --app-bg:
-    radial-gradient(1200px 600px at 8% -14%, rgba(77,124,255,.16) 0, transparent 62%),
-    radial-gradient(900px 500px at 96% 8%, rgba(255,138,76,.08) 0, transparent 60%),
-    #101216;
+    --app-bg: #101216;
   --glass-fill: rgba(255,255,255,.055);
   --glass-fill-strong: rgba(40,44,54,.62);
   --glass-fill-soft: rgba(255,255,255,.03);
