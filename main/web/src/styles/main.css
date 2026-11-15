@@ -27,14 +27,12 @@
   /* color-scheme 必须显式声明：否则系统深色时原生控件（select 弹层/滚动条）会跟系统而非应用主题 */
   color-scheme: light;
   /* UI 2.0 令牌收敛：中性色由冷灰改暖灰，强调色统一为 Engram Blue（2026-10 方案 A 精修：纸色更暖、蓝色更自信） */
-  --bg: #eff2f8;
+  --bg: #f5f6f9;
   /* 液态玻璃底：三团柔光 + 浅蓝纸底（2026-11 全局玻璃化） */
   --app-bg:
-    radial-gradient(circle at 10% 2%, rgba(84,126,255,.55) 0, rgba(84,126,255,.18) 260px, transparent 560px),
-    radial-gradient(circle at 92% 6%, rgba(255,150,96,.42) 0, rgba(255,150,96,.14) 240px, transparent 520px),
-    radial-gradient(circle at 74% 88%, rgba(122,91,214,.34) 0, rgba(122,91,214,.12) 280px, transparent 600px),
-    radial-gradient(circle at 4% 82%, rgba(56,189,248,.34) 0, rgba(56,189,248,.12) 240px, transparent 540px),
-    linear-gradient(165deg, #eef2ff 0%, #fdf7f1 48%, #eef3fd 100%);
+    radial-gradient(1100px 560px at 6% -16%, rgba(43,92,230,.07) 0, transparent 62%),
+    radial-gradient(900px 520px at 98% 4%, rgba(255,150,96,.06) 0, transparent 58%),
+    #f5f6f9;
   --glass-fill: rgba(255,255,255,.2);
   --glass-sheen: linear-gradient(140deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.26) 32%, rgba(255,255,255,.1) 62%, rgba(255,255,255,.22) 100%);
   --glass-edge: rgba(255,255,255,.62);
@@ -51,7 +49,7 @@
   --bg-secondary: #faf9f7;
   --bg-tertiary: #f0eeeb;
   /* 卡片底色半透明（2026-11 全局玻璃化）：70% 白盖在网格上仍是纸面，但会透出底下柔光 */
-  --card-bg: rgba(255, 255, 255, 0.7);
+  --card-bg: #ffffff;
   /* 必须完全不透的场合（画布 / 二维码 / 文档预览白纸）用它，别改 --card-bg */
   --card-solid: #ffffff;
   /* 首页卡片三档材质：白卡浮起 / 白卡贴纸（描边无投影）/ 内凹操作带 + 轻状态卡（2026-11-10 卡片美化） */
@@ -66,8 +64,8 @@
   --text-faint: #7c7a77;
   /* 卡片辅助信息（时间 / 来源 / 图例）：#91908e 在白底只有 3.2:1，卡片内统一用这档（4.9:1） */
   --text-muted: #6f6d6a;
-  --border: rgba(31, 30, 29, 0.08);
-  --border-strong: rgba(31, 30, 29, 0.14);
+  --border: rgba(20, 26, 40, 0.09);
+  --border-strong: rgba(20, 26, 40, 0.16);
   --accent: #2b5ce6;
   --accent-hover: #2450cf;
   --accent-pressed: #1e46bd;
@@ -99,7 +97,7 @@
   --link-v4-soft: var(--warn-soft);
   --link-off-soft: var(--danger-soft);
   /* Fluent 标准控件：白底 + 底缘深色描边（ControlElevationBorder） */
-  --control-bg: rgba(255, 255, 255, 0.72);
+  --control-bg: #ffffff;
   --control-bg-hover: #f5f3f1;
   --control-bg-pressed: #edeae7;
   --control-border: rgba(0, 0, 0, 0.06);
@@ -114,8 +112,8 @@
     0 -1px 0 rgba(255,255,255,.25) inset,
     0 0 0 1px rgba(255,255,255,.22) inset,
     0 36px 70px -34px rgba(28,32,60,.55);
-  --radius: 22px;
-  --radius-control: 12px;
+  --radius: 14px;
+  --radius-control: 9px;
   /* 类型徽章四色（方案 A：灵感=琥珀 / 概念=蓝 / 实体=紫 / 资料=青），首页「最近更新」与看板标签共用 */
   --badge-idea: #a15c07;
   --badge-idea-soft: #fbf0dd;
@@ -127,11 +125,11 @@
   --badge-note-soft: #e3f3f0;
   --content-max: 720px;
   /* 侧栏 Acrylic（Win11 NavigationView 窗格材质） */
-  --sidebar-material: rgba(250, 249, 247, 0.86);
+  --sidebar-material: #ffffff;
   --sidebar-material-solid: #f5f4f2;
   --sidebar-rail-material: var(--sidebar-material);
   --sidebar-rail-solid: var(--sidebar-material-solid);
-  --sidebar-glass-solid: #f5f4f2;
+  --sidebar-glass-solid: #ffffff;
   --sidebar-glass-border: rgba(0, 0, 0, 0.07);
   --sidebar-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
   --sidebar-hairline: rgba(0, 0, 0, 0.08);
@@ -205,13 +203,12 @@ html.dark {
   /* Windows 11 Fluent 深色主题：Mica 深基底 + 提亮分层 */
   /* 原生 select 弹层、滚动条、日期控件由此变深色 */
   color-scheme: dark;
-  --bg: #1e1d1c;
+  --bg: #101216;
   /* 液态玻璃深色档（2026-11 全局玻璃化）：中性色仍是暖灰，只把蓝/紫柔光压低饱和度贴上去 */
   --app-bg:
-    radial-gradient(circle at 12% 0%, rgba(70,110,235,.42) 0, rgba(70,110,235,.12) 300px, transparent 640px),
-    radial-gradient(circle at 88% 8%, rgba(232,132,74,.22) 0, rgba(232,132,74,.06) 260px, transparent 560px),
-    radial-gradient(circle at 74% 94%, rgba(126,96,220,.26) 0, rgba(126,96,220,.07) 320px, transparent 660px),
-    linear-gradient(165deg, #1b1b1e 0%, #1a1917 50%, #191b20 100%);
+    radial-gradient(1200px 600px at 8% -14%, rgba(77,124,255,.16) 0, transparent 62%),
+    radial-gradient(900px 500px at 96% 8%, rgba(255,138,76,.08) 0, transparent 60%),
+    #101216;
   --glass-fill: rgba(255,255,255,.055);
   --glass-fill-strong: rgba(40,44,54,.62);
   --glass-fill-soft: rgba(255,255,255,.03);
@@ -224,26 +221,26 @@ html.dark {
     0 0 0 1px rgba(255,255,255,.04) inset,
     0 30px 60px -30px rgba(0,0,0,.9);
   --glass-filter: blur(32px) saturate(150%);
-  --bg-secondary: #282726;
-  --bg-tertiary: #33312f;
-  --card-bg: rgba(38, 37, 36, 0.68);
-  --card-solid: #201f1e;
-  --surface-well: #232120;
+  --bg-secondary: #14161b;
+  --bg-tertiary: #1d212a;
+  --card-bg: #181b21;
+  --card-solid: #181b21;
+  --surface-well: #14171d;
   --surface-status: rgba(255, 255, 255, 0.05);
   --glass-bg: rgba(40, 39, 38, 0.72);
   --glass-blur: saturate(140%) blur(24px);
   --bg-hover: rgba(255, 255, 255, 0.06);
-  --text: #ffffff;
-  --text-secondary: #c9c9c9;
-  --text-faint: #8b8b8b;
+  --text: #eef1f6;
+  --text-secondary: #9aa1ad;
+  --text-faint: #79808b;
   --text-muted: #a3a19e;
-  --border: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.2);
-  --accent: #5aa9e6;
-  --accent-hover: #79b9ec;
-  --accent-pressed: #4c96d8;
-  --accent-soft: rgba(90, 169, 230, 0.14);
-  --on-accent: #0b2a3d;
+  --border: #252932;
+  --border-strong: #32374a;
+  --accent: #4d7cff;
+  --accent-hover: #6b93ff;
+  --accent-pressed: #3f6ae8;
+  --accent-soft: rgba(77, 124, 255, 0.16);
+  --on-accent: #ffffff;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
   --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.36);
@@ -265,16 +262,16 @@ html.dark {
   --badge-entity-soft: rgba(167, 155, 213, 0.15);
   --badge-note: #5ec4b6;
   --badge-note-soft: rgba(94, 196, 182, 0.14);
-  --control-bg: rgba(255, 255, 255, 0.06);
+  --control-bg: #1b1f26;
   --control-bg-hover: rgba(255, 255, 255, 0.084);
   --control-bg-pressed: rgba(255, 255, 255, 0.042);
   --control-border: rgba(255, 255, 255, 0.07);
   --control-border-strong: rgba(255, 255, 255, 0.22);
-  --sidebar-material: rgba(42, 41, 39, 0.8);
+  --sidebar-material: #13161b;
   --sidebar-material-solid: #2a2927;
   --sidebar-rail-material: var(--sidebar-material);
   --sidebar-rail-solid: var(--sidebar-material-solid);
-  --sidebar-glass-solid: #2a2927;
+  --sidebar-glass-solid: #13161b;
   --sidebar-glass-border: rgba(255, 255, 255, 0.08);
   --sidebar-glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   --sidebar-hairline: rgba(255, 255, 255, 0.08);
@@ -502,19 +499,13 @@ select option {
 .link-muted { --channel: var(--text-faint); --channel-soft: var(--bg-tertiary); }
 
 .card {
-  /* 2026-11 液态玻璃：低填充 + 大模糊 + 斜向反光 + 三层边缘高光 */
-  background-color: var(--glass-fill);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border: 1px solid var(--glass-edge);
+  /* 2026-11 第五轮「内容优先」：卡片回到纸面——细描边 + 1px 投影，
+   * 层级交给字号、留白与数据本身；玻璃只留给真的压在内容上的浮层（见文件末尾）。 */
+  background: var(--card-bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
+  padding: 16px 18px;
   box-shadow: var(--shadow-card);
-}
-/* 不支持 backdrop-filter（老 WebView / 部分安卓）时退回实心卡，保证可读 */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .card { background: var(--card-bg); border-color: var(--border); }
 }
 
 .muted { color: var(--text-secondary); }
@@ -916,99 +907,63 @@ html.kb-open .content {
 }
 
 /* ==========================================================================
- * 液态玻璃 · 页面层（2026-11 全局玻璃化 ②）
+ * 内容优先（2026-11 第五轮）
  * --------------------------------------------------------------------------
- * ① 主壳层（body 网格底、.card、首页模块卡、设置左栏）在文件前半段。
- * ② 这一段换掉**页面内部**的实色底：收集箱 / 搜索 / 任务 / 图谱 / 编辑器 / 浮层。
- *    做法是「页面根透明，让网格透上来」+「带内容的容器换成低填充玻璃」。
- *  - 一律用 #app 前缀压优先级：组件里的样式是 scoped 的，选择器带 [data-v-xxx]
- *    属性（0,2,0），#app .x 是 1,1,0，稳压一头。这样不用去改那些几十 KB 的 .vue 文件。
- *  - 填充/描边/光束/阴影全取令牌，深浅色两档自动切换；没有 backdrop-filter 的壳
- *    （老 WebView、部分安卓 ROM）由文件头的 @supports 兜底成实色，不会糊成一团。
- *  - 只在**压在有内容的区域上**的浮层用 blur：侧栏、正文这类本身就贴着网格的元素
- *    不 blur，省一层合成（安卓中低端机每个 blur 都是真实开销）。
+ * 前四轮把「玻璃」铺满整站，结果网格底成了主角、六张卡同一档材质，眼睛没有落点。
+ * 这一轮把材质的作用收回来：**只有真的压在内容上面的面才用玻璃**（吸顶工具条、
+ * 下拉菜单、提示、toast、抽屉头），其余一律回到纸面——细描边 + 1px 投影，
+ * 层级交给字号、留白和数据本身。网格底只保留 6% 强度的柔光当氛围，不再参与构图。
+ *
+ * 一律用 #app 前缀：组件样式是 scoped 的（选择器带 [data-v-xxx]，优先级 0,2,0），
+ * #app .x 是 1,1,0，稳压一头，不用去改那些几十 KB 的 .vue 文件。
  * ========================================================================== */
 
-/* ① 页面根：不再自己铺实色，让 body 的网格上来 */
+/* ① 页面根：不自己铺底，让极淡的网格透上来 */
 #app .inbox-view,
 #app .search-view,
 #app .tasks-view,
 #app .graph-view,
 #app .editor-view,
-#app .customer-research-view,
-#app .reading-preview { background: transparent; }
+#app .reading-preview,
+#app .customer-research-view { background: transparent; }
 
-/* ② 收集箱：收纳区 = 一块玻璃动作面，列表行 hover 时浮成玻璃 */
-#app .inbox-view .intake {
-  background-color: var(--glass-fill-strong);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border: 1px solid var(--glass-edge);
-  border-radius: 20px;
-  box-shadow: var(--glass-shadow);
+/* ② 内容面板：纸面。原来这里是低填充玻璃 */
+#app .inbox-view .intake,
+#app .search-view .search-box,
+#app .search-view .hit,
+#app .graph-view .gv-top,
+#app .graph-view .gv-facets {
+  background-color: var(--card-bg);
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
 }
+#app .inbox-view .intake,
+#app .search-view .search-box { border-radius: 14px; }
+#app .graph-view .gv-top { border-width: 0 0 1px; box-shadow: none; }
+#app .graph-view .gv-facets { border-radius: 14px; }
 #app .inbox-view .intake.hot {
   border-color: var(--accent);
-  box-shadow: var(--glass-shadow), 0 0 0 3px var(--accent-soft);
+  box-shadow: var(--shadow-card), 0 0 0 3px var(--accent-soft);
 }
-#app .inbox-view .row { border-radius: 14px; }
-#app .inbox-view .row:hover {
-  background-color: var(--glass-fill-strong);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  box-shadow: var(--glass-shadow);
-}
-
-/* ③ 搜索：命令面板式搜索盒 + 结果卡片 */
-#app .search-view .search-box {
-  background-color: var(--glass-fill-strong);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border: 1px solid var(--glass-edge);
-  border-radius: 18px;
-  box-shadow: var(--glass-shadow);
-}
+#app .inbox-view .row { border-radius: 9px; }
+#app .inbox-view .row:hover { background-color: var(--bg-hover); box-shadow: none; }
 #app .search-view .filter-chips button {
-  background: var(--glass-fill-strong);
-  border-color: var(--glass-edge);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
+  background: var(--card-bg);
+  border-color: var(--border);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 #app .search-view .filter-chips button.on {
   background: var(--accent);
   border-color: transparent;
   color: var(--on-accent);
 }
-#app .search-view .hit {
-  background-color: var(--card-bg);
-  background-image: var(--glass-sheen);
-  border-color: var(--glass-edge);
-  box-shadow: var(--glass-shadow);
-}
-
-/* ④ 图谱：顶栏与设置面板玻璃化，画布本身透出网格（节点浮在整页网格上） */
-#app .graph-view .gv-top {
-  background-color: var(--card-bg);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border-bottom: 1px solid var(--glass-edge);
-}
-#app .graph-view .gv-facets {
-  background-color: var(--glass-fill-strong);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border: 1px solid var(--glass-edge);
-  border-radius: 20px;
-  box-shadow: var(--glass-shadow);
-}
 #app .graph-view .gv-stage { background-color: transparent; }
 
-/* ⑤ 编辑器：正文直接写在网格上（像 Notion 整页文档），工具条浮成一条玻璃胶囊 */
+/* ③ 编辑器：正文写在底色上（像整页文档），工具条是一条浮起来的玻璃带 */
 #app .editor-view .editor-area,
 #app .editor-view .editor-area .vditor,
 #app .editor-view .editor-area .vditor-content,
@@ -1016,38 +971,16 @@ html.kb-open .content {
 #app .editor-view .editor-area .vditor-wysiwyg,
 #app .editor-view .editor-area .vditor-sv,
 #app .editor-view .editor-area .vditor-reset { background-color: transparent; }
-#app .editor-view .vditor-toolbar {
-  padding: 4px 8px;
-  background-color: var(--glass-fill-strong);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border: 1px solid var(--glass-edge);
-  border-radius: 16px;
-  box-shadow: var(--glass-shadow);
-}
 
-/* ⑤b 沉浸阅读：正文落在网格上，工具条浮成一条玻璃胶囊（顶栏原来是整条实色白，
-   把网格从中间切断） */
-#app .reading-toolbar {
-  margin: 8px 0 0;
-  padding: 6px 10px;
-  background-color: var(--glass-fill-strong);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  border: 1px solid var(--glass-edge);
-  border-radius: 18px;
-  box-shadow: var(--glass-shadow);
-}
-
-/* ⑥ 浮层：跟着光标走的提示 / toast / 下拉 / 右键菜单。它们压在有字的地方，
-   必须带 blur——0.46 的实心挡不住底下的字 */
+/* ④ 只有浮在内容上的面用玻璃：提示 / toast / 下拉 / 右键菜单 / 吸顶工具条。
+   它们底下有字，必须带模糊，否则会叠字 */
 #app .app-tooltip,
 #app .app-toast,
 #app .app-select-menu,
 #app .menu,
-#app .gv-tip {
+#app .gv-tip,
+#app .reading-toolbar,
+#app .editor-view .vditor-toolbar {
   background-color: var(--glass-fill-strong);
   background-image: var(--glass-sheen);
   backdrop-filter: var(--glass-filter);
@@ -1055,26 +988,39 @@ html.kb-open .content {
   border: 1px solid var(--glass-edge);
   box-shadow: var(--glass-shadow);
 }
+#app .reading-toolbar {
+  margin: 10px 12px 0;
+  padding: 6px 10px;
+  border-radius: 12px;
+}
+#app .editor-view .vditor-toolbar { border-radius: 12px; padding: 4px 8px; }
 
-/*
- * 兜底：跑不了 backdrop-filter 的壳（老 WebView / 部分安卓 ROM / 关闭了硬件加速）。
- * 玻璃填充只有 0.46 的白，不兜底会直接看见底下的字叠在一起——退回实色纸面，
- * 形状、描边、投影保留，只是不再透光。
- */
+/* ⑤ 壳层收口：首页模块卡、设置左栏、侧栏都回到纸面（原来各自带玻璃） */
+#app .shell,
+#app .settings-nav,
+#app .sidebar {
+  background-color: var(--card-bg) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-color: var(--border);
+  box-shadow: var(--shadow-card);
+}
+#app .shell { border-width: 1px; border-style: solid; border-radius: 14px; padding: 16px 18px; }
+#app .settings-nav { border-radius: 14px; }
+
+/* ⑥ 收纳区说明文字行高：1.2 挤成两行贴在一起，抬到 1.5 */
+#app .inbox-view .intake small { line-height: 1.5; }
+
+/* 兜底：跑不了 backdrop-filter 的壳（老 WebView / 部分安卓 ROM）把浮层退回实色 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  #app .inbox-view .intake,
-  #app .inbox-view .row:hover,
-  #app .search-view .search-box,
-  #app .search-view .filter-chips button,
-  #app .search-view .hit,
-  #app .graph-view .gv-top,
-  #app .graph-view .gv-facets,
-  #app .editor-view .vditor-toolbar,
   #app .app-tooltip,
   #app .app-toast,
   #app .app-select-menu,
   #app .menu,
-  #app .gv-tip {
+  #app .gv-tip,
+  #app .reading-toolbar,
+  #app .editor-view .vditor-toolbar {
     background-color: var(--card-solid);
     background-image: none;
   }
