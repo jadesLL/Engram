@@ -44,9 +44,16 @@
     0 0 0 1px rgba(255,255,255,.16) inset,
     0 30px 60px -32px rgba(28,32,60,.5);
   --glass-filter: blur(32px) saturate(190%);
+  /* 玻璃填充三档：soft 只提示体积 / fill 默认卡片 / strong 承载文字与浮层 */
+  --glass-fill-strong: rgba(255,255,255,.46);
+  --glass-fill-soft: rgba(255,255,255,.14);
+  --glass-rim: 0 0 0 1px rgba(255,255,255,.5) inset;
   --bg-secondary: #faf9f7;
   --bg-tertiary: #f0eeeb;
-  --card-bg: #ffffff;
+  /* 卡片底色半透明（2026-11 全局玻璃化）：70% 白盖在网格上仍是纸面，但会透出底下柔光 */
+  --card-bg: rgba(255, 255, 255, 0.7);
+  /* 必须完全不透的场合（画布 / 二维码 / 文档预览白纸）用它，别改 --card-bg */
+  --card-solid: #ffffff;
   /* 首页卡片三档材质：白卡浮起 / 白卡贴纸（描边无投影）/ 内凹操作带 + 轻状态卡（2026-11-10 卡片美化） */
   --surface-well: #efedea;
   --surface-status: rgba(255, 255, 255, 0.62);
@@ -55,7 +62,8 @@
   --bg-hover: rgba(0, 0, 0, 0.045);
   --text: #1d1b17;
   --text-secondary: #5f5d5b;
-  --text-faint: #91908e;
+  /* 玻璃化后卡片底色只剩 70% 白，辅助信息在原值上掉到 2.7:1，提一档到 4.3:1 */
+  --text-faint: #7c7a77;
   /* 卡片辅助信息（时间 / 来源 / 图例）：#91908e 在白底只有 3.2:1，卡片内统一用这档（4.9:1） */
   --text-muted: #6f6d6a;
   --border: rgba(31, 30, 29, 0.08);
@@ -91,7 +99,7 @@
   --link-v4-soft: var(--warn-soft);
   --link-off-soft: var(--danger-soft);
   /* Fluent 标准控件：白底 + 底缘深色描边（ControlElevationBorder） */
-  --control-bg: #fdfcfb;
+  --control-bg: rgba(255, 255, 255, 0.72);
   --control-bg-hover: #f5f3f1;
   --control-bg-pressed: #edeae7;
   --control-border: rgba(0, 0, 0, 0.06);
@@ -198,9 +206,28 @@ html.dark {
   /* 原生 select 弹层、滚动条、日期控件由此变深色 */
   color-scheme: dark;
   --bg: #1e1d1c;
+  /* 液态玻璃深色档（2026-11 全局玻璃化）：中性色仍是暖灰，只把蓝/紫柔光压低饱和度贴上去 */
+  --app-bg:
+    radial-gradient(circle at 12% 0%, rgba(70,110,235,.42) 0, rgba(70,110,235,.12) 300px, transparent 640px),
+    radial-gradient(circle at 88% 8%, rgba(232,132,74,.22) 0, rgba(232,132,74,.06) 260px, transparent 560px),
+    radial-gradient(circle at 74% 94%, rgba(126,96,220,.26) 0, rgba(126,96,220,.07) 320px, transparent 660px),
+    linear-gradient(165deg, #1b1b1e 0%, #1a1917 50%, #191b20 100%);
+  --glass-fill: rgba(255,255,255,.055);
+  --glass-fill-strong: rgba(40,44,54,.62);
+  --glass-fill-soft: rgba(255,255,255,.03);
+  --glass-sheen: linear-gradient(140deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 34%, rgba(255,255,255,.015) 66%, rgba(255,255,255,.08) 100%);
+  --glass-edge: rgba(255,255,255,.13);
+  --glass-rim: 0 0 0 1px rgba(255,255,255,.1) inset;
+  --glass-shadow:
+    0 1px 0 rgba(255,255,255,.07) inset,
+    0 -1px 0 rgba(255,255,255,.02) inset,
+    0 0 0 1px rgba(255,255,255,.04) inset,
+    0 30px 60px -30px rgba(0,0,0,.9);
+  --glass-filter: blur(32px) saturate(150%);
   --bg-secondary: #282726;
   --bg-tertiary: #33312f;
-  --card-bg: #2a2927;
+  --card-bg: rgba(38, 37, 36, 0.68);
+  --card-solid: #201f1e;
   --surface-well: #232120;
   --surface-status: rgba(255, 255, 255, 0.05);
   --glass-bg: rgba(40, 39, 38, 0.72);
@@ -223,6 +250,13 @@ html.dark {
   /* 2026-10 方案 A 精修：暗色卡片投影与徽章配色；浮层分层 hover 加深档 */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 32px -14px rgba(0, 0, 0, 0.55);
   --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.36), 0 20px 44px -14px rgba(0, 0, 0, 0.62);
+  /* 深色玻璃卡片阴影（2026-11）：沿用同一条玻璃光束，只换成深底上的半透明投影 */
+  --shadow-card: var(--glass-shadow);
+  --shadow-card-hover:
+    0 1px 0 rgba(255,255,255,.1) inset,
+    0 -1px 0 rgba(255,255,255,.03) inset,
+    0 0 0 1px rgba(255,255,255,.06) inset,
+    0 36px 70px -30px rgba(0,0,0,.95);
   --badge-idea: #e5b545;
   --badge-idea-soft: rgba(229, 181, 69, 0.15);
   --badge-concept: #7c9cf5;
@@ -878,5 +912,170 @@ html.kb-open .content {
     top: 50%;
     height: max(100%, 48px);
     transform: translateY(-50%);
+  }
+}
+
+/* ==========================================================================
+ * 液态玻璃 · 页面层（2026-11 全局玻璃化 ②）
+ * --------------------------------------------------------------------------
+ * ① 主壳层（body 网格底、.card、首页模块卡、设置左栏）在文件前半段。
+ * ② 这一段换掉**页面内部**的实色底：收集箱 / 搜索 / 任务 / 图谱 / 编辑器 / 浮层。
+ *    做法是「页面根透明，让网格透上来」+「带内容的容器换成低填充玻璃」。
+ *  - 一律用 #app 前缀压优先级：组件里的样式是 scoped 的，选择器带 [data-v-xxx]
+ *    属性（0,2,0），#app .x 是 1,1,0，稳压一头。这样不用去改那些几十 KB 的 .vue 文件。
+ *  - 填充/描边/光束/阴影全取令牌，深浅色两档自动切换；没有 backdrop-filter 的壳
+ *    （老 WebView、部分安卓 ROM）由文件头的 @supports 兜底成实色，不会糊成一团。
+ *  - 只在**压在有内容的区域上**的浮层用 blur：侧栏、正文这类本身就贴着网格的元素
+ *    不 blur，省一层合成（安卓中低端机每个 blur 都是真实开销）。
+ * ========================================================================== */
+
+/* ① 页面根：不再自己铺实色，让 body 的网格上来 */
+#app .inbox-view,
+#app .search-view,
+#app .tasks-view,
+#app .graph-view,
+#app .editor-view,
+#app .customer-research-view,
+#app .reading-preview { background: transparent; }
+
+/* ② 收集箱：收纳区 = 一块玻璃动作面，列表行 hover 时浮成玻璃 */
+#app .inbox-view .intake {
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+}
+#app .inbox-view .intake.hot {
+  border-color: var(--accent);
+  box-shadow: var(--glass-shadow), 0 0 0 3px var(--accent-soft);
+}
+#app .inbox-view .row { border-radius: 14px; }
+#app .inbox-view .row:hover {
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-shadow);
+}
+
+/* ③ 搜索：命令面板式搜索盒 + 结果卡片 */
+#app .search-view .search-box {
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
+  border-radius: 18px;
+  box-shadow: var(--glass-shadow);
+}
+#app .search-view .filter-chips button {
+  background: var(--glass-fill-strong);
+  border-color: var(--glass-edge);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+}
+#app .search-view .filter-chips button.on {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+#app .search-view .hit {
+  background-color: var(--card-bg);
+  background-image: var(--glass-sheen);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+
+/* ④ 图谱：顶栏与设置面板玻璃化，画布本身透出网格（节点浮在整页网格上） */
+#app .graph-view .gv-top {
+  background-color: var(--card-bg);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border-bottom: 1px solid var(--glass-edge);
+}
+#app .graph-view .gv-facets {
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+}
+#app .graph-view .gv-stage { background-color: transparent; }
+
+/* ⑤ 编辑器：正文直接写在网格上（像 Notion 整页文档），工具条浮成一条玻璃胶囊 */
+#app .editor-view .editor-area,
+#app .editor-view .editor-area .vditor,
+#app .editor-view .editor-area .vditor-content,
+#app .editor-view .editor-area .vditor-ir,
+#app .editor-view .editor-area .vditor-wysiwyg,
+#app .editor-view .editor-area .vditor-sv,
+#app .editor-view .editor-area .vditor-reset { background-color: transparent; }
+#app .editor-view .vditor-toolbar {
+  padding: 4px 8px;
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+}
+
+/* ⑤b 沉浸阅读：正文落在网格上，工具条浮成一条玻璃胶囊（顶栏原来是整条实色白，
+   把网格从中间切断） */
+#app .reading-toolbar {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
+  border-radius: 18px;
+  box-shadow: var(--glass-shadow);
+}
+
+/* ⑥ 浮层：跟着光标走的提示 / toast / 下拉 / 右键菜单。它们压在有字的地方，
+   必须带 blur——0.46 的实心挡不住底下的字 */
+#app .app-tooltip,
+#app .app-toast,
+#app .app-select-menu,
+#app .menu,
+#app .gv-tip {
+  background-color: var(--glass-fill-strong);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+
+/*
+ * 兜底：跑不了 backdrop-filter 的壳（老 WebView / 部分安卓 ROM / 关闭了硬件加速）。
+ * 玻璃填充只有 0.46 的白，不兜底会直接看见底下的字叠在一起——退回实色纸面，
+ * 形状、描边、投影保留，只是不再透光。
+ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #app .inbox-view .intake,
+  #app .inbox-view .row:hover,
+  #app .search-view .search-box,
+  #app .search-view .filter-chips button,
+  #app .search-view .hit,
+  #app .graph-view .gv-top,
+  #app .graph-view .gv-facets,
+  #app .editor-view .vditor-toolbar,
+  #app .app-tooltip,
+  #app .app-toast,
+  #app .app-select-menu,
+  #app .menu,
+  #app .gv-tip {
+    background-color: var(--card-solid);
+    background-image: none;
   }
 }
