@@ -57,6 +57,7 @@ engram/
 - 每次启动扫描 `brain/` 与索引对账；数据库可由文件库重建。
 - 登录密码使用 PBKDF2 哈希；同步成员令牌与本地会话密钥由 Android Keystore AES-GCM 密封保存，不进入 SQLite 或备份。
 - 所有本地、上传、恢复与同步路径均做 canonical 越界校验；写入先落同盘临时文件再原子替换；普通文件同步单文件上限 200 MB，收集箱文件同步不设固定单文件上限；网络和文件复制采用流式处理。
+- **收集箱上传的阈值按文件口径给**：Ktor 3 的 `receiveMultipart(formFieldLimit)` 卡的是**每一个 part**（文件 part 也算），不是只看表单字段。转发中枢时用 `MultipartLimits.HUB_UPLOAD_BYTES`（4 GB，近似不限，与中枢 `fileSize: Infinity` 对齐），表单字段另用 `HUB_FIELD_BYTES`（1 MB）自己守一道。改成 1 MB 之类的表单口径会把所有超过该值的照片 / 视频整份拦掉（2026-11 手机导入 HEIC 失败即此因，报错是 `Limit of 1048576 bytes exceeded while searching for "----WebKitFormBoundary…"`）。
 - Android 私有目录会在卸载时删除。设置 → 知识库数据 → 备份与恢复 可导出 v2 备份：`manifest.json + brain/ + portable-metadata.json`，不含密码、会话和同步令牌；导入旧版 `wiki.db + brain/` 时忽略旧数据库并从 `brain/` 重建本机索引。
 - 旧远程 APK 原地升级后，只把已保存服务器地址预填为候选中枢地址；仍需成员令牌，不会静默启用同步或覆盖本地库。
 

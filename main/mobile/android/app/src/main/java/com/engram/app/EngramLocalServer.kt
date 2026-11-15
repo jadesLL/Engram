@@ -86,7 +86,14 @@ class EngramLocalServer private constructor(private val context: Context) {
                     call.json(JSONObject().put("error", error.message ?: "请求无效"), HttpStatusCode.BadRequest)
                 }
                 exception<Throwable> { call, error ->
-                    call.json(JSONObject().put("error", error.message ?: "本地服务错误"), HttpStatusCode.InternalServerError)
+                    val message = error.message.orEmpty()
+                    // Ktor 3 的 multipart 超限原文是「Limit of N bytes exceeded while searching for "..."」，
+                    // 直接透到界面上等于没说；统一成一句能读懂的话（阈值见 MultipartLimits）。
+                    if (message.startsWith("Limit of ") && message.contains("bytes exceeded")) {
+                        call.json(JSONObject().put("error", "上传内容超过单次上限，请压缩或分批上传后重试"), HttpStatusCode.PayloadTooLarge)
+                    } else {
+                        call.json(JSONObject().put("error", message.ifBlank { "本地服务错误" }), HttpStatusCode.InternalServerError)
+                    }
                 }
             }
             routing { routes() }
@@ -1007,7 +1014,14 @@ class EngramLocalServer private constructor(private val context: Context) {
         respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
     }
 
-    /** 收集箱上传：把 WebView 发来的 multipart 原样流式转发到中枢，文件不整块进内存、不限单文件大小。 */
+    /**
+     * 收集箱上传：把 WebView 发来的 multipart 原样流式转发到中枢，文件不整块进内存、不限单文件大小。
+     *
+     * 坑：Ktor 3 的 receiveMultipart(formFieldLimit) 卡的是**每一个 part**（文件 part 也算），
+     * 不是只看表单字段。早先按 1 MB 传，超过 1 MB 的照片/视频会在 forEachPart 里抛
+     * 「Limit of 1048576 bytes exceeded while searching for "----WebKitFormBoundary…"」，
+     * 整份文件存不进收集箱（手机端导入 HEIC 照片就是这么失败的）。阈值见 MultipartLimits。
+     */
     private suspend fun ApplicationCall.proxyHubUpload() {
         if (!authorize()) return
         if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
@@ -1017,11 +1031,14 @@ class EngramLocalServer private constructor(private val context: Context) {
             remote.doOutput = true
             remote.setChunkedStreamingMode(64 * 1024)
             remote.outputStream.buffered(64 * 1024).use { output ->
-                receiveMultipart(formFieldLimit = MAX_HUB_FIELD_BYTES).forEachPart { part ->
+                receiveMultipart(formFieldLimit = MultipartLimits.HUB_UPLOAD_BYTES).forEachPart { part ->
                     when (part) {
                         is PartData.FormItem -> {
+                            // 阈值放到文件口径后，表单字段（dir / sourceUrl）自己守一道小上限
+                            val value = part.value.toByteArray(Charsets.UTF_8)
+                            require(value.size <= MultipartLimits.HUB_FIELD_BYTES) { "表单字段「${part.name.orEmpty()}」过长" }
                             writeMultipartHeader(output, boundary, part.name.orEmpty().ifBlank { "dir" }, null, null)
-                            output.write(part.value.toByteArray(Charsets.UTF_8))
+                            output.write(value)
                             output.write(MULTIPART_CRLF)
                         }
                         is PartData.FileItem -> {
@@ -1293,7 +1310,6 @@ class EngramLocalServer private constructor(private val context: Context) {
         private const val SESSION_COOKIE = "engram_local_session"
         private const val MAX_FILE_BYTES = 200L * 1024 * 1024
         private const val MAX_BACKUP_BYTES = 1024L * 1024 * 1024
-        private const val MAX_HUB_FIELD_BYTES = 1024L * 1024
         private const val MAX_HUB_JSON_BYTES = 4L * 1024 * 1024
         /** 单张图片资产上限（与 server routes/assets.ts 的 MAX_ASSET_BYTES 一致） */
         private const val MAX_ASSET_BYTES = 12L * 1024 * 1024
