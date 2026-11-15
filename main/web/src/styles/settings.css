@@ -76,8 +76,6 @@
  * 分组多、竖着放不下，所以这一列自己是滚动容器——不能再靠 position: sticky：
  * sticky 只在壳层滚动时才有意义，视口外面那几项永远钉不出来（就是这次的 bug）。
  */
-/* 设置页左栏：玻璃面板（全局玻璃化） */
-.settings-nav { background-color: var(--glass-fill); background-image: var(--glass-sheen); backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter); border: 1px solid var(--glass-edge); border-radius: var(--radius); box-shadow: var(--shadow-card); }
 .settings-nav {
   min-height: 0;
   display: flex;
