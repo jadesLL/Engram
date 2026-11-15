@@ -104,11 +104,14 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   height:100%;
   min-width:0;
   min-height:0;
-  padding:22px;
-  /* 浮层分层：去描边（保留 1px 透明边避免盒模型位移），层级全靠柔和投影 */
-  border:1px solid transparent;
-  border-radius:17px;
-  background:var(--card-bg);
+  padding:20px;
+  /* 2026-11 液态玻璃卡：低填充 + 大模糊 + 斜向反光 + 边缘高光 */
+  border:1px solid var(--glass-edge);
+  border-radius:24px;
+  background-color: var(--glass-fill);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
   box-shadow:var(--shadow-card);
   display:flex;
   flex-direction:column;
