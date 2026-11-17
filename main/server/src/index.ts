@@ -42,6 +42,7 @@ import { registerOfficeProxy } from './office/proxy.js';
 import { registerAgentConsoleProxy } from './assistant/agentConsoleProxy.js';
 import { agentToolRoutes } from './routes/agentTools.js';
 import { assetRoutes } from './routes/assets.js';
+import { doxentRoutes } from './routes/doxent.js';
 import { mediaRoutes } from './routes/media.js';
 import { scanVaultPages, scanVaultDeferred, readPage, writePage } from './lib/vault.js';
 import { startVaultWatch } from './lib/vaultWatch.js';
@@ -177,6 +178,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(hubUpdateRoutes);
   // Agent 工具面（CLI + skill 的 REST 后端）：/api/agent/*，替代已删除的 /mcp 端点
   await app.register(agentToolRoutes);
+  await app.register(doxentRoutes);
 
   // 静态托管前端构建产物 + SPA fallback（HTTP/HTTPS 实例各自缓存一份）。
   // 只预读 index.html，其余资源首次请求时再读盘（见 lib/staticAssets.ts）。

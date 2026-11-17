@@ -68,7 +68,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
-      agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+      agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-doxent', 'agent-tools'],
     },
   );
   // 混装桶拆开后的归位：外观不在账户里、搜索同义词不在数据里、版本与卸载不在更新里
@@ -125,7 +125,7 @@ test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出
   // 桌面端两个能力位恒 true：7 个分组与顺序原样不变（能力位引入不能悄悄改桌面导航）
   assert.deepEqual(
     visibleSettingsDomains(FULL).find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-doxent', 'agent-tools'],
   );
 });
 
@@ -319,7 +319,7 @@ test('「视频理解模型」「自动整理（梦境思考）」与「任务�
   //   见 docs/AGENT-CONSOLE.md 与 CONTRACT-video-inbox.md §4.3）
   assert.deepEqual(
     SETTINGS_DOMAINS.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-doxent', 'agent-tools'],
   );
 });
 
