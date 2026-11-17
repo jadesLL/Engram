@@ -50,8 +50,7 @@
   --card-bg: #ffffff;
   /* 必须完全不透的场合（画布 / 二维码 / 文档预览白纸）用它，别改 --card-bg */
   --card-solid: #ffffff;
-  /* 首页卡片三档材质：白卡浮起 / 白卡贴纸（描边无投影）/ 内凹操作带 + 轻状态卡（2026-11-10 卡片美化） */
-  --surface-well: #efedea;
+  /* 首页卡片材质：白卡浮起 / 白卡贴纸（描边无投影）/ 轻状态卡（2026-11-10 卡片美化；2026-11-17 操作卡并入白卡） */
   --surface-status: rgba(255, 255, 255, 0.62);
   --glass-bg: rgba(255, 255, 255, 0.72);
   --glass-blur: saturate(160%) blur(24px);
@@ -233,7 +232,6 @@ html.dark {
   --bg-tertiary: #1d212a;
   --card-bg: #181b21;
   --card-solid: #181b21;
-  --surface-well: #14171d;
   --surface-status: rgba(255, 255, 255, 0.05);
   --glass-bg: rgba(40, 39, 38, 0.72);
   --glass-blur: saturate(140%) blur(24px);

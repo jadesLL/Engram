@@ -97,6 +97,7 @@
         :style="{
           gridColumn: `${entry.place.col + 1} / span ${entry.place.w}`,
           gridRow: `${entry.place.row + 1} / span ${entry.place.h}`,
+          '--pop-index': String(Math.min(entry.index, 8)),
           transform: dragId === entry.module.id && gestureMode === 'move' ? `translate(${ghost.x}px, ${ghost.y}px)` : undefined,
         }"
         :data-module-id="entry.module.id"
@@ -1102,7 +1103,19 @@ onUnmounted(() => {
   flex-direction: column;
 }
 .widget > .shell { flex: 1; min-height: 0; }
-.widget.dragging { z-index: 3; }
+.widget.dragging { z-index: 3; animation: none; }
+/* 入场（2026-11-17）：首屏与新增卡片淡入 + 上浮 10px + 轻微放大，按栅格顺序错峰 30ms。
+   fill-mode 只用 backwards——动画结束后不再压住拖动用的 inline transform。 */
+.widget {
+  animation: card-pop .4s cubic-bezier(.22,1,.36,1) backwards;
+  animation-delay: calc(var(--pop-index, 0) * 30ms);
+}
+@keyframes card-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.965);
+  }
+}
 
 /* 拖动时的落点高亮：直接占在栅格的格里 */
 .drop-cell {
@@ -1114,7 +1127,7 @@ onUnmounted(() => {
   z-index: 1;
 }
 @media (prefers-reduced-motion: reduce) {
-  .widget { transition: none; }
+  .widget { transition: none; animation: none; }
 }
 
 .board-empty { padding: 28px 24px; text-align: center; }
