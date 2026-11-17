@@ -21,6 +21,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "update-preload.js",
       "lib/**",
       "scripts/lib/**",
       "icon.png",
