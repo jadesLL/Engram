@@ -1,6 +1,7 @@
 package com.engram.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +51,38 @@ class ShareLinksTest {
         assertEquals("bilibili", parsed?.platform)
         assertEquals("https://b23.tv/AbCdEf", parsed?.link)
         assertEquals("测试标题", parsed?.title)
+    }
+
+    @Test
+    fun recognizesSharedWebArticleLink() {
+        val linkOnly = ShareLinks.webArticleShare("https://mp.weixin.qq.com/s/abc")
+        assertEquals("https://mp.weixin.qq.com/s/abc", linkOnly?.url)
+        assertEquals("", linkOnly?.title)
+        assertEquals("https://mp.weixin.qq.com/s/abc", ShareLinks.webArticleShare("  https://mp.weixin.qq.com/s/abc。\n")?.url)
+        assertEquals(
+            "公众号文章标题",
+            ShareLinks.webArticleShare("公众号文章标题 https://mp.weixin.qq.com/s/abc")?.title,
+        )
+    }
+
+    @Test
+    fun keepsMultiLineOrTrailingTextAsPlainText() {
+        assertNull(ShareLinks.webArticleShare("看这个\n再说一句 https://mp.weixin.qq.com/s/abc"))
+        assertNull(ShareLinks.webArticleShare("https://mp.weixin.qq.com/s/abc 还有后文"))
+    }
+
+    @Test
+    fun videoSharesAreNotFetchedAsArticles() {
+        assertNull(ShareLinks.webArticleShare("https://b23.tv/AbCdEf"))
+        assertNull(ShareLinks.webArticleShare("https://www.bilibili.com/video/BV1xx411c7mD"))
+        assertNull(ShareLinks.webArticleShare("复制打开抖音，看看【山野阿川】的作品 https://v.douyin.com/abc123/ 07/15"))
+    }
+
+    @Test
+    fun matchesShareTitleWithPageTitleAllowingPunctuation() {
+        assertTrue(ShareLinks.titleMatches("《求是》杂志发表文章", "求是 杂志发表文章！"))
+        assertTrue(ShareLinks.titleMatches("公众号标题", "公众号标题"))
+        assertFalse(ShareLinks.titleMatches("这个不错", "求是杂志发表文章"))
     }
 
     @Test

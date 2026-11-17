@@ -27,6 +27,9 @@ class InboxFilesTest {
             assertFalse(InboxFiles.cleanName(".hidden").startsWith('.'))
             assertTrue(InboxFiles.cleanName("字".repeat(200) + ".pdf").toByteArray().size < 255)
             assertTrue(InboxFiles.textName("网页标题").endsWith(".txt"))
+            assertEquals("网页链接-mp.weixin.qq.com", InboxFiles.linkStem("https://mp.weixin.qq.com/s/abc"))
+            assertEquals("网页链接", InboxFiles.linkStem("不是链接"))
+            assertEquals("网页链接-mp.weixin.qq.com.txt", InboxFiles.textName(null, InboxFiles.linkStem("https://mp.weixin.qq.com/s/abc")))
         } finally { brain.deleteRecursively() }
     }
 
