@@ -29,8 +29,8 @@
         <span class="doxent-status-hint">{{ stripHint }}</span>
       </div>
       <div class="setting-actions">
-        <button class="btn ghost small" type="button" :disabled="loading" @click="refresh">
-          {{ loading ? '检测中…' : '重新检测' }}
+        <button class="btn ghost small" type="button" :disabled="loading || binding" @click="refresh">
+          {{ loading ? '检测中…' : binding ? '绑定中…' : '重新检测' }}
         </button>
       </div>
     </div>
@@ -45,6 +45,10 @@
         <span class="value-text">{{ skillText }}</span>
       </li>
       <li class="value-row">
+        <span class="value-label">官方 CLI</span>
+        <span class="value-text" :class="cliTextClass" :title="status.cli?.path">{{ cliText }}</span>
+      </li>
+      <li class="value-row">
         <span class="value-label">登录状态</span>
         <span class="value-text" :class="loginTextClass">{{ loginText }}</span>
       </li>
@@ -54,18 +58,40 @@
       </li>
     </ul>
 
+    <!-- 残留安装锁：官方客户端会为它白等 180 秒，必须显式告诉用户并给一键清理 -->
+    <div v-if="cliLockStale" class="state-strip tone-warn doxent-lock-strip">
+      <span class="state-dot" aria-hidden="true" />
+      <div class="doxent-status-copy">
+        <strong>官方 CLI 安装锁残留</strong>
+        <span class="doxent-status-hint">
+          上次安装 CLI 被中断留下的锁，会让之后每次绑定都白等 3 分钟。清理后重试即可。
+        </span>
+      </div>
+      <div class="setting-actions">
+        <button
+          class="btn ghost small"
+          type="button"
+          :disabled="clearingLock || binding || busy"
+          @click="clearCliLock"
+        >
+          {{ clearingLock ? '清理中…' : '清理安装锁' }}
+        </button>
+      </div>
+    </div>
+
     <!-- 主操作：未绑定时是「绑定办公本」，已绑定后是「切换账号 / 解除绑定」；登录链接单独一行，便于关掉浏览器后重新打开 -->
     <div class="setting-row">
       <div class="setting-copy">
         <strong>{{ bound ? '已绑定：内置 Agent 可以调阅办公本' : '绑定办公本' }}</strong>
         <span v-if="bound">在聊天抽屉里直接说「查一下我办公本的笔记」「把这份纪要写进办公本笔记」。新开的会话生效。</span>
         <span v-else-if="binding" class="doxent-progress" aria-live="polite">
-          {{ bindProgressText }}已等待 {{ bindElapsedText }}。离开本页再回来会接着显示进度。
+          正在按下面的步骤执行；离开本页再回来会接着显示进度。
         </span>
         <span v-else-if="syncing" class="doxent-progress" aria-live="polite">
           {{ syncDetail }}完成后这里会自动变成已绑定，无需再扫码。
         </span>
         <span v-else-if="waiting">已打开浏览器：在页面里完成登录，这里会自动变成已绑定。</span>
+        <span v-else-if="bindFailed">上次绑定没有完成：{{ errorText || '可查看下方官方 CLI 状态后重试' }}</span>
         <span v-else>点「绑定办公本」会装官方技能并生成本人的登录链接，在浏览器里扫码 / 登录即可。</span>
       </div>
       <div class="setting-actions">
@@ -76,7 +102,7 @@
           :disabled="binding || busy || syncing || savingType || !pythonOk"
           @click="bind"
         >
-          {{ binding ? (switching ? '切换中…' : '准备中…') : syncing ? '同步中…' : (waiting ? '重新获取链接' : switchRequested ? '切换中…' : '绑定办公本') }}
+          {{ binding ? (switching ? '切换中…' : '准备中…') : syncing ? '同步中…' : (waiting ? '重新获取链接' : switchRequested ? '切换中…' : bindFailed ? '重试绑定' : '绑定办公本') }}
         </button>
         <template v-else>
           <button
@@ -92,6 +118,20 @@
           </button>
         </template>
       </div>
+    </div>
+
+    <!-- 分步进度：把「装技能 / 装 CLI / 生成链接」拆开，并显示服务端最后一句人话说明 -->
+    <div v-if="binding" class="doxent-bind-progress" aria-live="polite">
+      <ol class="doxent-steps">
+        <li v-for="step in bindSteps" :key="step.key" :class="'is-' + step.state">
+          <span class="doxent-step-dot" aria-hidden="true" />
+          <span>{{ step.label }}</span>
+        </li>
+      </ol>
+      <p class="doxent-bind-detail">{{ bindDetailText }}</p>
+      <p class="doxent-bind-elapsed">
+        已等待 {{ bindElapsedText }}。绑定完成后会自动打开登录页面；浏览器没打开就点下方「打开登录页面」。
+      </p>
     </div>
 
     <div v-if="loginUrl" class="setting-row doxent-link-row">
@@ -137,16 +177,22 @@ import AppSelect from '../ui/AppSelect.vue';
 /**
  * 设置 → 外设接入 →「办公本接入」（2026-11-18 从「Agent 与自动化」移出：它接入的是外部设备）。
  *
- * 三条状态线：Python 是否可用（官方客户端是 Python 脚本）、官方技能是否已装进内置 Agent 的
- * DSH_HOME/skills、官方 CLI 当前是否已登录。绑定动作在服务端后台完成（装技能 + 跑 --cli-action login），
- * 这里轮询绑定任务拿阶段与真实登录链接，再轮询登录状态、负责解绑。
+ * 四条状态线：Python 是否可用（官方客户端是 Python 脚本）、官方技能是否已装进内置 Agent 的
+ * DSH_HOME/skills、官方 CLI 是否已落盘（以及有没有残留安装锁）、官方 CLI 当前是否已登录。
+ * 绑定动作在服务端后台完成（装技能 + 跑 --cli-action login），这里轮询绑定任务拿阶段、
+ * 人话说明与真实登录链接，再轮询登录状态、负责解绑。
+ *
+ * 为什么单独显示官方 CLI：CLI 由官方客户端在首次 login 时自己下载，成功后每次登录只需几十秒；
+ * 但下载/替换被中断会留下 `.doxent-cli-install.lock`，官方客户端会为它白等 180 秒。
+ * 设置页现在能看到「已安装 v1.0.4 / 正在安装 / 安装锁残留」，并能一键清理后重试。
  *
  * 已登录时多显示一行「当前账号」：服务端只回由官方 CLI 会话派生的脱敏展示值（手机号或用户 ID
  * 尾号）。「切换账号」会先退出旧会话（同步设备一起退出）、再生成新账号的登录链接，走的还是
  * 同一个后台任务，所以进度、计时和刷新恢复逻辑与绑定完全一致。
  *
- * 为什么绑定不再用一个长请求硬等：首次要下载技能包并启动官方 CLI，可能 1–3 分钟；旧版只显示
- * 「准备中…」，看起来像卡死。现在服务端立即返回任务，设置页每秒刷新阶段和已等待时长。
+ * 绑定不再用一个长请求硬等：首次要下载技能包并启动官方 CLI，可能 1–3 分钟；旧版只显示
+ * 「准备中…」，看起来像卡死。现在服务端立即返回任务，设置页每秒刷新阶段与说明；任务失败会
+ * 直接弹「重试」框，并带上残留安装锁的清理提示。
  *
  * 登录链接带一次性 pollKey：只放在页面上，不写进日志、不做本地缓存。
  */
@@ -173,6 +219,20 @@ interface DoxentSkill {
   managed: boolean;
 }
 
+/**
+ * 官方 CLI 的本地安装状态（服务端只读文件系统给出）：
+ * installed=二进制是否已落盘；lock=官方安装锁是否存在；lockStale=锁已过期可清理。
+ */
+interface DoxentCli {
+  installed: boolean;
+  path: string;
+  version?: string;
+  lock: boolean;
+  lockAgeMs?: number;
+  lockStale: boolean;
+  error?: string;
+}
+
 interface DoxentLogin {
   state: 'logged-in' | 'logged-out' | 'unknown';
   detail?: string;
@@ -191,6 +251,10 @@ interface DoxentBindJob {
   /** bind=绑定；switch=换账号（旧任务可能没有这个字段，按 bind 处理） */
   reason?: 'bind' | 'switch';
   startedAt: number;
+  /** 最近一次阶段/说明变化时间（旧任务可能没有） */
+  updatedAt?: number;
+  /** 当前阶段的人话说明（旧任务可能没有） */
+  detail?: string;
   finishedAt?: number;
   skill?: DoxentSkill;
   login?: DoxentLogin;
@@ -214,6 +278,8 @@ interface DoxentSyncState {
 interface DoxentStatus {
   python: DoxentPython;
   skill: DoxentSkill;
+  /** 官方 CLI 安装状态（服务端读文件系统，不起进程） */
+  cli?: DoxentCli;
   login: DoxentLogin;
   downloadUrl: string;
   /** 进行中 / 刚结束的绑定任务（服务端重启后为 null） */
@@ -231,6 +297,7 @@ const NOTEBOOK_TYPES: Array<{ value: NotebookType; label: string }> = [{ value: 
 const status = ref<DoxentStatus>({
   python: { available: false },
   skill: { installed: false, root: '', managed: false },
+  cli: { installed: false, path: '', lock: false, lockStale: false },
   login: { state: 'unknown' },
   downloadUrl: '',
   bind: null,
@@ -240,6 +307,10 @@ const status = ref<DoxentStatus>({
 const loading = ref(false);
 /** 解绑等一次性动作 */
 const busy = ref(false);
+/** 清理残留的官方 CLI 安装锁 */
+const clearingLock = ref(false);
+/** 上次绑定任务失败（决定按钮显示「重试绑定」并保留错误说明） */
+const bindFailed = ref(false);
 /** 保存办公本类型 */
 const savingType = ref(false);
 /** 手动点「我已完成登录」的那一次查询（后台轮询不影响按钮） */
@@ -286,6 +357,22 @@ const accountText = computed(
 const accountFallback = computed(() => bound.value && status.value.login?.account?.recorded === false);
 const sync = computed<DoxentSyncState>(() => status.value.sync ?? { phase: 'idle' });
 const syncing = computed(() => sync.value.phase !== 'idle');
+const cli = computed<DoxentCli | undefined>(() => status.value.cli);
+/** 残留安装锁：官方客户端会为它白等 180 秒，卡片上必须显式提示并给清理入口 */
+const cliLockStale = computed(() => Boolean(cli.value?.lockStale));
+const cliText = computed(() => {
+  const state = cli.value;
+  if (!state) return '未知';
+  const version = state.version ? ' v' + state.version : '';
+  if (state.installed) return `已安装${version}`;
+  if (state.lock) return state.lockStale ? '安装锁残留，CLI 未安装' : '正在安装';
+  return '未安装（绑定时由官方客户端自动下载）';
+});
+const cliTextClass = computed(() => {
+  const state = cli.value;
+  if (!state) return '';
+  return state.installed && !state.lockStale ? 'tone-ok' : 'tone-warn';
+});
 const syncDetail = computed(() => {
   if (!syncing.value) return '';
   return (
@@ -306,11 +393,48 @@ const bindProgressText = computed(() => {
   if (switching.value) {
     if (step === 'logout') return '正在退出当前账号并清理同步的登录凭据…';
     if (step === 'install') return '正在准备官方技能（切换账号）…';
-    return '正在启动官方客户端并生成新账号的登录链接（可能要 1–2 分钟）…';
+    return '正在准备官方 CLI 并生成新账号的登录链接（可能要 1–2 分钟）…';
   }
   return step === 'login'
-    ? '正在启动官方客户端并生成登录链接（首次可能要 1–2 分钟）…'
+    ? '正在准备官方 CLI 并生成登录链接（首次可能要 1–2 分钟）…'
     : '正在下载并安装官方技能包（首次约 30–60 秒）…';
+});
+
+interface BindStepView {
+  key: string;
+  label: string;
+  state: 'done' | 'active' | 'pending';
+}
+
+/**
+ * 绑定分步：把「装技能 / 装 CLI / 生成链接」拆开。
+ * 服务端 login 阶段同时负责「CLI 下载/更新」和「生成链接」，这里用 CLI 安装状态细分：
+ * CLI 还没落盘时停在第 2 步，落盘后进第 3 步；任务给的 detail 再说明具体在做什么。
+ */
+const bindStepIndex = computed(() => {
+  const job = bindJob.value;
+  if (!job) return -1;
+  if (switching.value) {
+    if (job.step === 'logout') return 0;
+    if (job.step === 'install') return 1;
+    return 2;
+  }
+  if (job.step === 'install') return 0;
+  return status.value.cli && !status.value.cli.installed ? 1 : 2;
+});
+const bindSteps = computed<BindStepView[]>(() => {
+  const labels = switching.value
+    ? ['退出旧账号', '安装官方技能', '准备官方 CLI 并生成登录链接']
+    : ['安装官方技能', '检查 / 安装官方 CLI', '生成登录链接'];
+  return labels.map((label, index) => ({
+    key: `${index}-${label}`,
+    label,
+    state: index < bindStepIndex.value ? 'done' : index === bindStepIndex.value ? 'active' : 'pending',
+  }));
+});
+const bindDetailText = computed(() => {
+  if (!binding.value) return '';
+  return bindJob.value?.detail || bindProgressText.value;
 });
 
 const bindElapsedText = computed(() => {
@@ -325,6 +449,7 @@ const stripTone = computed(() => {
   if (syncing.value) return 'tone-busy';
   if (!pythonOk.value) return 'tone-warn';
   if (bound.value) return 'tone-ok';
+  if (bindFailed.value) return 'tone-danger';
   return status.value.login?.state === 'unknown' ? 'tone-warn' : '';
 });
 
@@ -335,16 +460,19 @@ const stripTitle = computed(() => {
   }
   if (!pythonOk.value) return '环境不满足：需要 Python 3.8+';
   if (bound.value) return '已绑定办公本';
+  if (bindFailed.value) return '上次绑定没有完成';
   if (!status.value.skill?.installed) return '未绑定办公本';
   return status.value.login?.state === 'unknown' ? '登录状态未知' : '已装技能，等待登录';
 });
 
 const stripHint = computed(() => {
-  if (binding.value) return bindProgressText.value;
+  if (binding.value) return bindDetailText.value;
   if (syncing.value) return syncDetail.value;
   if (!pythonOk.value) return status.value.python?.error || '未找到可用的 Python';
   if (bound.value) return '内置 Agent 可读写笔记、Office 文档、书籍与日程。';
+  if (bindFailed.value && errorText.value) return errorText.value;
   if (waiting.value) return '已打开浏览器：在页面里完成登录，这里会自动变成已绑定。';
+  if (cliLockStale.value) return '检测到残留的官方 CLI 安装锁：点下方「清理安装锁」后重试。';
   if (!status.value.skill?.installed) return '绑定后会把官方技能装进内置 Agent，并生成登录链接。';
   return status.value.login?.detail || '点「绑定办公本」重新获取登录链接。';
 });
@@ -401,11 +529,19 @@ async function loadStatus(refresh = false, skillOnly = false, keepError = false)
     const job = status.value.bind;
     if (job?.state === 'running') {
       bindJob.value = job;
+      bindFailed.value = false;
       startBindPolling();
+    } else if (job?.state === 'error' && !bound.value) {
+      // 上次绑定失败：保留阶段与说明，按钮显示「重试绑定」；不在这里自动弹框，避免每次进页面都弹
+      bindJob.value = job;
+      bindFailed.value = true;
+      if (!errorText.value) errorText.value = job.error || '';
+      stopBindPolling();
     } else if (binding.value && !job) {
       // 服务端重启 / 任务被清理：别让按钮永远停在「准备中」
       bindJob.value = null;
       stopBindPolling();
+      bindFailed.value = true;
       notify.info('绑定任务已中断，请重新点「绑定办公本」');
     }
   } catch (error) {
@@ -475,6 +611,7 @@ async function pollSyncStatus(): Promise<void> {
 async function bind(): Promise<void> {
   if (binding.value || busy.value) return;
   errorText.value = '';
+  bindFailed.value = false;
   stopPolling();
   stopBindPolling();
   waiting.value = false;
@@ -482,6 +619,7 @@ async function bind(): Promise<void> {
   bindJob.value = null;
   try {
     const { data } = await api.post('/api/settings/doxent/bind');
+    if (data?.cli) status.value = { ...status.value, cli: data.cli as DoxentCli };
     const job = data?.job as DoxentBindJob | undefined;
     if (job) {
       bindJob.value = job;
@@ -496,6 +634,8 @@ async function bind(): Promise<void> {
     notify.error(errorText.value);
     // 请求失败不代表任务没启动：刷新状态，服务端还在跑就接着显示进度；不要覆盖错误说明
     await loadStatus(false, true, true);
+    // 任务确实没跑起来：弹重试框；服务端已在跑就交给轮询，别再弹一个让人误会的失败框
+    if (!binding.value) await showBindFailure(bindJob.value);
   }
 }
 
@@ -516,8 +656,14 @@ async function switchAccount(): Promise<void> {
     danger: true,
   });
   if (!ok) return;
+  await runSwitch();
+}
 
+/** 真正启动切换任务（失败重试时直接复用，不再弹一次「切换账号？」确认框） */
+async function runSwitch(): Promise<void> {
+  if (binding.value || busy.value || syncing.value) return;
   errorText.value = '';
+  bindFailed.value = false;
   stopPolling();
   stopBindPolling();
   waiting.value = false;
@@ -529,6 +675,7 @@ async function switchAccount(): Promise<void> {
   status.value = { ...status.value, login: { state: 'logged-out', detail: '正在切换账号' } };
   try {
     const { data } = await api.post('/api/settings/doxent/switch');
+    if (data?.cli) status.value = { ...status.value, cli: data.cli as DoxentCli };
     const job = data?.job as DoxentBindJob | undefined;
     if (job) {
       bindJob.value = job;
@@ -542,6 +689,7 @@ async function switchAccount(): Promise<void> {
     errorText.value = errorMessage(error, '切换办公本账号失败');
     notify.error(errorText.value);
     await loadStatus(false, true, true);
+    if (!binding.value) await showBindFailure(bindJob.value);
   } finally {
     busy.value = false;
     switchRequested.value = false;
@@ -563,9 +711,12 @@ async function pollBindOnce(): Promise<void> {
   try {
     const { data } = await api.get('/api/settings/doxent/bind');
     const job = (data?.job ?? null) as DoxentBindJob | null;
+    // 轮询顺带更新官方 CLI 状态：装没装上、安装锁有没有残留，进度里能实时看到
+    if (data?.cli) status.value = { ...status.value, cli: data.cli as DoxentCli };
     if (!job) {
       bindJob.value = null;
       stopBindPolling();
+      bindFailed.value = true;
       notify.info(
         switching.value ? '切换账号任务已中断，请重新点「切换账号」' : '绑定任务已中断，请重新点「绑定办公本」',
       );
@@ -577,10 +728,13 @@ async function pollBindOnce(): Promise<void> {
     if (job.state === 'running') return;
     stopBindPolling();
     if (job.state === 'error') {
+      bindFailed.value = true;
       errorText.value = job.error || '绑定办公本失败';
       notify.error(errorText.value);
-      // 只刷「Python / 技能」：失败时别再拉起一次官方 CLI；错误说明要留在卡片上
+      // 只刷「Python / 技能 / CLI」：失败时别再拉起一次官方 CLI；错误说明要留在卡片上
       await loadStatus(false, true, true);
+      // 失败弹「重试」框：用户不用在页面里找按钮，也不会再盯着「准备中」干等
+      await showBindFailure(job);
       return;
     }
     await applyBindResult(job);
@@ -591,9 +745,37 @@ async function pollBindOnce(): Promise<void> {
   }
 }
 
+/** 绑定失败弹框：说明卡在哪一步 + 残留锁情况，确认后直接重试 */
+async function showBindFailure(job: DoxentBindJob | null): Promise<void> {
+  const isSwitch = job?.reason === 'switch';
+  const reason = job?.error || errorText.value || '未知原因';
+  const stage = job ? stepLabel(job.step) : '启动绑定任务';
+  const lockHint = cliLockStale.value
+    ? '\n\n检测到残留的官方 CLI 安装锁：点「重试」会先自动清理再重新绑定。'
+    : '\n\n点「重试」会重新走一遍绑定流程；如果还失败，可先点「重新检测」看官方 CLI 是否已安装。';
+  const ok = await confirmDialog({
+    title: isSwitch ? '切换办公本账号失败' : '办公本绑定失败',
+    message: `卡住的阶段：${stage}\n原因：${reason}${lockHint}`,
+    confirmText: '重试',
+    cancelText: '稍后再试',
+  });
+  if (!ok) return;
+  if (isSwitch) await runSwitch();
+  else await bind();
+}
+
+/** 绑定阶段的中文名（失败弹框用） */
+function stepLabel(step: DoxentBindJob['step']): string {
+  if (step === 'logout') return '退出旧账号';
+  if (step === 'install') return '安装官方技能';
+  return '准备官方 CLI / 生成登录链接';
+}
+
 /** 绑定任务完成：按官方返回的「登录 / 设置」页决定是打开浏览器还是直接算已登录 */
 async function applyBindResult(job: DoxentBindJob): Promise<void> {
   bindJob.value = job;
+  bindFailed.value = false;
+  errorText.value = '';
   const isSwitch = job.reason === 'switch';
   if (job.login) {
     status.value = { ...status.value, login: job.login, skill: job.skill ?? status.value.skill };
@@ -692,6 +874,7 @@ async function unbind(): Promise<void> {
     stopPolling();
     stopBindPolling();
     bindJob.value = null;
+    bindFailed.value = false;
     waiting.value = false;
     loginUrl.value = '';
     notify.success('已解除办公本绑定');
@@ -701,6 +884,27 @@ async function unbind(): Promise<void> {
     notify.error(errorText.value);
   } finally {
     busy.value = false;
+  }
+}
+
+/** 清理残留的官方 CLI 安装锁（只删超过 5 分钟的旧锁；正在安装时服务端会拒绝） */
+async function clearCliLock(): Promise<void> {
+  if (clearingLock.value || binding.value) return;
+  clearingLock.value = true;
+  errorText.value = '';
+  try {
+    const { data } = await api.post('/api/settings/doxent/cli/clear-lock');
+    if (data?.cli) status.value = { ...status.value, cli: data.cli as DoxentCli };
+    if (data?.cleared) notify.success('已清理残留的安装锁，可以重新绑定了');
+    else notify.info(data?.error || '没有需要清理的安装锁');
+    await loadStatus(false, true, true);
+  } catch (error) {
+    const message = errorMessage(error, '清理安装锁失败');
+    errorText.value = message;
+    notify.error(message);
+    await loadStatus(false, true, true);
+  } finally {
+    clearingLock.value = false;
   }
 }
 
@@ -750,6 +954,72 @@ onBeforeUnmount(() => {
 }
 .doxent-progress {
   color: var(--accent);
+}
+.doxent-lock-strip {
+  align-items: flex-start;
+  margin: 8px 0 2px;
+}
+.doxent-lock-strip .setting-actions {
+  margin-left: auto;
+}
+/* 分步进度：细点 + 文案，当前步用主色，已完成为成功色，未开始为淡色 */
+.doxent-bind-progress {
+  margin: 2px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.doxent-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.doxent-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+}
+.doxent-step-dot {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--text-faint);
+  border-radius: 50%;
+  background: transparent;
+}
+.doxent-steps li.is-done {
+  color: var(--text-secondary);
+}
+.doxent-steps li.is-done .doxent-step-dot {
+  border-color: var(--success);
+  background: var(--success);
+}
+.doxent-steps li.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.doxent-steps li.is-active .doxent-step-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.doxent-bind-detail {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.doxent-bind-elapsed {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .doxent-link-row {
   margin-top: 4px;
