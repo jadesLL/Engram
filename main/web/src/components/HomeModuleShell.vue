@@ -274,6 +274,10 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .detail-backdrop {
   position:absolute;
   inset:0;
+  /* 全屏遮罩是一个 <button>，会吃到 main.css 里 button{border-radius:999px}：
+     圆角被浏览器夹到半屏高，遮罩变成一颗巨型胶囊（四角露出原页面）。
+     全屏场景必须显式归零，不能靠按钮默认样式。 */
+  border-radius:0;
   background:rgba(0,0,0,.38);
   backdrop-filter:blur(5px);
 }
