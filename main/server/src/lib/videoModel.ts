@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { profilePatchPath } from '../assistant/agentSettings.js';
+import { indentOf, parseCredentialRefs, unquoteScalar } from './credentialsFile.js';
 
 /**
  * 视频理解模型：从 DeepSeek Harness（dsh）自己的模型配置里解析。
@@ -89,10 +90,7 @@ export interface VideoModelResolution {
 }
 
 /** 行首缩进宽度（空格数；配置由 dsh / 界面写入，不会出现 tab 缩进） */
-export function indentOf(line: string): number {
-  const match = /^\s*/.exec(line);
-  return match ? match[0].length : 0;
-}
+export { indentOf } from './credentialsFile.js';
 
 /** 空行与纯注释行：解析时跳过，不算结构 */
 export function isSkippable(line: string): boolean {
@@ -101,20 +99,7 @@ export function isSkippable(line: string): boolean {
 }
 
 /** 去掉 YAML 标量两侧的引号（单引号里的 '' 是一个单引号；双引号做常见转义还原） */
-export function unquoteScalar(raw: string): string {
-  const value = raw.trim().replace(/\s+#.*$/, '');
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'");
-  }
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    try {
-      return JSON.parse(value) as string;
-    } catch {
-      return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-    }
-  }
-  return value;
-}
+export { unquoteScalar } from './credentialsFile.js';
 
 /** 解析 YAML 流式字符串数组（`[text, image]`）；不是流式写法时返回空数组（块状序列另行处理） */
 export function parseStringList(raw: string): string[] {
@@ -281,47 +266,10 @@ export function parseDshProviders(patchText: string): DshProvider[] {
 }
 
 /**
- * 解析 <DSH_HOME>/.credentials.yaml 的 refs 映射（dsh-credentials-local 的格式）。
- *
- * 兼容两种写法：
- *   refs:
- *     {
- *       DASHSCOPE_API_KEY: 'sk-xxx',
- *     }
- * 以及块状 map（refs: 下按 KEY: value 缩进）。
- * 值只用于发请求，绝不回显给前端。
+ * 解析 <DSH_HOME>/.credentials.yaml 的 refs 映射（实现移到 credentialsFile.ts，
+ * 供「有没有配模型 Key」的判定复用；这里继续导出，保持既有引用不变）。
  */
-export function parseCredentialRefs(text: string): Record<string, string> {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
-  const out: Record<string, string> = {};
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!/^refs:\s*(#.*)?$/.test(lines[index].trim())) continue;
-    let flow = false;
-    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      const line = lines[cursor];
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (trimmed === '{') {
-        flow = true;
-        continue;
-      }
-      if (trimmed === '}' || trimmed === '},') {
-        flow = false;
-        index = cursor;
-        break;
-      }
-      if (!flow && indentOf(line) === 0) {
-        index = cursor - 1;
-        break;
-      }
-      const match = /^(?:-\s*)?"?([A-Za-z0-9_./-]+)"?\s*:\s*(.+?)\s*,?\s*$/.exec(trimmed);
-      if (!match) continue;
-      const value = unquoteScalar(match[2]);
-      if (value) out[match[1]] = value;
-    }
-  }
-  return out;
-}
+export { parseCredentialRefs } from './credentialsFile.js';
 
 /**
  * dsh 的凭据引用名约定：写了 apiKeyEnv 就用它，否则 <PROVIDER_ID>_API_KEY。

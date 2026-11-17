@@ -16,6 +16,14 @@
 模型（提供商 / 密钥 / 模型目录）、插件（内置插件配置 + 实验性插件开关 + 插件清单）、Agent 预设、高级（Session Log、诊断）。
 DSH 仍是唯一配置真源：控制台里改的模型/插件，聊天抽屉下一轮对话直接生效，不存在两套配置。
 
+## 首启默认值（2026-11）
+
+- **只填一个 Key**：没配模型时，聊天抽屉输入区上方直接显示「填入 API Key 就能开始用」——填 DeepSeek 官方 Key 保存即可开聊。保存复用 `PUT /api/agent-console/models/official`（手机端已窄代理，零原生改动），Key 写进 dsh 凭据文件，因此控制台里显示的「密钥已配置」与首启是同一份状态。
+- **不打扰**：点卡片右上角「稍后」会在本机 `localStorage` 记一笔 `agentSetupDismissed`，之后不再弹；设置页齿轮入口始终在。
+- **默认模型**：沿用 dsh bundle 默认（`deepseek-official` / `deepseek-flash`，模型目录内声明文本 + 图片），不需要用户先选模型。
+- **默认预设**：用户没在控制台选过、DSH 也没标 `isDefault` 时，按「标准模式」展示（`assistant/agentPresets.ts` 的 `pickDefaultPresetId`）。聊天运行时（SDK）不挂 web preset，preset 只影响控制台 / 网页工作台的新任务。
+- **状态口径**：`GET /api/assistant/status` 新增 `modelConfigured`（旧配置 Key / `DEEPSEEK_API_KEY` / dsh 凭据文件任一命中即为 true），前端只在它为 `false` 时显示首启卡。
+
 ## 架构
 
 ```text

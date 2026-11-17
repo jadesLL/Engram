@@ -124,6 +124,19 @@ test('parseCredentialRefs：flow map 与块状 map 都能取到 ref（值去引�
   assert.equal(block.other, undefined);
 });
 
+test('parseCredentialRefs：只有 records（控制台浏览器会话授权）时返回空，不算配了模型 Key', () => {
+  const refs = parseCredentialRefs([
+    'version: 1',
+    'records:',
+    '  client-connection/browser-session:',
+    '    kind: grant',
+    '    payload:',
+    '      version: 1',
+    '      secret: abc-123',
+  ].join('\n'));
+  assert.deepEqual(refs, {});
+});
+
 test('resolveVideoModel：提供商 + Key 齐全时 configured=true，模型取 qwen3.8-omni-flash', () => {
   writePatch(DASHSCOPE_PATCH);
   writeCredentials(['version: 2', 'refs:', '  {', "    DASHSCOPE_API_KEY: 'sk-real-key',", '  }'].join('\n'));

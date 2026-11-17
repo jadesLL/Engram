@@ -7,6 +7,7 @@ import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submit
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
 import {
+  agentModelConfigured,
   agentPermissionMode,
   bundledDshBin,
   bundledDshVersion,
@@ -70,6 +71,9 @@ export async function assistantRoutes(app: FastifyInstance) {
       dshPath: config.dshPath || '',
       dshVersion: bundledDshVersion(),
       sdkClientVersion: bundledSdkClientVersion(),
+      // 是否已有可用的模型凭据（旧配置 / DEEPSEEK_API_KEY / dsh 凭据文件任一命中）。
+      // 聊天抽屉据此决定首启是否显示「填 API Key 即可开始」的引导卡片。
+      modelConfigured: agentModelConfigured(),
       // 成员端也能看到状态，但控制台的 iframe 地址（带 token）只在 owner 接口里给
       console: {
         running: consoleInfo.running,
