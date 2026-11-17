@@ -22,6 +22,8 @@
           class="settings-mobile-row"
           :data-mobile-domain="row.id"
           @click="openMobileSection(row.id)"
+          @pointerenter="warmDomain(row.id)"
+          @focus="warmDomain(row.id)"
         >
           <span class="settings-mobile-row-icon"><Icon :name="row.icon" :size="19" /></span>
           <span class="settings-mobile-row-main">
@@ -71,6 +73,8 @@
               :aria-current="activeDomain === domain.id ? 'page' : undefined"
               :tabindex="activeDomain === domain.id ? 0 : -1"
               @click="selectDomain(domain.id)"
+              @pointerenter="warmDomain(domain.id)"
+              @focus="warmDomain(domain.id)"
             >
               <Icon :name="domain.icon" :size="17" />
               <span class="nav-label">{{ domain.label }}</span>
@@ -220,6 +224,7 @@ import { useRoute } from 'vue-router';
 import Icon from '../components/Icon.vue';
 import DomainHead from '../components/settings/DomainHead.vue';
 import SettingsGroup from '../components/settings/SettingsGroup.vue';
+import SettingsPanelSkeleton from '../components/settings/SettingsPanelSkeleton.vue';
 import SettingsSearch from '../components/settings/SettingsSearch.vue';
 import SettingsStatusStrip from '../components/settings/SettingsStatusStrip.vue';
 /* 各面板按大类懒加载：静态 import 会把 17 块面板（含同步轮询、更新面板、存储列表）
@@ -229,10 +234,36 @@ const AppearanceSection = defineAsyncComponent(() => import('../components/setti
 const AppVersionSection = defineAsyncComponent(() => import('../components/settings/AppVersionSection.vue'));
 const UninstallSection = defineAsyncComponent(() => import('../components/settings/UninstallSection.vue'));
 const DesktopAppSection = defineAsyncComponent(() => import('../components/settings/DesktopAppSection.vue'));
-const AgentPanel = defineAsyncComponent(() => import('../components/settings/AgentPanel.vue'));
-const VideoPanel = defineAsyncComponent(() => import('../components/settings/VideoPanel.vue'));
-const DreamSection = defineAsyncComponent(() => import('../components/settings/DreamSection.vue'));
-const BoardSection = defineAsyncComponent(() => import('../components/settings/BoardSection.vue'));
+
+/* ---------- Agent 与自动化：面板加载骨架 + 预取 ----------
+ * 2026-11-17 用户报「打开先要白一会才能显示内容」：只有右侧卡片区白，标题已经在。
+ * 原因是 Agent 大类的四块面板都是异步组件，首次进入（或深链 ?section=agent、冷缓存、
+ * 服务端偶发繁忙）时 chunk 未到，异步组件按默认行为渲染空注释节点，整块卡片区就是白的。
+ * 处理分三层：
+ *  1. 骨架占位：AgentPanel 配 loadingComponent + delay:0，chunk 未到时立刻画出分组卡形状；
+ *  2. 空闲预取：设置页加载完就在空闲时把 Agent 四块面板 chunk 取回，点进去不再等；
+ *  3. 失败重试：chunk 偶发加载失败时最多重试 2 次（300ms 退避），避免永久空白。 */
+const loadAgentPanel = () => import('../components/settings/AgentPanel.vue');
+const loadVideoPanel = () => import('../components/settings/VideoPanel.vue');
+const loadDreamSection = () => import('../components/settings/DreamSection.vue');
+const loadBoardSection = () => import('../components/settings/BoardSection.vue');
+
+const AgentPanel = defineAsyncComponent({
+  loader: loadAgentPanel,
+  loadingComponent: SettingsPanelSkeleton,
+  delay: 0,
+  onError(_error, retry, fail, attempts) {
+    if (attempts <= 2) {
+      window.setTimeout(retry, 300 * attempts);
+      return;
+    }
+    fail();
+  },
+});
+const VideoPanel = defineAsyncComponent(() => loadVideoPanel());
+const DreamSection = defineAsyncComponent(() => loadDreamSection());
+const BoardSection = defineAsyncComponent(() => loadBoardSection());
+
 const SyncPanel = defineAsyncComponent(() => import('../components/settings/SyncPanel.vue'));
 const UpdatePanel = defineAsyncComponent(() => import('../components/settings/UpdatePanel.vue'));
 const AndroidUpdatePanel = defineAsyncComponent(() => import('../components/settings/AndroidUpdatePanel.vue'));
@@ -301,6 +332,41 @@ const contentEl = ref<HTMLElement | null>(null);
 const searchOpen = ref(false);
 const { capabilities, load } = useRuntimeCapabilities();
 const route = useRoute();
+
+/* ---------- Agent 大类预取：设置页空闲时先把四块面板的 chunk 取回来 ----------
+ * 深链（控制台返回 / 收集箱「模型与 API Key」/ 任务看板「自动提炼」）会直接落在
+ * Agent 大类上，此时再懒加载就来不及了；设置页一挂载就预取，用户点进去时模块已在
+ * 浏览器里。只预取这一组：其它大类没有深链直达、也不在用户抱怨里，保持按需加载。 */
+const AGENT_PANEL_LOADERS = [loadAgentPanel, loadVideoPanel, loadDreamSection, loadBoardSection];
+let agentPrefetched = false;
+
+function prefetchAgentDomain(): void {
+  if (agentPrefetched || !agentDomainVisible.value) return;
+  agentPrefetched = true;
+  for (const loadPanel of AGENT_PANEL_LOADERS) {
+    // 预取失败不打扰用户：真正进入 Agent 大类时 loadingComponent 会继续兜底。
+    void loadPanel().catch(() => {});
+  }
+}
+
+/** 空闲预取；不支持 requestIdleCallback 的旧内核退回 200ms 延时 */
+function scheduleAgentPrefetch(): void {
+  if (disposed) return;
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => {
+      if (!disposed) prefetchAgentDomain();
+    }, { timeout: 1200 });
+    return;
+  }
+  window.setTimeout(() => {
+    if (!disposed) prefetchAgentDomain();
+  }, 200);
+}
+
+/** 目录悬停 / 键盘聚焦就提前取：比「点下去再加载」早一步，也对深链之前的跳转生效 */
+function warmDomain(id: SettingsDomainId): void {
+  if (id === 'agent') prefetchAgentDomain();
+}
 
 /* ---------- 手机端（≤768px）：分组列表 + 子页 push ----------
  * 桌面端（≥769px）仍是「左侧目录 + 右侧内容」双栏，下面这些状态只在窄屏参与渲染：
@@ -732,6 +798,9 @@ onMounted(async () => {
   window.addEventListener('resize', onViewportResize, { passive: true });
   await load();
   if (disposed) return;
+  /* Agent 面板在空闲时预取：深链直达时也不用等懒加载（见 prefetchAgentDomain 注释）。
+     放在能力位到达之后：手机没绑定中枢时整个 Agent 大类不出现，不必白下这组 chunk。 */
+  if (agentDomainVisible.value) scheduleAgentPrefetch();
   const target = resolveSettingsTarget(
     String(route.query.section || ''),
     String(route.query.anchor || ''),
