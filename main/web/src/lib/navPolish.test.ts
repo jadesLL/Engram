@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
  *  ① 图标栏拆成上下两枚胶囊（原来是一根拉满高度的玻璃条 + flex spacer，中段空得像断了）；
  *  ② 设置左栏的二级目录补上展开提示、父项降级、导引线与 0fr→1fr 展开；
  *  ③ 折叠时高度必须真的是 0（给二级列表加 padding 会把 0fr 轨道撑成 8px），
- *     且收起的组要 inert，Tab 不能落到看不见的按钮上。
+ *     且收起的组要 inert，Tab 不能落到看不见的按钮上；
+ *  ④ 2026-11-18 选中态统一为 1px 细环（左栏二级项 + 分段控件），不再平涂/白盒。
  * 版式没法用单测跑，沿用仓库既有做法：按源码锁关键声明，防止改回旧结构。
  */
 
@@ -68,6 +69,27 @@ test('设置目录：展开提示、父项降级、导引线与 0fr 展开', () 
     /padding:\s*0/,
     '二级列表又加了 padding：0fr 轨道会被撑出高度（实测 8px），收起的组仍占位',
   );
+  // 2026-11-18：二级选中从「蓝底 + 竖条」收敛成一条 1px 细环，避免两套选中信号同屏
+  assert.match(
+    ruleBody(css, '.settings-nav-subitem.active'),
+    /box-shadow:\s*inset 0 0 0 1px color-mix/,
+    '二级项选中没有细环：又回到平涂/竖条那套信号',
+  );
+  assert.doesNotMatch(css, /\.settings-nav-subitem::before/, '二级项又加回竖条：细环选中会多出第二套信号');
+});
+
+test('分段控件与左栏共用细环选中', () => {
+  assert.match(
+    ruleBody(css, '.segmented button.active'),
+    /box-shadow:\s*inset 0 0 0 1px color-mix/,
+    '分段选中没有细环：白盒滑块又回来了',
+  );
+  assert.doesNotMatch(
+    ruleBody(css, '.segmented button.active'),
+    /background:\s*var\(--card-bg\)/,
+    '分段选中又铺回白底：选中感会重新变「重」',
+  );
+  assert.match(ruleBody(css, '.segmented'), /background:\s*transparent/, '分段轨道又铺了灰底：选中环会被盒子包住');
 });
 
 test('设置目录：展开后把当前大类带回列表视野', () => {
