@@ -22,77 +22,81 @@
   >
     <!-- 窄图标导航栏：提示一律贴按钮右侧（图标栏只有一列按钮，上/下都会压住相邻图标） -->
     <nav class="rail" aria-label="主导航">
-      <button class="rail-logo" type="button" v-tooltip.right="'回到首页'" aria-label="回到首页" @click="go('/page')">
-        <BrandMark :size="30" />
-      </button>
+      <!-- 2026-11-17：整条栏拆成上下两枚玻璃胶囊（原来是一个拉满高度的条 + flex spacer，
+           中段空得像是断了一截）。上面是导航，下面是全局动作与设置，空白变成有意的分组间隔。 -->
+      <div class="rail-cluster rail-cluster-nav">
+        <button class="rail-logo" type="button" v-tooltip.right="'回到首页'" aria-label="回到首页" @click="go('/page')">
+          <BrandMark :size="30" />
+        </button>
 
-      <!-- 侧栏开关 -->
-      <button
-        class="rail-btn action"
-        type="button"
-        :class="{ open: app.sidebarOpen }"
-        v-tooltip.right="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
-        :aria-label="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
-        :aria-pressed="app.sidebarOpen"
-        @click="toggleSidebar"
-      >
-        <Icon name="pages" :size="19" />
-      </button>
+        <!-- 侧栏开关 -->
+        <button
+          class="rail-btn action"
+          type="button"
+          :class="{ open: app.sidebarOpen }"
+          v-tooltip.right="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
+          :aria-label="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
+          :aria-pressed="app.sidebarOpen"
+          @click="toggleSidebar"
+        >
+          <Icon name="pages" :size="19" />
+        </button>
 
-      <div class="rail-divider" />
+        <div class="rail-divider" />
 
-      <!-- 导航组 -->
-      <button
-        v-for="item in navItems"
-        :key="item.key"
-        class="rail-btn"
-        type="button"
-        :class="{ active: item.active }"
-        v-tooltip.right="item.title"
-        :aria-label="item.title"
-        :aria-current="item.active ? 'page' : undefined"
-        @click="item.action"
-      >
-        <Icon :name="item.icon" :size="19" />
-        <span v-if="item.dot" class="dot" />
-      </button>
+        <!-- 导航组 -->
+        <button
+          v-for="item in navItems"
+          :key="item.key"
+          class="rail-btn"
+          type="button"
+          :class="{ active: item.active }"
+          v-tooltip.right="item.title"
+          :aria-label="item.title"
+          :aria-current="item.active ? 'page' : undefined"
+          @click="item.action"
+        >
+          <Icon :name="item.icon" :size="19" />
+          <span v-if="item.dot" class="dot" />
+        </button>
+      </div>
 
-      <div class="rail-spacer" />
+      <div class="rail-cluster rail-cluster-tools">
+        <!-- 内置 Agent（聊天抽屉）：有轮次在跑时按钮上就带状态，抽屉关着也知道它还在干活 -->
+        <!-- Agent 的提问（含公司全名核验）弹在对话最下侧，不再单独占一页 -->
+        <button
+          class="rail-btn"
+          type="button"
+          :class="{ active: app.chatDrawerOpen || isActive('/agent'), 'is-running': chat.hasRunning }"
+          v-tooltip.right="chat.hasRunning ? `${agentName} 正在回复（${chat.runningCount} 个会话）` : agentName"
+          :aria-label="chat.hasRunning ? `${agentName}（正在回复）` : agentName"
+          @click="openAgent()"
+        >
+          <Icon name="ai" :size="19" />
+          <span v-if="chat.hasRunning" class="rail-running" aria-hidden="true" />
+          <span v-if="app.chatUnread" class="dot" />
+        </button>
 
-      <!-- 内置 Agent（聊天抽屉）：有轮次在跑时按钮上就带状态，抽屉关着也知道它还在干活 -->
-      <!-- Agent 的提问（含公司全名核验）弹在对话最下侧，不再单独占一页 -->
-      <button
-        class="rail-btn"
-        type="button"
-        :class="{ active: app.chatDrawerOpen || isActive('/agent'), 'is-running': chat.hasRunning }"
-        v-tooltip.right="chat.hasRunning ? `${agentName} 正在回复（${chat.runningCount} 个会话）` : agentName"
-        :aria-label="chat.hasRunning ? `${agentName}（正在回复）` : agentName"
-        @click="openAgent()"
-      >
-        <Icon name="ai" :size="19" />
-        <span v-if="chat.hasRunning" class="rail-running" aria-hidden="true" />
-        <span v-if="app.chatUnread" class="dot" />
-      </button>
+        <!-- 动作/面板组 -->
+        <button class="rail-btn action" type="button" v-tooltip.right="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感" @click="quickNote">
+          <Icon name="plus" :size="19" />
+        </button>
+        <div class="rail-divider" />
 
-      <!-- 动作/面板组 -->
-      <button class="rail-btn action" type="button" v-tooltip.right="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感" @click="quickNote">
-        <Icon name="plus" :size="19" />
-      </button>
-      <div class="rail-divider" />
-
-      <!-- 设置（导航） -->
-      <button
-        class="rail-btn"
-        type="button"
-        :class="{ active: isActive('/settings') }"
-        v-tooltip.right="'设置'"
-        aria-label="设置"
-        :aria-current="isActive('/settings') ? 'page' : undefined"
-        @click="go('/settings')"
-      >
-        <Icon name="settings" :size="19" />
-        <span v-if="updateStore.hasNewVersion || sourceHasUpdate || appUpdateStore.hasUpdate" class="dot" />
-      </button>
+        <!-- 设置（导航） -->
+        <button
+          class="rail-btn"
+          type="button"
+          :class="{ active: isActive('/settings') }"
+          v-tooltip.right="'设置'"
+          aria-label="设置"
+          :aria-current="isActive('/settings') ? 'page' : undefined"
+          @click="go('/settings')"
+        >
+          <Icon name="settings" :size="19" />
+          <span v-if="updateStore.hasNewVersion || sourceHasUpdate || appUpdateStore.hasUpdate" class="dot" />
+        </button>
+      </div>
     </nav>
 
     <!-- 文件树侧栏：满窗时同一颗元素变「目录页」（几何在样式里，见 .layout.sidebar-full） -->
@@ -1467,6 +1471,12 @@ onUnmounted(() => {
   background: transparent;
 }
 
+/*
+ * 2026-11-17：图标栏从「一根拉满高度的玻璃条」改成上下两枚胶囊。
+ * 原来 nav 组和底部动作之间只靠一个 flex spacer 撑开，中段空得像是断了一截；
+ * 拆成两枚独立卡片后，空白变成有意的分组间隔：上面是导航，下面是全局动作与设置。
+ * 外层的 .rail 只负责定位与贴边，玻璃材质落在 .rail-cluster 上。
+ */
 .rail {
   position: absolute;
   /* 安卓边到边：整条图标栏让开状态栏/导航栏（--safe-* 桌面端恒为 0，观感不变） */
@@ -1477,7 +1487,17 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: var(--z-chrome);
+}
+
+.rail-cluster {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   padding: 8px 5px;
   border: 1px solid var(--sidebar-glass-border);
   border-radius: 18px;
@@ -1485,8 +1505,11 @@ onUnmounted(() => {
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);
   -webkit-backdrop-filter: saturate(150%) blur(28px);
-  z-index: var(--z-chrome);
 }
+
+/* 导航胶囊不参与拉伸；窗口很矮时由它自己收（按钮仍由触屏热区兜底） */
+.rail-cluster-nav { flex: 0 1 auto; min-height: 0; }
+.rail-cluster-tools { flex: none; }
 
 .rail-logo {
   width: 30px;
@@ -1494,7 +1517,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 9px;
+  margin-bottom: 8px;
   border-radius: 8px;
   filter: var(--rail-logo-filter);
   user-select: none;
@@ -1539,21 +1562,9 @@ onUnmounted(() => {
 }
 
 .rail-btn.active {
-  color: var(--text);
-  background: var(--sidebar-selection);
+  color: var(--sidebar-accent);
+  background: var(--sidebar-selection-strong);
   box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
-}
-
-/* Win11 NavigationView 选中指示条：左侧 3px 圆角强调色 pill */
-.rail-btn.active::before {
-  content: '';
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: -5px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--sidebar-accent);
 }
 
 .rail-btn.open {
@@ -1623,12 +1634,10 @@ onUnmounted(() => {
   }
 }
 
-.rail-spacer { flex: 1; }
-
 .rail-divider {
   width: 20px;
   height: 1px;
-  margin: 6px 0;
+  margin: 8px 0;
   background: var(--sidebar-hairline);
 }
 
@@ -2028,7 +2037,7 @@ html.kb-open .new-fab { display: none; }
 .new-action-chevron { flex: none; color: var(--text-faint); }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .rail { background: var(--sidebar-rail-solid); }
+  .rail-cluster { background: var(--sidebar-rail-solid); }
   .sidebar { background: var(--sidebar-material-solid); }
 }
 
@@ -2536,8 +2545,8 @@ html.kb-open .new-fab { display: none; }
     height: 36px;
   }
 
-  .layout.size-medium .rail,
-  .layout.size-expanded .rail { padding: 6px 4px; }
+  .layout.size-medium .rail-cluster,
+  .layout.size-expanded .rail-cluster { padding: 6px 3px; }
 
   .layout.size-medium .rail-btn::after,
   .layout.size-medium .rail-logo::after,
