@@ -109,7 +109,42 @@ class EngramLocalServer private constructor(private val context: Context) {
     }
     fun onBackground() = sync.onBackground()
     fun requestSync(full: Boolean) = sync.request(full)
-    fun importSharedText(title: String?, text: String): String = db.importSharedText(title, text).also { sync.request(false) }
+    /**
+     * 系统分享落袋：单独一条网页链接当场抓 HTML 原件、按页面标题命名（与 Web 端「粘贴链接」
+     * 同一口径，见 [SharedWebPage]）。
+     *
+     * 抓不到（离线、反爬验证页、正文靠脚本渲染）或分享里那行文字并不是网页标题（用户自己
+     * 写的说明）时，回退成原来的 .txt 落袋，链接与用户文字都不丢。
+     * B 站 / 抖音视频链接不在这里抓网页，仍走 [LocalDatabase.importSharedText] 的占位稿。
+     */
+    fun importSharedText(title: String?, text: String): String {
+        val share = ShareLinks.webArticleShare(text)
+        if (share != null) {
+            val page = try {
+                SharedWebPage.fetch(share.url)
+            } catch (error: Exception) {
+                db.log(
+                    "warn",
+                    "share-link-fallback",
+                    "分享链接没能抓成网页，已按链接保存：" + (error.message ?: error.javaClass.simpleName),
+                )
+                null
+            }
+            if (page != null) {
+                if (share.title.isEmpty() || ShareLinks.titleMatches(share.title, page.title)) {
+                    return db.importSharedPage(page).also { sync.request(false) }
+                }
+                db.log(
+                    "warn",
+                    "share-link-title-mismatch",
+                    "分享文字与网页标题不一致，保留原文按链接保存：" + share.title,
+                )
+            }
+            val fallback = share.title.ifBlank { InboxFiles.linkStem(share.url) }
+            return db.importSharedText(title, text, fallback).also { sync.request(false) }
+        }
+        return db.importSharedText(title, text).also { sync.request(false) }
+    }
     fun importSharedFile(name: String, staged: File): String = db.installSharedFile(name, staged).also { sync.request(false) }
 
     /** 旧远程壳升级：只把旧地址预填为候选中枢，不启用同步、不覆盖本地库。 */

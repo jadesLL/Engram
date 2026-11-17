@@ -568,6 +568,12 @@ public class MainActivity extends BridgeActivity {
         if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return;
         // singleTask 的 onNewIntent 可能再次交付同一 Intent；清掉 action 防止配置变更时重复导入。
         intent.setAction(null);
+        // 只分享一条网页链接时会当场抓取网页原文（按页面标题命名），先把等待说明出来；
+        // 抓取失败仍按 .txt 落袋，不在这一步打断分享。
+        CharSequence sharePreview = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        if (sharePreview != null && ShareLinks.INSTANCE.webArticleShare(sharePreview.toString()) != null) {
+            Toast.makeText(this, "正在保存网页…", Toast.LENGTH_SHORT).show();
+        }
         new Thread(() -> {
             int imported = 0;
             ArrayList<String> failures = new ArrayList<>();

@@ -628,9 +628,10 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
      *
      * 从 B 站 / 抖音分享进来的链接不能只存 txt：中枢的「提炼视频」只认带
      * `类型: video-link` frontmatter 的占位稿，存成 txt 会永远走不了视频管线。
-     * 这里先识别视频链接并写成占位稿；普通文章/文字仍按原样保存，不改变既有行为。
+     * 这里先识别视频链接并写成占位稿；普通文字按原样保存（网页链接由
+     * [EngramLocalServer.importSharedText] 先尝试 [importSharedPage]）。
      */
-    fun importSharedText(requestedTitle: String?, text: String): String = synchronized(lock) {
+    fun importSharedText(requestedTitle: String?, text: String, fallbackTitle: String? = null): String = synchronized(lock) {
         require(text.isNotBlank()) { "分享内容为空" }
         val video = ShareLinks.detectVideo(ShareLinks.firstUrl(text))
         if (video != null) {
@@ -641,12 +642,26 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             enqueue("file", rel)
             rel
         } else {
-            val rel = InboxFiles.uniquePath(brain, InboxFiles.textName(requestedTitle))
+            val rel = InboxFiles.uniquePath(brain, InboxFiles.textName(requestedTitle, fallbackTitle))
             atomicWrite(safe(rel), text.toByteArray(StandardCharsets.UTF_8))
             indexFile(rel)
             enqueue("file", rel)
             rel
         }
+    }
+
+    /**
+     * 分享进来的网页：按页面标题写成 `.html` 原件，与 Web 端「粘贴链接」保存的原件同口径
+     * （见 [SharedWebPage]）。尚未审阅入库，不建知识页面。
+     */
+    fun importSharedPage(page: SharedWebPage.Page): String = synchronized(lock) {
+        require(page.bytes.isNotEmpty()) { "分享内容为空" }
+        val title = page.title.takeIf { it.isNotBlank() } ?: "网页"
+        val rel = InboxFiles.uniquePath(brain, InboxFiles.cleanName("$title.html"))
+        atomicWrite(safe(rel), page.bytes)
+        indexFile(rel)
+        enqueue("file", rel)
+        rel
     }
 
     /** 分享来的图片/文档通过临时文件原子安装，保留原文件名并自动避让重名。 */

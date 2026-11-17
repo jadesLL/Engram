@@ -281,7 +281,7 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | 本地实现 | 只读写本机 `brain/` 或 `wiki.db` | auth、pages、files/assets、search、graph、trash、settings、backup/restore、sync config/status/log/pairing/reconcile、app-update | Kotlin/Ktor 路由实现 |
 | 窄代理到中枢 | 中枢做实事，手机只转发（成员令牌） | assistant 会话/run/events、agent-console 18 条、video-config、dream、guide、customer-research、tasks/board、inbox、ideas | `EngramLocalServer.kt` 的 `proxyHub` / `proxyAgent` + 未绑定中枢时 409 中文提示 |
 | 不代理（owner 级） | 成员令牌不能做 | 成员邀请/peers、DDNS、TLS、外部 Agent 接入、Agent 令牌发放 | 能力位 false，UI 不出现；直接访问给可读说明 |
-| 手机专属 | 只有壳层能做 | `/api/app-update/*`（OTA）、本机分享落袋 | Kotlin 实现 |
+| 手机专属 | 只有壳层能做 | `/api/app-update/*`（OTA）、本机分享落袋（单独分享一条网页链接时由壳层抓 HTML 原件并按标题落袋，失败回退 `.txt`） | Kotlin 实现 |
 
 **规则**：新增 server 接口时，必须判断手机端属于哪一类；窄代理类要在 `EngramLocalServer` 加一行代理并在能力位/文案上说明「由中枢执行」；owner 级必须继续报 false。
 
