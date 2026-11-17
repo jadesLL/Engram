@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import {
+  doxentAccountDisplay,
+  type DoxentAccountDisplay,
+  type DoxentCredentialOptions,
+} from './doxentCredentials.js';
 
 /**
  * 讯飞办公本（Doxent）绑定：技能安装 + 官方 CLI 的登录/状态/解绑。
@@ -9,7 +14,8 @@ import { spawn } from 'node:child_process';
  * Doxent 的官方 skill 包（SKILL.md + note/office/book/schedule 四个模块 + shared/scripts/doxent_api.py）
  * 就是官方维护的数据访问层，它自己负责 CLI 发现、下载、会话与编码安全。Engram 只做两件事：
  *  1. 把这份技能装进内置 Agent 的 DSH_HOME/skills，让聊天里的 Agent 能按官方规则读写办公本数据；
- *  2. 代理登录动作（--cli-action login / login-status / logout），把真实登录链接交给设置页。
+ *  2. 代理登录动作（--cli-action login / login-status / logout），把真实登录链接交给设置页；
+ *  3. 由本机会话派生脱敏的「当前账号」展示，并在换账号时先 logout 再走同一套登录流程。
  * 因此运行依赖是宿主机的 Python 3.8+（官方 meta.json 的要求），而不是随包的 Node。
  *
  * 安全边界：技能目录带管理标记（.engram-doxent.json），只覆盖/删除 Engram 自己装的；
@@ -60,6 +66,8 @@ export interface DoxentLoginInfo {
   state: DoxentLoginState;
   /** state=unknown 时的原因（CLI 输出认不出来 / 命令失败） */
   detail?: string;
+  /** 已登录时的当前账号展示值（脱敏；不含令牌、完整 userId 或会话原文） */
+  account?: DoxentAccountDisplay;
 }
 
 export interface DoxentStatus {
@@ -234,6 +242,17 @@ export function resetDoxentCaches(): void {
   loginStateCache = null;
 }
 
+/** 已登录时补上脱敏账号展示；读不到会话不影响登录结论（不能因此报未登录） */
+function withAccount(login: DoxentLoginInfo, credentials?: DoxentCredentialOptions): DoxentLoginInfo {
+  if (login.state !== 'logged-in') return login;
+  try {
+    const account = doxentAccountDisplay(credentials);
+    return account ? { ...login, account } : login;
+  } catch {
+    return login;
+  }
+}
+
 export interface DoxentRunResult {
   code: number | null;
   stdout: string;
@@ -384,12 +403,17 @@ interface DoxentBindResult {
   page?: DoxentLoginBlock;
 }
 
-/** 绑定任务阶段：install=下载/安装官方技能，login=启动官方 CLI 换取登录链接 */
-export type DoxentBindStep = 'install' | 'login';
+/** 绑定/切换任务阶段：logout=切换前退出旧账号，install=下载/安装官方技能，login=启动官方 CLI 换取登录链接 */
+export type DoxentBindStep = 'logout' | 'install' | 'login';
+
+/** bind=首次绑定；switch=换账号（先退出旧会话，再走同一套装技能 + 登录） */
+export type DoxentBindReason = 'bind' | 'switch';
 
 export interface DoxentBindJob {
   state: 'running' | 'done' | 'error';
   step: DoxentBindStep;
+  /** 任务意图：设置页据此显示「正在绑定」还是「正在切换账号」 */
+  reason: DoxentBindReason;
   startedAt: number;
   finishedAt?: number;
   skill?: DoxentSkillState;
@@ -401,10 +425,18 @@ export interface DoxentBindJob {
 export interface DoxentBindOptions {
   home: string;
   url?: string;
+  reason?: DoxentBindReason;
+  /**
+   * 切换账号前先退出旧会话（路由注入：logout + 清本机凭据 + 清同步偏好）。
+   * 放在任务里而不是请求里，避免官方 CLI 退出慢时把设置页请求挂住。
+   */
+  prepareSwitch?: () => Promise<void>;
   /** 注入技能安装（测试：不联网、不落盘） */
   install?: (options: DoxentInstallOptions) => Promise<DoxentSkillState>;
   /** 注入官方 CLI 动作（测试：不起 Python） */
   runAction?: (action: string, options: DoxentApiOptions) => Promise<DoxentRunResult>;
+  /** 注入凭据文件位置（测试：不读宿主机真实会话） */
+  credentials?: DoxentCredentialOptions;
 }
 
 let bindJob: DoxentBindJob | null = null;
@@ -433,13 +465,17 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 绑定正文：装技能 → 触发官方登录 → 把真实链接交回设置页 */
+/** 绑定正文：装技能 → 触发官方登录 → 把真实链接交回设置页；换账号先退出旧会话 */
 async function runDoxentBind(
   options: DoxentBindOptions,
   onStep: (step: DoxentBindStep, skill?: DoxentSkillState) => void,
 ): Promise<DoxentBindResult> {
   const install = options.install ?? installDoxentSkill;
   const runAction = options.runAction ?? runDoxentApiAction;
+  if (options.reason === 'switch') {
+    onStep('logout');
+    await options.prepareSwitch?.();
+  }
   onStep('install');
   const skill = await install({ home: options.home, url: options.url, log: (message) => console.info(message) });
   onStep('login', skill);
@@ -448,7 +484,10 @@ async function runDoxentBind(
   const page = parseDoxentLoginBlock(output);
   if (page) {
     // 已经登录时官方 CLI 返回的是「设置」页：这时登录态确实可用，顺手写进缓存
-    const login: DoxentLoginInfo = { state: page.pageType === '设置' ? 'logged-in' : 'logged-out' };
+    const login = withAccount(
+      { state: page.pageType === '设置' ? 'logged-in' : 'logged-out' },
+      options.credentials,
+    );
     loginStateCache = { at: Date.now(), value: login };
     return { skill, login, page };
   }
@@ -469,7 +508,8 @@ async function runDoxentBind(
 export function startDoxentBind(options: DoxentBindOptions): DoxentBindJob {
   if (bindJob?.state === 'running') return { ...bindJob };
   const token = ++bindToken;
-  bindJob = { state: 'running', step: 'install', startedAt: Date.now() };
+  const reason: DoxentBindReason = options.reason ?? 'bind';
+  bindJob = { state: 'running', step: reason === 'switch' ? 'logout' : 'install', reason, startedAt: Date.now() };
   bindSettled = (async () => {
     try {
       const result = await runDoxentBind(options, (step, skill) => {
@@ -506,11 +546,20 @@ export function startDoxentBind(options: DoxentBindOptions): DoxentBindJob {
  * 会话有效时官方 CLI 返回「设置」页（= 已登录）；返回「登录」页说明凭据失效，
  * 只把状态写进缓存、不把链接交给前端，用户仍可在设置页手动重新绑定。
  */
-export async function prepareDoxentAfterCredentialSync(options: { home: string; url?: string }): Promise<DoxentLoginInfo> {
+export async function prepareDoxentAfterCredentialSync(options: {
+  home: string;
+  url?: string;
+  credentials?: DoxentCredentialOptions;
+}): Promise<DoxentLoginInfo> {
   // 已装技能且 CLI 能直接读到同步会话：无需再跑一次 login（首次 login 可能下载 CLI，耗时 1–3 分钟）
   if (doxentSkillState(options.home).installed) {
     try {
-      const fast = await doxentLoginInfo({ home: options.home, refresh: true, timeoutMs: 20_000 });
+      const fast = await doxentLoginInfo({
+        home: options.home,
+        refresh: true,
+        timeoutMs: 20_000,
+        credentials: options.credentials,
+      });
       if (fast.state === 'logged-in') return fast;
     } catch {
       /* 继续走完整准备：缺 Python / CLI 未装时由 login 统一报错 */
@@ -519,7 +568,7 @@ export async function prepareDoxentAfterCredentialSync(options: { home: string; 
   await installDoxentSkill({ home: options.home, url: options.url, log: (message) => console.info(message) });
   const result = await runDoxentApiAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS });
   const page = parseDoxentLoginBlock(result.stdout + '\n' + result.stderr);
-  const login: DoxentLoginInfo = page
+  const rawLogin: DoxentLoginInfo = page
     ? { state: page.pageType === '设置' ? 'logged-in' : 'logged-out' }
     : {
         state: 'unknown',
@@ -527,6 +576,7 @@ export async function prepareDoxentAfterCredentialSync(options: { home: string; 
           ? '官方 CLI 校验同步凭据超时'
           : (result.stderr || result.stdout).trim().slice(0, 300) || '官方 CLI 没有返回登录状态',
       };
+  const login = withAccount(rawLogin, options.credentials);
   loginStateCache = { at: Date.now(), value: login };
   return login;
 }
@@ -544,7 +594,7 @@ export async function stopDoxentCliAfterCredentialChange(home: string): Promise<
 
 /** 查询登录状态（带 5 秒缓存，设置页轮询不至于每次都起进程） */
 export async function doxentLoginInfo(
-  options: { home: string; refresh?: boolean; timeoutMs?: number },
+  options: { home: string; refresh?: boolean; timeoutMs?: number; credentials?: DoxentCredentialOptions },
 ): Promise<DoxentLoginInfo> {
   if (!options.refresh && loginStateCache && Date.now() - loginStateCache.at < LOGIN_STATE_TTL_MS) {
     return loginStateCache.value;
@@ -552,39 +602,57 @@ export async function doxentLoginInfo(
   const result = await runDoxentApiAction('login-status', { home: options.home, timeoutMs: options.timeoutMs });
   const state = parseDoxentLoginState(result.stdout + '\n' + result.stderr);
   const detail = (result.stderr || result.stdout).trim().slice(0, 300);
-  const value: DoxentLoginInfo = {
-    state,
-    ...(state === 'unknown' ? { detail: detail || '认不出官方 CLI 的登录状态输出' } : {}),
-  };
+  const value = withAccount(
+    {
+      state,
+      ...(state === 'unknown' ? { detail: detail || '认不出官方 CLI 的登录状态输出' } : {}),
+    },
+    options.credentials,
+  );
   loginStateCache = { at: Date.now(), value };
   return value;
 }
 
-/** 解绑：注销官方 CLI 会话 + 卸载技能（只删 Engram 管理的目录） */
-export async function unbindDoxent(options: { home: string }): Promise<{ skillRemoved: boolean; login: DoxentLoginInfo }> {
-  const home = options.home;
+/**
+ * 退出官方 CLI 会话（保留技能）：用于「切换账号」。
+ *
+ * 官方 CLI 的 logout 成功后不一定回「未登录」字样：退出码 0 就按已注销处理，
+ * 只有明确报「已登录」或非 0 退出码才当作没退干净。失败不抛出——切换流程随后仍会
+ * 清掉本机会话文件，让下一次 login 走扫码而不是返回旧账号的设置页。
+ */
+export async function logoutDoxent(options: { home: string }): Promise<DoxentLoginInfo> {
   let login: DoxentLoginInfo = { state: 'unknown' };
   try {
-    const result = await runDoxentApiAction('logout', { home });
+    const result = await runDoxentApiAction('logout', { home: options.home });
     const state = parseDoxentLoginState(result.stdout + '\n' + result.stderr);
-    // 官方 CLI 的 logout 成功后不一定回「未登录」字样：退出码 0 就按已注销处理，
-    // 只有明确报「已登录」或非 0 退出码才当作没退干净。
     login = {
       state: state === 'logged-in' ? 'logged-in' : result.code === 0 ? 'logged-out' : 'unknown',
       ...(result.code === 0 ? {} : { detail: (result.stderr || '').trim().slice(0, 300) }),
     };
   } catch (error) {
-    // Python 不在或技能已删：解绑仍要能清掉技能目录，账号会话交给官方 CLI 自己管理
+    // Python 不在或技能已删：切换/解绑仍要能清掉本机凭据，账号会话交给官方 CLI 自己管理
     login = { state: 'unknown', detail: error instanceof Error ? error.message : String(error) };
   }
-  const skillRemoved = removeDoxentSkill(home);
   loginStateCache = { at: Date.now(), value: { state: 'logged-out' } };
+  return login;
+}
+
+/** 解绑：注销官方 CLI 会话 + 卸载技能（只删 Engram 管理的目录） */
+export async function unbindDoxent(options: { home: string }): Promise<{ skillRemoved: boolean; login: DoxentLoginInfo }> {
+  const login = await logoutDoxent(options);
+  const skillRemoved = removeDoxentSkill(options.home);
   return { skillRemoved, login };
 }
 
 /** 设置页的完整状态：Python、技能、登录态一次给全 */
 export async function doxentStatus(
-  options: { home: string; refresh?: boolean; loginTimeoutMs?: number; checkLogin?: boolean },
+  options: {
+    home: string;
+    refresh?: boolean;
+    loginTimeoutMs?: number;
+    checkLogin?: boolean;
+    credentials?: DoxentCredentialOptions;
+  },
 ): Promise<DoxentStatus> {
   const home = options.home;
   const python = await probePython();
@@ -598,10 +666,15 @@ export async function doxentStatus(
   }
   // 绑定刚失败时只想刷新「技能装没装上」：不拉起官方 CLI，省掉一次十几秒的子进程
   if (options.checkLogin === false) {
-    return { python, skill, downloadUrl, login: loginStateCache?.value ?? { state: 'unknown' } };
+    return { python, skill, downloadUrl, login: withAccount(loginStateCache?.value ?? { state: 'unknown' }, options.credentials) };
   }
   try {
-    const login = await doxentLoginInfo({ home, refresh: options.refresh, timeoutMs: options.loginTimeoutMs });
+    const login = await doxentLoginInfo({
+      home,
+      refresh: options.refresh,
+      timeoutMs: options.loginTimeoutMs,
+      credentials: options.credentials,
+    });
     return { python, skill, downloadUrl, login };
   } catch (error) {
     return {

@@ -288,3 +288,63 @@ test('startDoxentBind：重复点击复用同一个任务，不重复装技能',
   assert.equal(doxentBindJob()?.state, 'done');
   clearDoxentBindJob();
 });
+
+test('startDoxentBind：切换账号先退出旧会话，再装技能并生成新登录链接', async () => {
+  clearDoxentBindJob();
+  const home = tempHome();
+  const events: string[] = [];
+  const started = startDoxentBind({
+    home,
+    reason: 'switch',
+    credentials: { env: {}, home },
+    prepareSwitch: async () => {
+      events.push('logout');
+    },
+    install: async (input: { home: string }) => {
+      events.push('install');
+      return { installed: true, managed: true, root: doxentSkillRoot(input.home), version: '1.3.10' };
+    },
+    runAction: async (action) => {
+      events.push(action);
+      return { code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false };
+    },
+  });
+
+  assert.equal(started.state, 'running');
+  assert.equal(started.reason, 'switch');
+  assert.equal(started.step, 'logout', '切换任务先进入退出旧会话阶段');
+
+  await waitDoxentBindSettled();
+  const job = doxentBindJob();
+  assert.equal(job?.state, 'done');
+  assert.equal(job?.reason, 'switch');
+  assert.equal(job?.page?.pageType, '登录');
+  assert.deepEqual(events, ['logout', 'install', 'login']);
+  clearDoxentBindJob();
+});
+
+test('startDoxentBind：切换时退出旧会话失败进入 error，不继续生成链接', async () => {
+  clearDoxentBindJob();
+  const home = tempHome();
+  let installs = 0;
+  startDoxentBind({
+    home,
+    reason: 'switch',
+    credentials: { env: {}, home },
+    prepareSwitch: async () => {
+      throw new Error('退出旧账号失败');
+    },
+    install: async (input: { home: string }) => {
+      installs += 1;
+      return { installed: true, managed: true, root: doxentSkillRoot(input.home), version: '1.3.10' };
+    },
+    runAction: async () => ({ code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false }),
+  });
+
+  await waitDoxentBindSettled();
+  const job = doxentBindJob();
+  assert.equal(job?.state, 'error');
+  assert.match(job?.error || '', /退出旧账号失败/);
+  assert.equal(installs, 0, '退出失败时不能继续装技能/生成登录链接');
+  clearDoxentBindJob();
+});

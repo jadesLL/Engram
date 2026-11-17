@@ -16,10 +16,14 @@ import {
   doxentBindJob,
   doxentLoginInfo,
   doxentStatus,
+  logoutDoxent,
+  resetDoxentCaches,
   startDoxentBind,
+  stopDoxentCliAfterCredentialChange,
   unbindDoxent,
   waitDoxentBindSettled,
 } from '../lib/doxent.js';
+import { clearDoxentSession } from '../lib/doxentCredentials.js';
 import { clearDoxentSessionPreference, doxentSessionSyncState, mirrorDoxentSession } from '../sync/doxentSync.js';
 import { syncCategories } from '../sync/categories.js';
 import { recordLocalChange } from '../sync/index.js';
@@ -36,6 +40,10 @@ import { currentNodeId } from '../sync/store.js';
  * 跑官方客户端 --cli-action login → 设置页轮询 GET bind 拿到阶段与真实登录链接 →
  * 用户在浏览器完成登录 → 设置页轮询 login-status。绑定任务结算后关闭聊天运行时池：
  * 技能目录变了，下一次对话必须重新加载 catalog 才看得到 doxent。
+ *
+ * 换账号走 POST switch：同一套后台任务先 logout 旧会话、清本机与同步偏好，再重新生成登录链接；
+ * 登录成功后由 watchBindSettled 把新会话镜像回偏好。设置页的「当前账号」只拿
+ * doxentLoginInfo 里的脱敏展示值，不暴露会话原文。
  */
 
 function messageOf(error: unknown): string {
@@ -68,6 +76,36 @@ function mirrorSessionQuietly(): void {
   } catch (error) {
     console.warn('[doxent] 镜像办公本登录凭据失败（下次登录检测/周期镜像会重试）', error);
   }
+}
+
+/**
+ * 绑定 / 切换任务结算后的统一收尾：
+ * - 技能目录可能刚变：关闭聊天运行时池，下一次对话重新加载 skill catalog；
+ * - 已登录：把本机会话镜像进同步偏好（换账号成功后其他设备自动切到新账号）；
+ * - 超过阈值留一条慢日志，方便和设置页的「准备中」对上。
+ */
+function watchBindSettled(startedAt: number): void {
+  void waitDoxentBindSettled().then(() => {
+    try {
+      closeAllRuntimes();
+    } catch (error) {
+      console.warn('[doxent] 关闭聊天运行时失败（下次对话仍会重开）', error);
+    }
+    const finished = doxentBindJob();
+    if (finished?.state === 'done' && finished.login?.state === 'logged-in') {
+      mirrorSessionQuietly();
+    }
+    if (finished && Date.now() - startedAt > BIND_SLOW_LOG_MS) {
+      console.info(
+        '[doxent] ' +
+          (finished.reason === 'switch' ? '切换账号' : '绑定') +
+          '任务耗时 ' +
+          Math.round((Date.now() - startedAt) / 1000) +
+          ' 秒，结果：' +
+          finished.state,
+      );
+    }
+  });
 }
 
 export async function doxentRoutes(app: FastifyInstance) {
@@ -118,27 +156,54 @@ export async function doxentRoutes(app: FastifyInstance) {
   /** 绑定：启动后台任务并立即返回（真实下载与登录在后台跑，前端轮询 GET bind 看进度） */
   app.post('/api/settings/doxent/bind', async (_req, reply) => {
     const job = startDoxentBind({ home });
-    const startedAt = job.startedAt;
-    if (job.state === 'running') {
-      // 技能目录可能刚变：任务结算后回收聊天运行时，下一次对话重新加载 skill catalog
-      void waitDoxentBindSettled().then(() => {
+    if (job.state === 'running') watchBindSettled(job.startedAt);
+    return reply.code(202).send({ ok: true, job });
+  });
+
+  /**
+   * 切换账号：退出当前官方 CLI 会话（保留技能），清掉本机与同步偏好里的旧凭据，
+   * 再走同一套「装技能 → 生成登录链接」流程。
+   *
+   * 放进后台任务而不是请求里等：官方 logout / login 都可能要几十秒到几分钟，
+   * 设置页只轮询 GET bind 看阶段。清同步偏好是主动动作——旧账号立即在所有同步设备上退出，
+   * 新账号登录成功后由 mirrorSessionQuietly 写回偏好，其他设备自动切过去。
+   */
+  app.post('/api/settings/doxent/switch', async (_req, reply) => {
+    if (doxentBindJob()?.state === 'running') {
+      return reply.code(409).send({ error: '正在准备办公本任务，请等当前任务完成后再切换账号' });
+    }
+    if (doxentSessionSyncState().phase !== 'idle') {
+      return reply.code(409).send({ error: '正在应用同步的办公本登录凭据，请稍后再切换账号' });
+    }
+    const job = startDoxentBind({
+      home,
+      reason: 'switch',
+      prepareSwitch: async () => {
+        await logoutDoxent({ home });
+        // logout 失败（缺 Python / CLI）也要清掉本机会话：否则下一次 login 会读到旧会话、
+        // 直接返回「设置」页，看起来像没换账号。
+        clearDoxentSession();
+        resetDoxentCaches();
+        try {
+          clearDoxentSessionPreference();
+        } catch (error) {
+          console.warn('[doxent] 清理同步的办公本登录凭据失败（下次启动会对齐）', error);
+        }
+        // clearDoxentSessionPreference 内部只异步踢一脚 stop；这里等它踢完，避免旧 daemon
+        // 和新账号的 login 抢官方 CLI。
+        await stopDoxentCliAfterCredentialChange(home);
         try {
           closeAllRuntimes();
         } catch (error) {
           console.warn('[doxent] 关闭聊天运行时失败（下次对话仍会重开）', error);
         }
-        const finished = doxentBindJob();
-        if (finished?.state === 'done' && finished.login?.state === 'logged-in') {
-          // 官方 CLI 返回「设置」页 = 本机已登录：把会话镜像进同步偏好，其他设备免扫码
-          mirrorSessionQuietly();
-        }
-        if (finished && Date.now() - startedAt > BIND_SLOW_LOG_MS) {
-          console.info(
-            '[doxent] 绑定任务耗时 ' + Math.round((Date.now() - startedAt) / 1000) + ' 秒，结果：' + finished.state,
-          );
-        }
-      });
+      },
+    });
+    if (job.state === 'running' && job.reason !== 'switch') {
+      // 极端并发：检查后被别的请求抢先启动了绑定任务，不能把绑定任务当成换账号返回
+      return reply.code(409).send({ error: '正在准备办公本任务，请等当前任务完成后再切换账号' });
     }
+    if (job.state === 'running') watchBindSettled(job.startedAt);
     return reply.code(202).send({ ok: true, job });
   });
 

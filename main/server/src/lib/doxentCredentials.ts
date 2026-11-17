@@ -13,6 +13,9 @@ import path from 'node:path';
  *
  * 安全边界：这里只处理「Engram 自己可见的本机会话文件」，不实现登录、不访问官方账号接口；
  * 会话内容只在同步偏好与本机文件之间流转，绝不进入 API 响应、日志或前端。
+ * 设置页要显示「当前登录的是哪个账号」，只允许读取由会话派生的**脱敏展示值**
+ * （describeDoxentAccount：手机号 / 用户名脱敏，缺 account 时用 userId 尾号兜底），
+ * 令牌、secret、refreshToken、完整 userId 与完整会话原文都不出这个模块。
  */
 
 export const DOXENT_SESSION_KEY = 'doxent_session';
@@ -119,6 +122,57 @@ export function serializeDoxentSession(session: DoxentSession): string {
 
 export function doxentSessionDigest(raw: string): string {
   return crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
+}
+
+/* ------------------------------------------------------------------ 账号展示 */
+
+export interface DoxentAccountDisplay {
+  /** 脱敏后的账号展示值（手机号 138 **** 5678 / 用户名脱敏 / 用户 ID 2110 **** 3250） */
+  display: string;
+  /** true = 官方会话记录了手机号/用户名；false = 扫码/旧版会话，用 userId 尾号兜底 */
+  recorded: boolean;
+}
+
+/** 手机号只留前 3 后 4；其它账号保留首尾便于用户辨认 */
+function maskDoxentAccountText(value: string): string {
+  const at = value.indexOf('@');
+  if (at > 0) {
+    const local = value.slice(0, at);
+    const domain = value.slice(at + 1);
+    const head = local.slice(0, 2);
+    return head + (local.length > 2 ? '***' : '') + '@' + domain;
+  }
+  if (value.length <= 4) return value;
+  if (value.length <= 8) return value.slice(0, 2) + '****' + value.slice(-2);
+  return value.slice(0, 4) + ' **** ' + value.slice(-4);
+}
+
+/**
+ * 由会话派生「当前登录账号」的展示值。
+ *
+ * 官方 CLI 只有密码 / 验证码登录会写 `account`（手机号）；扫码登录的旧版会话 `account`
+ * 为空（官方本机登录页同样显示「未记录」）。这时用 userId 尾号兜底，至少能让用户分辨
+ * 当前登录的是哪个账号。返回的字符串可安全地进设置页 API，不含任何令牌或完整 ID。
+ */
+export function describeDoxentAccount(session: Pick<DoxentSession, 'account' | 'userId'>): DoxentAccountDisplay | null {
+  const account = session.account.trim();
+  if (account) {
+    const digits = account.replace(/[\s-]/g, '');
+    if (/^(?:\+?86)?1\d{10}$/.test(digits)) {
+      const phone = digits.slice(-11);
+      return { display: phone.slice(0, 3) + ' **** ' + phone.slice(-4), recorded: true };
+    }
+    return { display: maskDoxentAccountText(account), recorded: true };
+  }
+  const userId = session.userId.trim();
+  if (!userId) return null;
+  return { display: '用户 ID ' + maskDoxentAccountText(userId), recorded: false };
+}
+
+/** 读本机会话并派生账号展示值（读不到 / 坏数据返回 null，不猜账号） */
+export function doxentAccountDisplay(options: DoxentCredentialOptions = {}): DoxentAccountDisplay | null {
+  const session = readDoxentSession(options);
+  return session ? describeDoxentAccount(session.data) : null;
 }
 
 function atomicWrite(file: string, body: string): void {

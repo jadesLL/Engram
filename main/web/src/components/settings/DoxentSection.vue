@@ -4,7 +4,7 @@
     <div class="setting-row">
       <div class="setting-copy">
         <strong>办公本类型</strong>
-        <span v-if="bound">已绑定讯飞办公本；要换品牌请先解除绑定。</span>
+        <span v-if="bound">已绑定讯飞办公本；要换品牌请先解除绑定，只换账号可直接点下方「切换账号」。</span>
         <span v-else-if="syncing">其他设备同步来的登录凭据正在应用，类型先锁定。</span>
         <span v-else>选择要接入的办公本品牌，目前支持讯飞；类型与登录凭据随「设置」分类同步。</span>
       </div>
@@ -46,9 +46,13 @@
         <span class="value-label">登录状态</span>
         <span class="value-text" :class="loginTextClass">{{ loginText }}</span>
       </li>
+      <li v-if="bound" class="value-row">
+        <span class="value-label">当前账号</span>
+        <span class="value-text">{{ accountText }}</span>
+      </li>
     </ul>
 
-    <!-- 主操作：未绑定时是「绑定办公本」，已绑定后是解绑；登录链接单独一行，便于关掉浏览器后重新打开 -->
+    <!-- 主操作：未绑定时是「绑定办公本」，已绑定后是「切换账号 / 解除绑定」；登录链接单独一行，便于关掉浏览器后重新打开 -->
     <div class="setting-row">
       <div class="setting-copy">
         <strong>{{ bound ? '已绑定：内置 Agent 可以调阅办公本' : '绑定办公本' }}</strong>
@@ -70,11 +74,21 @@
           :disabled="binding || busy || syncing || savingType || !pythonOk"
           @click="bind"
         >
-          {{ binding ? '准备中…' : syncing ? '同步中…' : (waiting ? '重新获取链接' : '绑定办公本') }}
+          {{ binding ? (switching ? '切换中…' : '准备中…') : syncing ? '同步中…' : (waiting ? '重新获取链接' : switchRequested ? '切换中…' : '绑定办公本') }}
         </button>
-        <button v-else class="btn danger small" type="button" :disabled="binding || busy || syncing" @click="unbind">
-          {{ busy ? '处理中…' : '解除绑定' }}
-        </button>
+        <template v-else>
+          <button
+            class="btn ghost small"
+            type="button"
+            :disabled="binding || busy || syncing || savingType || !pythonOk"
+            @click="switchAccount"
+          >
+            {{ switching ? '切换中…' : '切换账号' }}
+          </button>
+          <button class="btn danger small" type="button" :disabled="binding || busy || syncing" @click="unbind">
+            {{ busy ? '处理中…' : '解除绑定' }}
+          </button>
+        </template>
       </div>
     </div>
 
@@ -96,6 +110,9 @@
       官方客户端是 Python 脚本（meta.json 要求 3.8+）：装好 Python 后点「重新检测」，或用环境变量
       <code>DOXENT_PYTHON</code> 指定解释器路径。
     </p>
+    <p v-if="bound && accountFallback" class="setting-note">
+      官方 CLI 的扫码 / 旧版会话没有记录手机号，这里用脱敏的用户 ID 展示当前账号；不影响读写办公本资料。
+    </p>
     <p class="setting-note">
       技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭据由官方 CLI 生成，开启「设置」分类同步后 Engram 只在本机与同步群组之间转存官方 CLI 的会话文件，不读取账号密码。
     </p>
@@ -103,7 +120,7 @@
       当前已加入多端同步，但「设置」分类同步未开启：办公本类型与登录凭据不会跨设备同步。到「多端同步 → 同步内容」打开「设置」即可。
     </p>
     <p v-else-if="sync.settingsEnabled && sync.role !== 'none'" class="setting-note">
-      办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。
+      办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。切换账号会先让同步设备一起退出旧账号，新账号登录成功后自动切过去。
     </p>
   </div>
 </template>
@@ -111,6 +128,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { api } from '../../api';
+import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
 
@@ -121,11 +139,22 @@ import AppSelect from '../ui/AppSelect.vue';
  * DSH_HOME/skills、官方 CLI 当前是否已登录。绑定动作在服务端后台完成（装技能 + 跑 --cli-action login），
  * 这里轮询绑定任务拿阶段与真实登录链接，再轮询登录状态、负责解绑。
  *
+ * 已登录时多显示一行「当前账号」：服务端只回由官方 CLI 会话派生的脱敏展示值（手机号或用户 ID
+ * 尾号）。「切换账号」会先退出旧会话（同步设备一起退出）、再生成新账号的登录链接，走的还是
+ * 同一个后台任务，所以进度、计时和刷新恢复逻辑与绑定完全一致。
+ *
  * 为什么绑定不再用一个长请求硬等：首次要下载技能包并启动官方 CLI，可能 1–3 分钟；旧版只显示
  * 「准备中…」，看起来像卡死。现在服务端立即返回任务，设置页每秒刷新阶段和已等待时长。
  *
  * 登录链接带一次性 pollKey：只放在页面上，不写进日志、不做本地缓存。
  */
+
+interface DoxentAccount {
+  /** 脱敏后的展示值（手机号 138 **** 5678 / 用户名 / 用户 ID 2110 **** 3250） */
+  display: string;
+  /** false = 官方会话没记录手机号，display 是用户 ID 兜底 */
+  recorded: boolean;
+}
 
 interface DoxentPython {
   available: boolean;
@@ -145,6 +174,8 @@ interface DoxentSkill {
 interface DoxentLogin {
   state: 'logged-in' | 'logged-out' | 'unknown';
   detail?: string;
+  /** 已登录时的当前账号（脱敏；不含任何凭据） */
+  account?: DoxentAccount;
 }
 
 interface DoxentLoginBlock {
@@ -154,7 +185,9 @@ interface DoxentLoginBlock {
 
 interface DoxentBindJob {
   state: 'running' | 'done' | 'error';
-  step: 'install' | 'login';
+  step: 'logout' | 'install' | 'login';
+  /** bind=绑定；switch=换账号（旧任务可能没有这个字段，按 bind 处理） */
+  reason?: 'bind' | 'switch';
   startedAt: number;
   finishedAt?: number;
   skill?: DoxentSkill;
@@ -213,6 +246,8 @@ const errorText = ref('');
 const loginUrl = ref('');
 /** 已经触发过登录、等用户去浏览器完成的阶段（决定按钮文案） */
 const waiting = ref(false);
+/** 切换账号请求发出到服务端返回任务之间：按钮先显示「切换中…」，别闪回「绑定办公本」 */
+const switchRequested = ref(false);
 const notebookType = ref<NotebookType>('iflytek');
 const notebookTypeOptions = NOTEBOOK_TYPES;
 const bindJob = ref<DoxentBindJob | null>(null);
@@ -238,6 +273,15 @@ const SYNC_POLL_INTERVAL_MS = 1500;
 const pythonOk = computed(() => Boolean(status.value.python?.available));
 const bound = computed(() => status.value.login?.state === 'logged-in');
 const binding = computed(() => bindJob.value?.state === 'running');
+/** 切换到新账号：请求刚发出，或后台任务正在跑且明确标记为 switch */
+const switching = computed(
+  () => switchRequested.value || (bindJob.value?.state === 'running' && bindJob.value?.reason === 'switch'),
+);
+const accountText = computed(
+  () => status.value.login?.account?.display || '官方 CLI 未记录账号信息',
+);
+/** 会话里没有手机号，账号行是 userId 尾号兜底：补一句说明，避免用户以为显示错了 */
+const accountFallback = computed(() => bound.value && status.value.login?.account?.recorded === false);
 const sync = computed<DoxentSyncState>(() => status.value.sync ?? { phase: 'idle' });
 const syncing = computed(() => sync.value.phase !== 'idle');
 const syncDetail = computed(() => {
@@ -256,7 +300,13 @@ const settingsSyncOff = computed(
 
 const bindProgressText = computed(() => {
   if (!binding.value) return '';
-  return bindJob.value?.step === 'login'
+  const step = bindJob.value?.step;
+  if (switching.value) {
+    if (step === 'logout') return '正在退出当前账号并清理同步的登录凭据…';
+    if (step === 'install') return '正在准备官方技能（切换账号）…';
+    return '正在启动官方客户端并生成新账号的登录链接（可能要 1–2 分钟）…';
+  }
+  return step === 'login'
     ? '正在启动官方客户端并生成登录链接（首次可能要 1–2 分钟）…'
     : '正在下载并安装官方技能包（首次约 30–60 秒）…';
 });
@@ -277,7 +327,7 @@ const stripTone = computed(() => {
 });
 
 const stripTitle = computed(() => {
-  if (binding.value) return '正在准备绑定办公本';
+  if (binding.value) return switching.value ? '正在切换办公本账号' : '正在准备绑定办公本';
   if (syncing.value) {
     return sync.value.phase === 'applying' ? '正在应用同步的办公本登录' : '正在准备同步的办公本登录';
   }
@@ -447,6 +497,55 @@ async function bind(): Promise<void> {
   }
 }
 
+/**
+ * 切换账号：确认后走后端后台任务（退出旧会话 → 装技能 → 生成新账号登录链接）。
+ * 旧账号立即退出，所以这里先把卡片按未登录渲染；新会话登录成功后由轮询补回账号。
+ */
+async function switchAccount(): Promise<void> {
+  if (binding.value || busy.value || syncing.value) return;
+  const ok = await confirmDialog({
+    title: '切换办公本账号',
+    message:
+      '切换办公本账号？\n\n' +
+      `将退出当前账号${status.value.login?.account?.display ? `（${status.value.login.account.display}）` : ''}，` +
+      '并重新生成登录链接。若已开启「设置」分类同步，其他设备也会一起退出旧账号，新账号登录成功后自动切过去。',
+    confirmText: '切换账号',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!ok) return;
+
+  errorText.value = '';
+  stopPolling();
+  stopBindPolling();
+  waiting.value = false;
+  loginUrl.value = '';
+  bindJob.value = null;
+  switchRequested.value = true;
+  busy.value = true;
+  // 服务端要先 logout 再生成链接；这段空窗期不能让卡片继续显示旧账号
+  status.value = { ...status.value, login: { state: 'logged-out', detail: '正在切换账号' } };
+  try {
+    const { data } = await api.post('/api/settings/doxent/switch');
+    const job = data?.job as DoxentBindJob | undefined;
+    if (job) {
+      bindJob.value = job;
+      if (job.state === 'running') startBindPolling();
+      else await applyBindResult(job);
+    } else {
+      // 旧版服务端没有这个接口 / 没返回任务：回到状态卡，不要假装已切换
+      await loadStatus(false, true);
+    }
+  } catch (error) {
+    errorText.value = errorMessage(error, '切换办公本账号失败');
+    notify.error(errorText.value);
+    await loadStatus(false, true, true);
+  } finally {
+    busy.value = false;
+    switchRequested.value = false;
+  }
+}
+
 function startBindPolling(): void {
   stopBindPolling();
   now.value = Date.now();
@@ -465,7 +564,11 @@ async function pollBindOnce(): Promise<void> {
     if (!job) {
       bindJob.value = null;
       stopBindPolling();
-      notify.info('绑定任务已中断，请重新点「绑定办公本」');
+      notify.info(
+        switching.value ? '切换账号任务已中断，请重新点「切换账号」' : '绑定任务已中断，请重新点「绑定办公本」',
+      );
+      // 任务被服务端重启清掉时，卡片不能停在乐观的「未登录」上：拉一次真实状态
+      await loadStatus(false, true);
       return;
     }
     bindJob.value = job;
@@ -489,12 +592,13 @@ async function pollBindOnce(): Promise<void> {
 /** 绑定任务完成：按官方返回的「登录 / 设置」页决定是打开浏览器还是直接算已登录 */
 async function applyBindResult(job: DoxentBindJob): Promise<void> {
   bindJob.value = job;
+  const isSwitch = job.reason === 'switch';
   if (job.login) {
     status.value = { ...status.value, login: job.login, skill: job.skill ?? status.value.skill };
   }
   const page = job.page;
   if (!page?.url) {
-    notify.success('已绑定办公本');
+    notify.success(isSwitch ? '已切换办公本账号' : '已绑定办公本');
     await loadStatus(false, true);
     return;
   }
@@ -502,7 +606,7 @@ async function applyBindResult(job: DoxentBindJob): Promise<void> {
     // 官方 CLI 返回设置页 = 这台机器已经登录过：不用再等，直接刷新状态
     waiting.value = false;
     loginUrl.value = '';
-    notify.success('已登录办公本');
+    notify.success(isSwitch ? '办公本已登录新账号' : '已登录办公本');
     await loadStatus(false, true);
     return;
   }
@@ -510,7 +614,11 @@ async function applyBindResult(job: DoxentBindJob): Promise<void> {
   waiting.value = true;
   // 绑定任务完成是在轮询回调里，浏览器可能拦截 window.open：页面上的登录链接是兜底入口
   window.open(page.url, '_blank', 'noopener,noreferrer');
-  notify.success('登录链接已生成；浏览器没弹出就点下方「打开登录页面」');
+  notify.success(
+    isSwitch
+      ? '新账号的登录链接已生成；浏览器没弹出就点下方「打开登录页面」'
+      : '登录链接已生成；浏览器没弹出就点下方「打开登录页面」',
+  );
   startPolling();
 }
 
