@@ -435,3 +435,16 @@ test('能力关掉时旧链接不会把用户留在不存在的大类里', () =>
   assert.ok(hit, `解析出的 ${target.domain} 不在可见大类里`);
   assert.ok(hit?.groups.some((group) => group.id === target.anchor), '落点分组不在该大类里');
 });
+
+test('办公本接入：分组名不带品牌，品牌放在分组内的类型下拉里', () => {
+  const group = SETTINGS_DOMAINS.flatMap((domain) => domain.groups).find((item) => item.id === 'agent-doxent');
+  assert.ok(group, '找不到「办公本接入」分组');
+  assert.equal(group?.label, '办公本接入');
+  assert.doesNotMatch(group?.label || '', /讯飞|Doxent/, '品牌不该再写进分组名');
+
+  const section = fs.readFileSync(path.join(settingsDir, 'DoxentSection.vue'), 'utf8');
+  assert.match(section, /办公本类型/, '分组内应有办公本类型选择');
+  assert.match(section, /AppSelect/, '办公本类型要复用统一的自绘下拉');
+  assert.match(section, /讯飞办公本/, '品牌选项应落在类型下拉里');
+  assert.match(section, /\/api\/settings\/doxent\/bind/, '绑定应走后台任务接口');
+});
