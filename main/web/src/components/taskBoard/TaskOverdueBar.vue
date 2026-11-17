@@ -38,10 +38,11 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
 <style scoped>
 .overdue-bar {
   margin-bottom: 12px;
-  padding: 10px 12px 11px;
-  border: 1px solid rgba(196, 43, 28, 0.28);
+  padding: 10px 12px 11px 13px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
   border-radius: var(--radius);
-  background: var(--danger-soft);
+  background: var(--card-bg);
 }
 .overdue-bar h3 {
   display: flex;
@@ -56,12 +57,13 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
 .overdue-bar .hint { font-weight: 500; color: var(--text-secondary); }
 .rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .row { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--text); }
+.row + .row { border-top: 1px solid var(--border); padding-top: 7px; }
 .row .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip {
   flex: none;
   padding: 0 7px;
   border-radius: 9px;
-  background: var(--card-bg);
+  background: var(--danger-soft);
   color: var(--danger);
   font-size: 10.5px;
   font-weight: 600;
@@ -74,9 +76,9 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 16px;
-  background: var(--card-bg);
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 11.5px;

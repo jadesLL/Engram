@@ -8,7 +8,6 @@
       type="button"
       @click="$emit('go', '/tasks')"
     >
-      <span class="mini-check" aria-hidden="true" />
       <span class="mini-main">
         <span class="mini-text">{{ card.text }}</span>
         <span v-if="taskMeta(card)" class="mini-meta">{{ taskMeta(card) }}</span>
@@ -45,20 +44,9 @@ const shown = computed(() => (props.cards || []).slice(0, Math.max(1, props.limi
   text-align: left;
 }
 .mini-task + .mini-task { border-top: 1px solid var(--border); }
-.mini-check {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  margin-top: 2px;
-  border: 1.5px solid var(--border-strong, var(--border));
-  border-radius: 6px;
-  transition: border-color 150ms ease;
-}
-.mini-task:hover .mini-check { border-color: var(--accent); }
-.mini-task:focus-visible { outline: none; }
-.mini-task:focus-visible .mini-check { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.mini-task:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
 .mini-main { flex: 1; min-width: 0; }
-.mini-text { display: block; font-size: 13px; font-weight: 500; line-height: 1.45; color: var(--text); }
+.mini-text { display: block; font-size: 13px; font-weight: 500; line-height: 1.45; color: var(--text); text-wrap: balance; }
 .mini-meta {
   display: block;
   margin-top: 2px;

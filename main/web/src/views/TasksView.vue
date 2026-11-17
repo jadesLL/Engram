@@ -12,7 +12,7 @@
           v-tooltip="'自动提炼的间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）在设置里调'"
           @click="openAutoSettings"
         >
-          <Icon name="settings" :size="14" />自动提炼：{{ autoLabel }}
+          <Icon name="settings" :size="14" />自动提炼 · {{ autoLabel }}
         </button>
         <!-- 手机端（设置页「Agent 与自动化」不渲染）：就地改档位，接口已由本机服务代理到中枢 -->
         <AppSelect
@@ -413,13 +413,12 @@ const currentSections = computed<TaskBoardColumn[]>(() =>
 /** 页头「自动提炼」按钮上的档位文案（0 = 关闭自动；口径与设置页同一处：lib/boardAuto） */
 const autoLabel = computed(() => boardAutoLabel(tasks.autoDays));
 
-/** 顶部副标题：一眼看清这份看板「上次更新时间」、自动提炼档位，以及是不是别端同步过来的 */
+/** 顶部副标题只负责「上次更新 / 来源」；自动提炼档位在右侧按钮上，避免同一句话出现两次 */
 const headSub = computed(() => {
   if (tasks.running) return tasks.answer ? '正在重新提炼，下面是上一版' : '正在从知识库提炼';
   if (!tasks.generatedAt) return '点一下就按知识库生成下周的活';
   const from = !tasks.local && tasks.sourceNodeLabel ? `（来自 ${tasks.sourceNodeLabel}）` : '';
-  const auto = tasks.autoDays > 0 ? `自动提炼：${autoLabel.value}` : '自动提炼已关闭';
-  return `上次更新：${formatSessionTime(tasks.generatedAt)}${from} · ${auto}`;
+  return `上次更新：${formatSessionTime(tasks.generatedAt)}${from}`;
 });
 
 const emptyHint = computed(() =>

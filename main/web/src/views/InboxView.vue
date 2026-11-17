@@ -1203,12 +1203,27 @@ onBeforeUnmount(() => {
 .seg button:hover { color: var(--text); }
 
 .seg button.on {
-  background: var(--text);
-  color: var(--bg);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .seg .n { opacity: 0.6; font-size: 11.5px; margin-left: 3px; }
+/* active 的计数用实心品牌色小圆：不再用整枚黑胶囊抢页面层级 */
+.seg button.on .n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  opacity: 1;
+}
 
 .hint { font-size: 12px; color: var(--text-faint); }
 

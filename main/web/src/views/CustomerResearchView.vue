@@ -56,7 +56,9 @@
                 <span class="cust-name">{{ item.name }}</span>
                 <span class="cust-meta">{{ item.tasks.length }} 次 · {{ shortDate(item.latest.createdAt) }}</span>
               </span>
-              <span class="sdot" :class="dotClass(item.latest)" aria-hidden="true" />
+              <span class="cust-status" :class="statusChipClass(item.latest)" :title="statusLabel(item.latest)">
+                <span class="cust-status-dot" aria-hidden="true" />{{ listStatusLabel(item.latest) }}
+              </span>
             </button>
             <p v-if="!visibleCustomers.length" class="cust-none">
               {{ filter === 'running' ? '当前没有正在跑的调研' : '没有匹配的客户' }}
@@ -445,11 +447,18 @@ function statusChipClass(task: Task) {
   if (task.status === 'failed' || task.status === 'interrupted' || task.status === 'unverified') return 'danger';
   return '';
 }
-function dotClass(task: Task) {
-  if (task.status === 'saved') return 'ok';
-  if (isRunning(task)) return 'run';
-  if (task.status === 'failed' || task.status === 'interrupted' || task.status === 'unverified') return 'danger';
-  return 'idle';
+/** 客户列表的短状态：颜色不能单独表意，3 个字以内让 190px 的列也放得下 */
+function listStatusLabel(task: Task) {
+  if (task.status === 'saved') return '已保存';
+  if (task.status === 'running') return '调研中';
+  if (task.status === 'queued') return '排队';
+  if (task.status === 'pending') return '待提交';
+  if (task.status === 'draft') return '未入库';
+  if (task.status === 'unverified') return '未核实';
+  if (task.status === 'failed' || task.status === 'interrupted') return '失败';
+  if (task.status === 'cancelled') return '已停止';
+  if (task.status === 'completed') return '未提交';
+  return '待处理';
 }
 
 /* ---------- 按客户聚合 ---------- */
@@ -1012,8 +1021,8 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 /* 输入框自己去掉了焦点环，把环提到外框上，键盘操作仍有可见焦点 */
 .cust-search:focus-within { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft),0 0 0 1px var(--accent); }
 .cust-list { flex:1; min-height:0; overflow-y:auto; }
-/* 客户行：只有名字 + 次数/日期 + 状态点。首字母方块对辨认客户没有帮助，去掉后宽度全给名字 */
-.cust { display:grid; grid-template-columns:minmax(0,1fr) 7px; align-items:center;
+/* 客户行：名字 + 次数/日期 + 带文字的状态标签。颜色不再单独承担含义 */
+.cust { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center;
   gap:clamp(6px, .85cqw, 9px); width:100%; padding:clamp(5px, .6cqw, 8px) clamp(6px, .7cqw, 10px); border-radius:10px; text-align:left; }
 .cust.on { background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent-soft); }
 .cust.on .cust-name { color:var(--accent); }
@@ -1021,11 +1030,12 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .cust-name { display:block; font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .cust-meta { display:block; font-size:11.5px; color:var(--text-secondary); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .cust-none { font-size:12.5px; color:var(--text-secondary); padding:14px 10px; }
-.sdot { width:7px; height:7px; border-radius:50%; justify-self:end; }
-.sdot.ok { background:var(--success); }
-.sdot.run { background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-.sdot.danger { background:var(--danger); }
-.sdot.idle { background:var(--text-faint); }
+.cust-status { display:inline-flex; align-items:center; gap:4px; padding:1px 6px; border-radius:999px;
+  background:var(--bg-tertiary); color:var(--text-secondary); font-size:10.5px; line-height:16px; white-space:nowrap; }
+.cust-status-dot { width:5px; height:5px; flex:none; border-radius:50%; background:currentColor; }
+.cust-status.ok { background:var(--success-soft); color:var(--success); }
+.cust-status.run { background:var(--accent-soft); color:var(--accent); }
+.cust-status.danger { background:var(--danger-soft); color:var(--danger); }
 
 /* 中：客户档案 */
 .archive { display:flex; flex-direction:column; min-height:0; background:var(--card-bg); border:1px solid var(--border);
