@@ -35,8 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android 成员端一次性同步器。无 SSE、无后台调度：前台事件触发一轮收敛，完成后线程空闲。
- * 退到后台时若还有在途/排队的工作，会走一个最多 5 分钟的宽限（[BackgroundSyncPolicy]），
- * 把这一轮跑完再停，不在后台常驻、不排失败重试。
+ * 退到后台时若还有在途/排队的工作，会走一个最多 10 分钟的宽限（[BackgroundSyncPolicy]），
+ * 由 [SyncGraceService] 以前台服务 + 唤醒锁保活，把这一轮跑完再停，不在后台常驻、不排失败重试。
  * 本地写入先落 SQLite outbox，网络失败或进程退出均可在下次前台继续。
  * 连中枢走 OkHttp + 双栈策略（见 DualStack.kt）：域名同时有 A/AAAA 时先 IPv6，连不上改 IPv4，
  * IPv4 用稳后定期回探一次 IPv6——协议族只在建连时选定，传输途中不换。
@@ -83,10 +83,15 @@ class SyncEngine(
     @Volatile private var lastHeartbeatRequestAt = 0L
     /**
      * 退到后台后继续完成同步的宽限截止时刻（0 = 没有宽限）：从 onBackground 起算，最多
-     * [BackgroundSyncPolicy.GRACE_MS]（5 分钟）。宽限只用来把已经在跑 / 已排队的工作跑完，
+     * [BackgroundSyncPolicy.GRACE_MS]（10 分钟）。宽限只用来把已经在跑 / 已排队的工作跑完，
      * 不接受前台 UI 的新触发；到期立即取消在途请求，回到「待回前台继续」。
      */
     @Volatile private var backgroundGraceDeadline = 0L
+    /**
+     * 宽限开/关的通知（宿主据此拉起/停掉 [SyncGraceService]）：Android 的缓存进程冻结在十秒级就把
+     * 后台进程 SIGSTOP，只靠计时器到不了 10 分钟，必须由前台服务把进程优先级顶住。
+     */
+    var onGraceChanged: ((Boolean) -> Unit)? = null
     /** 宽限到期收尾任务：挂在 retryScheduler 上，与失败退避互不影响 */
     @Volatile private var backgroundGraceFuture: ScheduledFuture<*>? = null
     @Volatile private var foreground = false
@@ -180,10 +185,12 @@ class SyncEngine(
 
     /**
      * 进入后台：以前是立刻取消在途请求；现在若还有没跑完的同步（正在跑 / 待推队列 / 已排队的
-     * 下一轮），给它一个最多 5 分钟的宽限把成果落完再停，避免「刚改完切到别的 App 就断」。
+     * 下一轮），给它一个最多 10 分钟的宽限把成果落完再停，避免「刚改完切到别的 App 就断」。
      * 宽限内不新增失败重试；窗口到期（或这一轮收敛完 / 失败）立即收尾，待推队列留在 SQLite。
+     *
+     * @return 是否开了宽限（宿主据此决定留着还是停掉后台同步前台服务）
      */
-    fun onBackground() {
+    fun onBackground(): Boolean {
         // 前台心跳随生命周期停止：后台不排新的同步轮（与「无后台常驻同步」的形态一致）
         stopHeartbeat()
         foreground = false
@@ -196,7 +203,30 @@ class SyncEngine(
             pendingOutbox = db.outboxCount(),
             rerunQueued = requestWhileRunning.get(),
         )
-        if (hasWork) startBackgroundGrace() else cancelActiveWork()
+        if (hasWork) {
+            startBackgroundGrace()
+            return true
+        }
+        cancelActiveWork()
+        return false
+    }
+
+    /** 退出前台前是否还有值得继续的工作（MainActivity.onUserLeaveHint 据此提前拉起前台服务） */
+    fun hasBackgroundWork(): Boolean {
+        if (db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return false
+        return running.get() || db.outboxCount() > 0 || requestWhileRunning.get()
+    }
+
+    /** 后台宽限现状（`/api/sync/status` 的 background 字段）：界面据此显示「还剩几分钟」 */
+    data class BackgroundGrace(val active: Boolean, val remainingMs: Long)
+
+    fun backgroundGrace(): BackgroundGrace {
+        val now = System.currentTimeMillis()
+        val deadline = backgroundGraceDeadline
+        return BackgroundGrace(
+            BackgroundSyncPolicy.inGrace(now, deadline),
+            BackgroundSyncPolicy.remainingMs(now, deadline),
+        )
     }
 
     /** 没有可继续的工作（或同步未启用）：与旧行为一致，立刻停 */
@@ -210,7 +240,13 @@ class SyncEngine(
     private fun startBackgroundGrace() {
         cancelled = false
         backgroundGraceDeadline = BackgroundSyncPolicy.deadlineFrom(System.currentTimeMillis())
-        db.log("info", "bg-sync-grace", "应用已进入后台：继续完成本轮同步（最多 5 分钟）")
+        db.log(
+            "info",
+            "bg-sync-grace",
+            "应用已进入后台：继续完成本轮同步（最多 " + BackgroundSyncPolicy.GRACE_MINUTES + " 分钟）",
+        )
+        // 拉起前台服务保活（进程级）：缓存进程冻结在十秒级就把后台线程 SIGSTOP，计时器自己到不了 10 分钟
+        onGraceChanged?.invoke(true)
         scheduleBackgroundGraceEnd(backgroundGraceDeadline)
         // 刚写完就切走（请求已排队但还没开跑）：后台把它推完；已经在跑就等这一轮自己收敛
         if (!running.get()) request(false)
@@ -235,7 +271,11 @@ class SyncEngine(
         cancelPendingRetry()
         activeCalls.forEach { it.cancel() }
         syncProgress = "已暂停，待下次继续"
-        db.log("info", "sync-paused", "后台同步宽限结束（最多 5 分钟）：已暂停，回前台继续")
+        db.log(
+            "info",
+            "sync-paused",
+            "后台同步宽限结束（最多 " + BackgroundSyncPolicy.GRACE_MINUTES + " 分钟）：已暂停，回前台继续",
+        )
     }
 
     /** 宽限内这一轮已收敛且没有待推工作：提前收尾，不空等到期 */
@@ -256,9 +296,12 @@ class SyncEngine(
     }
 
     private fun clearBackgroundGrace() {
+        val wasActive = backgroundGraceDeadline > 0L
         backgroundGraceDeadline = 0L
         backgroundGraceFuture?.cancel(false)
         backgroundGraceFuture = null
+        // 只在真的开着宽限时通知：回前台 / 从没开过宽限时不要白停一次前台服务
+        if (wasActive) onGraceChanged?.invoke(false)
     }
 
     /** 是否处在退到后台后的宽限窗口内 */
