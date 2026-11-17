@@ -26,9 +26,21 @@ object InboxFiles {
         return if (extension.isBlank() || !leaf.contains('.')) stem else "$stem.$extension"
     }
 
-    fun textName(title: String?): String = cleanName(
-        (title?.takeIf { it.isNotBlank() } ?: "手机分享-${Instant.now().toEpochMilli()}") + ".txt",
+    fun textName(title: String?, fallback: String? = null): String = cleanName(
+        (title?.takeIf { it.isNotBlank() }
+            ?: fallback?.takeIf { it.isNotBlank() }
+            ?: "手机分享-${Instant.now().toEpochMilli()}") + ".txt",
     )
+
+    /**
+     * 网页抓不到时的回退名：用域名代替时间戳，至少能看出链接来源（正文仍原样保存）。
+     * 例：https://mp.weixin.qq.com/s/abc → 网页链接-mp.weixin.qq.com
+     */
+    fun linkStem(url: String): String {
+        val host = runCatching { java.net.URI(url).host }.getOrNull()
+            ?.lowercase()?.removePrefix("www.")?.takeIf { it.isNotBlank() && it.length <= 60 }
+        return if (host == null) "网页链接" else "网页链接-$host"
+    }
 
     fun uniquePath(brain: File, name: String): String {
         val clean = cleanName(name)
