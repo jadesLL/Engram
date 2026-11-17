@@ -101,14 +101,15 @@
       <AgentCliSection />
     </SettingsGroup>
 
-    <!-- 办公本（讯飞）：绑定 Doxent 账号后，内置 Agent 经官方 skill + CLI 直接读写办公本数据。
+    <!-- 办公本接入：绑定办公本账号（目前只支持讯飞 Doxent）后，内置 Agent 经官方 skill + CLI
+         直接读写办公本数据。品牌在分组内的「办公本类型」下拉里选。
          绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，属 owner 级管理面，
          所以与「外部接入」同样按 features.agentAdmin 门控（手机恒 false，整组不渲染）。 -->
     <SettingsGroup
       v-if="capabilities.features.agentAdmin"
       anchor="agent-doxent"
-      title="办公本（讯飞）"
-      hint="绑定 Doxent 账号，内置 Agent 可调阅办公本资料"
+      title="办公本接入"
+      hint="选择办公本类型并绑定账号，内置 Agent 可调阅办公本资料"
     >
       <DoxentSection />
     </SettingsGroup>

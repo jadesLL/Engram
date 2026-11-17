@@ -125,7 +125,7 @@ export function doxentSkillState(home: string): DoxentSkillState {
 
 /* ------------------------------------------------------------------ 技能安装 */
 
-interface InstallOptions {
+export interface DoxentInstallOptions {
   home: string;
   url?: string;
   force?: boolean;
@@ -157,7 +157,7 @@ function writeMarker(root: string, info: { url: string; version?: string }): voi
  * - 目录存在但没有管理标记、又确实是官方技能（用户手工装的）时直接接管，补上标记；
  * - 目录存在但不是官方技能（用户自己的同名技能）时拒绝，避免覆盖别人的文件。
  */
-export async function installDoxentSkill(options: InstallOptions): Promise<DoxentSkillState> {
+export async function installDoxentSkill(options: DoxentInstallOptions): Promise<DoxentSkillState> {
   const home = options.home;
   const url = options.url ?? doxentSkillUrl();
   const log = options.log ?? (() => {});
@@ -234,7 +234,7 @@ export function resetDoxentCaches(): void {
   loginStateCache = null;
 }
 
-interface RunResult {
+export interface DoxentRunResult {
   code: number | null;
   stdout: string;
   stderr: string;
@@ -242,7 +242,7 @@ interface RunResult {
 }
 
 /** 起一个隐藏窗口的子进程并收齐输出（不抛：失败进 code/stderr） */
-function runProcess(command: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<RunResult> {
+function runProcess(command: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<DoxentRunResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       windowsHide: true,
@@ -256,6 +256,13 @@ function runProcess(command: string, args: string[], timeoutMs: number, env?: No
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill();
+      // 官方客户端可能拉起常驻 daemon；若它继承了 stdout/stderr 句柄，父进程退出后
+      // 'close' 事件永远不会到，绑定请求就会一直停在「准备中」。超时后强制结算。
+      setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null);
+      }, 1_000);
     }, timeoutMs);
     const finish = (code: number | null) => {
       if (settled) return;
@@ -319,14 +326,14 @@ export async function probePython(env: NodeJS.ProcessEnv = process.env): Promise
   return value;
 }
 
-interface ApiRunOptions {
+export interface DoxentApiOptions {
   home: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
 }
 
 /** 跑官方客户端的一个 CLI 动作（--cli-action login / login-status / logout） */
-async function runDoxentApiAction(action: string, options: ApiRunOptions): Promise<RunResult> {
+async function runDoxentApiAction(action: string, options: DoxentApiOptions): Promise<DoxentRunResult> {
   const home = options.home;
   const python = await probePython(options.env);
   if (!python.available) throw new Error(python.error || '未找到可用的 Python');
@@ -370,18 +377,73 @@ export function parseDoxentLoginState(text: string): DoxentLoginState {
 
 /* ------------------------------------------------------------------ 对外动作 */
 
-export interface DoxentBindResult {
+interface DoxentBindResult {
   skill: DoxentSkillState;
   login: DoxentLoginInfo;
   /** 需要用户去打开的登录/设置页（页面类型为设置时说明已登录） */
   page?: DoxentLoginBlock;
 }
 
-/** 绑定：装技能 → 触发官方登录 → 把真实链接交回设置页 */
-export async function bindDoxent(options: { home: string; url?: string }): Promise<DoxentBindResult> {
-  const home = options.home;
-  const skill = await installDoxentSkill({ home, url: options.url, log: (message) => console.info(message) });
-  const result = await runDoxentApiAction('login', { home, timeoutMs: LOGIN_TIMEOUT_MS });
+/** 绑定任务阶段：install=下载/安装官方技能，login=启动官方 CLI 换取登录链接 */
+export type DoxentBindStep = 'install' | 'login';
+
+export interface DoxentBindJob {
+  state: 'running' | 'done' | 'error';
+  step: DoxentBindStep;
+  startedAt: number;
+  finishedAt?: number;
+  skill?: DoxentSkillState;
+  login?: DoxentLoginInfo;
+  page?: DoxentLoginBlock;
+  error?: string;
+}
+
+export interface DoxentBindOptions {
+  home: string;
+  url?: string;
+  /** 注入技能安装（测试：不联网、不落盘） */
+  install?: (options: DoxentInstallOptions) => Promise<DoxentSkillState>;
+  /** 注入官方 CLI 动作（测试：不起 Python） */
+  runAction?: (action: string, options: DoxentApiOptions) => Promise<DoxentRunResult>;
+}
+
+let bindJob: DoxentBindJob | null = null;
+let bindSettled: Promise<void> | null = null;
+/** 任务代号：解绑 / 重置后，旧任务的迟到结果不能再回写状态 */
+let bindToken = 0;
+
+/** 当前绑定任务快照（null = 没有任务 / 已清理） */
+export function doxentBindJob(): DoxentBindJob | null {
+  return bindJob ? { ...bindJob } : null;
+}
+
+/** 清掉绑定任务状态（解绑、测试重置） */
+export function clearDoxentBindJob(): void {
+  bindToken += 1;
+  bindJob = null;
+  bindSettled = null;
+}
+
+/** 等当前绑定任务结算（路由用它回收聊天运行时；没有任务时立即返回） */
+export function waitDoxentBindSettled(): Promise<void> {
+  return bindSettled ?? Promise.resolve();
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** 绑定正文：装技能 → 触发官方登录 → 把真实链接交回设置页 */
+async function runDoxentBind(
+  options: DoxentBindOptions,
+  onStep: (step: DoxentBindStep, skill?: DoxentSkillState) => void,
+): Promise<DoxentBindResult> {
+  const install = options.install ?? installDoxentSkill;
+  const runAction = options.runAction ?? runDoxentApiAction;
+  onStep('install');
+  const skill = await install({ home: options.home, url: options.url, log: (message) => console.info(message) });
+  onStep('login', skill);
+  const result = await runAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS });
   const output = result.stdout + '\n' + result.stderr;
   const page = parseDoxentLoginBlock(output);
   if (page) {
@@ -395,6 +457,46 @@ export async function bindDoxent(options: { home: string; url?: string }): Promi
       ? '打开登录页面超时（官方 CLI 3 分钟内没有返回登录链接）'
       : '官方 CLI 没有返回登录链接' + (result.stderr.trim() ? '：' + result.stderr.trim().slice(0, 300) : ''),
   );
+}
+
+/**
+ * 启动绑定任务并立即返回快照；下载技能包与启动官方 CLI 在后台继续。
+ *
+ * 为什么不再用一个长请求硬等：首次绑定要下载技能包、启动 CLI 并等它回登录链接，
+ * 可能 1–3 分钟；设置页只能显示「准备中…」，反代/浏览器还可能先把请求掐断。
+ * 改成任务 + 轮询后，设置页能显示当前阶段与已等待时长，刷新页面也能接着看。
+ */
+export function startDoxentBind(options: DoxentBindOptions): DoxentBindJob {
+  if (bindJob?.state === 'running') return { ...bindJob };
+  const token = ++bindToken;
+  bindJob = { state: 'running', step: 'install', startedAt: Date.now() };
+  bindSettled = (async () => {
+    try {
+      const result = await runDoxentBind(options, (step, skill) => {
+        if (token !== bindToken || !bindJob) return;
+        bindJob = { ...bindJob, step, ...(skill ? { skill } : {}) };
+      });
+      if (token !== bindToken || !bindJob) return;
+      bindJob = {
+        ...bindJob,
+        state: 'done',
+        step: 'login',
+        finishedAt: Date.now(),
+        skill: result.skill,
+        login: result.login,
+        ...(result.page ? { page: result.page } : {}),
+      };
+    } catch (error) {
+      if (token !== bindToken || !bindJob) return;
+      bindJob = {
+        ...bindJob,
+        state: 'error',
+        finishedAt: Date.now(),
+        error: messageOf(error),
+      };
+    }
+  })();
+  return { ...bindJob };
 }
 
 /** 查询登录状态（带 5 秒缓存，设置页轮询不至于每次都起进程） */

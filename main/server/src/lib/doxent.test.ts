@@ -6,6 +6,8 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import {
   DOXENT_MARKER_FILE,
+  clearDoxentBindJob,
+  doxentBindJob,
   doxentSkillRoot,
   doxentSkillState,
   doxentSkillUrl,
@@ -14,6 +16,8 @@ import {
   parseDoxentLoginState,
   readDoxentSkillVersion,
   removeDoxentSkill,
+  startDoxentBind,
+  waitDoxentBindSettled,
 } from './doxent.js';
 
 function tempHome(): string {
@@ -193,4 +197,94 @@ test('doxentStatus 的目录状态：没装 / 装了 / 未管理三种口径', a
 test('doxentSkillUrl：ENGRAM_DOXENT_SKILL_URL 覆盖默认官方地址', () => {
   assert.equal(doxentSkillUrl({}), 'https://download.iflyink.com/apk/doxent_skills.zip');
   assert.equal(doxentSkillUrl({ ENGRAM_DOXENT_SKILL_URL: 'https://mirror.test/doxent.zip' }), 'https://mirror.test/doxent.zip');
+});
+
+test('startDoxentBind：后台任务按 install → login 推进，完成后带回登录链接', async () => {
+  clearDoxentBindJob();
+  const home = tempHome();
+  const steps: string[] = [];
+  let releaseInstall!: () => void;
+  let releaseLogin!: () => void;
+  const installGate = new Promise<void>((resolve) => { releaseInstall = resolve; });
+  const loginGate = new Promise<void>((resolve) => { releaseLogin = resolve; });
+
+  const started = startDoxentBind({
+    home,
+    install: async (options) => {
+      steps.push('install');
+      await installGate;
+      return { installed: true, managed: true, root: doxentSkillRoot(options.home), version: '1.3.10' };
+    },
+    runAction: async (action) => {
+      steps.push(action);
+      await loginGate;
+      return { code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false };
+    },
+  });
+
+  assert.equal(started.state, 'running');
+  assert.equal(started.step, 'install', '刚启动时处于装技能阶段');
+
+  releaseInstall();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const mid = doxentBindJob();
+  assert.equal(mid?.state, 'running');
+  assert.equal(mid?.step, 'login', '技能装好后阶段切到启动官方 CLI');
+  assert.equal(mid?.skill?.installed, true);
+
+  releaseLogin();
+  await waitDoxentBindSettled();
+  const job = doxentBindJob();
+  assert.equal(job?.state, 'done');
+  assert.equal(job?.page?.pageType, '登录');
+  assert.equal(job?.page?.url, 'https://cli.iflyink.com/login?sn=nsn_abc&pollKey=deadbeef');
+  assert.equal(job?.login?.state, 'logged-out');
+  assert.deepEqual(steps, ['install', 'login']);
+  clearDoxentBindJob();
+});
+
+test('startDoxentBind：CLI 没回链接时进入 error（按钮不会永远停在准备中）', async () => {
+  clearDoxentBindJob();
+  const job = startDoxentBind({
+    home: tempHome(),
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    runAction: async () => ({ code: 0, stdout: 'DOXENT CLI\n未登录', stderr: '', timedOut: false }),
+  });
+  assert.equal(job.state, 'running');
+  await waitDoxentBindSettled();
+  const finished = doxentBindJob();
+  assert.equal(finished?.state, 'error');
+  assert.match(finished?.error || '', /没有返回登录链接/);
+  clearDoxentBindJob();
+});
+
+test('startDoxentBind：重复点击复用同一个任务，不重复装技能', async () => {
+  clearDoxentBindJob();
+  let installs = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const options = {
+    home: tempHome(),
+    install: async (input: { home: string }) => {
+      installs += 1;
+      await gate;
+      return { installed: true, managed: true, root: doxentSkillRoot(input.home), version: '1.3.10' };
+    },
+    runAction: async () => ({ code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false }),
+  };
+
+  const first = startDoxentBind(options);
+  const second = startDoxentBind(options);
+  assert.equal(second.startedAt, first.startedAt, '并发点击应复用进行中的任务');
+
+  release();
+  await waitDoxentBindSettled();
+  assert.equal(installs, 1);
+  assert.equal(doxentBindJob()?.state, 'done');
+  clearDoxentBindJob();
 });
