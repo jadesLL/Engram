@@ -7,15 +7,28 @@ export interface PreferenceValue { value: string; updatedAt: number; nodeId: str
 
 /**
  * 偏好合并成功后的监听器（key + 远端 updatedAt）。
- * 用途：模型配置这类「偏好值还要落到别的文件」的项，需要在所有合并路径（SSE 应用 /
- * 全量对账 / 中枢处理成员 push）之后做一次本机应用，又不让本模块反向依赖同步业务模块。
- * 监听器实现方必须自己吞异常、异步执行，不能拖慢同步轮。
+ * 用途：模型配置 / 办公本凭据这类「偏好值还要落到别的文件」的项，需要在所有合并路径
+ * （SSE 应用 / 全量对账 / 中枢处理成员 push）之后做一次本机应用，又不让本模块反向依赖
+ * 同步业务模块。监听器实现方必须自己吞异常、异步执行，不能拖慢同步轮。
+ *
+ * 允许多个监听器（模型配置、办公本凭据各自注册）；旧接口 setPreferenceMergeListener
+ * 保留为「替换全部」语义，避免测试/旧代码误把别的监听器顶掉。
  */
 export type PreferenceMergeListener = (key: string, updatedAt: number) => void;
-let mergeListener: PreferenceMergeListener | null = null;
+const mergeListeners = new Set<PreferenceMergeListener>();
 
+/** 追加一个监听器；返回注销函数（测试收尾 / 热重载用） */
+export function addPreferenceMergeListener(listener: PreferenceMergeListener): () => void {
+  mergeListeners.add(listener);
+  return () => {
+    mergeListeners.delete(listener);
+  };
+}
+
+/** 替换全部监听器（兼容旧调用；新代码用 addPreferenceMergeListener） */
 export function setPreferenceMergeListener(listener: PreferenceMergeListener | null): void {
-  mergeListener = listener;
+  mergeListeners.clear();
+  if (listener) mergeListeners.add(listener);
 }
 export function preferenceValue(key: string): PreferenceValue | null {
   if (!PREFERENCE_KEYS.includes(key as typeof PREFERENCE_KEYS[number])) return null;
@@ -41,11 +54,13 @@ export function mergePreference(key: string, input: unknown): boolean {
   setSetting(key, p.value);
   setSetting(`sync_preference:${key}`, JSON.stringify({ updatedAt: p.updatedAt, nodeId: p.nodeId }));
   emit('settings-changed', { key });
-  // 合并成功才通知：监听器故障不能影响偏好落库（同步轮会重试）
-  try {
-    mergeListener?.(key, p.updatedAt);
-  } catch {
-    /* 监听器自己负责吞异常，这里再兜一层 */
+  // 合并成功才通知：监听器故障不能影响偏好落库（同步轮会重试）；逐个隔离，互不拖累
+  for (const listener of mergeListeners) {
+    try {
+      listener(key, p.updatedAt);
+    } catch {
+      /* 监听器自己负责吞异常，这里再兜一层 */
+    }
   }
   return true;
 }

@@ -499,6 +499,49 @@ export function startDoxentBind(options: DoxentBindOptions): DoxentBindJob {
   return { ...bindJob };
 }
 
+/**
+ * 应用同步来的登录凭据后的准备（后台执行，不面向设置页要登录链接）：
+ * 装官方技能（幂等）→ 跑一次官方 login 让 CLI 校验会话 / 必要时下载客户端。
+ *
+ * 会话有效时官方 CLI 返回「设置」页（= 已登录）；返回「登录」页说明凭据失效，
+ * 只把状态写进缓存、不把链接交给前端，用户仍可在设置页手动重新绑定。
+ */
+export async function prepareDoxentAfterCredentialSync(options: { home: string; url?: string }): Promise<DoxentLoginInfo> {
+  // 已装技能且 CLI 能直接读到同步会话：无需再跑一次 login（首次 login 可能下载 CLI，耗时 1–3 分钟）
+  if (doxentSkillState(options.home).installed) {
+    try {
+      const fast = await doxentLoginInfo({ home: options.home, refresh: true, timeoutMs: 20_000 });
+      if (fast.state === 'logged-in') return fast;
+    } catch {
+      /* 继续走完整准备：缺 Python / CLI 未装时由 login 统一报错 */
+    }
+  }
+  await installDoxentSkill({ home: options.home, url: options.url, log: (message) => console.info(message) });
+  const result = await runDoxentApiAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS });
+  const page = parseDoxentLoginBlock(result.stdout + '\n' + result.stderr);
+  const login: DoxentLoginInfo = page
+    ? { state: page.pageType === '设置' ? 'logged-in' : 'logged-out' }
+    : {
+        state: 'unknown',
+        detail: result.timedOut
+          ? '官方 CLI 校验同步凭据超时'
+          : (result.stderr || result.stdout).trim().slice(0, 300) || '官方 CLI 没有返回登录状态',
+      };
+  loginStateCache = { at: Date.now(), value: login };
+  return login;
+}
+
+/** 凭据文件被替换 / 删除后停止官方 CLI daemon（失败不阻塞：下次启动会重新读会话） */
+export async function stopDoxentCliAfterCredentialChange(home: string): Promise<void> {
+  try {
+    await runDoxentApiAction('stop', { home, timeoutMs: 15_000 });
+  } catch {
+    /* 技能未装、Python 不在或 CLI 未运行时无需停止 */
+  } finally {
+    resetDoxentCaches();
+  }
+}
+
 /** 查询登录状态（带 5 秒缓存，设置页轮询不至于每次都起进程） */
 export async function doxentLoginInfo(
   options: { home: string; refresh?: boolean; timeoutMs?: number },

@@ -13,7 +13,7 @@ import {
   type SyncedAgentModelConfig,
 } from '../lib/agentModelConfig.js';
 import { logSyncEvent } from './eventLog.js';
-import { preferenceValue, setPreferenceMergeListener, stampPreference } from './preferences.js';
+import { addPreferenceMergeListener, preferenceValue, stampPreference } from './preferences.js';
 import { recordLocalChange } from './index.js';
 import { currentNodeId } from './store.js';
 
@@ -256,7 +256,8 @@ let listenerInstalled = false;
  */
 export function initializeAgentModelSync(): void {
   if (!listenerInstalled) {
-    setPreferenceMergeListener((key, updatedAt) => {
+    // 追加而不是替换：办公本凭据同步也注册在同一份合并监听器集合里
+    addPreferenceMergeListener((key, updatedAt) => {
       if (key !== AGENT_MODEL_CONFIG_KEY) return;
       // 监听器内只调度：同步轮 / SSE 处理不能等文件写入
       void onAgentModelPreferenceApplied(key, updatedAt);

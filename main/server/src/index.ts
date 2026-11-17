@@ -37,6 +37,7 @@ import { hubUpdateRoutes } from './routes/syncHubUpdate.js';
 import { runtimeRoutes } from './routes/runtime.js';
 import { applyEnvSyncRole, initSync } from './sync/index.js';
 import { initializeAgentModelSync } from './sync/agentModelSync.js';
+import { initializeDoxentSync } from './sync/doxentSync.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { registerAgentConsoleProxy } from './assistant/agentConsoleProxy.js';
@@ -239,6 +240,9 @@ async function runBackgroundStartup(app: FastifyInstance): Promise<void> {
   // 内置 Agent 模型配置镜像（本机 → 偏好）：必须在同步客户端初始化之后挂监听器，
   // 首轮镜像再延迟约 4 秒（避开启动峰值），之后每 5 分钟一轮；异常只记日志。
   await step('agent-model-sync', () => { initializeAgentModelSync(); });
+  // 办公本登录凭据镜像 / 应用：与模型配置同一套偏好合并监听器（追加监听，不互相覆盖）。
+  // 首轮对齐延迟约 5 秒，之后每 5 分钟镜像一次（捕捉官方 CLI 自己刷新 token 写回的文件）。
+  await step('doxent-sync', () => { initializeDoxentSync(); });
   // 旧版收集箱入库误建子目录迁移（迁到 原始资料/文档/，movePage 保留页面 ID 与检索引用）。
   //
   // 动态 import ./pipeline/inboxConvert.js 会顺带把 pdfjs/xlsx/mammoth/jszip 整条重型解析链

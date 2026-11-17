@@ -289,5 +289,11 @@ test('偏好条目：中枢收到的设置同步写成中文人话，模型配�
   assert.equal(describeOpSummary(model), '同步设置「内置 Agent 模型配置」');
   assert.equal(JSON.stringify(model).includes('sk-'), false);
   assert.equal(describeOpSummary(summarizePreferenceChange('video_config')), '同步视频理解开关「video_config」');
+  assert.equal(describeOpSummary(summarizePreferenceChange('doxent_config')), '同步办公本类型「doxent_config」');
+  // 办公本登录凭据含令牌明文：同步记录只写固定中文名，不带内部 key 和值
+  const doxentSession = summarizePreferenceChange('doxent_session');
+  assert.equal(describeOpSummary(doxentSession), '同步设置「办公本登录凭据」');
+  assert.equal(describeOpSummary(doxentSession).includes('doxent_session'), false);
+  assert.equal(describeOpSummary(doxentSession).includes('token'), false);
   assert.equal(describeOpSummary(summarizePreferenceChange('theme')), '同步设置「theme」');
 });

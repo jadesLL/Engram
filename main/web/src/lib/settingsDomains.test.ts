@@ -447,4 +447,8 @@ test('办公本接入：分组名不带品牌，品牌放在分组内的类型�
   assert.match(section, /AppSelect/, '办公本类型要复用统一的自绘下拉');
   assert.match(section, /讯飞办公本/, '品牌选项应落在类型下拉里');
   assert.match(section, /\/api\/settings\/doxent\/bind/, '绑定应走后台任务接口');
+  assert.match(section, /\/api\/settings\/doxent\/config/, '办公本类型要写入可同步的 preference');
+  assert.match(section, /随「设置」分类同步/, '卡片要说明类型与登录凭据的同步范围');
+  assert.match(section, /登录凭据/, '卡片要说明登录凭据会同步');
+  assert.match(section, /settingsEnabled|syncDetail/, '同步应用阶段要有可见状态');
 });

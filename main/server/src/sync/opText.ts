@@ -443,6 +443,8 @@ function preferenceLabel(path: string): string {
   if (path === 'customer_research_rules') return '客户调研流程模板';
   if (path === 'agent_model_config') return '内置 Agent 模型配置';
   if (path === 'video_config') return '视频理解开关';
+  if (path === 'doxent_config') return '办公本类型';
+  if (path === 'doxent_session') return '办公本登录凭据';
   return '设置';
 }
 
@@ -466,8 +468,9 @@ export function describeOpSummary(item: SyncOpSummary): string {
     return `同步会话「${item.title || item.path}」${count > 0 ? `（${count} 条消息）` : ''}`;
   }
   if (item.kind === 'preference') {
-    // 模型配置含 Key 明文：日志只写固定中文名，不带值也不带内部 key
+    // 模型配置 / 办公本凭据含敏感值：日志只写固定中文名，不带值也不带内部 key
     if (item.path === 'agent_model_config') return '同步设置「内置 Agent 模型配置」';
+    if (item.path === 'doxent_session') return '同步设置「办公本登录凭据」';
     return `同步${preferenceLabel(item.path)}「${item.path}」`;
   }
   if (item.kind === 'board') return '同步任务看板（全端取最新一版）';

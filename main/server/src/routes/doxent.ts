@@ -2,6 +2,15 @@ import { FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
 import { bundledDshHome } from '../assistant/config.js';
 import { closeAllRuntimes } from '../assistant/dshRuntime.js';
+import { getSetting, setSetting } from '../lib/db.js';
+import {
+  DEFAULT_DOXENT_CONFIG,
+  DOXENT_CONFIG_KEY,
+  normalizeDoxentConfigInput,
+  parseDoxentConfig,
+  serializeDoxentConfig,
+  type DoxentConfig,
+} from '../lib/doxentConfig.js';
 import {
   clearDoxentBindJob,
   doxentBindJob,
@@ -11,6 +20,11 @@ import {
   unbindDoxent,
   waitDoxentBindSettled,
 } from '../lib/doxent.js';
+import { clearDoxentSessionPreference, doxentSessionSyncState, mirrorDoxentSession } from '../sync/doxentSync.js';
+import { syncCategories } from '../sync/categories.js';
+import { recordLocalChange } from '../sync/index.js';
+import { stampPreference } from '../sync/preferences.js';
+import { currentNodeId } from '../sync/store.js';
 
 /**
  * 设置 → Agent 与自动化 →「办公本接入」的绑定接口。
@@ -31,28 +45,74 @@ function messageOf(error: unknown): string {
 /** 测试/排查用的慢日志阈值：一次绑定超过这个时长就在服务端留一条，方便对上「准备中」 */
 const BIND_SLOW_LOG_MS = 90_000;
 
+/**
+ * 读办公本类型（preference `doxent_config`）：
+ * 首次访问把默认值落库并登记为同步偏好；历史脏数据归一化后回写，修一次就跟着「设置」分类同步。
+ */
+function readDoxentConfig(): DoxentConfig {
+  const raw = getSetting(DOXENT_CONFIG_KEY);
+  const config = raw == null ? DEFAULT_DOXENT_CONFIG : parseDoxentConfig(raw);
+  const normalized = serializeDoxentConfig(config);
+  if (raw !== normalized) {
+    setSetting(DOXENT_CONFIG_KEY, normalized);
+    stampPreference(DOXENT_CONFIG_KEY, currentNodeId());
+    recordLocalChange('preference', DOXENT_CONFIG_KEY);
+  }
+  return config;
+}
+
+/** 登录成功 / 已登录时把本机会话镜像进同步偏好（失败只记日志，不影响设置页状态） */
+function mirrorSessionQuietly(): void {
+  try {
+    mirrorDoxentSession();
+  } catch (error) {
+    console.warn('[doxent] 镜像办公本登录凭据失败（下次登录检测/周期镜像会重试）', error);
+  }
+}
+
 export async function doxentRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
   /** 内置 Agent 的 DSH_HOME：技能就装在它下面的 skills/doxent */
   const home = bundledDshHome();
 
-  /** 状态：Python 是否可用、技能是否已装、当前登录态、进行中的绑定任务（登录检查 20 秒内返回） */
+  /** 状态：Python / 技能 / 登录态 / 绑定任务 / 办公本类型 / 凭据同步进度（登录检查 20 秒内返回） */
   app.get('/api/settings/doxent', async (req) => {
     const query = (req.query as { refresh?: string; skillOnly?: string } | undefined) ?? {};
     const refresh = String(query.refresh ?? '') === '1';
     // skillOnly=1：只刷新「Python / 技能」两项，不拉起官方 CLI 查登录态（绑定失败后刷新卡片用）
     const skillOnly = String(query.skillOnly ?? '') === '1';
     const job = doxentBindJob();
-    // 绑定正在跑时不要再起一个 login-status 子进程和它抢官方 CLI；顺手把任务阶段带回去，
-    // 设置页刷新后也能接着显示进度。
-    const checkLogin = skillOnly || job?.state === 'running' ? false : undefined;
+    const syncState = doxentSessionSyncState();
+    const sync = {
+      ...syncState,
+      settingsEnabled: syncCategories().settings,
+      role: getSetting('sync_role') || 'none',
+    };
+    // 绑定任务或凭据同步正在跑时不要再起一个 login-status 子进程和它抢官方 CLI；
+    // 顺手把任务阶段带回去，设置页刷新后也能接着显示进度。
+    const busy = job?.state === 'running' || syncState.phase !== 'idle';
+    const checkLogin = skillOnly || busy ? false : undefined;
     const status = await doxentStatus({
       home,
       refresh,
       loginTimeoutMs: job?.state === 'running' ? 5_000 : 20_000,
       checkLogin,
     });
-    return { ...status, bind: job };
+    if (status.login.state === 'logged-in') mirrorSessionQuietly();
+    return { ...status, bind: job, config: readDoxentConfig(), sync };
+  });
+
+  /** 办公本类型：写入 preference 并登记为「设置」分类的同步项 */
+  app.put('/api/settings/doxent/config', async (req, reply) => {
+    const config = normalizeDoxentConfigInput(req.body);
+    if (!config) return reply.code(400).send({ error: '办公本类型无效' });
+    const value = serializeDoxentConfig(config);
+    if (getSetting(DOXENT_CONFIG_KEY) !== value) {
+      setSetting(DOXENT_CONFIG_KEY, value);
+      stampPreference(DOXENT_CONFIG_KEY, currentNodeId());
+      recordLocalChange('preference', DOXENT_CONFIG_KEY);
+    }
+    return { ok: true, config };
   });
 
   /** 绑定：启动后台任务并立即返回（真实下载与登录在后台跑，前端轮询 GET bind 看进度） */
@@ -68,6 +128,10 @@ export async function doxentRoutes(app: FastifyInstance) {
           console.warn('[doxent] 关闭聊天运行时失败（下次对话仍会重开）', error);
         }
         const finished = doxentBindJob();
+        if (finished?.state === 'done' && finished.login?.state === 'logged-in') {
+          // 官方 CLI 返回「设置」页 = 本机已登录：把会话镜像进同步偏好，其他设备免扫码
+          mirrorSessionQuietly();
+        }
         if (finished && Date.now() - startedAt > BIND_SLOW_LOG_MS) {
           console.info(
             '[doxent] 绑定任务耗时 ' + Math.round((Date.now() - startedAt) / 1000) + ' 秒，结果：' + finished.state,
@@ -87,7 +151,10 @@ export async function doxentRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: '正在准备绑定，请等登录链接生成后再确认登录' });
     }
     try {
-      return { login: await doxentLoginInfo({ home, refresh: true, timeoutMs: 45_000 }) };
+      const login = await doxentLoginInfo({ home, refresh: true, timeoutMs: 45_000 });
+      // 用户刚在浏览器完成登录：立即把官方 CLI 会话写入同步偏好（失败交给周期镜像重试）
+      if (login.state === 'logged-in') mirrorSessionQuietly();
+      return { login };
     } catch (error) {
       return reply.code(502).send({ error: messageOf(error) });
     }
@@ -101,6 +168,12 @@ export async function doxentRoutes(app: FastifyInstance) {
     try {
       const result = await unbindDoxent({ home });
       clearDoxentBindJob();
+      // 解绑要同步到其他设备：写空偏好 → 对端删除本机会话并退出，避免「这边已解绑、那边还能读」
+      try {
+        clearDoxentSessionPreference();
+      } catch (error) {
+        console.warn('[doxent] 清理同步的办公本登录凭据失败（下次启动会对齐）', error);
+      }
       try {
         closeAllRuntimes();
       } catch (error) {

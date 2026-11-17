@@ -23,8 +23,13 @@ test('分类同步：缺省、关闭隔离、偏好冲突与凭据隔离', async
     // 2026-11 新增：内置 Agent 模型配置与视频理解开关都归「设置」分类
     assert.equal(c.categoryFor('preference', 'agent_model_config'), 'settings');
     assert.equal(c.categoryFor('preference', 'video_config'), 'settings');
+    // 办公本类型与官方 CLI 登录凭据也归「设置」分类（凭据值只在服务端偏好里流转）
+    assert.equal(c.categoryFor('preference', 'doxent_config'), 'settings');
+    assert.equal(c.categoryFor('preference', 'doxent_session'), 'settings');
     assert.equal(c.syncAllowed('preference', 'agent_model_config'), false, '设置分类默认关闭');
     assert.equal(c.syncAllowed('preference', 'video_config'), false, '设置分类默认关闭');
+    assert.equal(c.syncAllowed('preference', 'doxent_config'), false, '设置分类默认关闭');
+    assert.equal(c.syncAllowed('preference', 'doxent_session'), false, '设置分类默认关闭');
     assert.equal(c.syncAllowed('research', '任意 id'), true);
     assert.equal(c.syncAllowed('preference', 'customer_research_rules'), true);
     db.setSetting('sync_categories', 'broken-json');
@@ -69,9 +74,19 @@ test('分类同步：缺省、关闭隔离、偏好冲突与凭据隔离', async
     // 设置分类打开后：新 key 可以合并（旧 video_config 不登记时这些调用会静默失效）
     assert.equal(c.syncAllowed('preference', 'agent_model_config'), true);
     assert.equal(c.syncAllowed('preference', 'video_config'), true);
+    assert.equal(c.syncAllowed('preference', 'doxent_config'), true);
+    assert.equal(c.syncAllowed('preference', 'doxent_session'), true);
     const remoteModelConfig = { value: '{"version":1,"providers":{},"official":{},"keys":{}}', updatedAt: Date.now(), nodeId: '远端' };
     assert.equal(p.mergePreference('agent_model_config', remoteModelConfig), true);
     assert.equal(p.mergePreference('video_config', { value: '{"enabled":false}', updatedAt: Date.now(), nodeId: '远端' }), true);
+    assert.equal(
+      p.mergePreference('doxent_config', { value: '{"provider":"iflytek"}', updatedAt: Date.now(), nodeId: '远端' }),
+      true,
+    );
+    assert.equal(
+      p.mergePreference('doxent_session', { value: '{"userId":"u","sn":"s","userToken":"t","refreshToken":"r"}', updatedAt: Date.now(), nodeId: '远端' }),
+      true,
+    );
     db.setSetting('editor_mode', 'ir');
     const legacy = p.preferenceValue('editor_mode')!;
     assert.ok(legacy.nodeId, '旧偏好也要有稳定来源，首次开启后才能收敛');
