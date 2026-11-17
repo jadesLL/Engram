@@ -17,7 +17,7 @@
           {{ clearingAll ? '正在清除…' : '一键清除' }}
         </button>
         <button class="btn ghost" type="button" @click="openRules()">流程与模板</button>
-        <button class="btn primary" type="button" @click="openStart()"><Icon name="plus" :size="15" />发起调研</button>
+        <button v-if="tasks.length" class="btn primary" type="button" @click="openStart()"><Icon name="plus" :size="15" />发起调研</button>
       </div>
     </header>
 
@@ -1029,7 +1029,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 
 /* 中：客户档案 */
 .archive { display:flex; flex-direction:column; min-height:0; background:var(--card-bg); border:1px solid var(--border);
-  border-radius:var(--radius); box-shadow:var(--shadow-card); overflow:hidden; animation:arrive .22s ease-out; }
+  border-radius:var(--radius); box-shadow:var(--shadow-card); overflow:hidden; animation:arrive var(--motion-slow) var(--ease-enter); }
 .arc-head { flex:none; padding:clamp(13px, 1.75cqw, 18px) clamp(15px, 2.3cqw, 24px) clamp(10px, 1.25cqw, 13px); }
 .arc-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .arc-title { min-width:0; }
@@ -1095,9 +1095,9 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .report-markdown :deep(.cite:focus-visible) { outline:2px solid var(--accent); outline-offset:1px; }
 /* 落到来源章那条来源时的短暂高亮（条目本身就是 `[n] 标题…` 那一行）；动画结束回落原样 */
 .report-markdown :deep(li.cite-hot),.report-markdown :deep(p.cite-hot) {
-  animation:cite-flash 1.7s ease-out; border-radius:6px;
+  animation:cite-flash var(--motion-flash) var(--ease-standard); border-radius:6px;
 }
-.report-markdown :deep(.cite-hot) { animation:cite-flash 1.7s ease-out; }
+.report-markdown :deep(.cite-hot) { animation:cite-flash var(--motion-flash) var(--ease-standard); }
 @keyframes cite-flash {
   from { background:var(--accent-soft); box-shadow:0 0 0 4px var(--accent-soft); }
   to { background:transparent; box-shadow:0 0 0 4px transparent; }
