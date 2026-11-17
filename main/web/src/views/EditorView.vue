@@ -151,7 +151,18 @@
       <div v-show="!app.readingMode && !pageLoading && !pageError" class="editor-body">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <DocumentTitle v-if="isRawPage" :title="title" :page-id="String(page.id)" :disabled="pageLoading" @save="saveDocumentTitle" />
-        <input v-else v-model="title" class="title-input" placeholder="无标题" aria-label="页面标题" @change="save(true)" />
+        <textarea
+          v-else
+          ref="titleInput"
+          v-model="title"
+          class="title-input"
+          rows="1"
+          placeholder="无标题"
+          aria-label="页面标题"
+          @input="resizeTitleInput"
+          @keydown.enter.prevent="onTitleEnter"
+          @change="save(true)"
+        />
         <!-- 手机端摘要行：折叠时仅此一行（选项切换），桌面隐藏 -->
         <div class="head-summary">
           <button
@@ -656,6 +667,28 @@ watch(
 );
 const content = ref('');
 const title = ref('');
+const titleInput = ref<HTMLTextAreaElement | null>(null);
+
+/** 标题改为自动增高 textarea：手机上长标题最多展示两行，不再被 input 硬裁 */
+function resizeTitleInput() {
+  const el = titleInput.value;
+  /* 加载态 / 阅读态里编辑器是 v-show 隐藏的：此时 scrollHeight=0，写成 0px 会把标题压成一行，
+     等真正显示出来后调用方要再量一次（loadPage / 退出阅读 / watch 都会补） */
+  if (!el || !el.offsetParent) return;
+  const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 36;
+  const max = line * 3 + 2;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+}
+
+function onTitleEnter(event: KeyboardEvent) {
+  const el = event.target as HTMLTextAreaElement | null;
+  el?.blur();
+}
+
+watch(title, () => { void nextTick(resizeTitleInput); });
+/* 从阅读态回到编辑、或页面加载完成后，标题 textarea 才真正有高度可量 */
+watch(() => app.readingMode, (reading) => { if (!reading) void nextTick(resizeTitleInput); });
 const pageType = ref('note');
 /* 页面类型下拉：AppSelect 的 chip 变体（原原生 select 的 .chip-select 样式已内置到组件） */
 const PAGE_KINDS = [
@@ -1097,7 +1130,10 @@ async function loadPage(id: string) {
       pageLoading.value = false;
       // 换页期间编辑器仍存活但不可见，DOM 恢复后补齐最新正文。
       await nextTick();
-      if (seq === loadSeq) editorRef.value?.syncIfPending();
+      if (seq === loadSeq) {
+        editorRef.value?.syncIfPending();
+        resizeTitleInput();
+      }
     }
   }
 }
@@ -1828,7 +1864,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border-radius: 50%;
   background: var(--success);
 }
-.save-state.dirty .dot { background: var(--warning); animation: save-pulse 1.2s infinite; }
+.save-state.dirty .dot { background: var(--warning); animation: save-pulse 1.2s 3; }
 .save-state.failed { color: var(--danger); }
 .save-state.failed .dot { background: var(--danger); }
 @keyframes save-pulse { 50% { opacity: 0.35; } }
@@ -1890,13 +1926,19 @@ button.save-state.dirty:hover { color: var(--accent); }
   padding: 28px var(--col-inset) 0;
 }
 .title-input {
+  display: block;
   width: 100%;
+  min-height: 1.2em;
+  max-height: 3.6em;
   border: none;
   font-size: 30px;
   font-weight: 700;
+  line-height: 1.2;
   letter-spacing: -0.01em;
   padding: 0;
   background: transparent;
+  resize: none;
+  overflow: hidden;
 }
 .title-input::placeholder { color: var(--text-faint); }
 .document-meta .tags-chips { flex: none; min-width: 0; }

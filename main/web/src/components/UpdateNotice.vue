@@ -466,6 +466,16 @@ onUnmounted(() => {
 
 <style scoped>
 .update-notice { position: fixed; z-index: var(--z-popup); top: calc(var(--win-titlebar-h, 0px) + 11px + var(--safe-top)); right: calc(22px + var(--safe-right)); }
+/*
+ * 手机档没有桌面标题栏，top 只有 11px：更新图标会压住页面标题的第一行。
+ * 下移到页头首行之下，仍贴右缘；桌面端（含标题栏形态）不受影响。
+ */
+@media (max-width: 768px) {
+  .update-notice:not(.update-notice-titlebar) {
+    top: calc(64px + var(--safe-top));
+    right: calc(12px + var(--safe-right));
+  }
+}
 /* 入口就是一枚绿色小图标：底色用主题的成功色（亮色 #0f7b0f / 暗色 #6ccb5f），图标取对比色 */
 .update-notice-trigger { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1px solid var(--success); border-radius: 8px; background: var(--success); color: var(--on-accent); box-shadow: var(--shadow-raised); }
 .update-notice-trigger:hover { filter: brightness(1.08); }

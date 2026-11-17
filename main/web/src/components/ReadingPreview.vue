@@ -343,6 +343,7 @@
     <button
       v-if="narrowReader"
       class="reading-edit-fab"
+      :class="{ 'is-hidden': readingFabHidden }"
       type="button"
       aria-label="编辑这一页"
       @click="closeReading"
@@ -509,6 +510,18 @@ const compactToolbar = ref(compactMedia.matches);
    412px 宽的安卓屏上 70% 只剩 258px：一行放不下十来个字，表格 / 代码块一进来就横向溢出，
    读者看到的是「正文显示不全、要左右拖」。偏好照旧保存，宽屏档仍按它收敛 */
 const narrowReader = ref(mobileMedia.matches);
+/* 手机上「编辑」FAB 在滚动期间淡出，停稳 500ms 后回来：避免它一直压住正在读的那一行 */
+const readingFabHidden = ref(false);
+let readingFabTimer: ReturnType<typeof setTimeout> | null = null;
+function onReaderScrollForFab() {
+  if (!narrowReader.value) return;
+  readingFabHidden.value = true;
+  if (readingFabTimer) clearTimeout(readingFabTimer);
+  readingFabTimer = setTimeout(() => {
+    readingFabHidden.value = false;
+    readingFabTimer = null;
+  }, 500);
+}
 /* 宽块（表格）按比例缩放的下限：缩到这一档还放不下就保持横向滚动，不再继续缩到读不清 */
 const WIDE_BLOCK_MIN_ZOOM = 0.6;
 /* 窄屏档表格的「舒适列宽」：每列这个宽度大致放得下三四个字，再窄就要一行一两个字地折。
@@ -1264,6 +1277,7 @@ onMounted(() => {
     });
   }
   readerEl.value?.addEventListener('scroll', updateCurrentHeading, { passive: true });
+  readerEl.value?.addEventListener('scroll', onReaderScrollForFab, { passive: true });
   layoutObserver = new ResizeObserver(handleLayoutChange);
   if (readerEl.value) layoutObserver.observe(readerEl.value);
   if (toolbarEl.value) layoutObserver.observe(toolbarEl.value);
@@ -1290,6 +1304,8 @@ onBeforeUnmount(() => {
   citationTooltipUnbind?.();
   layoutObserver?.disconnect();
   readerEl.value?.removeEventListener('scroll', updateCurrentHeading);
+  readerEl.value?.removeEventListener('scroll', onReaderScrollForFab);
+  if (readingFabTimer) { clearTimeout(readingFabTimer); readingFabTimer = null; }
   wideMedia.removeEventListener('change', onWideChange);
   compactMedia.removeEventListener('change', onCompactChange);
   mobileMedia.removeEventListener('change', onMobileChange);
@@ -1863,7 +1879,7 @@ onBeforeUnmount(() => {
 .reading-content :deep(sup.cite:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* 落到来源章那一条时的短暂高亮；动画结束自己回落，不靠 JS 记状态 */
 .reading-content :deep(li.cite-hot),
-.reading-content :deep(p.cite-hot) { animation: cite-flash 1.7s ease-out; border-radius: 6px; }
+.reading-content :deep(p.cite-hot) { animation: cite-flash var(--motion-flash) var(--ease-standard); border-radius: 6px; }
 @keyframes cite-flash {
   from { background: var(--accent-soft); box-shadow: 0 0 0 4px var(--accent-soft); }
   to { background: transparent; box-shadow: 0 0 0 4px transparent; }
@@ -2316,7 +2332,14 @@ onBeforeUnmount(() => {
     font-size: 15px;
     font-weight: 600;
     box-shadow: var(--shadow-card);
-    transition: transform 0.12s ease, background 0.12s ease;
+    transition: transform var(--motion-fast) var(--ease-standard),
+      opacity var(--motion-fast) var(--ease-standard),
+      background var(--motion-fast) var(--ease-standard);
+  }
+  .reading-edit-fab.is-hidden {
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
   }
   .reading-edit-fab:active {
     transform: scale(0.97);

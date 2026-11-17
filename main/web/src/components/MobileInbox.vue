@@ -2538,7 +2538,9 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   box-shadow: var(--shadow-card);
   overflow: hidden;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  transition: transform var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-standard);
 }
 
 .mi-card.front {
@@ -2547,7 +2549,7 @@ onBeforeUnmount(() => {
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
-  animation: mi-deal 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: mi-deal var(--motion-slow) var(--ease-enter);
 }
 
 .mi-card.back-1 {
@@ -2799,7 +2801,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-status.converting i {
-  animation: mi-pulse 1.2s ease-in-out infinite;
+  animation: mi-pulse 1.2s ease-in-out 3;
 }
 
 .mi-status.converted {
@@ -3513,7 +3515,7 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: var(--z-overlay);
   background: rgba(20, 18, 15, 0.42);
-  animation: mi-fade 0.2s ease both;
+  animation: mi-fade var(--motion-base) var(--ease-standard) both;
 }
 
 .mi-sheet {
@@ -3529,7 +3531,7 @@ onBeforeUnmount(() => {
   border-radius: 24px 24px 0 0;
   background: var(--card-bg);
   box-shadow: 0 -18px 60px -20px rgba(20, 18, 15, 0.35);
-  animation: mi-sheet-up 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: mi-sheet-up var(--motion-slow) var(--ease-enter) both;
 }
 
 .mi-sheet-grab {
@@ -3698,13 +3700,29 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 550;
   white-space: nowrap;
-  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+  transition: background var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
 
 .mi-filter.on {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/*
+ * ≤640px（规范档位）：四个胶囊总宽约 377px，390px 容器可用约 374px，flex 换行会变成 3+1，
+ * 「已入库」单独一行既浪费高度又看不出同组。改成 2×2 等宽网格，四个分类一眼全在。
+ */
+@media (max-width: 640px) {
+  .mi-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mi-filter {
+    justify-content: center;
+  }
 }
 
 .mi-filter-n {
