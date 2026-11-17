@@ -5,14 +5,16 @@
       <div class="setting-copy">
         <strong>办公本类型</strong>
         <span v-if="bound">已绑定讯飞办公本；要换品牌请先解除绑定。</span>
-        <span v-else>选择要接入的办公本品牌，目前支持讯飞。</span>
+        <span v-else-if="syncing">其他设备同步来的登录凭据正在应用，类型先锁定。</span>
+        <span v-else>选择要接入的办公本品牌，目前支持讯飞；类型与登录凭据随「设置」分类同步。</span>
       </div>
       <div class="setting-control doxent-type-control">
         <AppSelect
           v-model="notebookType"
           aria-label="办公本类型"
           :options="notebookTypeOptions"
-          :disabled="binding || busy || bound"
+          :disabled="binding || busy || bound || savingType || syncing"
+          @change="saveNotebookType"
         />
       </div>
     </div>
@@ -54,6 +56,9 @@
         <span v-else-if="binding" class="doxent-progress" aria-live="polite">
           {{ bindProgressText }}已等待 {{ bindElapsedText }}。离开本页再回来会接着显示进度。
         </span>
+        <span v-else-if="syncing" class="doxent-progress" aria-live="polite">
+          {{ syncDetail }}完成后这里会自动变成已绑定，无需再扫码。
+        </span>
         <span v-else-if="waiting">已打开浏览器：在页面里完成登录，这里会自动变成已绑定。</span>
         <span v-else>点「绑定办公本」会装官方技能并生成本人的登录链接，在浏览器里扫码 / 登录即可。</span>
       </div>
@@ -62,12 +67,12 @@
           v-if="!bound"
           class="btn small"
           type="button"
-          :disabled="binding || busy || !pythonOk"
+          :disabled="binding || busy || syncing || savingType || !pythonOk"
           @click="bind"
         >
-          {{ binding ? '准备中…' : (waiting ? '重新获取链接' : '绑定办公本') }}
+          {{ binding ? '准备中…' : syncing ? '同步中…' : (waiting ? '重新获取链接' : '绑定办公本') }}
         </button>
-        <button v-else class="btn danger small" type="button" :disabled="binding || busy" @click="unbind">
+        <button v-else class="btn danger small" type="button" :disabled="binding || busy || syncing" @click="unbind">
           {{ busy ? '处理中…' : '解除绑定' }}
         </button>
       </div>
@@ -92,7 +97,13 @@
       <code>DOXENT_PYTHON</code> 指定解释器路径。
     </p>
     <p class="setting-note">
-      技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭证由官方 CLI 自己保管，Engram 只读取登录状态，不保存账号与令牌。
+      技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭据由官方 CLI 生成，开启「设置」分类同步后 Engram 只在本机与同步群组之间转存官方 CLI 的会话文件，不读取账号密码。
+    </p>
+    <p v-if="settingsSyncOff" class="setting-note tone-warn">
+      当前已加入多端同步，但「设置」分类同步未开启：办公本类型与登录凭据不会跨设备同步。到「多端同步 → 同步内容」打开「设置」即可。
+    </p>
+    <p v-else-if="sync.settingsEnabled && sync.role !== 'none'" class="setting-note">
+      办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。
     </p>
   </div>
 </template>
@@ -152,6 +163,19 @@ interface DoxentBindJob {
   error?: string;
 }
 
+interface DoxentConfig {
+  provider: 'iflytek';
+}
+
+interface DoxentSyncState {
+  phase: 'idle' | 'applying' | 'preparing';
+  detail?: string;
+  /** 「设置」分类同步是否开启（未加入同步群组时也恒 false） */
+  settingsEnabled?: boolean;
+  /** none / hub / member；none 时同步提示不出现 */
+  role?: 'none' | 'hub' | 'member';
+}
+
 interface DoxentStatus {
   python: DoxentPython;
   skill: DoxentSkill;
@@ -159,6 +183,10 @@ interface DoxentStatus {
   downloadUrl: string;
   /** 进行中 / 刚结束的绑定任务（服务端重启后为 null） */
   bind?: DoxentBindJob | null;
+  /** 办公本类型（preference doxent_config） */
+  config?: DoxentConfig;
+  /** 登录凭据的跨端同步进度 */
+  sync?: DoxentSyncState;
 }
 
 /** 办公本品牌：目前只实现讯飞（Doxent）。新增品牌时在这里加选项，并在服务端补对应接入。 */
@@ -171,10 +199,14 @@ const status = ref<DoxentStatus>({
   login: { state: 'unknown' },
   downloadUrl: '',
   bind: null,
+  config: { provider: 'iflytek' },
+  sync: { phase: 'idle', settingsEnabled: false, role: 'none' },
 });
 const loading = ref(false);
 /** 解绑等一次性动作 */
 const busy = ref(false);
+/** 保存办公本类型 */
+const savingType = ref(false);
 /** 手动点「我已完成登录」的那一次查询（后台轮询不影响按钮） */
 const checking = ref(false);
 const errorText = ref('');
@@ -198,9 +230,29 @@ let bindTimer: ReturnType<typeof setInterval> | null = null;
 let bindPollInFlight = false;
 const BIND_POLL_INTERVAL_MS = 1000;
 
+/** 凭据同步应用期间轮询服务端阶段；完成后自动回到常规登录态检查 */
+let syncTimer: ReturnType<typeof setInterval> | null = null;
+let syncPollInFlight = false;
+const SYNC_POLL_INTERVAL_MS = 1500;
+
 const pythonOk = computed(() => Boolean(status.value.python?.available));
 const bound = computed(() => status.value.login?.state === 'logged-in');
 const binding = computed(() => bindJob.value?.state === 'running');
+const sync = computed<DoxentSyncState>(() => status.value.sync ?? { phase: 'idle' });
+const syncing = computed(() => sync.value.phase !== 'idle');
+const syncDetail = computed(() => {
+  if (!syncing.value) return '';
+  return (
+    sync.value.detail ||
+    (sync.value.phase === 'applying'
+      ? '正在写入从其他设备同步来的办公本登录凭据…'
+      : '正在准备官方技能与客户端，完成后即可直接读写…')
+  );
+});
+/** 已加入同步群组但「设置」分类没开：给出明确入口，避免用户以为功能坏了 */
+const settingsSyncOff = computed(
+  () => sync.value.settingsEnabled === false && !!sync.value.role && sync.value.role !== 'none',
+);
 
 const bindProgressText = computed(() => {
   if (!binding.value) return '';
@@ -218,22 +270,27 @@ const bindElapsedText = computed(() => {
 });
 
 const stripTone = computed(() => {
+  if (syncing.value) return 'tone-busy';
   if (!pythonOk.value) return 'tone-warn';
   if (bound.value) return 'tone-ok';
   return status.value.login?.state === 'unknown' ? 'tone-warn' : '';
 });
 
 const stripTitle = computed(() => {
-  if (!pythonOk.value) return '环境不满足：需要 Python 3.8+';
   if (binding.value) return '正在准备绑定办公本';
+  if (syncing.value) {
+    return sync.value.phase === 'applying' ? '正在应用同步的办公本登录' : '正在准备同步的办公本登录';
+  }
+  if (!pythonOk.value) return '环境不满足：需要 Python 3.8+';
   if (bound.value) return '已绑定办公本';
   if (!status.value.skill?.installed) return '未绑定办公本';
   return status.value.login?.state === 'unknown' ? '登录状态未知' : '已装技能，等待登录';
 });
 
 const stripHint = computed(() => {
-  if (!pythonOk.value) return status.value.python?.error || '未找到可用的 Python';
   if (binding.value) return bindProgressText.value;
+  if (syncing.value) return syncDetail.value;
+  if (!pythonOk.value) return status.value.python?.error || '未找到可用的 Python';
   if (bound.value) return '内置 Agent 可读写笔记、Office 文档、书籍与日程。';
   if (waiting.value) return '已打开浏览器：在页面里完成登录，这里会自动变成已绑定。';
   if (!status.value.skill?.installed) return '绑定后会把官方技能装进内置 Agent，并生成登录链接。';
@@ -287,6 +344,8 @@ async function loadStatus(refresh = false, skillOnly = false, keepError = false)
     if (skillOnly) params.skillOnly = '1';
     const { data } = await api.get('/api/settings/doxent', { params });
     status.value = data as DoxentStatus;
+    applyConfigFromStatus();
+    if (status.value.sync && status.value.sync.phase !== 'idle') startSyncWatch();
     const job = status.value.bind;
     if (job?.state === 'running') {
       bindJob.value = job;
@@ -301,6 +360,62 @@ async function loadStatus(refresh = false, skillOnly = false, keepError = false)
     errorText.value = errorMessage(error, '读取办公本状态失败');
   } finally {
     loading.value = false;
+  }
+}
+
+/** 服务端返回的类型写回下拉；非法/缺省时保持当前值（服务端已有默认） */
+function applyConfigFromStatus(): void {
+  const provider = status.value.config?.provider;
+  if (provider === 'iflytek') notebookType.value = provider;
+}
+
+/** 保存办公本类型（写入 preference，随「设置」分类同步） */
+async function saveNotebookType(value: NotebookType): Promise<void> {
+  if (value === (status.value.config?.provider ?? 'iflytek')) return;
+  savingType.value = true;
+  errorText.value = '';
+  try {
+    const { data } = await api.put('/api/settings/doxent/config', { provider: value });
+    const config = data?.config as DoxentConfig | undefined;
+    status.value = { ...status.value, config: config ?? { provider: value } };
+    notify.success('已保存办公本类型');
+  } catch (error) {
+    notebookType.value = status.value.config?.provider ?? 'iflytek';
+    errorText.value = errorMessage(error, '保存办公本类型失败');
+    notify.error(errorText.value);
+  } finally {
+    savingType.value = false;
+  }
+}
+
+function stopSyncWatch(): void {
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = null;
+}
+
+function startSyncWatch(): void {
+  if (syncTimer) return;
+  syncTimer = setInterval(() => {
+    void pollSyncStatus();
+  }, SYNC_POLL_INTERVAL_MS);
+}
+
+/** 同步应用期间只刷状态卡（skillOnly 不拉官方 CLI），阶段归零后再做一次完整登录检查 */
+async function pollSyncStatus(): Promise<void> {
+  if (syncPollInFlight) return;
+  syncPollInFlight = true;
+  try {
+    const { data } = await api.get('/api/settings/doxent', { params: { skillOnly: '1' } });
+    status.value = data as DoxentStatus;
+    applyConfigFromStatus();
+    if ((status.value.sync?.phase ?? 'idle') === 'idle') {
+      stopSyncWatch();
+      await loadStatus(true);
+    }
+  } catch {
+    /* 网络抖动：保持轮询，下一轮再试 */
+  } finally {
+    syncPollInFlight = false;
   }
 }
 
@@ -504,6 +619,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling();
   stopBindPolling();
+  stopSyncWatch();
 });
 </script>
 
