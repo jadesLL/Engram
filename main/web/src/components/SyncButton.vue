@@ -380,7 +380,7 @@ onUnmounted(() => {
 }
 
 .sync-chip.syncing .chip-dot {
-  animation: sync-pulse 1.4s ease-in-out infinite;
+  animation: sync-pulse 1.4s ease-in-out 3;
 }
 
 @keyframes sync-spin {

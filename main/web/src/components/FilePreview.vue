@@ -829,7 +829,7 @@ defineExpose({ downloadFile, openExternal });
 .fp-body.docx :deep(sup.cite:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* 落到来源章那一条时的短暂高亮；动画结束自己回落 */
 .fp-body.docx :deep(li.cite-hot), .fp-body.docx :deep(p.cite-hot) {
-  animation: cite-flash 1.7s ease-out;
+  animation: cite-flash var(--motion-flash) var(--ease-standard);
   border-radius: 6px;
 }
 @keyframes cite-flash {

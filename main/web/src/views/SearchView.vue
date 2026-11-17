@@ -158,6 +158,8 @@ function cleanSnippet(s: string): string {
   return String(s || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    /* 双链先还原成可读标题：搜索片段里出现 [[Engram 架构]] 会像源码，而不是正文 */
+    .replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (_m, target: string, alias?: string) => (alias || target).trim())
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}#{1,6}\s*/gm, '')
     .replace(/[*_~`>]/g, '')

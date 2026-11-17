@@ -170,6 +170,19 @@
   /* 字号层级 */
   --font-sm: 12.5px;
   --font-md: 13px;
+  /*
+   * 动效标尺（2026-11 UI 修复）：新增/调整过渡只引用这五个值，不再散写 80–360ms。
+   * fast  = hover / press / 开关 / 分段选择
+   * base  = 抽屉 / 侧栏 / 菜单 / 折叠
+   * slow  = 底部面板 / 页面级进入
+   * flash = 搜索跳转等一次性目标高亮（短到不会像选中态）
+   */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 240ms;
+  --motion-flash: 700ms;
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(.22, 1, .36, 1);
   font-size: 15px;
 
   /*
@@ -421,7 +434,9 @@ input, textarea, select {
   border-radius: var(--radius-control);
   padding: 7px 10px;
   outline: none;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard);
 }
 input:hover, textarea:hover, select:hover { background: var(--control-bg-hover); }
 input:focus, textarea:focus, select:focus {
@@ -449,7 +464,8 @@ select option {
   border-radius: var(--radius-control);
   background: var(--control-bg);
   color: var(--text);
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
   white-space: nowrap;
 }
 .btn:hover { background: var(--control-bg-hover); }

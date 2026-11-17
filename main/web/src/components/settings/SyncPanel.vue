@@ -1666,6 +1666,17 @@ onUnmounted(() => {
     flex-direction: column;
     gap: 12px;
   }
+  /*
+   * 纵向排列后 flex-basis 作用在高度上：仍写 240px 会把每个选项撑成 240px 高，
+   * 段落再 flex:1 就把按钮推到底部（用户看到的「240px 空洞」）。
+   * 手机档改为内容高度，按钮紧跟说明文字。
+   */
+  .role-option {
+    flex: 0 0 auto;
+  }
+  .role-option p {
+    flex: none;
+  }
   .role-or {
     align-self: stretch;
     text-align: center;

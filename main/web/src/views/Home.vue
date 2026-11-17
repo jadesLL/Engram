@@ -797,7 +797,8 @@ const bottomItems = computed<BottomNavItem[]>(() => [
     label: '我的',
     title: '我的',
     icon: 'more',
-    active: moreOpen.value,
+    /* 设置（含设置子页 / Agent 控制台）也属于「我的」，否则进入设置后底栏五项全灰 */
+    active: moreOpen.value || isActive('/settings'),
     dot: false,
     running: false,
     action: () => {
@@ -1064,6 +1065,29 @@ async function refreshTopLevel() {
  * medium 没有底栏就贴右下 24px。一个入口一件事：新建页面 / 记一条灵感 / 收进收集箱 / 扫码绑定。
  */
 const newSheetOpen = ref(false);
+/*
+ * 手机首页的快速灵感卡本身就是「新建 / 记灵感」入口；FAB 浮在它上面会压住 textarea。
+ * 卡片在视口内时收起 FAB，滚过卡片后再出现（滚动/切路由都会重算）。
+ */
+const captureCardVisible = ref(sizeClass.value !== 'expanded');
+let captureVisibilityRaf = 0;
+function updateCaptureCardVisibility() {
+  captureVisibilityRaf = 0;
+  if (sizeClass.value === 'expanded') {
+    captureCardVisible.value = false;
+    return;
+  }
+  const card = document.querySelector<HTMLElement>('.board-grid .home-action.editor');
+  if (!card) {
+    captureCardVisible.value = false;
+    return;
+  }
+  const rect = card.getBoundingClientRect();
+  captureCardVisible.value = rect.bottom > 0 && rect.top < window.innerHeight - 64;
+}
+function scheduleCaptureCardVisibility() {
+  if (!captureVisibilityRaf) captureVisibilityRaf = requestAnimationFrame(updateCaptureCardVisibility);
+}
 const newFabVisible = computed(() =>
   sizeClass.value !== 'expanded'
     // 面板/抽屉打开时让位：浮层是半透明的，蓝色 FAB 留在后面会透出一块色斑
@@ -1071,6 +1095,7 @@ const newFabVisible = computed(() =>
     && !app.chatDrawerOpen
     && !moreOpen.value
     && !newSheetOpen.value
+    && !captureCardVisible.value
     /* 桌面姿态下半屏已经是操作台，重复的 FAB 只会挡住正文 */
     && !tabletop.value
     && route.path === '/page'
@@ -1273,6 +1298,9 @@ function onWindowFocus() {
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
+  window.addEventListener('resize', scheduleCaptureCardVisibility);
+  window.addEventListener('scroll', scheduleCaptureCardVisibility, true);
+  window.setTimeout(scheduleCaptureCardVisibility, 600);
   // Android 返回键/侧滑返回：先收掉应用级浮层（我的面板 → 对话抽屉 → 文件树），
   // 都关着才交回原生（历史后退或退到后台）。桌面端没有原生调用，注册了也不会触发。
   // 折叠屏形态（半开横折 / 桌面姿态）：Viewport Segments 变化时重判上下分屏
@@ -1305,6 +1333,14 @@ onMounted(() => {
   // 下拉刷新手势：.content 是外壳滚动容器（router-view 切换不清空它），挂载时装一次即可
   if (contentEl.value) detachPullRefresh = installPullRefresh(contentEl.value);
   app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
+  /* 切回首页 / 从设置回来后，看板卡片可能刚挂载：稍后再判一次 FAB 与快速灵感卡的重叠 */
+  watch(
+    () => route.path,
+    () => {
+      scheduleCaptureCardVisibility();
+      window.setTimeout(scheduleCaptureCardVisibility, 400);
+    },
+  );
   // 首页看板布局：先按本地那份画出来（进页面就有内容），服务端答复到了再校正（多端一致）
   void homeBoard.load();
   // 布局改动是去抖写服务端的（600ms）：页面隐藏/卸载前补一次，免得「刚拖完就关掉」只留在本地
@@ -1385,6 +1421,12 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onWindowResize);
+  window.removeEventListener('resize', scheduleCaptureCardVisibility);
+  window.removeEventListener('scroll', scheduleCaptureCardVisibility, true);
+  if (captureVisibilityRaf) {
+    cancelAnimationFrame(captureVisibilityRaf);
+    captureVisibilityRaf = 0;
+  }
   stopBackHandler?.();
   stopBackHandler = null;
   detachSidebarSwipe?.();
@@ -1541,7 +1583,7 @@ onUnmounted(() => {
 }
 
 .rail-btn.is-running > svg {
-  animation: rail-thinking 1.6s ease-in-out infinite;
+  animation: rail-thinking 1.6s ease-in-out 3;
 }
 
 .rail-btn .rail-running {
@@ -1553,7 +1595,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--sidebar-accent);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--sidebar-accent) 55%, transparent);
-  animation: rail-pulse 1.6s ease-out infinite;
+  animation: rail-pulse 1.6s ease-out 3;
   pointer-events: none;
 }
 
@@ -1626,8 +1668,12 @@ onUnmounted(() => {
   left: 3px;
   width: 1px;
   background: transparent;
-  transition: width 150ms ease, left 150ms ease, background 150ms ease;
+  transition: width var(--motion-fast) var(--ease-standard),
+    left var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
 }
+
+/* 拖拽中不要过渡：高亮线必须跟着指针走，不能滞后一帧半 */
+.layout.sidebar-resizing .resizer::before { transition: none; }
 
 .resizer:hover::before,
 .resizer:focus-visible::before {
@@ -1657,7 +1703,9 @@ onUnmounted(() => {
   background: transparent;
   /* 下拉刷新自己接管「顶部继续往下拉」：别让浏览器再叠一层 overscroll 光晕/滚动链 */
   overscroll-behavior-y: contain;
-  transition: padding-left 180ms ease, padding-right 180ms ease, padding-top 180ms ease;
+  transition: padding-left var(--motion-base) var(--ease-standard),
+    padding-right var(--motion-base) var(--ease-standard),
+    padding-top var(--motion-base) var(--ease-standard);
 }
 
 .layout.update-notice-visible .content { padding-top: calc(52px + var(--safe-top)); }
@@ -1704,9 +1752,9 @@ onUnmounted(() => {
  * 「满窗」必须盖过它，否则只铺到 400px（原型里就踩过这一条）。
  */
 .sidebar {
-  transition: left 180ms cubic-bezier(0.2, 0, 0, 1), top 180ms cubic-bezier(0.2, 0, 0, 1),
-    bottom 180ms cubic-bezier(0.2, 0, 0, 1), width 180ms cubic-bezier(0.2, 0, 0, 1),
-    border-radius 180ms ease, box-shadow 180ms ease;
+  transition: left var(--motion-base) var(--ease-standard), top var(--motion-base) var(--ease-standard),
+    bottom var(--motion-base) var(--ease-standard), width var(--motion-base) var(--ease-standard),
+    border-radius var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard);
 }
 
 /* 拖动宽度时不做过渡（否则每帧都在追上一帧的值） */
@@ -2112,7 +2160,7 @@ html.kb-open .new-fab { display: none; }
     border-radius: 50%;
     background: var(--sidebar-accent);
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--sidebar-accent) 55%, transparent);
-    animation: rail-pulse 1.6s ease-out infinite;
+    animation: rail-pulse 1.6s ease-out 3;
     pointer-events: none;
   }
 

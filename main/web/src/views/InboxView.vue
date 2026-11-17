@@ -342,11 +342,12 @@ const dragOver = ref(false);
 const filter = ref<'active' | 'pending' | 'converted' | 'adopted'>('active');
 
 /**
- * 三个状态：待整理 / 已转换 / 已入库。默认视图只列前两个——
- * 已入库的内容已经进了知识库，不再占收集箱界面，点「已入库」单独翻。
+ * 四档：全部未入库（待整理 + 已转换）/ 待整理 / 已转换 / 已入库。
+ * 默认「全部未入库」——它和两个单项是「合集 + 子集」关系，不再用「待整理 · 已转换」
+ * 和同名单项并排，避免空态下四个 0 看起来像重复筛选。
  */
 const filterOptions = computed(() => [
-  { value: 'active' as const, label: '待整理 · 已转换', count: Math.max(0, inbox.counts.all - inbox.counts.adopted) },
+  { value: 'active' as const, label: '全部未入库', count: Math.max(0, inbox.counts.all - inbox.counts.adopted) },
   { value: 'pending' as const, label: '待整理', count: inbox.counts.pending },
   { value: 'converted' as const, label: '已转换', count: inbox.counts.converted },
   { value: 'adopted' as const, label: '已入库', count: inbox.counts.adopted },
@@ -1362,7 +1363,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
 .status.adopted { color: var(--text-faint); } .status.adopted i { background: var(--text-faint); }
 .status.failed { color: var(--danger); } .status.failed i { background: var(--danger); }
 .status.converting { color: var(--inbox-accent); }
-.status.converting i { background: var(--inbox-accent); animation: status-pulse 1.2s ease-in-out infinite; }
+.status.converting i { background: var(--inbox-accent); animation: status-pulse 1.2s ease-in-out 3; }
 
 @keyframes status-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

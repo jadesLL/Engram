@@ -1834,13 +1834,14 @@ onUnmounted(() => {
 
 /*
  * 开合动画（<transition name="drawer-slide"> 在 Home.vue）：与左侧栏同一套节奏——
- * 右缘滑入 + 轻微缩放 + 淡入，160ms 一套走完。
+ * 右缘滑入 + 轻微缩放 + 淡入，与正文让位共用 --motion-base 一套节奏。
  * 只碰 transform / opacity 这两个合成层属性：全程不触发重排，
  * 对话再长、正文再重也不掉帧（正文让位的过渡在首页 .content 上）。
  */
 .drawer-slide-enter-active,
 .drawer-slide-leave-active {
-  transition: opacity 160ms ease, transform 160ms ease;
+  transition: opacity var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-standard);
 }
 
 .drawer-slide-enter-from,
@@ -1884,8 +1885,12 @@ onUnmounted(() => {
   left: 3px;
   width: 1px;
   background: transparent;
-  transition: width 150ms ease, background 150ms ease;
+  transition: width var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard);
 }
+
+/* 拖拽中不做过渡：指示线要跟手，不能滞后 */
+.drawer-resizer.dragging::before { transition: none; }
 
 .drawer-resizer:hover::before,
 .drawer-resizer:focus-visible::before,
@@ -3111,7 +3116,7 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 550;
   white-space: nowrap;
-  animation: head-live-pulse 2.2s ease-in-out infinite;
+  animation: head-live-pulse 2.2s ease-in-out 3;
 }
 
 @keyframes head-live-pulse {
@@ -3257,13 +3262,13 @@ onUnmounted(() => {
 .subagent.running .subagent-pill {
   background: var(--accent-soft);
   color: var(--accent);
-  animation: subagent-breathe 2.4s ease-in-out infinite;
+  animation: subagent-breathe 2.4s ease-in-out 3;
 }
 
 .subagent.background .subagent-pill {
   background: var(--warn-soft);
   color: var(--warning);
-  animation: subagent-breathe-warn 3.2s ease-in-out infinite;
+  animation: subagent-breathe-warn 3.2s ease-in-out 3;
 }
 
 .subagent.failed .subagent-pill {
@@ -3480,13 +3485,13 @@ onUnmounted(() => {
 .subagent-nested.running {
   background: var(--accent-soft);
   color: var(--accent);
-  animation: subagent-breathe 2.4s ease-in-out infinite;
+  animation: subagent-breathe 2.4s ease-in-out 3;
 }
 
 .subagent-nested.background {
   background: var(--warn-soft);
   color: var(--warning);
-  animation: subagent-breathe-warn 3.2s ease-in-out infinite;
+  animation: subagent-breathe-warn 3.2s ease-in-out 3;
 }
 
 .subagent-nested.failed {

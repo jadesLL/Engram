@@ -135,7 +135,7 @@ onUnmounted(() => sync.unsubscribe());
 
 /* 同步中：圆点呼吸（原来是转 ⟳ 图标，这版状态条已经没有图标了） */
 .sync-pill.syncing .sync-dot {
-  animation: sync-pill-pulse 1.4s ease-in-out infinite;
+  animation: sync-pill-pulse 1.4s ease-in-out 3;
 }
 
 @keyframes sync-pill-pulse {

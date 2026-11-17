@@ -769,6 +769,24 @@ function scheduleFloatingHints() {
   floatingHintRaf = requestAnimationFrame(placeFloatingHints);
 }
 
+/*
+ * 手机工具栏是单行横滚，但滚动条被隐藏：右侧还有按钮时用户看不出可以滑。
+ * 在「还能往右滚」时给工具条加 eg-toolbar-overflow，CSS 右侧渐隐提示还有内容；
+ * 滚到末端就移除，避免最后一个按钮一直半透明。
+ */
+let toolbarOverflowRaf = 0;
+function updateToolbarOverflow() {
+  toolbarOverflowRaf = 0;
+  const toolbar = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar');
+  if (!toolbar) return;
+  const overflow = toolbar.scrollWidth > toolbar.clientWidth + 2;
+  const atEnd = toolbar.scrollLeft + toolbar.clientWidth >= toolbar.scrollWidth - 2;
+  toolbar.classList.toggle('eg-toolbar-overflow', overflow && !atEnd);
+}
+function scheduleToolbarOverflow() {
+  if (!toolbarOverflowRaf) toolbarOverflowRaf = requestAnimationFrame(updateToolbarOverflow);
+}
+
 /** 菜单显隐由 Vditor 自己的 hover / click / 延迟弹出处理：
  *  用 MutationObserver 盯工具栏里的 class/style 变化（Vditor 靠类名或内联 display 控制显隐），
  *  另外在工具栏滚动、页面滚动与窗口尺寸变化时重算位置（菜单开着时按钮会跟着滚走）。 */
@@ -782,14 +800,27 @@ function bindToolbarHintOverlay() {
     attributes: true,
     attributeFilter: ['class', 'style'],
   });
+  const toolbarResizeObserver = toolbar ? new ResizeObserver(scheduleToolbarOverflow) : null;
+  toolbarResizeObserver?.observe(toolbar as HTMLElement);
   window.addEventListener('scroll', scheduleFloatingHints, true);
   window.addEventListener('resize', scheduleFloatingHints);
+  window.addEventListener('resize', scheduleToolbarOverflow);
+  toolbar?.addEventListener('scroll', scheduleToolbarOverflow, { passive: true });
   vditorEl.value.addEventListener('scroll', scheduleFloatingHints, true);
+  scheduleToolbarOverflow();
   floatingHintCleanup = () => {
     observer.disconnect();
+    toolbarResizeObserver?.disconnect();
     window.removeEventListener('scroll', scheduleFloatingHints, true);
     window.removeEventListener('resize', scheduleFloatingHints);
+    window.removeEventListener('resize', scheduleToolbarOverflow);
+    toolbar?.removeEventListener('scroll', scheduleToolbarOverflow);
+    toolbar?.classList.remove('eg-toolbar-overflow');
     vditorEl.value?.removeEventListener('scroll', scheduleFloatingHints, true);
+    if (toolbarOverflowRaf) {
+      cancelAnimationFrame(toolbarOverflowRaf);
+      toolbarOverflowRaf = 0;
+    }
     if (floatingHintRaf) {
       cancelAnimationFrame(floatingHintRaf);
       floatingHintRaf = 0;
@@ -2460,6 +2491,11 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
     scrollbar-width: none;
   }
   :deep(.vditor-toolbar::-webkit-scrollbar) { display: none; }
+  /* 右侧渐隐：还有按钮没露出来时提示「可以继续横滑」；滚到末端由脚本移除类 */
+  :deep(.vditor-toolbar.eg-toolbar-overflow) {
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+  }
   :deep(.vditor-toolbar .vditor-toolbar__item),
   :deep(.vditor-toolbar button) { flex: none; }
   :deep(.vditor-toolbar button) {
