@@ -481,6 +481,10 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-bg);
   font-size: 12px;
 }
 .state-dot {
@@ -562,23 +566,27 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* 分区导航与设置页左栏同一套「细环」选中态：不铺面、不用竖条，
+   只在当前项内描 1px 主色环；hover 才给浅底反馈。 */
 .nav-item {
   position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
-  min-height: 36px;
-  padding: 8px 10px;
+  min-height: 35px;
+  padding: 7px 11px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 9px;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
 }
 .nav-item:hover {
   background: var(--bg-hover);
@@ -589,19 +597,13 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 .nav-item.active {
-  background: var(--bg-hover);
-  color: var(--text);
+  background: transparent;
+  color: var(--accent);
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 .nav-item.active::before {
-  content: '';
-  position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: 0;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent);
+  display: none;
 }
 .console-main {
   min-width: 0;
@@ -685,9 +687,10 @@ onBeforeUnmount(() => {
     font-size: 12.5px;
   }
   .nav-item.active {
-    border-color: transparent;
-    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+    background: transparent;
     color: var(--accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
   }
   .nav-item.active::before {
     display: none;

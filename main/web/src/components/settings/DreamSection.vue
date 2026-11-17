@@ -100,20 +100,20 @@
         </div>
 
         <template v-else>
-          <article v-for="(round, index) in boardRounds" :key="round.runId" class="dream-round">
-            <header class="dream-round-head" @click="toggleRound(round.runId, index)">
+          <article v-for="(round, index) in visibleBoardRounds" :key="round.runId" class="dream-round">
+            <header class="dream-round-head" @click="toggleRound(round.runId)">
               <span class="group-badge" :class="`tone-${roundBadgeTone(round.status)}`">{{ statusText(round.status) }}</span>
               <span class="dream-round-time">{{ formatStamp(round.startedAt) }}</span>
               <span v-if="roundMeta(round)" class="dream-round-meta">{{ roundMeta(round) }}</span>
               <span v-if="index === 0" class="group-badge tone-accent">最近一轮</span>
-              <button class="text-action dream-round-fold" type="button" @click.stop="toggleRound(round.runId, index)">
-                {{ isRoundOpen(round.runId, index) ? '收起' : '展开' }}
+              <button class="text-action dream-round-fold" type="button" @click.stop="toggleRound(round.runId)">
+                {{ isRoundOpen(round.runId) ? '收起' : '展开' }}
               </button>
             </header>
 
             <p v-if="round.error" class="dream-error">{{ round.error }}</p>
 
-            <template v-if="isRoundOpen(round.runId, index)">
+            <template v-if="isRoundOpen(round.runId)">
               <div class="dream-round-metrics">
                 <span v-for="metric in roundMetrics(round)" :key="metric" class="dream-metric">{{ metric }}</span>
               </div>
@@ -174,6 +174,14 @@
 
             <p v-else-if="round.summary" class="setting-note dream-round-peek">{{ summaryPeek(round.summary) }}</p>
           </article>
+
+          <!-- 默认只露出最近 3 轮（全部折叠），点「查看更多」才展开到最多 10 轮；
+               更早的记录不再往下堆，需要完整过程就去对话里看。 -->
+          <div v-if="canExpandBoard" class="dream-board-more">
+            <button class="btn ghost small" type="button" @click="boardExpanded = !boardExpanded">
+              {{ boardExpanded ? '收起，只看最近 3 条' : `查看更多（还有 ${hiddenBoardCount} 条）` }}
+            </button>
+          </div>
         </template>
       </section>
 
@@ -269,11 +277,21 @@ const chat = useChatStore();
 const app = useAppStore();
 const router = useRouter();
 
-/** 看板折叠状态：默认只展开最近一轮，更早的收起成一行；总结默认只看前几行 */
+/** 看板折叠状态：默认全部收起；列表默认只露最近 3 轮，展开后最多 10 轮 */
 const roundOpen = ref<Record<string, boolean>>({});
 const summaryOpen = ref<Record<string, boolean>>({});
+/** 「查看更多」是否已展开（默认 false：只看最近 3 条） */
+const boardExpanded = ref(false);
+/** 默认露出的轮次数 / 展开后最多再读多少轮（用户：最多近 10 条，不能再多） */
+const BOARD_PREVIEW_ROUNDS = 3;
+const BOARD_MAX_ROUNDS = 10;
 
-const boardRounds = computed(() => status.value?.board?.rounds ?? []);
+const boardRounds = computed(() => (status.value?.board?.rounds ?? []).slice(0, BOARD_MAX_ROUNDS));
+const visibleBoardRounds = computed(() => (
+  boardExpanded.value ? boardRounds.value : boardRounds.value.slice(0, BOARD_PREVIEW_ROUNDS)
+));
+const hiddenBoardCount = computed(() => Math.max(0, boardRounds.value.length - BOARD_PREVIEW_ROUNDS));
+const canExpandBoard = computed(() => hiddenBoardCount.value > 0);
 
 const boardHint = computed(() => boardHintOf(status.value?.board));
 
@@ -284,13 +302,14 @@ function roundBadgeTone(state: string): string {
   return ROUND_BADGE_TONE[roundTone(state)];
 }
 
-function isRoundOpen(runId: string, index: number): boolean {
+function isRoundOpen(runId: string): boolean {
   const flag = roundOpen.value[runId];
-  return flag === undefined ? index === 0 : flag;
+  // 用户 2026-11-18：默认全部折叠，点「展开」才看明细
+  return flag === undefined ? false : flag;
 }
 
-function toggleRound(runId: string, index: number): void {
-  roundOpen.value = { ...roundOpen.value, [runId]: !isRoundOpen(runId, index) };
+function toggleRound(runId: string): void {
+  roundOpen.value = { ...roundOpen.value, [runId]: !isRoundOpen(runId) };
 }
 
 function isSummaryOpen(runId: string): boolean {
@@ -625,6 +644,12 @@ onUnmounted(() => {
 }
 .dream-round-fold { margin-left: auto; }
 .dream-round-peek { margin-top: 6px; }
+.dream-board-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
 
 .dream-round-metrics {
   display: flex;

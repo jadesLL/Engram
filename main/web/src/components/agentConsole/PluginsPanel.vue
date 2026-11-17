@@ -383,6 +383,8 @@ function handleMutationError(error: unknown): void {
 }
 .panel-head {
   align-items: flex-start;
+  padding: 0 2px 16px;
+  border-bottom: 0;
 }
 .readonly-badge {
   flex: none;
@@ -438,10 +440,11 @@ function handleMutationError(error: unknown): void {
   margin: 0 0 14px;
 }
 .console-card {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: 16px;
   background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(29, 27, 23, 0.035);
   overflow: hidden;
 }
 .console-card:last-child {
@@ -452,43 +455,44 @@ function handleMutationError(error: unknown): void {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  padding: 15px 20px 6px;
+  border-bottom: 0;
+  background: transparent;
 }
 .card-head h4 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 600;
 }
 .card-head p {
   margin: 4px 0 0;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.5;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 .card-body {
-  padding: 12px 16px 14px;
+  padding: 0 20px 16px;
 }
 .plugin-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  margin-bottom: 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  margin-bottom: 0;
   overflow: hidden;
 }
-.plugin-card:last-child {
-  margin-bottom: 0;
+.plugin-card:first-of-type {
+  border-top: 0;
 }
 .plugin-card.is-open {
-  background: var(--card-bg);
+  background: transparent;
 }
 .plugin-card-head {
   display: flex;
   align-items: center;
   gap: 11px;
   width: 100%;
-  padding: 11px 13px;
+  padding: 11px 2px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -522,7 +526,7 @@ function handleMutationError(error: unknown): void {
   font-weight: 600;
 }
 .plugin-copy span {
-  color: var(--text-faint);
+  color: var(--text-secondary);
   font-size: 11.5px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -536,7 +540,7 @@ function handleMutationError(error: unknown): void {
   transform: rotate(180deg);
 }
 .plugin-form {
-  padding: 2px 13px 13px;
+  padding: 2px 2px 14px;
   border-top: 1px solid var(--border);
 }
 .experimental-row {

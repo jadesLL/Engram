@@ -1,5 +1,7 @@
 <template>
-  <div class="doxent-section">
+  <!-- settings-native：本组件原先由 AgentPanel 的 settings-native 祖先提供行/值列表框架样式；
+       2026-11-18 迁到「外设接入」后直接在 SettingsGroup 里渲染，必须自带这套框架类。 -->
+  <div class="doxent-section settings-native">
     <!-- 办公本类型：目前只实装讯飞（Doxent）。下拉是后续品牌的唯一入口，分组名保持中性的「办公本接入」 -->
     <div class="setting-row">
       <div class="setting-copy">
@@ -133,7 +135,7 @@ import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
 
 /**
- * 设置 → Agent 与自动化 →「办公本接入」。
+ * 设置 → 外设接入 →「办公本接入」（2026-11-18 从「Agent 与自动化」移出：它接入的是外部设备）。
  *
  * 三条状态线：Python 是否可用（官方客户端是 Python 脚本）、官方技能是否已装进内置 Agent 的
  * DSH_HOME/skills、官方 CLI 当前是否已登录。绑定动作在服务端后台完成（装技能 + 跑 --cli-action login），

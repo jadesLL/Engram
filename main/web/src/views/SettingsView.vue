@@ -36,7 +36,7 @@
       </div>
 
       <p class="settings-mobile-footnote">
-        手机上改的是中枢那份配置；模型 Key、外部接入与 Agent 令牌只在桌面端生成。
+        手机上改的是中枢那份配置；模型 Key、外部接入、办公本绑定与 Agent 令牌只在桌面端生成。
       </p>
     </div>
 
@@ -190,6 +190,22 @@
       </section>
 
       <section
+        v-if="visitedDomains.has('peripheral')"
+        v-show="activeDomain === 'peripheral'"
+        class="settings-domain is-multi"
+        data-domain="peripheral"
+      >
+        <DomainHead :domain="domainOf('peripheral')" />
+        <SettingsGroup
+          anchor="peripheral-doxent"
+          title="办公本接入"
+          hint="选择办公本类型并绑定账号，内置 Agent 可调阅办公本资料"
+        >
+          <DoxentSection />
+        </SettingsGroup>
+      </section>
+
+      <section
         v-if="visitedDomains.has('update')"
         v-show="activeDomain === 'update'"
         class="settings-domain is-multi"
@@ -289,6 +305,9 @@ const StoragePanel = defineAsyncComponent(() => import('../components/settings/S
 const DataPanel = defineAsyncComponent(() => import('../components/settings/DataPanel.vue'));
 const DataDangerSection = defineAsyncComponent(() => import('../components/settings/DataDangerSection.vue'));
 const SearchPanel = defineAsyncComponent(() => import('../components/settings/SearchPanel.vue'));
+/* 外设接入：办公本绑定要装技能、起官方 CLI、开本机浏览器，只在桌面 / 服务端可用；
+   与其他面板一样按需加载，首次进入「外设接入」大类时才取 chunk。 */
+const DoxentSection = defineAsyncComponent(() => import('../components/settings/DoxentSection.vue'));
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { hiddenSettingsAnchors } from '../lib/settingsNavVisibility';
 import {
@@ -312,11 +331,11 @@ import { APP_VERSION } from '../version';
 /**
  * 设置页信息架构（2026-11 重设计）：
  *
- *  - 左侧只留 7 个单职责大类（账户与访问 / 界面与检索 / 知识库数据 / 多端同步 / 版本与更新 /
- *    本机应用 / Agent 与自动化）。**二级锚点不再进目录**——标签与分组卡头是同一层信息，
+ *  - 左侧只留 8 个单职责大类（账户与访问 / 界面与检索 / 知识库数据 / 多端同步 / 外设接入 /
+ *    版本与更新 / 本机应用 / Agent 与自动化）。**二级锚点不再进目录**——标签与分组卡头是同一层信息，
  *    平铺 28 项会让「我在哪」变成猜谜（原型阶段的评审结论）。
  *  - 页头下方是一条状态总览（同步 / 更新 / 版本），回答「我有没有事」，点一条跳到对应分类。
- *  - 页头搜索框（Ctrl / ⌘ K）跨 7 类检索设置项，结果带「大类 · 分组」面包屑，选中跳到分组并闪一下。
+ *  - 页头搜索框（Ctrl / ⌘ K）跨 8 类检索设置项，结果带「大类 · 分组」面包屑，选中跳到分组并闪一下。
  *  - 分组仍然是卡片（SettingsGroup），卡头是唯一的章节标题；分组间距、折叠、徽标沿用既有实现。
  *
  * 导航顺序 = 页面渲染顺序：下面每个 <section> 里挂载的面板顺序必须与 lib/settingsDomains.ts

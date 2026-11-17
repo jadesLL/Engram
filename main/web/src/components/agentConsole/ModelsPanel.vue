@@ -801,6 +801,8 @@ function handleMutationError(error: unknown): void {
 }
 .panel-head {
   align-items: flex-start;
+  padding: 0 2px 16px;
+  border-bottom: 0;
 }
 .readonly-badge {
   flex: none;
@@ -856,10 +858,11 @@ function handleMutationError(error: unknown): void {
   margin: 0 0 14px;
 }
 .console-card {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: 16px;
   background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(29, 27, 23, 0.035);
   overflow: hidden;
 }
 .console-card:last-child {
@@ -870,20 +873,20 @@ function handleMutationError(error: unknown): void {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  padding: 15px 20px 6px;
+  border-bottom: 0;
+  background: transparent;
 }
 .card-head h4 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 600;
 }
 .card-head p {
   margin: 4px 0 0;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.5;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
 }
 .card-sub {
   display: flex;
@@ -892,7 +895,7 @@ function handleMutationError(error: unknown): void {
   flex-wrap: wrap;
 }
 .card-body {
-  padding: 6px 16px 14px;
+  padding: 0 20px 16px;
 }
 .effective-strip {
   margin: 8px 0 6px;

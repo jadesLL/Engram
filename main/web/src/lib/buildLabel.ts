@@ -27,6 +27,8 @@ export interface GitIdentity {
    * 应用内 git 更新不可用，提交号来自包清单 .engram-prebuilt.json。
    */
   prebuilt?: boolean;
+  /** 主进程运行平台（process.platform；源码更新只在 win32 走增量拉取重建） */
+  platform?: string;
 }
 
 /** 源码模式「检查更新」结果中与提交号相关的字段 */
