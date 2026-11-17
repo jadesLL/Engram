@@ -60,7 +60,12 @@ const compact = computed(() => {
   if (props.kind === 'shortcuts') return tier.value !== 'bar';
   return true;
 });
-const padding = computed(() => functional.value ? (props.width === 1 ? 7 : props.height === 1 ? 10 : 16) : size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 16);
+/** 一行高的横条统一 12px 内边距：同步条与记想法条并排时内容线对齐，不再按像素宽度分 6 / 10 两档 */
+const padding = computed(() => {
+  if (tier.value === 'bar') return 12;
+  if (functional.value) return props.width === 1 ? 7 : 16;
+  return size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 16;
+});
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
 let stopDetailBack: (() => void) | null = null, stopSettingsBack: (() => void) | null = null;
@@ -127,14 +132,15 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   outline:2px solid var(--accent);
   outline-offset:-3px;
 }
-/* 三档卡面（2026-11-10 卡片美化）：材质只决定「谁浮在前面」，不改变格位、命中区与拖拽。
-   数据卡浮起（投影）、列表卡贴纸（描边无投影）、操作卡内凹（--surface-well）、状态卡轻卡。
-   深色两套材质见 main.css 的 --surface-well / --surface-status。 */
+/* 三档卡面（2026-11-10 卡片美化；2026-11-17 操作卡并入白卡）：材质只决定「谁浮在前面」，
+   不改变格位、命中区与拖拽。数据卡浮起（投影）、列表/操作卡白卡贴纸（描边无投影）、状态卡轻卡。
+   操作卡不再整块内凹——和状态卡并排时一浮一陷会读成两套设计；输入性交给聚焦描边与主色按钮。
+   深色材质见 main.css 的 --surface-status。 */
 .shell.tone-data { background:var(--card-bg); border-color:transparent; box-shadow:var(--shadow-card); }
 .shell.tone-list { background:var(--card-bg); border-color:var(--border); box-shadow:none; }
 .shell.tone-list:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
-.shell.tone-action { background:var(--surface-well); border-color:transparent; box-shadow:none; }
-.shell.tone-action:not(.managing):not(.dragging):hover { box-shadow:inset 0 0 0 1px var(--border); }
+.shell.tone-action { background:var(--card-bg); border-color:var(--border); box-shadow:none; }
+.shell.tone-action:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
 .shell.tone-status { background:var(--surface-status); border-color:var(--border); box-shadow:none; }
 .shell.tone-status:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
 .shell-head {
@@ -280,6 +286,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   border-radius:0;
   background:rgba(0,0,0,.38);
   backdrop-filter:blur(5px);
+  animation:detail-fade .18s ease;
 }
 .detail-panel {
   position:relative;
@@ -291,6 +298,12 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   background:var(--card-bg);
   color:var(--text);
   box-shadow:var(--shadow-card);
+  animation:detail-pop .22s cubic-bezier(.2,.9,.3,1.06);
+}
+@keyframes detail-fade { from { opacity:0; } }
+/* 详情面板从下方 10px 弹入并轻微放大，遮罩同时淡入：点卡不再「瞬间糊上来」 */
+@keyframes detail-pop {
+  from { opacity:0; transform:translateY(10px) scale(.97); }
 }
 .detail-panel .module-content {
   overflow:auto;
@@ -454,6 +467,9 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 @media(prefers-reduced-motion:reduce) {
   .shell {
     transition:none;
+  }
+  .detail-panel,.detail-backdrop {
+    animation:none;
   }
 }
 </style>
