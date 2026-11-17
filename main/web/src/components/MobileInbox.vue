@@ -2534,9 +2534,9 @@ onBeforeUnmount(() => {
 .mi-card {
   position: relative;
   background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow-card);
+  border: 1px solid var(--card-line);
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
   overflow: hidden;
   transition: transform var(--motion-base) var(--ease-standard),
     box-shadow var(--motion-base) var(--ease-standard),
@@ -2756,7 +2756,7 @@ onBeforeUnmount(() => {
 .mi-card-body {
   display: flex;
   flex-direction: column;
-  padding: 8px 14px 10px;
+  padding: 9px 14px 12px;
 }
 
 .mi-card-top {
@@ -2855,7 +2855,7 @@ onBeforeUnmount(() => {
 
 .mi-card-title {
   margin: 5px 0 0;
-  font-size: 16.5px;
+  font-size: 16px;
   line-height: 1.35;
   font-weight: 650;
   letter-spacing: -0.01em;

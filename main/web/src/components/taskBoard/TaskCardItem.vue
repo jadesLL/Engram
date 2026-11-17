@@ -78,11 +78,11 @@ function compactWhen(text: string): string {
 
 <style scoped>
 .task-card {
-  padding: 10px 11px;
-  border: 1px solid var(--border);
+  padding: 11px 12px;
+  border: 1px solid var(--card-line);
   border-radius: 12px;
   background: var(--card-bg);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--card-shadow);
   transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
 }
 .task-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-card); }
@@ -93,8 +93,8 @@ function compactWhen(text: string): string {
 .card-head .complete-task { margin-left: auto; }
 .card-text {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--text);
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -112,7 +112,7 @@ function compactWhen(text: string): string {
   border-radius: 9px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 18px;
   white-space: nowrap;
   overflow: hidden;

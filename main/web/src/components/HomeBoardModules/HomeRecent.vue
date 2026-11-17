@@ -23,13 +23,14 @@
 import { computed } from 'vue';
 import { fromNow, pageBadge } from '../../lib/homeBoardData.ts';
 
-const props = defineProps<{ items: any[]; limit: number }>();
+const props = defineProps<{ items: any[]; limit: number; bodyHeight?: number }>();
 defineEmits<{ (e: 'go', path: string): void }>();
 
-const shown = computed(() => (props.items || []).slice(0, Math.max(1, props.limit || 6)));
+const capacity = computed(() => (props.bodyHeight ? Math.max(1, Math.floor(props.bodyHeight / 36)) : 99));
+const shown = computed(() => (props.items || []).slice(0, Math.min(Math.max(1, props.limit || 6), capacity.value)));
 </script>
 
 <style scoped>
-.recent-list { display: flex; flex-direction: column; gap: 2px; }
-.recent-row { padding: 9px 12px; }
+.recent-list { display: flex; flex-direction: column; gap: 0; flex: 1; min-height: 0; }
+.recent-row { padding: 0; flex: 1; min-height: 36px; }
 </style>

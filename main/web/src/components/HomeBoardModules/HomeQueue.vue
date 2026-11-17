@@ -27,18 +27,19 @@ import { computed } from 'vue';
 import Icon from '../Icon.vue';
 import { pendingDistillOf, pendingDistillLabel, rawMaterialRoute } from '../../lib/homeBoard.ts';
 
-const props = defineProps<{ files: any[]; limit: number; loading: boolean; error: string }>();
+const props = defineProps<{ files: any[]; limit: number; loading: boolean; error: string; bodyHeight?: number }>();
 defineEmits<{ (e: 'go', path: string): void }>();
 
-const shown = computed(() => pendingDistillOf(props.files, Math.max(1, props.limit || 4)));
+const capacity = computed(() => (props.bodyHeight ? Math.max(1, Math.floor(props.bodyHeight / 36)) : 99));
+const shown = computed(() => pendingDistillOf(props.files, Math.min(Math.max(1, props.limit || 4), capacity.value)));
 function isIdea(page: any): boolean {
   return String(page?.path || '').startsWith('原始资料/灵感碎片/');
 }
 </script>
 
 <style scoped>
-.queue-list { display: flex; flex-direction: column; gap: 2px; }
-.queue-row { padding: 9px 12px; gap: 10px; }
+.queue-list { display: flex; flex-direction: column; gap: 0; flex: 1; min-height: 0; }
+.queue-row { padding: 0; gap: 10px; flex: 1; min-height: 36px; }
 .queue-icon {
   width: 26px;
   height: 26px;

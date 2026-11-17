@@ -2,7 +2,7 @@
   <!-- 分区导航：按 Wiki 目录（概念 / 实体 / 项目 / 归档）与原始资料分类，点一下去对应的搜索结果 -->
   <div class="hb-card sections-card">
     <button
-      v-for="entry in entries"
+      v-for="entry in shown"
       :key="entry.key"
       class="section-row"
       type="button"
@@ -20,10 +20,12 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import Icon from '../Icon.vue';
 import type { SectionEntry } from '../../lib/homeBoard.ts';
 
-defineProps<{ entries: SectionEntry[] }>();
+const props = defineProps<{ entries: SectionEntry[]; bodyHeight?: number }>();
+const shown = computed(() => (props.entries || []).slice(0, props.bodyHeight ? Math.max(1, Math.floor(props.bodyHeight / 36)) : 99));
 defineEmits<{ (e: 'go', path: string): void }>();
 
 /** 目录图标：不新造图标资源，用已有的语义接近的一组 */
@@ -41,17 +43,19 @@ function iconOf(key: string): string {
 </script>
 
 <style scoped>
-.sections-card { padding: 6px 14px; }
+.sections-card { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; }
 .section-row {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
+  padding: 0;
+  flex: 1;
+  min-height: 36px;
   text-align: left;
   border-radius: 8px;
 }
-.section-row + .section-row { border-top: 1px solid var(--border); }
+.section-row + .section-row { border-top: 1px solid var(--card-line-soft); }
 .section-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .section-ic {
   width: 28px;
@@ -66,5 +70,5 @@ function iconOf(key: string): string {
 }
 .section-row:hover .section-ic { background: var(--accent-soft); color: var(--accent); }
 .section-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.section-label { font-size: 13px; font-weight: 550; color: var(--text); }
+.section-label { font-size: 12.5px; font-weight: 600; color: var(--text); }
 </style>

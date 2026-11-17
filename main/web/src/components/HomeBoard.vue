@@ -86,7 +86,7 @@
     <div
       ref="gridEl"
       class="board-grid"
-      :class="{ editing: store.editing }"
+      :class="{ editing: store.editing, 'mobile-list': mobileCanvas }"
       :style="{ '--grid-rows': gridRows, transform: mobileCanvas ? undefined : `scale(${boardScale})` }"
     >
       <div
@@ -135,8 +135,9 @@
         <HomeModuleShell
           :kind="entry.module.kind"
           :title="entry.title"
-          :width="mobileEditing ? 12 : entry.place.w"
+          :width="mobileCanvas ? GRID_COLS : entry.place.w"
           :height="entry.place.h"
+          :auto-height="mobileCanvas"
           :capture-style="Number(entry.module.opts.captureStyle) || 2"
           :limit="entry.hasLimit ? entry.limit : undefined"
           :managing="store.editing && !mobileEditing"
@@ -150,34 +151,35 @@
           @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
           @drag-request="startDrag($event, entry.module.id)"
           @resize-request="startResize($event, entry.module.id)"
-          v-slot="{ expanded, open, close }"
+          v-slot="{ expanded, open, close, bodyHeight }"
         >
-          <HomeAsk v-if="entry.module.kind === 'ask'" :title="entry.title" :width="entry.place.w" :height="entry.place.h" :expanded="expanded" @open="open" @close="close" />
-          <HomeCapture v-else-if="entry.module.kind === 'capture'" :title="entry.title" :width="entry.place.w" :height="entry.place.h" :expanded="expanded" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :ideas="ideaItems" @new="quickNote" @open="open" @go="go" />
+          <HomeAsk v-if="entry.module.kind === 'ask'" :title="entry.title" :width="mobileCanvas ? GRID_COLS : entry.place.w" :height="entry.place.h" :expanded="expanded" @open="open" @close="close" />
+          <HomeCapture v-else-if="entry.module.kind === 'capture'" :title="entry.title" :width="mobileCanvas ? GRID_COLS : entry.place.w" :height="entry.place.h" :expanded="expanded" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :ideas="ideaItems" @new="quickNote" @open="open" @go="go" />
           <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
-          <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" @go="go" />
-          <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" @go="go" @capture="quickNote" />
+          <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" :body-height="expanded ? undefined : bodyHeight" @go="go" />
+          <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" :body-height="expanded ? undefined : bodyHeight" @go="go" @capture="quickNote" />
           <HomeTasks
             v-else-if="entry.module.kind === 'tasks'"
             :cards="taskCards"
             :limit="entry.limit"
+            :body-height="expanded ? undefined : bodyHeight"
             :loading="tasksLoading"
             @go="go"
           />
-          <HomeFresh v-else-if="entry.module.kind === 'fresh'" :items="freshItems" :limit="entry.limit" @go="go" />
+          <HomeFresh v-else-if="entry.module.kind === 'fresh'" :items="freshItems" :limit="entry.limit" :body-height="expanded ? undefined : bodyHeight" @go="go" />
           <HomeStats v-else-if="entry.module.kind === 'stats'" :pages="stats.pages" :counts="counts" :words="words" @go="go" />
           <HomeWeekly v-else-if="entry.module.kind === 'weekly'" :rows="weeklyRows" :days="7" @go="go" />
-          <HomeTags v-else-if="entry.module.kind === 'tags'" :tags="tagList" @go="go" />
-          <HomeSections v-else-if="entry.module.kind === 'sections'" :entries="sections" @go="go" />
+          <HomeTags v-else-if="entry.module.kind === 'tags'" :tags="tagList" :body-height="expanded ? undefined : bodyHeight" @go="go" />
+          <HomeSections v-else-if="entry.module.kind === 'sections'" :entries="sections" :body-height="expanded ? undefined : bodyHeight" @go="go" />
           <HomeRoam v-else-if="entry.module.kind === 'roam'" :pages="roamCandidates" @go="go" @capture="quickNote" />
           <HomeSystem v-else-if="entry.module.kind === 'system'" :counts="counts" :agent-name="agentName" @go="go" />
           <HomeRing v-else-if="entry.module.kind === 'ring'" :pages="props.pages" :files="props.fileCount" @go="go" />
           <HomeHeat v-else-if="entry.module.kind === 'heat'" :pages="props.pages" :weeks="entry.limit" />
-          <HomeInbox v-else-if="entry.module.kind === 'inbox'" @go="go" />
-          <HomeQueue v-else-if="entry.module.kind === 'queue'" :files="rawFiles" :loading="queueLoading" :error="queueError" :limit="12" @go="go" />
+          <HomeInbox v-else-if="entry.module.kind === 'inbox'" :body-height="expanded ? undefined : bodyHeight" @go="go" />
+          <HomeQueue v-else-if="entry.module.kind === 'queue'" :files="rawFiles" :loading="queueLoading" :error="queueError" :limit="12" :body-height="expanded ? undefined : bodyHeight" @go="go" />
           <HomeBoardCard v-else-if="entry.module.kind === 'board'" :board="tasks.board" :loading="tasksLoading" @go="go" />
-          <HomeActivity v-else-if="entry.module.kind === 'activity'" :items="changeLogItems" :limit="entry.limit" @go="go" />
-          <HomeDigest v-else-if="entry.module.kind === 'digest'" :lines="digestLines" :agent-name="agentName" @go="go" @chat="onChat" />
+          <HomeActivity v-else-if="entry.module.kind === 'activity'" :items="changeLogItems" :limit="entry.limit" :body-height="expanded ? undefined : bodyHeight" @go="go" />
+          <HomeDigest v-else-if="entry.module.kind === 'digest'" :lines="digestLines" :agent-name="agentName" :body-height="expanded ? undefined : bodyHeight" @go="go" @chat="onChat" />
           <HomeSync v-else />
         </HomeModuleShell>
       </div>
@@ -238,6 +240,7 @@ import {
   MODULE_META,
   freshPagesOf,
   homeDigest,
+  heatmapDayCounts,
   moveModuleTo,
   kbCounts,
   limitOf,
@@ -473,7 +476,10 @@ function computeSummary(module: HomeModule): HomeCardSummary {
     case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动','按改动时间');
     case 'fresh': return pageSummary(freshItems.value,'最近七天还没有新增页面','近 7 天');
     // 热力卡的摘要只在 1×1 磁贴或窄卡上用：给「本周改动了多少篇」，别让磁贴显示 0
-    case 'heat': return {value:weeklyRows.value.reduce((n,r)=>n+r.updated,0),label:'本周改动'};
+    case 'heat': {
+      const days = heatmapDayCounts(props.pages, 12).filter((cell) => !cell.future);
+      return { value: days.filter((cell) => cell.count > 0).length, label: '活跃日' };
+    }
     case 'weekly': {
       const TONES: Record<string, 'concept'|'entity'|'note'|'idea'> = { concept:'concept', entity:'entity', note:'note', idea:'idea' };
       const created = weeklyRows.value.reduce((n,r)=>n+r.created,0);
@@ -1083,6 +1089,28 @@ onUnmounted(() => {
   left: 0;
   transform-origin: top left;
 }
+/*
+ * 手机单列（2026-11-18 卡片 v2）：不再沿用桌面的 12 列格高，改成 flex 列表，
+ * 每张卡由内容决定高度。desktop 的 grid 坐标仍原样保留在数据里，切回桌面不受影响。
+ */
+.board-grid.mobile-list {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  grid-template-columns: none;
+  grid-template-rows: none;
+}
+.board-grid.mobile-list .widget {
+  width: 100%;
+  min-height: 0;
+  grid-column: auto;
+  grid-row: auto;
+}
+.board-grid.mobile-list .widget > .shell { height: auto; flex: none; }
+.board-grid.mobile-list.editing { background-image: none; }
 /* 编辑态：把栅格线画出来（手机桌面那种「看得见的格子」） */
 .board-grid.editing {
   background-image:

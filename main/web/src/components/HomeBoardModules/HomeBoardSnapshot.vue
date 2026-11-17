@@ -36,42 +36,65 @@ const total = computed(() => columns.value.reduce((sum, col) => sum + col.cards.
 </script>
 
 <style scoped>
-.board-card { padding: 12px 14px 10px; }
-.board-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.board-card { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; }
+.board-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; flex: 1; min-height: 0; }
 .board-col {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
   padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
+  border: 1px solid var(--card-line-soft);
+  border-radius: 8px;
   background: var(--bg-secondary);
   text-align: left;
   transition: border-color 150ms ease, background 150ms ease;
 }
-.board-col:hover { border-color: var(--accent); background: var(--card-bg); }
+.board-col:hover { border-color: var(--border-strong); background: var(--bg-tertiary); }
 .board-col:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .board-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: 9.5px;
 }
-.board-num { font-size: 17px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.board-num {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: lining-nums tabular-nums;
+}
 .board-num.over { color: var(--danger); }
 .board-item {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 5px 7px;
-  border-radius: 6px;
+  padding: 4px 6px;
+  border-radius: 5px;
   background: var(--card-bg);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-secondary);
 }
-.board-more { color: var(--text-faint); font-size: 10.5px; }
-.board-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 11px; }
-@media (max-width: 640px) { .board-cols { grid-template-columns: minmax(0, 1fr); } }
+.board-more { color: var(--text-faint); font-size: 9.5px; }
+.board-foot { margin-top: auto; padding-top: 9px; border-top: 1px solid var(--card-line-soft); font-size: 10px; color: var(--text-faint); }
+@container (max-width: 420px) {
+  .board-cols { grid-template-columns: 1fr; gap: 0; }
+  .board-col {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid var(--card-line-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+  .board-col:first-child { border-top: 0; }
+  .board-name { flex: 1; font-size: 11px; }
+  .board-num { order: 2; font-size: 20px; }
+  .board-item, .board-more { display: none; }
+}
 </style>
