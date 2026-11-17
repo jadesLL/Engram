@@ -149,10 +149,15 @@
   background: var(--bg-hover);
   color: var(--text);
 }
+/*
+ * 2026-11-18 选中态改「细环」：不再用白卡 + 外阴影，改成 1px 主色内描边。
+ * 白卡和内容区的卡片同材质，选中项会「浮起来」抢内容；细环只圈出位置，不增加一层厚度。
+ * 展开二级后父项降级为分组头，环交给当前二级项（见下方规则）。
+ */
 .settings-nav-item.active {
-  background: var(--card-bg);
-  border-color: var(--border);
-  box-shadow: var(--shadow-raised);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
   color: var(--text);
   font-weight: 600;
 }
@@ -199,8 +204,7 @@
  * 二级目录展开：grid-template-rows 0fr → 1fr 的高度过渡。
  * 始终保留 DOM（收起时 inert + aria-hidden），这样高度能平滑收起，Tab 也不会落到看不见的按钮上。
  * 导引线挂在 wrap 上而不是 inner：动画裁切由 wrap 的 overflow: hidden 负责，
- * 画在 inner 里的线会被裁掉。left: 27px = inner 的 28px 缩进 - 1px，
- * 正好让当前项的 2px 强调条压在这条线上。
+ * 画在 inner 里的线会被裁掉。left: 27px = inner 的 28px 缩进 - 1px，让导引线正好落在二级项左沿。
  */
 .settings-nav-sub-wrap {
   position: relative;
@@ -251,11 +255,16 @@
   background: var(--bg-hover);
   color: var(--text);
 }
-/* 点击目录后的当前分组（不再跟滚动联动） */
+/*
+ * 点击目录后的当前分组（不再跟滚动联动）。
+ * 2026-11-18：accent-soft 平涂换成 1px 主色细环——蓝色平涂压在暖灰玻璃上会发灰，
+ * 与右侧白卡并排时显脏；细环不铺面，深色主题下也不会糊成一团。
+ */
 .settings-nav-subitem.active {
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 /* 危险分组标记：只给一行小字，不铺色块 */
 .nav-danger {
@@ -285,6 +294,7 @@
 }
 .settings-nav-subitem.danger.active {
   color: var(--danger);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 38%, transparent);
 }
 .settings-nav-subitem.danger.active .nav-dot {
   background: var(--danger);
@@ -731,15 +741,19 @@
 }
 .settings-native .danger-icon { color: var(--danger); }
 
-/* 分段选择控件：三选一场景（主题等）替代下拉，选项一眼可见、一键直达 */
+/*
+ * 分段选择控件：三选一场景（主题等）替代下拉，选项一眼可见、一键直达。
+ * 2026-11-18：轨道不再铺灰底/描边，只给选中项画 1px 主色细环（与左栏目录同一套选中语言）。
+ * 原来的白盒 + 双层阴影让控件比它所在的内容行更「重」，去掉后选中感只剩下环。
+ */
 .segmented {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--border);
+  gap: 4px;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
-  background: var(--bg-secondary);
+  background: transparent;
 }
 .segmented button {
   padding: 5px 14px;
@@ -752,12 +766,13 @@
     box-shadow var(--motion-fast) var(--ease-standard);
 }
 .segmented button:hover {
+  background: var(--bg-hover);
   color: var(--text);
 }
 .segmented button.active {
-  background: var(--card-bg);
-  box-shadow: 0 1px 3px rgba(31, 30, 29, 0.12), 0 0 0 1px var(--border);
-  color: var(--text);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+  color: var(--accent);
   font-weight: 600;
 }
 .segmented button:focus-visible {
@@ -1495,24 +1510,8 @@
   margin: 10px 0 4px;
 }
 
-/* ---------- 左栏：当前大类的图标点亮；二级项用 2px 主色竖条标出「正在读这一组」 ---------- */
+/* ---------- 左栏：当前大类的图标点亮；二级项用 1px 细环标出「正在读这一组」 ---------- */
 .settings-nav-item.active svg { color: var(--accent); }
-.settings-nav-subitem { position: relative; }
-.settings-nav-subitem::before {
-  position: absolute;
-  top: 50%;
-  left: -1px;
-  width: 2px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--accent);
-  content: "";
-  transform: translateY(-50%) scaleY(0);
-  transform-origin: center;
-  transition: transform var(--motion-fast) var(--ease-standard);
-}
-.settings-nav-subitem.active::before { transform: translateY(-50%) scaleY(1); }
-.settings-nav-subitem.danger::before { background: var(--danger); }
 
 /* ---------- 手机档：行内控件落到下一行后，按钮保持可点面积 ---------- */
 @media (max-width: 768px) {
@@ -1523,8 +1522,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-native .setting-row-toggle::before,
-  .settings-nav-subitem::before { transition: none; }
+  .settings-native .setting-row-toggle::before { transition: none; }
 }
 /* 全局玻璃：设置左栏面板（追加在末尾，确保优先级） */
 .settings-nav { background-color: var(--glass-fill) !important; background-image: var(--glass-sheen) !important; backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter); border: 1px solid var(--glass-edge) !important; border-radius: 22px; box-shadow: var(--shadow-card); padding: 10px 12px 16px !important; }
