@@ -13,7 +13,9 @@ import {
 } from '../lib/doxentConfig.js';
 import {
   clearDoxentBindJob,
+  clearStaleDoxentCliLock,
   doxentBindJob,
+  doxentCliState,
   doxentLoginInfo,
   doxentStatus,
   logoutDoxent,
@@ -37,9 +39,10 @@ import { currentNodeId } from '../sync/store.js';
  * 把登录链接交给本机浏览器，手机（同步成员令牌）没有这条路径，设置页按 features.agentAdmin 隐藏。
  *
  * 链路：POST bind 启动后台任务（202 立即返回）→ 装技能到 <DSH_HOME>/skills/doxent →
- * 跑官方客户端 --cli-action login → 设置页轮询 GET bind 拿到阶段与真实登录链接 →
- * 用户在浏览器完成登录 → 设置页轮询 login-status。绑定任务结算后关闭聊天运行时池：
- * 技能目录变了，下一次对话必须重新加载 catalog 才看得到 doxent。
+ * 跑官方客户端 --cli-action login → 设置页轮询 GET bind 拿到阶段、说明与真实登录链接 →
+ * 用户在浏览器完成登录 → 设置页轮询 login-status。绑定前会清理上次安装中断留下的
+ * CLI 安装锁；GET bind 同时回官方 CLI 是否已安装，设置页能区分「在装 CLI」和「在等链接」。
+ * 绑定任务结算后关闭聊天运行时池：技能目录变了，下一次对话必须重新加载 catalog 才看得到 doxent。
  *
  * 换账号走 POST switch：同一套后台任务先 logout 旧会话、清本机与同步偏好，再重新生成登录链接；
  * 登录成功后由 watchBindSettled 把新会话镜像回偏好。设置页的「当前账号」只拿
@@ -94,6 +97,10 @@ function watchBindSettled(startedAt: number): void {
     const finished = doxentBindJob();
     if (finished?.state === 'done' && finished.login?.state === 'logged-in') {
       mirrorSessionQuietly();
+    }
+    // 失败原因必须落日志：设置页会弹重试框，但排查时还要能在 app.log 里对上「卡在哪一步」
+    if (finished?.state === 'error') {
+      console.warn('[doxent] 绑定失败（阶段 ' + finished.step + '）：' + (finished.error || '未知原因'));
     }
     if (finished && Date.now() - startedAt > BIND_SLOW_LOG_MS) {
       console.info(
@@ -157,7 +164,7 @@ export async function doxentRoutes(app: FastifyInstance) {
   app.post('/api/settings/doxent/bind', async (_req, reply) => {
     const job = startDoxentBind({ home });
     if (job.state === 'running') watchBindSettled(job.startedAt);
-    return reply.code(202).send({ ok: true, job });
+    return reply.code(202).send({ ok: true, job, cli: doxentCliState() });
   });
 
   /**
@@ -204,11 +211,36 @@ export async function doxentRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: '正在准备办公本任务，请等当前任务完成后再切换账号' });
     }
     if (job.state === 'running') watchBindSettled(job.startedAt);
-    return reply.code(202).send({ ok: true, job });
+    return reply.code(202).send({ ok: true, job, cli: doxentCliState() });
   });
 
-  /** 绑定任务进度：running（带阶段）/ done（带登录链接）/ error（带原因） */
-  app.get('/api/settings/doxent/bind', async () => ({ job: doxentBindJob() }));
+  /** 绑定任务进度：running（带阶段/说明）/ done（带登录链接）/ error（带原因）+ 官方 CLI 当前安装状态 */
+  app.get('/api/settings/doxent/bind', async () => ({ job: doxentBindJob(), cli: doxentCliState() }));
+
+  /**
+   * 清理残留的官方 CLI 安装锁。
+   *
+   * 官方客户端用 mkdir 锁协调 CLI 下载/替换，进程被强杀（升级超时、杀毒软件拦截）后
+   * 锁目录会留在安装目录里；之后每次 login 都要白等 180 秒。这里只删「超过阈值且为空」的
+   * 锁目录，正在安装（锁很新）或非空目录一律不动。
+   */
+  app.post('/api/settings/doxent/cli/clear-lock', async (_req, reply) => {
+    if (doxentBindJob()?.state === 'running') {
+      return reply.code(409).send({ error: '正在准备绑定，请等当前任务完成后再清理安装锁' });
+    }
+    const result = clearStaleDoxentCliLock();
+    if (result.cleared) return { ok: true, cleared: true, cli: result.cli };
+    const error =
+      result.reason === 'no-lock'
+        ? '没有需要清理的安装锁'
+        : result.reason === 'fresh'
+          ? '安装锁刚创建，官方 CLI 可能正在安装，请稍后再试'
+          : result.reason === 'not-empty'
+            ? '安装锁目录里还有其他文件，未自动删除'
+            : result.error || '清理安装锁失败';
+    if (result.reason === 'no-lock') return { ok: false, cleared: false, reason: result.reason, error, cli: result.cli };
+    return reply.code(409).send({ ok: false, cleared: false, reason: result.reason, error, cli: result.cli });
+  });
 
   /** 轮询登录状态：设置页在用户扫码/登录期间每几秒调一次 */
   app.get('/api/settings/doxent/login-status', async (_req, reply) => {

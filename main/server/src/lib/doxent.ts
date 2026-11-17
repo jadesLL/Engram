@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import {
   doxentAccountDisplay,
   type DoxentAccountDisplay,
@@ -30,11 +31,27 @@ export const DOXENT_SKILL_NAME = 'doxent';
 export const DOXENT_MARKER_FILE = '.engram-doxent.json';
 /** 技能里真正执行请求的客户端脚本（相对技能根） */
 export const DOXENT_API_SCRIPT = path.join('shared', 'scripts', 'doxent_api.py');
-/** 登录/状态/登出的超时：首次登录要下载 CLI 并启动 daemon，给足 3 分钟 */
-const LOGIN_TIMEOUT_MS = 180_000;
+/**
+ * 登录/状态/登出的超时：首次登录要下载 CLI 并启动 daemon，给足 3 分钟。
+ * 官方客户端抢安装锁的上限也是 180 秒——这里必须比它长，否则我们会在它报错前先杀进程，
+ * 设置页只能拿到笼统的「超时」，看不到「安装锁被占用」这类真正的原因。
+ */
+const LOGIN_TIMEOUT_MS = 210_000;
 const ACTION_TIMEOUT_MS = 60_000;
 const PYTHON_PROBE_TIMEOUT_MS = 8_000;
 const LOGIN_STATE_TTL_MS = 5_000;
+/** 官方 CLI 的 mkdir 安装锁：与 doxent_api.py 的 cli_install_lock 保持一致 */
+export const DOXENT_CLI_LOCK_NAME = '.doxent-cli-install.lock';
+/** 官方 CLI 写在自己安装目录里的版本缓存（不是产品版 version.json） */
+const DOXENT_CLI_VERSION_CACHE = 'cli-version.json';
+/**
+ * 安装锁超过这个时长视为「上次安装被中断留下的残留」。
+ * 官方客户端自己抢锁上限是 180 秒，超过 5 分钟仍存在的锁不可能再被正常流程持有；
+ * 不清理它会让之后每次绑定都白等 180 秒（2026-11-18 的「一直准备中」即此原因）。
+ */
+export const DOXENT_CLI_LOCK_STALE_MS = 5 * 60_000;
+/** 登录阶段巡查官方 CLI 安装进度（纯读文件，不起进程） */
+const CLI_PROGRESS_INTERVAL_MS = 2_000;
 
 export interface DoxentPython {
   available: boolean;
@@ -73,9 +90,150 @@ export interface DoxentLoginInfo {
 export interface DoxentStatus {
   python: DoxentPython;
   skill: DoxentSkillState;
+  /** 官方 CLI 的安装状态（只读文件系统，不启动进程） */
+  cli: DoxentCliState;
   login: DoxentLoginInfo;
   /** 官方包地址（设置页展示「技能从哪来」） */
   downloadUrl: string;
+}
+
+/**
+ * 官方 CLI 的本地安装状态。
+ *
+ * 官方 doxent_api.py 首次 login 时会自己下载 CLI；下载/替换期间会在安装目录里建
+ * `.doxent-cli-install.lock`（mkdir 锁）。Engram 只读这些文件，用来回答设置页
+ * 「CLI 到底装没装上、现在是不是卡在安装」——不额外起进程，也不替官方客户端做安装决策。
+ */
+export interface DoxentCliState {
+  installed: boolean;
+  /** 官方客户端期望的 CLI 路径（DOXENT_CLI_INSTALL_DIR 可覆盖） */
+  path: string;
+  /** 从官方版本缓存读到的已安装版本（可能没有） */
+  version?: string;
+  /** 安装锁是否存在（存在说明有进程在下载/替换 CLI，或上次安装被中断） */
+  lock: boolean;
+  /** 安装锁存在时长 */
+  lockAgeMs?: number;
+  /** 锁已超过残留阈值：可以安全清理后重试 */
+  lockStale: boolean;
+  /** 读安装目录失败时的原因（权限等） */
+  error?: string;
+}
+
+export interface DoxentCliLockClearResult {
+  cleared: boolean;
+  reason?: 'no-lock' | 'fresh' | 'not-empty' | 'error';
+  error?: string;
+  cli: DoxentCliState;
+}
+
+/** 官方 CLI 的文件名（与 doxent_api.py 的 cli_install_path 一致） */
+function doxentCliFileName(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? 'doxent-cli.exe' : 'doxent-cli';
+}
+
+/** 官方客户端 normalize_path 的最小镜像：去空白/引号，逗号拼接时取第一段 */
+function normalizeCliDir(value: string): string {
+  const text = String(value || '').trim().replace(/^"+|"+$/g, '');
+  if (!text) return '';
+  if (text.includes(',') && !fs.existsSync(text)) return text.split(',', 1)[0].trim().replace(/^"+|"+$/g, '');
+  return text;
+}
+
+/**
+ * 官方 CLI 的预期安装路径：DOXENT_CLI_INSTALL_DIR 覆盖优先，其余与官方客户端同规则。
+ * 只用于展示/判断状态，不写入。
+ */
+export function doxentCliInstallPath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // 显式按目标平台拼路径：测试可在任意宿主上断言 Windows 安装目录
+  const join = platform === 'win32' ? path.win32.join : path.join;
+  const override = normalizeCliDir(env.DOXENT_CLI_INSTALL_DIR || '');
+  if (override) return join(override, doxentCliFileName(platform));
+  if (platform === 'win32') {
+    const base = (env.LOCALAPPDATA || '').trim() || join(os.homedir(), 'AppData', 'Local');
+    return join(base, 'Doxent', 'CoreCLI', doxentCliFileName(platform));
+  }
+  return join(os.homedir(), '.local', 'bin', doxentCliFileName(platform));
+}
+
+/** 读官方 CLI 版本缓存（installedVersion 优先；0.0.0 是官方客户端「未识别」的占位） */
+export function readDoxentCliVersion(cliPath: string): string | undefined {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(cliPath), DOXENT_CLI_VERSION_CACHE), 'utf8'),
+    ) as Record<string, unknown>;
+    for (const key of ['installedVersion', 'version']) {
+      const value = raw[key];
+      if (typeof value === 'string' && value.trim() && value.trim() !== '0.0.0') return value.trim();
+    }
+  } catch {
+    /* 版本缓存缺失/损坏不影响「已安装」判断 */
+  }
+  return undefined;
+}
+
+/** 官方 CLI 状态：文件是否存在、版本、安装锁及是否残留 */
+export function doxentCliState(env: NodeJS.ProcessEnv = process.env): DoxentCliState {
+  const cliPath = doxentCliInstallPath(env);
+  const state: DoxentCliState = { installed: false, path: cliPath, lock: false, lockStale: false };
+  try {
+    state.installed = fs.statSync(cliPath).isFile();
+    if (state.installed) {
+      const version = readDoxentCliVersion(cliPath);
+      if (version) state.version = version;
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code && code !== 'ENOENT' && code !== 'ENOTDIR') {
+      state.error = error instanceof Error ? error.message : String(error);
+    }
+  }
+  try {
+    const stat = fs.statSync(path.join(path.dirname(cliPath), DOXENT_CLI_LOCK_NAME));
+    state.lock = true;
+    state.lockAgeMs = Math.max(0, Date.now() - stat.mtimeMs);
+    state.lockStale = state.lockAgeMs >= DOXENT_CLI_LOCK_STALE_MS;
+  } catch {
+    /* 没有安装锁是常态 */
+  }
+  return state;
+}
+
+/**
+ * 清理残留的官方 CLI 安装锁。
+ *
+ * 只删空目录（官方锁就是 mkdir 出来的空目录），非空目录绝不递归删除；默认只清理
+ * 超过残留阈值的锁，避免和另一个正在安装的进程抢。返回清理后的最新 CLI 状态。
+ */
+export function clearStaleDoxentCliLock(
+  options: { env?: NodeJS.ProcessEnv; force?: boolean; staleMs?: number } = {},
+): DoxentCliLockClearResult {
+  const env = options.env ?? process.env;
+  const lockPath = path.join(path.dirname(doxentCliInstallPath(env)), DOXENT_CLI_LOCK_NAME);
+  let ageMs: number;
+  try {
+    ageMs = Math.max(0, Date.now() - fs.statSync(lockPath).mtimeMs);
+  } catch {
+    return { cleared: false, reason: 'no-lock', cli: doxentCliState(env) };
+  }
+  if (!options.force && ageMs < (options.staleMs ?? DOXENT_CLI_LOCK_STALE_MS)) {
+    return { cleared: false, reason: 'fresh', cli: doxentCliState(env) };
+  }
+  try {
+    fs.rmdirSync(lockPath);
+    return { cleared: true, cli: doxentCliState(env) };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return {
+      cleared: false,
+      reason: code === 'ENOTEMPTY' || code === 'EEXIST' ? 'not-empty' : 'error',
+      error: error instanceof Error ? error.message : String(error),
+      cli: doxentCliState(env),
+    };
+  }
 }
 
 /**
@@ -260,6 +418,38 @@ export interface DoxentRunResult {
   timedOut: boolean;
 }
 
+/**
+ * 超时后连同子进程一起结束。
+ *
+ * 官方客户端会再拉起 CLI 子进程；Windows 上 child.kill() 只结束 Python 父进程，
+ * 正在下载/安装 CLI 的子进程会继续跑并一直占着 .doxent-cli-install.lock，
+ * 下一次绑定就会白等 180 秒。taskkill /T 把整棵进程树收掉。
+ */
+function killProcessTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      return;
+    } catch {
+      /* 退回 child.kill */
+    }
+  } else {
+    try {
+      process.kill(-pid, 'SIGKILL');
+      return;
+    } catch {
+      /* 不是进程组组长时退回 child.kill */
+    }
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    /* 已经退出 */
+  }
+}
+
 /** 起一个隐藏窗口的子进程并收齐输出（不抛：失败进 code/stderr） */
 function runProcess(command: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<DoxentRunResult> {
   return new Promise((resolve) => {
@@ -274,7 +464,7 @@ function runProcess(command: string, args: string[], timeoutMs: number, env?: No
     let settled = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      killProcessTree(child);
       // 官方客户端可能拉起常驻 daemon；若它继承了 stdout/stderr 句柄，父进程退出后
       // 'close' 事件永远不会到，绑定请求就会一直停在「准备中」。超时后强制结算。
       setTimeout(() => {
@@ -415,6 +605,10 @@ export interface DoxentBindJob {
   /** 任务意图：设置页据此显示「正在绑定」还是「正在切换账号」 */
   reason: DoxentBindReason;
   startedAt: number;
+  /** 最近一次阶段/说明变化时间（设置页据此判断进度是否还在动） */
+  updatedAt: number;
+  /** 当前阶段的人话说明：卡在装 CLI、等登录链接还是收尾，一眼能看懂 */
+  detail?: string;
   finishedAt?: number;
   skill?: DoxentSkillState;
   login?: DoxentLoginInfo;
@@ -426,6 +620,8 @@ export interface DoxentBindOptions {
   home: string;
   url?: string;
   reason?: DoxentBindReason;
+  /** 官方 CLI/Python 探测用的环境变量（测试注入临时安装目录） */
+  env?: NodeJS.ProcessEnv;
   /**
    * 切换账号前先退出旧会话（路由注入：logout + 清本机凭据 + 清同步偏好）。
    * 放在任务里而不是请求里，避免官方 CLI 退出慢时把设置页请求挂住。
@@ -437,6 +633,8 @@ export interface DoxentBindOptions {
   runAction?: (action: string, options: DoxentApiOptions) => Promise<DoxentRunResult>;
   /** 注入凭据文件位置（测试：不读宿主机真实会话） */
   credentials?: DoxentCredentialOptions;
+  /** 注入 CLI 状态读取（测试：不读宿主机真实安装目录） */
+  cliState?: (env?: NodeJS.ProcessEnv) => DoxentCliState;
 }
 
 let bindJob: DoxentBindJob | null = null;
@@ -465,21 +663,77 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 官方 CLI 在登录阶段的可读状态：装没装、是不是正在下载/替换、是否已就绪 */
+function cliLoginDetail(cli: DoxentCliState): string {
+  const version = cli.version ? ' v' + cli.version : '';
+  if (!cli.installed && cli.lock) return '官方 CLI 正在下载并安装（安装锁已就位，首次约 1–2 分钟）…';
+  if (!cli.installed) return '官方 CLI 尚未安装，正在由官方客户端下载…';
+  if (cli.lock) return `官方 CLI 已安装${version}，正在检查更新并替换文件…`;
+  return `官方 CLI 已安装${version}，正在生成登录链接…`;
+}
+
+/** 登录阶段每 2 秒读一次 CLI 安装状态（纯文件读取），只在文字变化时回写任务 */
+function watchCliLoginProgress(
+  env: NodeJS.ProcessEnv | undefined,
+  getCli: (env?: NodeJS.ProcessEnv) => DoxentCliState,
+  onDetail: (detail: string) => void,
+): () => void {
+  let last = '';
+  const tick = () => {
+    let cli: DoxentCliState;
+    try {
+      cli = getCli(env);
+    } catch {
+      return;
+    }
+    const detail = cliLoginDetail(cli);
+    if (detail === last) return;
+    last = detail;
+    onDetail(detail);
+  };
+  tick();
+  const timer = setInterval(tick, CLI_PROGRESS_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/** 没有拿到登录链接时的失败说明：把 CLI 安装锁状态一起说清楚，避免只看到笼统超时 */
+function loginFailureMessage(result: DoxentRunResult, cli: DoxentCliState): string {
+  const tail = (result.stderr || result.stdout).trim().slice(0, 300);
+  const lock = cli.lock
+    ? `；官方 CLI 安装锁仍存在${cli.lockStale ? '（应是上次安装被中断留下的残留锁）' : '（可能仍在安装）'}`
+    : '';
+  if (result.timedOut) {
+    return `打开登录页面超时（官方 CLI ${Math.round(LOGIN_TIMEOUT_MS / 1000)} 秒内没有返回登录链接${lock}）。` +
+      (tail ? `官方输出：${tail}` : '');
+  }
+  return '官方 CLI 没有返回登录链接' + (tail ? '：' + tail : '') + lock + '。';
+}
+
 /** 绑定正文：装技能 → 触发官方登录 → 把真实链接交回设置页；换账号先退出旧会话 */
 async function runDoxentBind(
   options: DoxentBindOptions,
-  onStep: (step: DoxentBindStep, skill?: DoxentSkillState) => void,
+  onStep: (step: DoxentBindStep, skill?: DoxentSkillState, detail?: string) => void,
+  onDetail: (detail: string) => void,
 ): Promise<DoxentBindResult> {
   const install = options.install ?? installDoxentSkill;
   const runAction = options.runAction ?? runDoxentApiAction;
+  const getCli = options.cliState ?? doxentCliState;
   if (options.reason === 'switch') {
-    onStep('logout');
+    onStep('logout', undefined, '正在退出当前账号并清理本机登录凭据…');
     await options.prepareSwitch?.();
   }
-  onStep('install');
+  onStep('install', undefined, '正在下载并安装官方技能包（首次约 30–60 秒）…');
   const skill = await install({ home: options.home, url: options.url, log: (message) => console.info(message) });
-  onStep('login', skill);
-  const result = await runAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS });
+  // 先在任务里写明 CLI 现状：设置页不用猜「现在是装 CLI 还是在等链接」
+  onStep('login', skill, cliLoginDetail(getCli(options.env)));
+  const stopWatch = watchCliLoginProgress(options.env, getCli, onDetail);
+  let result: DoxentRunResult;
+  try {
+    result = await runAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS, env: options.env });
+  } finally {
+    stopWatch();
+  }
   const output = result.stdout + '\n' + result.stderr;
   const page = parseDoxentLoginBlock(output);
   if (page) {
@@ -491,11 +745,7 @@ async function runDoxentBind(
     loginStateCache = { at: Date.now(), value: login };
     return { skill, login, page };
   }
-  throw new Error(
-    result.timedOut
-      ? '打开登录页面超时（官方 CLI 3 分钟内没有返回登录链接）'
-      : '官方 CLI 没有返回登录链接' + (result.stderr.trim() ? '：' + result.stderr.trim().slice(0, 300) : ''),
-  );
+  throw new Error(loginFailureMessage(result, getCli(options.env)));
 }
 
 /**
@@ -504,24 +754,55 @@ async function runDoxentBind(
  * 为什么不再用一个长请求硬等：首次绑定要下载技能包、启动 CLI 并等它回登录链接，
  * 可能 1–3 分钟；设置页只能显示「准备中…」，反代/浏览器还可能先把请求掐断。
  * 改成任务 + 轮询后，设置页能显示当前阶段与已等待时长，刷新页面也能接着看。
+ *
+ * 启动前会清理「上次安装被中断」留下的官方 CLI 安装锁：官方客户端抢锁上限 180 秒，
+ * 不清理会让每次绑定都白等三分钟（2026-11-18 的「一直准备中」根因）。
  */
 export function startDoxentBind(options: DoxentBindOptions): DoxentBindJob {
   if (bindJob?.state === 'running') return { ...bindJob };
   const token = ++bindToken;
   const reason: DoxentBindReason = options.reason ?? 'bind';
-  bindJob = { state: 'running', step: reason === 'switch' ? 'logout' : 'install', reason, startedAt: Date.now() };
+  const env = options.env ?? process.env;
+  const cleared = clearStaleDoxentCliLock({ env });
+  if (cleared.cleared) {
+    console.info('[doxent] 已清理残留的官方 CLI 安装锁：' + doxentCliInstallPath(env));
+  }
+  const startedAt = Date.now();
+  bindJob = {
+    state: 'running',
+    step: reason === 'switch' ? 'logout' : 'install',
+    reason,
+    startedAt,
+    updatedAt: startedAt,
+    detail: reason === 'switch' ? '正在退出当前账号并清理本机登录凭据…' : '正在检查环境并准备官方技能包…',
+  };
   bindSettled = (async () => {
     try {
-      const result = await runDoxentBind(options, (step, skill) => {
-        if (token !== bindToken || !bindJob) return;
-        bindJob = { ...bindJob, step, ...(skill ? { skill } : {}) };
-      });
+      const result = await runDoxentBind(
+        options,
+        (step, skill, detail) => {
+          if (token !== bindToken || !bindJob) return;
+          bindJob = {
+            ...bindJob,
+            step,
+            updatedAt: Date.now(),
+            ...(skill ? { skill } : {}),
+            ...(detail ? { detail } : {}),
+          };
+        },
+        (detail) => {
+          if (token !== bindToken || !bindJob) return;
+          bindJob = { ...bindJob, detail, updatedAt: Date.now() };
+        },
+      );
       if (token !== bindToken || !bindJob) return;
       bindJob = {
         ...bindJob,
         state: 'done',
         step: 'login',
         finishedAt: Date.now(),
+        updatedAt: Date.now(),
+        detail: result.page?.pageType === '设置' ? '官方 CLI 已登录' : '已拿到登录链接，等待在浏览器完成登录',
         skill: result.skill,
         login: result.login,
         ...(result.page ? { page: result.page } : {}),
@@ -532,6 +813,8 @@ export function startDoxentBind(options: DoxentBindOptions): DoxentBindJob {
         ...bindJob,
         state: 'error',
         finishedAt: Date.now(),
+        updatedAt: Date.now(),
+        detail: '绑定失败，可点「重试」重新绑定',
         error: messageOf(error),
       };
     }
@@ -565,6 +848,9 @@ export async function prepareDoxentAfterCredentialSync(options: {
       /* 继续走完整准备：缺 Python / CLI 未装时由 login 统一报错 */
     }
   }
+  // 同步凭据后的准备也会跑官方 login：同样先清掉上次安装中断留下的锁
+  const cleared = clearStaleDoxentCliLock();
+  if (cleared.cleared) console.info('[doxent] 已清理残留的官方 CLI 安装锁（同步凭据准备）');
   await installDoxentSkill({ home: options.home, url: options.url, log: (message) => console.info(message) });
   const result = await runDoxentApiAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS });
   const page = parseDoxentLoginBlock(result.stdout + '\n' + result.stderr);
@@ -644,7 +930,7 @@ export async function unbindDoxent(options: { home: string }): Promise<{ skillRe
   return { skillRemoved, login };
 }
 
-/** 设置页的完整状态：Python、技能、登录态一次给全 */
+/** 设置页的完整状态：Python、技能、CLI、登录态一次给全 */
 export async function doxentStatus(
   options: {
     home: string;
@@ -652,21 +938,25 @@ export async function doxentStatus(
     loginTimeoutMs?: number;
     checkLogin?: boolean;
     credentials?: DoxentCredentialOptions;
+    env?: NodeJS.ProcessEnv;
   },
 ): Promise<DoxentStatus> {
   const home = options.home;
-  const python = await probePython();
+  // 「重新检测」必须重新探测 Python：否则用户装完 Python 后仍会看到缓存的「未找到」
+  if (options.refresh) resetDoxentCaches();
+  const python = await probePython(options.env);
   const skill = doxentSkillState(home);
-  const downloadUrl = doxentSkillUrl();
+  const cli = doxentCliState(options.env);
+  const downloadUrl = doxentSkillUrl(options.env);
   if (!python.available) {
-    return { python, skill, downloadUrl, login: { state: 'unknown', detail: '缺少 Python，无法调用官方客户端' } };
+    return { python, skill, cli, downloadUrl, login: { state: 'unknown', detail: '缺少 Python，无法调用官方客户端' } };
   }
   if (!skill.installed) {
-    return { python, skill, downloadUrl, login: { state: 'logged-out', detail: '尚未绑定办公本' } };
+    return { python, skill, cli, downloadUrl, login: { state: 'logged-out', detail: '尚未绑定办公本' } };
   }
   // 绑定刚失败时只想刷新「技能装没装上」：不拉起官方 CLI，省掉一次十几秒的子进程
   if (options.checkLogin === false) {
-    return { python, skill, downloadUrl, login: withAccount(loginStateCache?.value ?? { state: 'unknown' }, options.credentials) };
+    return { python, skill, cli, downloadUrl, login: withAccount(loginStateCache?.value ?? { state: 'unknown' }, options.credentials) };
   }
   try {
     const login = await doxentLoginInfo({
@@ -675,11 +965,12 @@ export async function doxentStatus(
       timeoutMs: options.loginTimeoutMs,
       credentials: options.credentials,
     });
-    return { python, skill, downloadUrl, login };
+    return { python, skill, cli, downloadUrl, login };
   } catch (error) {
     return {
       python,
       skill,
+      cli,
       downloadUrl,
       login: { state: 'unknown', detail: error instanceof Error ? error.message : String(error) },
     };

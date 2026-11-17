@@ -5,15 +5,21 @@ import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
 import {
+  DOXENT_CLI_LOCK_NAME,
+  DOXENT_CLI_LOCK_STALE_MS,
   DOXENT_MARKER_FILE,
   clearDoxentBindJob,
+  clearStaleDoxentCliLock,
   doxentBindJob,
+  doxentCliInstallPath,
+  doxentCliState,
   doxentSkillRoot,
   doxentSkillState,
   doxentSkillUrl,
   installDoxentSkill,
   parseDoxentLoginBlock,
   parseDoxentLoginState,
+  readDoxentCliVersion,
   readDoxentSkillVersion,
   removeDoxentSkill,
   startDoxentBind,
@@ -22,6 +28,11 @@ import {
 
 function tempHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'doxent-test-'));
+}
+
+/** 临时官方 CLI 安装目录：测试绝不碰宿主机真实的 %LOCALAPPDATA%\Doxent */
+function tempCliEnv(): NodeJS.ProcessEnv {
+  return { DOXENT_CLI_INSTALL_DIR: tempHome() };
 }
 
 /** 真实 CLI 输出的形状：起止标记 + 页面类型 + markdown 链接 + 字符二维码 */
@@ -199,6 +210,108 @@ test('doxentSkillUrl：ENGRAM_DOXENT_SKILL_URL 覆盖默认官方地址', () => 
   assert.equal(doxentSkillUrl({ ENGRAM_DOXENT_SKILL_URL: 'https://mirror.test/doxent.zip' }), 'https://mirror.test/doxent.zip');
 });
 
+/* ------------------------------------------------------------------ 官方 CLI 状态/安装锁 */
+
+test('doxentCliInstallPath：与官方客户端同规则（Windows LOCALAPPDATA / POSIX ~/.local/bin / 环境变量覆盖）', () => {
+  assert.equal(
+    doxentCliInstallPath({ LOCALAPPDATA: 'C:\\Users\\example\\AppData\\Local' }, 'win32'),
+    'C:\\Users\\example\\AppData\\Local\\Doxent\\CoreCLI\\doxent-cli.exe',
+  );
+  assert.equal(
+    doxentCliInstallPath({ DOXENT_CLI_INSTALL_DIR: 'D:\\tools\\doxent' }, 'win32'),
+    'D:\\tools\\doxent\\doxent-cli.exe',
+  );
+  assert.equal(
+    doxentCliInstallPath({ DOXENT_CLI_INSTALL_DIR: '/opt/doxent' }, 'linux'),
+    '/opt/doxent/doxent-cli',
+  );
+});
+
+test('doxentCliState：未安装 / 已安装（读 cli-version.json）/ 安装锁残留', () => {
+  const env = tempCliEnv();
+  const cliPath = doxentCliInstallPath(env);
+
+  const missing = doxentCliState(env);
+  assert.equal(missing.installed, false);
+  assert.equal(missing.lock, false);
+  assert.equal(missing.lockStale, false);
+  assert.equal(missing.path, cliPath);
+
+  fs.writeFileSync(cliPath, 'fake cli');
+  // 官方缓存里 installedVersion 是真正装上的版本；version=0.0.0 是「未识别」占位，不能被展示
+  fs.writeFileSync(path.join(path.dirname(cliPath), 'cli-version.json'), JSON.stringify({ version: '0.0.0', installedVersion: '1.0.4' }));
+  const installed = doxentCliState(env);
+  assert.equal(installed.installed, true);
+  assert.equal(installed.version, '1.0.4');
+  assert.equal(readDoxentCliVersion(cliPath), '1.0.4');
+
+  const lockPath = path.join(path.dirname(cliPath), DOXENT_CLI_LOCK_NAME);
+  fs.mkdirSync(lockPath);
+  const fresh = doxentCliState(env);
+  assert.equal(fresh.lock, true);
+  assert.equal(fresh.lockStale, false, '刚创建的锁可能正在安装，不能判成残留');
+
+  const old = new Date(Date.now() - DOXENT_CLI_LOCK_STALE_MS - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  const stale = doxentCliState(env);
+  assert.equal(stale.lock, true);
+  assert.equal(stale.lockStale, true, '超过阈值的锁要能被识别为残留');
+});
+
+test('clearStaleDoxentCliLock：只清老旧空锁；新锁和非空目录不动', () => {
+  const env = tempCliEnv();
+  const dir = path.dirname(doxentCliInstallPath(env));
+  const lockPath = path.join(dir, DOXENT_CLI_LOCK_NAME);
+
+  // 没有锁：什么都不做
+  const none = clearStaleDoxentCliLock({ env });
+  assert.equal(none.cleared, false);
+  assert.equal(none.reason, 'no-lock');
+
+  // 新锁：可能官方客户端正在装，不能抢
+  fs.mkdirSync(lockPath);
+  assert.equal(clearStaleDoxentCliLock({ env }).reason, 'fresh');
+  assert.equal(fs.existsSync(lockPath), true);
+
+  // 老锁：清理
+  const old = new Date(Date.now() - DOXENT_CLI_LOCK_STALE_MS - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  const cleared = clearStaleDoxentCliLock({ env });
+  assert.equal(cleared.cleared, true);
+  assert.equal(fs.existsSync(lockPath), false);
+
+  // 老锁但目录非空：不递归删，报 not-empty
+  fs.mkdirSync(lockPath);
+  fs.writeFileSync(path.join(lockPath, 'keep.txt'), 'x');
+  fs.utimesSync(lockPath, old, old);
+  const nonEmpty = clearStaleDoxentCliLock({ env });
+  assert.equal(nonEmpty.cleared, false);
+  assert.equal(nonEmpty.reason, 'not-empty');
+  assert.equal(fs.existsSync(path.join(lockPath, 'keep.txt')), true);
+});
+
+test('startDoxentBind：启动前自动清理上次安装中断留下的 CLI 安装锁', async () => {
+  clearDoxentBindJob();
+  const env = tempCliEnv();
+  const dir = path.dirname(doxentCliInstallPath(env));
+  const lockPath = path.join(dir, DOXENT_CLI_LOCK_NAME);
+  fs.mkdirSync(lockPath);
+  const old = new Date(Date.now() - DOXENT_CLI_LOCK_STALE_MS - 60_000);
+  fs.utimesSync(lockPath, old, old);
+
+  const started = startDoxentBind({
+    home: tempHome(),
+    env,
+    install: async (input) => ({ installed: true, managed: true, root: doxentSkillRoot(input.home), version: '1.3.10' }),
+    runAction: async () => ({ code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false }),
+  });
+  assert.equal(started.state, 'running');
+  assert.equal(fs.existsSync(lockPath), false, '残留锁必须在任务启动时清掉');
+  await waitDoxentBindSettled();
+  assert.equal(doxentBindJob()?.state, 'done');
+  clearDoxentBindJob();
+});
+
 test('startDoxentBind：后台任务按 install → login 推进，完成后带回登录链接', async () => {
   clearDoxentBindJob();
   const home = tempHome();
@@ -210,6 +323,7 @@ test('startDoxentBind：后台任务按 install → login 推进，完成后带�
 
   const started = startDoxentBind({
     home,
+    env: tempCliEnv(),
     install: async (options) => {
       steps.push('install');
       await installGate;
@@ -231,6 +345,8 @@ test('startDoxentBind：后台任务按 install → login 推进，完成后带�
   assert.equal(mid?.state, 'running');
   assert.equal(mid?.step, 'login', '技能装好后阶段切到启动官方 CLI');
   assert.equal(mid?.skill?.installed, true);
+  assert.match(mid?.detail || '', /官方 CLI/, '登录阶段要说明官方 CLI 在做什么');
+  assert.ok((mid?.updatedAt || 0) >= started.startedAt);
 
   releaseLogin();
   await waitDoxentBindSettled();
@@ -239,6 +355,7 @@ test('startDoxentBind：后台任务按 install → login 推进，完成后带�
   assert.equal(job?.page?.pageType, '登录');
   assert.equal(job?.page?.url, 'https://cli.iflyink.com/login?sn=nsn_abc&pollKey=deadbeef');
   assert.equal(job?.login?.state, 'logged-out');
+  assert.match(job?.detail || '', /登录链接/, '完成后要说明在等浏览器登录');
   assert.deepEqual(steps, ['install', 'login']);
   clearDoxentBindJob();
 });
@@ -247,6 +364,7 @@ test('startDoxentBind：CLI 没回链接时进入 error（按钮不会永远停�
   clearDoxentBindJob();
   const job = startDoxentBind({
     home: tempHome(),
+    env: tempCliEnv(),
     install: async (options) => ({
       installed: true,
       managed: true,
@@ -263,6 +381,36 @@ test('startDoxentBind：CLI 没回链接时进入 error（按钮不会永远停�
   clearDoxentBindJob();
 });
 
+test('startDoxentBind：超时错误带「安装锁」线索（设置页据此提示清理后重试）', async () => {
+  clearDoxentBindJob();
+  startDoxentBind({
+    home: tempHome(),
+    env: tempCliEnv(),
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    // 注入「CLI 已安装但安装锁残留」：超时说明必须把这条线索带出来
+    cliState: () => ({
+      installed: true,
+      path: 'C:\\Users\\example\\AppData\\Local\\Doxent\\CoreCLI\\doxent-cli.exe',
+      version: '1.0.4',
+      lock: true,
+      lockAgeMs: DOXENT_CLI_LOCK_STALE_MS * 2,
+      lockStale: true,
+    }),
+    runAction: async () => ({ code: null, stdout: '', stderr: '', timedOut: true }),
+  });
+  await waitDoxentBindSettled();
+  const finished = doxentBindJob();
+  assert.equal(finished?.state, 'error');
+  assert.match(finished?.error || '', /安装锁/);
+  assert.match(finished?.error || '', /超时/);
+  clearDoxentBindJob();
+});
+
 test('startDoxentBind：重复点击复用同一个任务，不重复装技能', async () => {
   clearDoxentBindJob();
   let installs = 0;
@@ -270,6 +418,7 @@ test('startDoxentBind：重复点击复用同一个任务，不重复装技能',
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const options = {
     home: tempHome(),
+    env: tempCliEnv(),
     install: async (input: { home: string }) => {
       installs += 1;
       await gate;
@@ -295,6 +444,7 @@ test('startDoxentBind：切换账号先退出旧会话，再装技能并生成�
   const events: string[] = [];
   const started = startDoxentBind({
     home,
+    env: tempCliEnv(),
     reason: 'switch',
     credentials: { env: {}, home },
     prepareSwitch: async () => {
@@ -329,6 +479,7 @@ test('startDoxentBind：切换时退出旧会话失败进入 error，不继续�
   let installs = 0;
   startDoxentBind({
     home,
+    env: tempCliEnv(),
     reason: 'switch',
     credentials: { env: {}, home },
     prepareSwitch: async () => {
