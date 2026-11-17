@@ -101,6 +101,18 @@
       <AgentCliSection />
     </SettingsGroup>
 
+    <!-- 办公本（讯飞）：绑定 Doxent 账号后，内置 Agent 经官方 skill + CLI 直接读写办公本数据。
+         绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，属 owner 级管理面，
+         所以与「外部接入」同样按 features.agentAdmin 门控（手机恒 false，整组不渲染）。 -->
+    <SettingsGroup
+      v-if="capabilities.features.agentAdmin"
+      anchor="agent-doxent"
+      title="办公本（讯飞）"
+      hint="绑定 Doxent 账号，内置 Agent 可调阅办公本资料"
+    >
+      <DoxentSection />
+    </SettingsGroup>
+
     <SettingsGroup
       anchor="agent-tools"
       title="工具与手册"
@@ -152,6 +164,7 @@ import {
 } from '../../lib/cliReference';
 import { expandGroup } from '../../lib/settingsCollapse';
 import AgentCliSection from './AgentCliSection.vue';
+import DoxentSection from './DoxentSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AgentConsolePanel from './AgentConsolePanel.vue';

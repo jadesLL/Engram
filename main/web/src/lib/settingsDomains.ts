@@ -216,6 +216,10 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       // Agent 管理面的端出现：手机只有同步成员令牌，Agent 令牌不能下发到手机，所以这一组挂 agent
       // （android-local 为 false）且不渲染。
       { id: 'agent-target', label: '外部接入', icon: 'plug', need: 'agent' },
+      // 办公本（讯飞，2026-11）：绑定 Doxent 账号后，内置 Agent 经官方 skill + CLI 读写办公本的
+      // 笔记 / Office 文档 / 书籍 / 日程。绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，
+      // 同属 owner 级管理面，所以与「外部接入」一样挂 agent（手机恒 false，不渲染组）。
+      { id: 'agent-doxent', label: '办公本（讯飞）', icon: 'book-open', need: 'agent' },
       { id: 'agent-tools', label: '工具与手册', icon: 'wrench', need: 'agentConsole' },
     ],
   },

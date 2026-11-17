@@ -110,6 +110,19 @@ FROM node:22-slim
 ENV NODE_ENV=production \
     DATA_DIR=/data \
     PORT=8080
+# 办公本接入（doxent）走官方 Python 客户端（官方 meta.json 要求 Python 3.8+）：运行镜像内装最小的
+# python3，内置 Agent 才能在 Docker / NAS 上绑定办公本。apt 源与 CA 引导同 deps 阶段（slim 缺系统 CA，
+# 用 Node 自带根证书引导），放在 COPY 应用产物之前，代码改动不会让这一层失效。
+RUN sed -i \
+    -e 's|https\?://deb\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
+    -e 's|https\?://security\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
+    /etc/apt/sources.list.d/debian.sources \
+  && node -e "require('node:fs').writeFileSync('/tmp/engram-node-ca.pem', require('node:tls').rootCertificates.join('\n') + '\n')" \
+  && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem -o APT::Update::Error-Mode=any update \
+  && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem install -y --no-install-recommends python3 ca-certificates \
+  && rm -f /tmp/engram-node-ca.pem \
+  && rm -rf /var/lib/apt/lists/* \
+  && python3 --version
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/server/node_modules ./server/node_modules
