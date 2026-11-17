@@ -33,3 +33,21 @@ test('速记提交按钮的文字标签不换行', () => {
   assert.ok(label, '找不到 .send-label 样式');
   assert.match(label[0], /white-space:\s*nowrap/, '「记下」在窄档里可能折行，按钮会忽高忽低');
 });
+
+test('速记提交按钮：禁用态用主色细环，不再铺灰块', () => {
+  const source = read('components/HomeBoardModules/HomeActionComposer.vue');
+  const styles = source.slice(source.lastIndexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '');
+  const disabled = styles.match(/\.action-send:disabled,\s*\.action-submit:disabled\s*\{[^}]*\}/);
+  assert.ok(disabled, '找不到「记下」/「提交」的禁用态规则');
+  assert.doesNotMatch(
+    disabled[0],
+    /background:\s*var\(--bg-tertiary\)/,
+    '禁用态又退回实心灰底：白卡上的「记下」会重新变成一块废弃感灰块'
+  );
+  assert.match(disabled[0], /background:\s*transparent/, '禁用态应透明底，把卡面让出来');
+  assert.match(
+    disabled[0],
+    /box-shadow:\s*inset\s+0\s+0\s+0\s+1px\s+color-mix\(in srgb,\s*var\(--accent\)/,
+    '禁用态缺少 1px 主色细环：和设置页选中态不是同一套语言'
+  );
+});

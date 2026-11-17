@@ -119,13 +119,24 @@ function onKey(event: KeyboardEvent) {
 /* 一格高的记想法条：左侧落一个灵感图标，右侧给快捷键提示与带文字的提交按钮，整条读起来像一个输入框 */
 .bar-lead { display:flex;align-items:center;justify-content:center;width:24px;height:32px;flex:none;color:var(--accent); }
 .bar-hint { flex:none;font-size:11px;color:var(--text-faint);white-space:nowrap; }
-.action-send { display:flex;align-items:center;justify-content:center;gap:6px;height:32px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent); }
+.action-send { display:flex;align-items:center;justify-content:center;gap:6px;height:32px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent);transition:background var(--motion-fast) var(--ease-standard),color var(--motion-fast) var(--ease-standard),box-shadow var(--motion-fast) var(--ease-standard); }
 /* 上面那条 `.home-action button` 重置比单类名权重高，会把内边距与最小宽度吃掉，
    结果「记下」贴着按钮右缘、被卡片的 overflow 裁掉半笔；这里用两段选择器把它们提回来。 */
 .home-action .action-send { min-width:32px;padding:0 11px; }
 .send-label { font-size:12px;font-weight:600;line-height:1;white-space:nowrap; }
 @container (max-width:340px) { .bar-hint { display:none; } .send-label { display:none; } }
-.action-send:disabled,.action-submit:disabled { background:var(--bg-tertiary);color:var(--text-faint);opacity:1!important; }
+/*
+ * 2026-11-18 禁用态去灰：空输入时原本铺 `--bg-tertiary` 实心灰，白卡上像一块废弃控件，
+ * 也跟设置页选中态改用的「1px 细环」语言打架。现在改成透明底 + 淡主色细环 + 淡主色字：
+ * 位置和主操作仍一眼可见，但不再在卡面上压一层灰。输入一有内容就恢复实心主色。
+ */
+.action-send:disabled,
+.action-submit:disabled {
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+  opacity: 1 !important;
+}
 .bar-helper,.bar-error,.action-expand { display:flex;align-items:center;justify-content:center;width:28px;height:32px;flex:none;color:var(--text-faint);background:transparent; }
 .bar-helper:hover,.action-expand:hover { color:var(--accent); }
 .bar-error { width:18px;color:var(--danger); }
