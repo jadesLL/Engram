@@ -224,7 +224,8 @@ startupSummaryTimer = setTimeout(() => startupSummary('兜底输出：60s 内未
 if (startupSummaryTimer.unref) startupSummaryTimer.unref();
 
 function dataUrl(html) {
-  // 过渡/错误页无交互元素：整页可拖拽，标题栏隐藏后窗口仍可移动
+  // 过渡/错误页整页可拖拽，标题栏隐藏后窗口仍可移动；页面内的交互元素（更新小窗的最小化按钮）
+  // 需自行声明 -webkit-app-region: no-drag，否则点击会被拖拽区吃掉。
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html + '<style>html,body{-webkit-app-region:drag}</style>');
 }
 
@@ -2355,7 +2356,8 @@ ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
 });
 
 // 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。复用启动页深色主题，
-// 主进程经 executeJavaScript 原地更新步骤文字与日志，不开 nodeIntegration、无 IPC 桥。
+// 主进程经 executeJavaScript 原地更新步骤文字与日志；页面本身是 data: URL，
+// 只通过专用 preload（update-preload.js）暴露「最小化」一个能力，不挂主窗的 wikiDesktop 桥。
 function updateProgressPage() {
   const extra = `
     body { align-items: flex-start; padding-top: 40px; }
@@ -2370,25 +2372,55 @@ function updateProgressPage() {
     }
     .failed .bar i { animation: none; background: #f87171; }
     .failed .step { color: #f87171; }
+    /* 无边框窗口没有系统标题栏按钮：自绘最小化；整页是拖拽区，按钮必须显式 no-drag 才点得动 */
+    .win-min {
+      position: fixed; top: 10px; right: 12px; width: 30px; height: 26px;
+      display: flex; align-items: center; justify-content: center; padding: 0;
+      border: 0; border-radius: 6px; background: transparent; color: #8a93a6;
+      cursor: pointer; -webkit-app-region: no-drag;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .win-min:hover { background: rgba(255,255,255,0.08); color: #e6e9f0; }
+    .win-min:active { background: rgba(255,255,255,0.14); }
+    .win-min:focus-visible { outline: 1px solid #4d8aff; outline-offset: 1px; }
   `;
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
     extra +
-    '</style></head><body><div class="wrap">' +
+    '</style></head><body>' +
+    '<button class="win-min" id="win-min" type="button" title="最小化" aria-label="最小化">' +
+    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">' +
+    '<path d="M2.5 6h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
+    '</svg></button>' +
+    '<div class="wrap">' +
     logoSvg('logo') +
     '<h1>正在更新 Engram</h1>' +
     '<p class="step" id="step">准备中…</p>' +
     '<div class="bar"><i></i></div>' +
     '<pre id="log"></pre>' +
-    '</div></body></html>'
+    '</div>' +
+    '<script>document.getElementById("win-min").addEventListener("click", function () {' +
+    'if (window.engramUpdateWindow) window.engramUpdateWindow.minimize();});</script>' +
+    '</body></html>'
   );
 }
 
 let updateWin = null;
 
+// 小窗最小化通道：只接受更新小窗自己发来的请求（data: 页面 + 专用 preload），其他来源忽略
+ipcMain.on('desktop-update-window-minimize', (event) => {
+  if (!updateWin || updateWin.isDestroyed() || event.sender !== updateWin.webContents) return;
+  updateWin.minimize();
+});
+
 function showUpdateProgress() {
-  if (updateWin && !updateWin.isDestroyed()) return updateWin;
+  if (updateWin && !updateWin.isDestroyed()) {
+    // 上一次更新失败后用户可能把窗口最小化了：重试时先恢复，否则新步骤只在任务栏里更新
+    if (updateWin.isMinimized()) updateWin.restore();
+    updateWin.show();
+    return updateWin;
+  }
   updateWin = new BrowserWindow({
     width: 560,
     height: 430,
@@ -2400,7 +2432,13 @@ function showUpdateProgress() {
     title: 'Engram 更新',
     backgroundColor: SPLASH_BG,
     icon: windowIcon(),
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: {
+      // 专用 preload：只给页面一个最小化方法，不复用主窗 preload.js 的完整桌面桥
+      preload: path.join(__dirname, 'update-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
   });
   updateWin.setAlwaysOnTop(true, 'screen-saver');
   updateWin.once('ready-to-show', () => updateWin.show());

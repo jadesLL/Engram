@@ -13,6 +13,8 @@ function stagingPlan(desktopRoot) {
   return [
     { from: at('main.js'), to: 'main.js' },
     { from: at('preload.js'), to: 'preload.js' },
+    // 更新进度小窗的专用 preload（只暴露最小化）；缺了它小窗按钮点了没反应
+    { from: at('update-preload.js'), to: 'update-preload.js' },
     // main.js 顶部用到的 lib/data-dir 与 scripts/lib/*（都在主进程模块图里，缺一个就起不来）
     { from: at('lib'), to: 'lib' },
     { from: at('scripts', 'lib'), to: path.join('scripts', 'lib') },
