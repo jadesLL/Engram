@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「退到后台后继续同步最多 5 分钟」的宽限策略回归（纯逻辑，不碰 Android API）：
+ * 「退到后台后继续同步最多 10 分钟」的宽限策略回归（纯逻辑，不碰 Android API）：
  * 只放行已经发生的工作；窗口从进入后台起算，到期边界之后一律不再允许。
  */
 class BackgroundSyncPolicyTest {
@@ -32,13 +32,20 @@ class BackgroundSyncPolicyTest {
     }
 
     @Test
-    fun graceLastsFiveMinutesFromBackgrounding() {
+    fun graceLastsTenMinutesFromBackgrounding() {
         val backgroundAt = 1_000_000L
         val deadline = BackgroundSyncPolicy.deadlineFrom(backgroundAt)
-        assertEquals(backgroundAt + 5 * 60_000L, deadline)
-        assertEquals(5 * 60_000L, BackgroundSyncPolicy.remainingMs(backgroundAt, deadline))
+        assertEquals(backgroundAt + 10 * 60_000L, deadline)
+        assertEquals(10 * 60_000L, BackgroundSyncPolicy.remainingMs(backgroundAt, deadline))
         assertTrue(BackgroundSyncPolicy.inGrace(backgroundAt + 1, deadline))
         assertTrue(BackgroundSyncPolicy.inGrace(deadline - 1, deadline))
+    }
+
+    @Test
+    fun graceWindowIsTenMinutes() {
+        // 需求口径：退到后台后还有 10 分钟可以同步（通知文案的分钟数必须与窗口同源）
+        assertEquals(10 * 60_000L, BackgroundSyncPolicy.GRACE_MS)
+        assertEquals(10, BackgroundSyncPolicy.GRACE_MINUTES)
     }
 
     @Test

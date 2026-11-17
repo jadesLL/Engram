@@ -1,6 +1,7 @@
 package com.engram.app
 
 import android.content.Context
+import android.os.Build
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -56,6 +57,8 @@ class EngramLocalServer private constructor(private val context: Context) {
     private val agent = AgentBridge(db, secrets)
     init {
         deviceNetwork.setListener { sync.onNetworkChanged() }
+        // 后台宽限窗口开/关 → 后台同步前台服务（[SyncGraceService]）：窗口内不让系统冻结进程
+        sync.onGraceChanged = { active -> if (active) startSyncGraceService() else stopSyncGraceService() }
     }
     /** 安卓端 OTA（APK 在线升级）：检查/下载在本地服务内跑，安装交给宿主的 Activity（见 AppUpdater） */
     private val appUpdate = AppUpdater(context, db, secrets)
@@ -104,10 +107,51 @@ class EngramLocalServer private constructor(private val context: Context) {
         // 回前台补一次网络核对：飞行模式、开合 VPN 等场景可能错过系统回调
         deviceNetwork.refresh()
         sync.onForeground()
+        // 兜底：onUserLeaveHint 提前拉起过前台服务、但这一轮其实没有工作（没开宽限）时也要停掉
+        stopSyncGraceService()
         // 启动/回前台自动检查更新（自动更新开着时发现新版直接后台下载），与网页侧的退避调度互补
         runCatching { appUpdate.onForeground() }
     }
-    fun onBackground() = sync.onBackground()
+
+    /**
+     * 进入后台：交给同步引擎开宽限窗口；没开成（没有可继续的工作）就把提前拉起的前台服务收掉。
+     */
+    fun onBackground() {
+        if (!sync.onBackground()) stopSyncGraceService()
+    }
+
+    /**
+     * 用户按 Home / 切到别的 App（MainActivity.onUserLeaveHint）：趁进程还在前台把后台同步前台服务拉起来。
+     *
+     * Android 12+ 不允许从后台启动前台服务，等到 onStop 再拉会被系统拒绝；这里只在确实有工作时拉，
+     * 没有工作就不留任何后台通知。
+     */
+    fun onUserLeaveHint() {
+        if (!sync.hasBackgroundWork()) return
+        startSyncGraceService()
+    }
+
+    /** 「申请后台同步权限」是否值得弹框：已绑定中枢且同步开着（没有后台同步时不要骚扰用户） */
+    fun wantsBackgroundSyncPermissions(): Boolean =
+        db.setting("sync_role") == "member" && db.setting("sync_enabled") == "1"
+
+    private fun startSyncGraceService() {
+        if (SyncGraceService.start(context)) {
+            db.log(
+                "info",
+                "bg-sync-service",
+                "后台同步服务已启动：退到后台后继续完成同步（最多 " + BackgroundSyncPolicy.GRACE_MINUTES + " 分钟）",
+            )
+        } else {
+            db.log(
+                "warn",
+                "bg-sync-service-blocked",
+                "系统不允许启动后台同步服务：本轮可能提前中断，回到前台会立即补一轮",
+            )
+        }
+    }
+
+    private fun stopSyncGraceService() = SyncGraceService.stop(context)
     fun requestSync(full: Boolean) = sync.request(full)
     /**
      * 系统分享落袋：单独一条网页链接当场抓 HTML 原件、按页面标题命名（与 Web 端「粘贴链接」
@@ -931,6 +975,18 @@ class EngramLocalServer private constructor(private val context: Context) {
             sync.request(false)
         }
         post("/api/sync/reconcile") { if (call.authorize()) { sync.request(true); call.ok() } }
+        // 后台同步（Android 独有，见 BackgroundSyncPolicy / SyncGraceService）：
+        // 宽限窗口现状 + 两枚运行时权限（通知 / 电池优化）缺哪个。
+        get("/api/sync/background") {
+            if (!call.authorize()) return@get
+            call.json(backgroundStatus())
+        }
+        // 设置页的「申请权限」：弹系统对话框只能由 Activity 做，交给宿主（BackgroundSyncHost）转到 UI 线程。
+        post("/api/sync/background/permissions") {
+            if (!call.authorize()) return@post
+            val requested = backgroundSyncHost?.requestBackgroundSyncPermissions() ?: false
+            call.json(backgroundStatus().put("requested", requested))
+        }
 
         get("/") { call.serveAsset("index.html") }
         get("/{path...}") {
@@ -1007,6 +1063,29 @@ class EngramLocalServer private constructor(private val context: Context) {
             // 连接通道四态（局域网 / IPv6 / IPv4 / 已断开）与候选探测明细：侧栏状态胶囊、
             // 设置页「局域网优先」开关都按这套字段渲染（server sync/index.ts 的 link 同口径）
             .put("link", sync.linkStatus() ?: JSONObject.NULL)
+            // 后台同步（Android 独有）：10 分钟宽限窗口 + 两枚运行时权限的现状
+            .put("background", backgroundStatus())
+    }
+
+    /**
+     * 后台同步状态：`/api/sync/status` 的 `background` 字段与 `GET /api/sync/background` 共用。
+     *
+     * 桌面 / Docker 端没有这条路由也没有这个字段：前端按缺失整块隐藏（与 biometric / insets 同一套降级口径）。
+     */
+    private fun backgroundStatus(): JSONObject {
+        val grace = sync.backgroundGrace()
+        val notifications = SyncPermissions.notificationsGranted(context)
+        val battery = SyncPermissions.batteryUnrestricted(context)
+        val missing = BackgroundSyncPermissions.missing(Build.VERSION.SDK_INT, notifications, battery)
+        return JSONObject()
+            .put("supported", true)
+            .put("enabled", wantsBackgroundSyncPermissions())
+            .put("graceMs", BackgroundSyncPolicy.GRACE_MS)
+            .put("graceMinutes", BackgroundSyncPolicy.GRACE_MINUTES)
+            .put("active", grace.active)
+            .put("remainingMs", grace.remainingMs)
+            .put("permissions", JSONObject().put("notifications", notifications).put("battery", battery))
+            .put("missing", JSONArray(missing))
     }
 
     private fun currentDualStackConfig(): DualStackConfig = DualStackConfig.fromSettings { key -> db.setting(key) }
@@ -1359,6 +1438,12 @@ class EngramLocalServer private constructor(private val context: Context) {
         private val ASSET_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp")
         private val MULTIPART_CRLF = "\r\n".toByteArray(Charsets.UTF_8)
         @Volatile private var instance: EngramLocalServer? = null
+        /** 权限宿主（MainActivity）：只有 Activity 能弹系统权限界面，见 [BackgroundSyncHost] */
+        @Volatile private var backgroundSyncHost: BackgroundSyncHost? = null
+
+        @JvmStatic fun setBackgroundSyncHost(host: BackgroundSyncHost?) {
+            backgroundSyncHost = host
+        }
 
         @JvmStatic fun getInstance(context: Context): EngramLocalServer = instance ?: synchronized(this) {
             instance ?: EngramLocalServer(context.applicationContext).also { instance = it }

@@ -265,6 +265,7 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | `window.__engramJoinLink(raw)` → 返回 true 才算送达 | `MainActivity.java` | `lib/joinLink.ts` | 无调用；粘贴链接仍可用 |
 | `window.__engramShareInbox(delivery)` | `MainActivity.java` | `lib/shareInbox.ts` | 无分享入口 |
 | `EngramInboxRender` + `window.__engramInboxRenderResult(id, payload)` | `InboxRender.java` | `lib/inboxRender.ts` | 走服务端抓取，失败给原错误提示 |
+| 后台同步权限（**非 JS 桥**，host + 本地接口）：`BackgroundSyncHost` + `POST /api/sync/background/permissions`；保活为 `SyncGraceService`（`dataSync` 前台服务） | `MainActivity.java`（实现宿主）/ `SyncGraceService.kt` / `SyncPermissions.java` | `lib/backgroundSync.ts` + `SyncPanel.vue`（`/api/sync/status` 的 `background` 字段） | 桌面 / Docker 无 `background` 字段 → 卡片整块隐藏；没有宿主时申请接口为 no-op，状态照常可读 |
 
 **Windows 桥**：`main/desktop/preload.js` 通过 `contextBridge` 暴露 `window.wikiDesktop`（约 30 个方法，见文件）；Web 侧在 19 处调用，全部必须做「无桥不渲染/不调用」判断（样板：`App.vue` 用桥存在性判标题栏；`biometric.ts` 用 null 判降级）。
 
@@ -281,7 +282,7 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | 本地实现 | 只读写本机 `brain/` 或 `wiki.db` | auth、pages、files/assets、search、graph、trash、settings、backup/restore、sync config/status/log/pairing/reconcile、app-update | Kotlin/Ktor 路由实现 |
 | 窄代理到中枢 | 中枢做实事，手机只转发（成员令牌） | assistant 会话/run/events、agent-console 18 条、video-config、dream、guide、customer-research、tasks/board、inbox、ideas | `EngramLocalServer.kt` 的 `proxyHub` / `proxyAgent` + 未绑定中枢时 409 中文提示 |
 | 不代理（owner 级） | 成员令牌不能做 | 成员邀请/peers、DDNS、TLS、外部 Agent 接入、Agent 令牌发放 | 能力位 false，UI 不出现；直接访问给可读说明 |
-| 手机专属 | 只有壳层能做 | `/api/app-update/*`（OTA）、本机分享落袋（单独分享一条网页链接时由壳层抓 HTML 原件并按标题落袋，失败回退 `.txt`） | Kotlin 实现 |
+| 手机专属 | 只有壳层能做 | `/api/app-update/*`（OTA）、`/api/sync/background` 与 `/api/sync/background/permissions`（退到后台后 10 分钟的宽限窗口与通知 / 电池优化权限）、本机分享落袋（单独分享一条网页链接时由壳层抓 HTML 原件并按标题落袋，失败回退 `.txt`） | Kotlin 实现 |
 
 **规则**：新增 server 接口时，必须判断手机端属于哪一类；窄代理类要在 `EngramLocalServer` 加一行代理并在能力位/文案上说明「由中枢执行」；owner 级必须继续报 false。
 
