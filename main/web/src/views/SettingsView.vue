@@ -64,13 +64,20 @@
         </button>
 
         <div class="settings-nav-list">
-          <div v-for="domain in domains" :key="domain.id" class="settings-nav-domain">
+          <div
+            v-for="domain in domains"
+            :key="domain.id"
+            class="settings-nav-domain"
+            :class="{ 'is-expanded': activeDomain === domain.id }"
+          >
             <button
               class="settings-nav-item"
               type="button"
               :data-nav="domain.id"
               :class="{ active: activeDomain === domain.id }"
               :aria-current="activeDomain === domain.id ? 'page' : undefined"
+              :aria-expanded="activeDomain === domain.id"
+              :aria-controls="'settings-nav-sub-' + domain.id"
               :tabindex="activeDomain === domain.id ? 0 : -1"
               @click="selectDomain(domain.id)"
               @pointerenter="warmDomain(domain.id)"
@@ -79,22 +86,33 @@
               <Icon :name="domain.icon" :size="17" />
               <span class="nav-label">{{ domain.label }}</span>
               <span v-if="navMetaOf(domain.id)" class="settings-nav-meta">{{ navMetaOf(domain.id) }}</span>
+              <!-- 展开提示：没有它，用户不知道「多端同步」点开还有 5 个分组 -->
+              <Icon name="chevron-right" :size="14" class="settings-nav-chevron" />
             </button>
-            <!-- 二级目录：只展开当前大类；点击定位，滚动内容列时实时反亮当前分组（scrollspy） -->
-            <div v-if="activeDomain === domain.id" class="settings-nav-sub" role="group" :aria-label="domain.label + '的分组'">
-              <button
-                v-for="group in domain.groups"
-                :key="group.id"
-                type="button"
-                class="settings-nav-subitem"
-                :data-anchor="group.id"
-                :class="{ active: activeGroup === group.id, danger: group.danger }"
-                :aria-current="activeGroup === group.id ? 'true' : undefined"
-                @click="jumpToGroup(group.id)"
-              >
-                <span class="nav-label">{{ group.label }}</span>
-                <span v-if="group.danger" class="nav-danger">危险</span>
-              </button>
+            <!-- 二级目录：0fr→1fr 展开当前大类，收起的组挂 inert（Tab 不会落到看不见的按钮上）；
+                 点击定位，滚动内容列时实时反亮当前分组（scrollspy）。 -->
+            <div
+              :id="'settings-nav-sub-' + domain.id"
+              class="settings-nav-sub-wrap"
+              :class="{ open: activeDomain === domain.id }"
+              :inert="activeDomain === domain.id ? undefined : true"
+              :aria-hidden="activeDomain === domain.id ? undefined : 'true'"
+            >
+              <div class="settings-nav-sub" role="group" :aria-label="domain.label + '的分组'">
+                <button
+                  v-for="group in domain.groups"
+                  :key="group.id"
+                  type="button"
+                  class="settings-nav-subitem"
+                  :data-anchor="group.id"
+                  :class="{ active: activeGroup === group.id, danger: group.danger }"
+                  :aria-current="activeGroup === group.id ? 'true' : undefined"
+                  @click="jumpToGroup(group.id)"
+                >
+                  <span class="nav-label">{{ group.label }}</span>
+                  <span v-if="group.danger" class="nav-danger">危险</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -324,6 +342,8 @@ watch(activeDomain, (id) => {
     if (disposed || mobileLayout.value) return;
     observeActiveSection();
     scheduleScrollSpy();
+    /* 二级目录是手风琴：展开后当前大类可能被挤到列表可视区外，等高度过渡走完再带回视野 */
+    scheduleRevealActiveDomain(id);
   });
 });
 const viewEl = ref<HTMLElement | null>(null);
@@ -700,6 +720,46 @@ function revealActiveNavItem() {
   else if (itemRect.bottom > boxRect.bottom - pad) scroller.scrollTop += itemRect.bottom - (boxRect.bottom - pad);
 }
 
+/**
+ * 展开大类后把「父项 + 二级项」带回目录列表视野。
+ * 目录列表自己滚（不是整列），切换大类时手风琴一展开，靠下的父项和新增的二级项
+ * 很容易落到可视区之外——用户点完只看到内容变了，左栏却像没反应。
+ * 展开组比列表还高时（Agent 大类有 11 个分组），把父项顶到上沿，从第一组往下读。
+ */
+function revealActiveDomain(id: SettingsDomainId) {
+  if (mobileLayout.value) return;
+  const scroller = navScroller();
+  if (!scroller) return;
+  const item = scroller.querySelector<HTMLElement>(
+    '.settings-nav-item[data-nav="' + CSS.escape(id) + '"]',
+  );
+  const wrapper = item?.closest<HTMLElement>('.settings-nav-domain');
+  if (!item || !wrapper) return;
+  const box = scroller.getBoundingClientRect();
+  const itemRect = item.getBoundingClientRect();
+  const wrapRect = wrapper.getBoundingClientRect();
+  const pad = 8;
+  if (wrapRect.height > box.height - pad * 2) {
+    if (itemRect.top < box.top + pad) scroller.scrollTop -= box.top + pad - itemRect.top;
+    else if (itemRect.top > box.top + pad) scroller.scrollTop += itemRect.top - (box.top + pad);
+    return;
+  }
+  if (wrapRect.bottom > box.bottom - pad) scroller.scrollTop += wrapRect.bottom - (box.bottom - pad);
+  else if (wrapRect.top < box.top + pad) scroller.scrollTop -= box.top + pad - wrapRect.top;
+}
+
+/** 展开有 0fr→1fr 的高度过渡：等它走完再量高度，否则会按收起时的 0 高度算滚动位置 */
+let revealDomainTimer = 0;
+function scheduleRevealActiveDomain(id: SettingsDomainId) {
+  window.clearTimeout(revealDomainTimer);
+  revealDomainTimer = window.setTimeout(() => {
+    revealDomainTimer = 0;
+    if (disposed || activeDomain.value !== id) return;
+    revealActiveDomain(id);
+    revealActiveNavItem();
+  }, 220);
+}
+
 function syncActiveGroupFromScroll() {
   if (mobileLayout.value) return;
   if (Date.now() < spyLockedUntil) return;
@@ -839,6 +899,8 @@ onBeforeUnmount(() => {
   disconnectSectionObserver();
   if (spyRaf) cancelAnimationFrame(spyRaf);
   spyRaf = 0;
+  window.clearTimeout(revealDomainTimer);
+  revealDomainTimer = 0;
   unregisterBack?.();
   unregisterBack = null;
   mobileMedia.removeEventListener('change', onMobileChange);
