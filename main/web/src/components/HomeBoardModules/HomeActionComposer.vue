@@ -119,8 +119,11 @@ function onKey(event: KeyboardEvent) {
 /* 一格高的记想法条：左侧落一个灵感图标，右侧给快捷键提示与带文字的提交按钮，整条读起来像一个输入框 */
 .bar-lead { display:flex;align-items:center;justify-content:center;width:24px;height:32px;flex:none;color:var(--accent); }
 .bar-hint { flex:none;font-size:11px;color:var(--text-faint);white-space:nowrap; }
-.action-send { display:flex;align-items:center;justify-content:center;gap:6px;min-width:32px;height:32px;padding:0 11px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent); }
-.send-label { font-size:12px;font-weight:600;line-height:1; }
+.action-send { display:flex;align-items:center;justify-content:center;gap:6px;height:32px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent); }
+/* 上面那条 `.home-action button` 重置比单类名权重高，会把内边距与最小宽度吃掉，
+   结果「记下」贴着按钮右缘、被卡片的 overflow 裁掉半笔；这里用两段选择器把它们提回来。 */
+.home-action .action-send { min-width:32px;padding:0 11px; }
+.send-label { font-size:12px;font-weight:600;line-height:1;white-space:nowrap; }
 @container (max-width:340px) { .bar-hint { display:none; } .send-label { display:none; } }
 .action-send:disabled,.action-submit:disabled { background:var(--bg-tertiary);color:var(--text-faint);opacity:1!important; }
 .bar-helper,.bar-error,.action-expand { display:flex;align-items:center;justify-content:center;width:28px;height:32px;flex:none;color:var(--text-faint);background:transparent; }
