@@ -57,7 +57,31 @@
   font-size: 10px;
   font-weight: 600;
 }
-.settings-nav-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; margin-top: 14px; }
+/*
+ * 目录列表自己是滚动容器（2026-11-17 修用户报的「文字都飞出去了」）。
+ * 原先是 min-height: 0 + flex 默认收缩：分组一多，列表被压短到装不下，
+ * 条目又不是被裁掉而是溢出可见——于是「外部接入 / 工具与手册」直接压到底部状态条上，
+ * 而且列表既没滚动条也滚不动，最后两个分组等于没法点。
+ * 现在列表占满两段之间的剩余高度、自己滚；左栏顶部搜索与底部状态条各自钉住。
+ */
+.settings-nav-list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin-top: 14px;
+  padding-bottom: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 目录列比正文窄：滚动条收细一档（8px 轨道 + 2px 透明描边 = 4px 可见滑块） */
+.settings-nav-list::-webkit-scrollbar {
+  width: 8px;
+}
+.settings-nav-list::-webkit-scrollbar-thumb {
+  border-width: 2px;
+}
 .settings-nav-domain { display: flex; flex-direction: column; }
 
 .settings-shell {
@@ -73,23 +97,20 @@
 /*
  * 分类导航（两级）：7 个大类 + 各大类的分组锚点，全部平铺常显（2026-09-24 改版：
  * 不再有展开/收起状态）。大类切换整页，二级锚点负责滚动定位；滚动时反向高亮当前分组。
- * 分组多、竖着放不下，所以这一列自己是滚动容器——不能再靠 position: sticky：
- * sticky 只在壳层滚动时才有意义，视口外面那几项永远钉不出来（就是这次的 bug）。
+ * 分组多、竖着放不下，所以这一列自己负责滚动——不能再靠 position: sticky：
+ * sticky 只在壳层滚动时才有意义，视口外面那几项永远钉不出来（就是 2026-09-28 的 bug）。
+ *
+ * 2026-11-17：滚动权下放到中间的 .settings-nav-list，这一列只负责裁切（overflow: hidden）。
+ * 搜索框与底部状态条留在列上、不跟着列表滚；列表若继续由整列来滚，
+ * 状态条会被挤到视口外，或者（原来那种）被溢出的条目压住。
  */
 .settings-nav {
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 2px 10px 16px 0;
-  overflow-y: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
-}
-/* 目录列比正文窄：滚动条收细一档（8px 轨道 + 2px 透明描边 = 4px 可见滑块） */
-.settings-nav::-webkit-scrollbar {
-  width: 8px;
-}
-.settings-nav::-webkit-scrollbar-thumb {
-  border-width: 2px;
 }
 .settings-nav-domain {
   display: flex;
