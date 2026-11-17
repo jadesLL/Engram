@@ -18,26 +18,27 @@
       </button>
     </div>
     <div class="meta">
-      <span v-if="card.owner" class="chip owner" v-tooltip="'责任人'">{{ card.owner }}</span>
+      <span v-if="card.owner" class="chip owner" v-tooltip="'责任人'"><Icon name="user" :size="10" />{{ card.owner }}</span>
       <span
         v-if="card.when || card.repeat"
         class="chip when"
         :title="card.repeat ? `周期：${card.repeat}` : card.when"
-      >{{ card.repeat && !card.when ? card.repeat : whenText }}</span>
-      <span class="chip customer" :title="card.customer ? '客户' : '没有客户，按端组归到内部工作'">{{ customer }}</span>
-      <span v-if="card.customer && card.team" class="chip team" v-tooltip="'端组'">{{ card.team }}</span>
+      ><Icon name="calendar" :size="10" />{{ card.repeat && !card.when ? card.repeat : whenText }}</span>
+      <span class="chip customer" :title="card.customer ? '客户' : '没有客户，按端组归到内部工作'"><Icon name="building" :size="10" />{{ customer }}</span>
+      <span v-if="card.customer && card.team" class="chip team" v-tooltip="'端组'"><Icon name="users" :size="10" />{{ card.team }}</span>
       <span v-if="overdue" class="chip overdue-days">逾期 {{ overdueDays }} 天</span>
     </div>
     <button
       v-if="target.kind !== 'none'"
       class="source"
       type="button"
+      :title="target.label"
       v-tooltip="'跳到依据的原文'"
       @click="$emit('open', card)"
     >
-      <Icon name="link" :size="12" />{{ target.label }}
+      <Icon name="link" :size="12" /><span class="source-label">{{ target.label }}</span>
     </button>
-    <span v-else-if="card.source" class="source plain">{{ card.source }}</span>
+    <span v-else-if="card.source" class="source plain"><Icon name="file" :size="12" /><span class="source-label">{{ card.source }}</span></span>
   </article>
 </template>
 
@@ -99,10 +100,14 @@ function compactWhen(text: string): string {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   overflow: hidden;
+  text-wrap: balance;
 }
 .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chip {
   max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 1px 7px;
   border-radius: 9px;
   background: var(--bg-tertiary);
@@ -113,10 +118,13 @@ function compactWhen(text: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chip.owner { background: var(--accent-soft); color: var(--accent); }
-.chip.when { background: var(--badge-idea-soft); color: var(--badge-idea); }
-.chip.customer { background: var(--badge-entity-soft); color: var(--badge-entity); }
-.chip.team { background: var(--badge-note-soft); color: var(--badge-note); }
+.chip svg { flex: none; opacity: .8; }
+/* 四类元数据不再各占一种粉彩底：紫色 / 青色归还知识类型徽章。
+   只有日期保留琥珀文字色（不铺底），逾期才用红色。 */
+.chip.owner,
+.chip.customer,
+.chip.team { background: var(--bg-tertiary); color: var(--text-secondary); }
+.chip.when { background: transparent; color: var(--badge-idea); box-shadow: inset 0 0 0 1px var(--border); }
 .chip.overdue-days { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
 .complete-task {
   display: inline-flex;
@@ -153,9 +161,9 @@ function compactWhen(text: string): string {
   text-align: left;
   cursor: pointer;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.source-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source:hover { color: var(--accent); text-decoration: underline; }
 .source.plain { cursor: default; }
 .source.plain:hover { color: var(--text-faint); text-decoration: none; }

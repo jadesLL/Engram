@@ -60,9 +60,9 @@
         <div v-if="summary.chart === 'ring'" class="summary-ring" :style="{ background: ringBackground, maxWidth: `${plan.chartHeight}px` }" role="img" :aria-label="chartDescription" />
         <div v-else class="summary-trend" role="img" :aria-label="chartDescription"><i v-for="(row,i) in amounts" :key="i" :style="{ height: `${maxAmount ? Math.max(2,row / maxAmount * 100) : 2}%` }" /></div>
       </div>
-      <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars', detailed: detailedRows }" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
+      <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars', detailed: detailedRows, 'all-zero': summary.chart === 'bars' && maxAmount === 0 }" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
         <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" :class="{ 'row-tasks': summary.presentation === 'tasks' }" :title="[row.text,row.meta,row.detail,row.badge?.text].filter(Boolean).join(' · ')" :aria-label="[row.text,row.meta,row.detail,row.badge?.text].filter(v => v !== undefined).join(' · ')" @click="activate(row)">
-          <span v-if="summary.presentation === 'tasks' && !plan.narrow" class="row-check" aria-hidden="true" />
+          <span v-if="summary.chart === 'bars'" class="row-dot" :class="row.tone ? `tone-${row.tone}` : ''" aria-hidden="true" />
           <span v-else-if="detailedRows && !plan.narrow && row.type" class="row-type" :class="[row.tone ? `tone-${row.tone}` : '', { idea: row.type === '灵感' }]">{{ row.type.slice(0,1) }}</span>
           <span class="row-copy">
             <span class="row-text">{{ row.text }}</span>
@@ -71,7 +71,7 @@
           <span v-if="!plan.narrow && row.badge" class="row-badge" :class="row.badge.tone">{{ row.badge.text }}</span>
           <small v-else-if="detailedRows && !plan.narrow && row.detail" class="row-side">{{ row.detail }}</small>
           <small v-else-if="!detailedRows && !plan.narrow && row.detail !== undefined" class="row-value">{{ row.detail }}</small>
-          <i v-if="summary.chart === 'bars'" class="row-track"><b :class="row.tone ? `tone-${row.tone}` : ''" :style="{ width: `${maxAmount ? Math.max(0,(row.amount || 0) / maxAmount * 100) : 0}%` }" /></i>
+          <i v-if="summary.chart === 'bars' && maxAmount > 0" class="row-track"><b :class="row.tone ? `tone-${row.tone}` : ''" :style="{ width: `${Math.max(0,(row.amount || 0) / maxAmount * 100)}%` }" /></i>
         </button>
       </div>
       <button v-else-if="summary.empty" type="button" class="summary-empty" @click="$emit('open')">
@@ -218,20 +218,31 @@ onUnmounted(()=>observer?.disconnect());
 .summary-row small {font-size:11.5px;line-height:1.3;color:var(--text-muted, var(--text-faint));white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* 条形行（数据类）：标签 + 轨道 + 数值，整卡均分铺开，不再缩在卡片上半截 */
 .summary-rows.bars {justify-content:stretch}
-.bars .summary-row {flex:1;padding:0;border-top:1px solid var(--border);gap:13px}
+.bars .summary-row {flex:1;padding:0;border-top:1px solid var(--border);gap:9px}
 .bars .summary-row:first-child {border-top:0}
 .bars .row-copy {flex:none;width:62px;display:block}
 .bars .row-value {min-width:25px;text-align:right;font-size:14px;font-weight:600;color:var(--text);margin-left:auto;font-variant-numeric:tabular-nums}
 .bars .row-track {position:static;flex:1;min-width:12px;height:7px;order:1}
 .bars .row-value {order:2}
+/* 条形行前置色点：0 值时轨道会收起，色点仍说明「这一行是哪一类」；
+   有数据时色点 + 轨道 + 数值一起出现，不再用一条满宽空轨道制造「已满」的错觉。 */
+.bars .row-dot {width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent)}
+.bars .row-dot.tone-concept {background:var(--badge-concept)}
+.bars .row-dot.tone-entity {background:var(--badge-entity)}
+.bars .row-dot.tone-note {background:var(--badge-note)}
+.bars .row-dot.tone-idea {background:var(--badge-idea)}
+/* 防御：模板已不渲染 0 值轨道，CSS 也兜一层，避免以后有人回退模板又出现满格空条 */
+.bars.all-zero .row-track {display:none}
 /* 分类色只给类型：概念蓝 / 实体紫 / 资料青 / 灵感琥珀（与徽章四色同源），不再用透明度伪造层级 */
 /* 列表 / 待办：标题 + 来源两行，右侧时间、角标各占一列；行高由预算决定，不靠加内边距撑开 */
 .detailed-rows .summary-row {align-items:center;padding:0;gap:9px;font-size:13px}
 .detailed-rows .row-meta {display:block;max-width:100%;margin-top:2px;font-size:11.5px;line-height:1.35;color:var(--text-muted, var(--text-faint));overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-/* 待办标题信息量大：允许两行，62px 行高已留出预算 */
-.row-tasks .row-text {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.4}
-.row-check {width:15px;height:15px;flex:none;border:1.5px solid var(--border-strong, var(--border));border-radius:5px;transition:border-color 150ms ease}
-.row-tasks:hover .row-check {border-color:var(--accent)}
+/* 待办标题信息量大：允许两行，62px 行高已留出预算；balance 避免最后一行只剩一个字 */
+.row-tasks .row-text {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.4;text-wrap:balance}
+/* 两行标题时勾选框/日期不要跟着整行垂直居中：行内容顶对齐，日期贴标题首行。
+   勾选框本身是装饰（点击整行只打开详情），已移除，避免看起来能勾选。 */
+.row-tasks {align-items:flex-start;padding-top:4px}
+.row-tasks .row-badge {align-self:flex-start;margin-top:2px}
 .row-side {flex:none;min-width:0;max-width:44%;font-size:11.5px;line-height:1.3;color:var(--text-muted, var(--text-faint));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;text-align:right}
 .row-type {width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:10.5px;font-weight:600}
 .row-type.idea {width:7px;height:7px;border-radius:50%;background:var(--accent);font-size:0}

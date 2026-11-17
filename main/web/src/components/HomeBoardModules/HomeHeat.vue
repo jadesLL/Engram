@@ -7,9 +7,9 @@
       <template v-else>
         <div v-if="strip" class="heat-strip" :style="{gridTemplateColumns:`repeat(${shown.length},minmax(0,1fr))`}"><div v-for="cell in shown" :key="cell.date"><button type="button" class="heat-cell" :class="`l${cell.level}`" :aria-label="`${cell.date}：${cell.count} 篇页面最近更新`" :title="`${cell.date} · ${cell.count} 篇页面最近更新`" @click="selectDate(cell.date)" /><time>{{ Number(cell.date.slice(8)) }}日</time></div></div>
         <div v-else class="heat-calendar">
-          <div></div><div class="heat-week-dates" :style="{gridTemplateColumns:`repeat(${visibleWeeks},minmax(0,1fr))`}"><time v-for="(cell, wi) in weekStarts" :key="cell.date">{{ weekLabel(wi) }}</time></div>
+          <div></div><div class="heat-week-dates" :style="{gridTemplateColumns:`repeat(${visibleWeeks},20px)`}"><time v-for="(cell, wi) in weekStarts" :key="cell.date">{{ weekLabel(wi) }}</time></div>
           <div class="heat-weekdays"><span v-for="day in ['日','一','二','三','四','五','六']" :key="day">{{ day }}</span></div>
-          <div class="heat-grid" :style="{gridTemplateColumns:`repeat(${visibleWeeks},minmax(0,1fr))`}"><button v-for="(cell,i) in shown" :key="cell.date" type="button" class="heat-cell" :class="[`l${cell.level}`,{future:cell.future,selected:cell.date===selected,today:cell.date===latest?.date}]" :style="{gridColumn:Math.floor(i/7)+1,gridRow:i%7+1}" :disabled="cell.future" :aria-label="`${cell.date}：${cell.count} 篇页面最近更新`" :aria-pressed="cell.date===selected" :title="cell.future?'未来日期':`${cell.date} · ${cell.count} 篇页面最近更新`" @click="selectDate(cell.date)" /></div>
+          <div class="heat-grid" :style="{gridTemplateColumns:`repeat(${visibleWeeks},20px)`}"><button v-for="(cell,i) in shown" :key="cell.date" type="button" class="heat-cell" :class="[`l${cell.level}`,{future:cell.future,selected:cell.date===selected,today:cell.date===latest?.date}]" :style="{gridColumn:Math.floor(i/7)+1,gridRow:i%7+1}" :disabled="cell.future" :aria-label="`${cell.date}${cell.date===latest?.date?'（今天）':''}：${cell.count} 篇页面最近更新`" :aria-pressed="cell.date===selected" :title="cell.future?'未来日期':`${cell.date}${cell.date===latest?.date?'（今天）':''} · ${cell.count} 篇页面最近更新`" @click="selectDate(cell.date)" /></div>
         </div>
       </template>
       <div v-if="!narrow && size.h > 180" class="heat-foot"><span>{{ shortDate(shown[0]?.date) }}—{{ shortDate(latest?.date) }} · {{ total }} 篇</span><span class="heat-legend">少 <i v-for="level in 5" :key="level" :class="`l${level-1}`" /> 多</span></div>
@@ -51,15 +51,21 @@ onUnmounted(()=>{observer?.disconnect();stopBack?.();});
 .heat-summary strong {font-size:32px;line-height:1;font-weight:650;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
 .heat-summary span {font-size:11.5px;color:var(--text-muted, var(--text-secondary))}
 .heat-summary small {display:block;font-size:11px;color:var(--text-muted, var(--text-faint));margin-top:3px}
-.heat-calendar {overflow:hidden;display:grid;grid-template-columns:12px minmax(0,1fr);grid-template-rows:12px minmax(0,1fr);gap:5px;flex:1;min-width:0;min-height:0}
+.heat-calendar {overflow:hidden;display:grid;grid-template-columns:12px auto;grid-template-rows:12px minmax(0,1fr);gap:5px;justify-content:center;flex:1;min-width:0;min-height:0}
 .heat-week-dates {display:grid;gap:3px;text-align:center;color:var(--text-muted, var(--text-faint));font-size:11px;line-height:1.2;min-width:0;font-variant-numeric:tabular-nums}
-.heat-week-dates time {white-space:nowrap;min-width:0;overflow:hidden}
-.heat-weekdays {min-height:0;display:grid;grid-template-rows:repeat(7,minmax(0,1fr));gap:3px;align-items:center;color:var(--text-muted, var(--text-faint));font-size:11px;line-height:1.1}
-.heat-grid {display:grid;grid-template-rows:repeat(7,minmax(0,1fr));gap:3px;min-width:0;min-height:0;flex:1}
+/* 20px 周列下月份标签会略宽：允许溢出到相邻空格/卡片留白，不裁成「10/1」 */
+.heat-week-dates time {white-space:nowrap;min-width:0;overflow:visible}
+.heat-weekdays {min-height:0;display:grid;grid-template-rows:repeat(7,20px);gap:3px;align-content:center;align-items:center;color:var(--text-muted, var(--text-faint));font-size:11px;line-height:1.1}
+/* 格子保持近正方：8 周不变，列宽固定 20px 并整体居中；行高同理。
+   原来列宽吃满卡片，27×18 的扁格读起来像条形图。 */
+.heat-grid {display:grid;grid-template-rows:repeat(7,20px);gap:3px;align-content:center;min-width:0;min-height:0;flex:1}
 .heat-cell {width:100%;height:100%;padding:0;min-width:0;min-height:0;border-radius:3px;background:var(--bg-tertiary)}
 .heat-cell.future {opacity:.15;cursor:default}
 .heat-cell:hover:not(:disabled),.heat-cell:focus-visible,.heat-cell.selected {outline:2px solid var(--accent);outline-offset:-2px}
-.heat-cell.today {outline:1.5px solid var(--text-muted, var(--text-faint));outline-offset:-1.5px}
+/* 今天不再用深灰外描边（落在蓝格上像脏边），改白色内描边；空格用品牌蓝细边 */
+.heat-cell.today {outline:none;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.92)}
+.heat-cell.today.l0 {box-shadow:inset 0 0 0 1.5px var(--accent)}
+.heat-cell.today.selected {outline:2px solid var(--accent);outline-offset:-2px}
 .heat-card .l1 {background:color-mix(in srgb,var(--accent) 22%,var(--card-bg))}
 .heat-card .l2 {background:color-mix(in srgb,var(--accent) 42%,var(--card-bg))}
 .heat-card .l3 {background:color-mix(in srgb,var(--accent) 66%,var(--card-bg))}

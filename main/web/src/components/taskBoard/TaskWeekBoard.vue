@@ -56,7 +56,8 @@ function shortDate(date: string) {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
-  align-items: start;
+  /* 7 列等高：任务多的列会把行撑高，其余列不跟着长就会长短腿（周六 217 / 其余 170） */
+  align-items: stretch;
 }
 .day-col {
   display: flex;
@@ -107,7 +108,8 @@ function shortDate(date: string) {
   text-align: center;
 }
 .day-cards { display: flex; flex-direction: column; gap: 8px; }
-.day-empty { margin: 0; padding: 12px 0; text-align: center; font-size: 11.5px; color: var(--text-secondary); }
+/* 7 列等高后空列会变高：把「本日暂无」放在剩余空间中间，不贴在列顶 */
+.day-empty { flex: 1; display: flex; align-items: center; justify-content: center; margin: 0; padding: 12px 0; text-align: center; font-size: 11.5px; color: var(--text-secondary); }
 
 /* 窄窗口 / 平板竖屏：7 列放不下，改成一天一块竖排（与手机端同一口径） */
 @media (max-width: 1024px) {

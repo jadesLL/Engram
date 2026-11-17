@@ -1576,16 +1576,34 @@ onUnmounted(() => {
 .setting-note.sync-content-note {
   margin: 4px 0 0;
 }
-.setting-row.sync-category-row {
+.settings-native .setting-row.sync-category-row {
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
+  align-items: start;
 }
 .setting-check {
   display: flex;
   align-items: center;
+  margin-top: 1px;
 }
 .sync-category-row input[type='checkbox'] {
-  accent-color: var(--success);
+  accent-color: var(--accent);
+}
+/* 九行「已开启」不再每行刷一遍亮绿：勾选框回主色，状态改成小绿点 + 次要文字 */
+.settings-native .sync-category-row .setting-value.tone-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.settings-native .sync-category-row .setting-value.tone-ok::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--success);
 }
 
 /* ---------- 局域网优先：状态条 + 探测记录 ---------- */
