@@ -57,6 +57,14 @@
 
         </activity>
 
+        <!-- 后台同步宽限窗口（见 SyncGraceService / BackgroundSyncPolicy）：退到后台后还有 10 分钟
+             可以把这一轮同步跑完。dataSync 类型让系统知道这是短时的数据同步，Android 14 起必须声明；
+             exported=false：只由本应用在前后台切换时拉起。 -->
+        <service
+            android:name=".SyncGraceService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -86,8 +94,18 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <!-- 应用内在线更新（见 AppUpdater.kt）：侧载 APK 只能靠系统安装器安装，需要这条普通权限声明；
-         真正的授权开关在系统「安装未知应用」里，未授权时界面会引导去开启。
-         通知权限（Android 13+）用于「新版本已下载」的提醒，属运行时权限，用户点开关时才申请。 -->
+         真正的授权开关在系统「安装未知应用」里，未授权时界面会引导去开启。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 通知权限（Android 13+）两用：①「新版本已下载」提醒 ② 后台同步的前台服务通知。
+         前台服务通知要不要得回来只影响「看不看得见」，同步本身照样跑。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 后台同步：退到后台后继续同步最多 10 分钟（见 SyncGraceService / BackgroundSyncPolicy）。
+         FOREGROUND_SERVICE + FOREGROUND_SERVICE_DATA_SYNC：前台服务本体与它的 dataSync 类型（API 34 起必须）；
+         WAKE_LOCK：熄屏时不让 CPU 睡，10 分钟窗口才真的跑得完（普通权限，安装即授予）；
+         REQUEST_IGNORE_BATTERY_OPTIMIZATIONS：Doze / 厂商省电会冻结后台进程，要在系统里把这个应用
+         加进电池优化白名单——这是运行时授权，App 每次回到前台发现没授权都会主动申请。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

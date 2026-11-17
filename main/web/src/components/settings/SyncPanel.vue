@@ -313,6 +313,29 @@
               />
             </div>
           </div>
+          <!-- 后台同步（Android 独有）：退到后台后还有 10 分钟继续同步；缺权限就地申请 -->
+          <div v-if="background" class="setting-row">
+            <div class="setting-copy">
+              <strong>后台同步</strong>
+              <span>{{ background.hint }}</span>
+              <span class="setting-note">每次回到前台发现没授权，都会再按系统提示申请一次。</span>
+            </div>
+            <div class="setting-control">
+              <span class="setting-value">{{ background.statusLabel }}</span>
+              <div class="setting-actions">
+                <button
+                  v-if="!background.allGranted"
+                  class="btn"
+                  type="button"
+                  :disabled="backgroundPermissionBusy"
+                  @click="requestBackgroundPermissions"
+                >
+                  {{ backgroundPermissionBusy ? '申请中…' : '申请权限' }}
+                </button>
+                <span v-else class="setting-note">通知与电池优化都已允许</span>
+              </div>
+            </div>
+          </div>
           <div class="setting-actions sync-form-actions">
             <button class="btn" type="button" :disabled="reconciling" @click="reconcileNow">{{ reconciling ? '对账中…' : '立即全量对账' }}</button>
             <button class="btn primary" type="button" :disabled="saving" @click="saveBinding">保存修改</button>
@@ -326,7 +349,7 @@
         <div v-if="status && status.role !== 'none'" class="sync-role-note">
           <p class="setting-note">同步范围：页面、附件图片、原始资料、证据账本、Agent 会话与任务看板、客户洞察记录；「设置」分类含模型配置与 API Key（明文随群组下发）。</p>
           <p class="setting-note">各端登录密码、绑定令牌等仍各端独立；同一页面两端同时改按字符级合并，无法合并时以最新修改为准。</p>
-          <p v-if="capabilities.runtime === 'android-local'" class="setting-note">安卓端退到后台后最多再同步 5 分钟；回到前台立即对账。</p>
+          <p v-if="capabilities.runtime === 'android-local'" class="setting-note">安卓端退到后台后最多再同步 {{ BACKGROUND_SYNC_MINUTES }} 分钟（窗口内用前台服务保活）；回到前台立即再对一次账。</p>
         </div>
 
       </div>
@@ -516,6 +539,7 @@ import { buildInviteLink, describeInvite, parseInviteLink } from '../../lib/sync
 import { cameraScanSupport } from '../../lib/qrScan';
 import { pendingJoinLink, takePendingJoinLink } from '../../lib/joinLink';
 import SecretField from '../SecretField.vue';
+import { BACKGROUND_SYNC_MINUTES, backgroundSyncView, type BackgroundSyncState } from '../../lib/backgroundSync';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSyncStore } from '../../stores/sync';
 import { useServerUpdateStore } from '../../stores/serverUpdate';
@@ -569,6 +593,8 @@ interface SyncStatus {
   dualStack?: DualStackStatus;
   /** 连接通道明细（局域网 / IPv6 / IPv4 / 已断开 + 候选探测结果）：成员端才有 */
   link?: SyncLinkStatus | null;
+  /** Android 本地端：后台同步（退到后台后最多再同步 10 分钟）的窗口与权限状态；桌面 / Docker 没有 */
+  background?: BackgroundSyncState;
   log: SyncLogEntry[];
   peers: PeerView[];
 }
@@ -618,6 +644,12 @@ async function saveCategory(key: string, event: Event): Promise<void> {
   input.checked = categoryEnabled(key);
 }
 const peers = ref<PeerView[]>([]);
+/**
+ * 后台同步卡片（Android 本地端）：退到后台后最多再同步 10 分钟，缺通知 / 电池优化权限就地申请。
+ * 桌面 / Docker 的 /api/sync/status 没有 background 字段，backgroundSyncView 返回 null → 整块隐藏。
+ */
+const background = computed(() => backgroundSyncView(status.value?.background));
+const backgroundPermissionBusy = ref(false);
 const pickJoin = ref(false);
 const hubUrl = ref('');
 const hubToken = ref('');
@@ -1254,6 +1286,25 @@ async function revokePeer(peer: PeerView): Promise<void> {
     await loadStatus();
   } catch (error: any) {
     notify.error(error?.response?.data?.error || '移除失败');
+  }
+}
+
+/**
+ * 「申请权限」：把系统权限申请交给原生（通知对话框 → 电池优化对话框 → 永久拒绝时跳设置页）。
+ * 弹框只能由 Activity 做，本机服务收到请求后转回 UI 线程，这里只负责提示并刷新状态。
+ */
+async function requestBackgroundPermissions(): Promise<void> {
+  if (backgroundPermissionBusy.value) return;
+  backgroundPermissionBusy.value = true;
+  try {
+    const res = await api.post('/api/sync/background/permissions');
+    if (res.data?.requested) notify.info('已按系统提示申请后台同步权限；没授权时下次回前台还会再问');
+    else notify.info('后台同步权限已齐（通知与电池优化都已允许）');
+    await loadStatus();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '申请权限失败');
+  } finally {
+    backgroundPermissionBusy.value = false;
   }
 }
 

@@ -44,12 +44,14 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 
-public class MainActivity extends BridgeActivity {
+public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
 
     /** 长按桌面图标快捷方式的 action：保留旧名称以兼容升级，实际打开本地库同步设置。 */
     private static final String ACTION_SELECT_SERVER = "com.engram.app.SELECT_SERVER";
     private static final int REQUEST_CREATE_DOCUMENT = 18182;
     private static final int REQUEST_NOTIFICATIONS = 18183;
+    /** 后台同步要的通知权限（Android 13+）：与「更新提醒」分开请，结果回来后接着要电池优化 */
+    private static final int REQUEST_BACKGROUND_SYNC_NOTIFICATIONS = 18185;
 
     private boolean forceSelectServer = false;
     private volatile boolean activityForeground = false;
@@ -72,6 +74,13 @@ public class MainActivity extends BridgeActivity {
     private InboxRender inboxRender;
     /** 应用内在线更新的宿主（安装器/权限页/通知都离不开 Activity），见 AppUpdater。 */
     private UpdateHost updateHost;
+    /**
+     * 本次「使用」是否已经自动申请过后台同步权限。
+     *
+     * 用户要求「每次使用如果没权限都要申请」：每次回到前台（onStart）都检查一次，缺就申请；
+     * 同一段前台里只问一次，避免轮询/切面板时反复弹框；退到后台（onStop）后重置，下次再问。
+     */
+    private boolean backgroundSyncPermissionAsked;
     /**
      * Android 13+（API 33）的预测性返回回调：系统返回手势经 OnBackInvokedDispatcher 派发，
      * 由它转发到 {@link #handleSystemBack()}。API 33 以下恒为 null——返回走 OnBackPressedCallback。
@@ -103,6 +112,9 @@ public class MainActivity extends BridgeActivity {
         // 调起系统安装器 / 跳「安装未知应用」授权页 / 发通知。实例还没建好也先挂上（静态持有）。
         updateHost = new UpdateHost();
         AppUpdater.setHost(updateHost);
+        // 后台同步权限（通知 / 电池优化）只能由 Activity 弹系统界面：本机服务在后台线程，
+        // 通过这个宿主把「申请权限」转回 UI 线程（设置页的「申请权限」按钮走 POST 本地接口）。
+        EngramLocalServer.setBackgroundSyncHost(this);
 
         // Ktor/kotlinx-io 在 Android 上跨线程写 socket 时若不启用二级段池，会持续产生大量
         // 短命 Segment，部分设备可在几秒内耗尽应用堆。必须在首次加载 Ktor 类之前设置。
@@ -218,8 +230,17 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        // 「每次使用如果没权限都要申请」：回到前台就检查一次后台同步要的两枚权限（每次前台只问一次）
+        autoRequestBackgroundSyncPermissions();
+    }
+
+    @Override
     public void onStop() {
         activityForeground = false;
+        // 退到后台后重置：下一次回到前台（下一次使用）发现还没授权就再申请一次
+        backgroundSyncPermissionAsked = false;
         try {
             EngramLocalServer localServer = EngramLocalServer.peek();
             if (localServer != null) localServer.onBackground();
@@ -227,6 +248,86 @@ public class MainActivity extends BridgeActivity {
             // 本地服务未完成初始化时没有需要取消的同步请求。
         }
         super.onStop();
+    }
+
+    /**
+     * 用户按 Home / 切到别的 App：趁进程还在前台把后台同步的前台服务拉起来。
+     *
+     * Android 12+ 不允许从后台启动前台服务（ForegroundServiceStartNotAllowedException），
+     * 等 onStop 再拉会被系统拒绝；onUserLeaveHint 是「用户主动离开」的确定信号，此时进程仍是前台。
+     * 熄屏 / 被别的应用整体覆盖等没有这个回调的情况，由 onStop 里的兜底尝试处理（失败只记 warn）。
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        try {
+            EngramLocalServer localServer = EngramLocalServer.peek();
+            if (localServer != null) localServer.onUserLeaveHint();
+        } catch (Throwable ignored) {
+            // 本机服务还没起来：这一轮没有可继续的同步
+        }
+    }
+
+    /**
+     * 后台同步要的权限：回到前台（每次使用）发现缺就申请。
+     *
+     * 只在「已绑定中枢 + 同步开着」时问——没绑定就没有后台同步，弹框只会骚扰。
+     * 系统同一时刻只允许一个权限对话框，所以按策略逐个来：通知对话框 → 结果回来再要电池优化。
+     */
+    private void autoRequestBackgroundSyncPermissions() {
+        if (backgroundSyncPermissionAsked) return;
+        EngramLocalServer localServer = EngramLocalServer.peek();
+        if (localServer == null || !localServer.wantsBackgroundSyncPermissions()) return;
+        backgroundSyncPermissionAsked = true;
+        requestBackgroundSyncPermissionsNow();
+    }
+
+    /** 本机服务转来的「申请后台同步权限」（设置页按钮）：与自动申请共用同一条路径 */
+    @Override
+    public boolean requestBackgroundSyncPermissions() {
+        runOnUiThread(this::requestBackgroundSyncPermissionsNow);
+        return true;
+    }
+
+    /**
+     * 按策略弹一个系统界面；返回是否真的发起了申请（都齐了返回 false，界面据此提示「已齐全」）。
+     *
+     * 永久拒绝通知（系统不再弹框）时改跳应用通知设置页，避免用户点了没反应。
+     */
+    private boolean requestBackgroundSyncPermissionsNow() {
+        if (isFinishing() || isDestroyed()) return false;
+        String action = BackgroundSyncPermissions.nextAction(
+                Build.VERSION.SDK_INT,
+                SyncPermissions.notificationsGranted(this),
+                SyncPermissions.batteryUnrestricted(this),
+                SyncPermissions.notificationDialogBlocked(this)
+        );
+        if (action == null) return false;
+        switch (action) {
+            case BackgroundSyncPermissions.ACTION_REQUEST_NOTIFICATIONS:
+                SyncPermissions.markNotificationsAsked(this);
+                ActivityCompat.requestPermissions(
+                        this,
+                        new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                        REQUEST_BACKGROUND_SYNC_NOTIFICATIONS
+                );
+                return true;
+            case BackgroundSyncPermissions.ACTION_NOTIFICATION_SETTINGS:
+                SyncPermissions.openAppNotificationSettings(this);
+                return true;
+            case BackgroundSyncPermissions.ACTION_REQUEST_BATTERY:
+                SyncPermissions.requestBatteryExemption(this);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        // 通知对话框关掉之后接着要电池优化：系统同一时刻只能弹一个权限界面
+        if (requestCode == REQUEST_BACKGROUND_SYNC_NOTIFICATIONS) requestBackgroundSyncPermissionsNow();
     }
 
     @Override
@@ -241,6 +342,8 @@ public class MainActivity extends BridgeActivity {
         // 摘掉宿主：更新引擎静态持有 Activity 会造成泄漏；应用不在前台时安装/权限页会明确报错
         if (AppUpdater.getHost() == updateHost) AppUpdater.setHost(null);
         updateHost = null;
+        // 宿主静态持有 Activity：销毁时必须摘掉，否则泄漏（与本机服务实例是否还在无关）
+        EngramLocalServer.setBackgroundSyncHost(null);
         super.onDestroy();
     }
 
