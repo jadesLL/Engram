@@ -18,8 +18,9 @@ import * as repo from './repository.js';
  * 只读：不写状态、不起轮、不碰知识库。
  */
 
-/** 看板默认回看多少轮；更早的去「梦境思考」对话里翻 */
-export const DREAM_BOARD_ROUNDS = 5;
+/** 看板默认回看多少轮；更早的去「梦境思考」对话里翻。
+ *  2026-11-18 用户要求设置页最多只看近 10 条：这里从 5 提到 10，界面默认再折到 3 条。 */
+export const DREAM_BOARD_ROUNDS = 10;
 
 /** 一轮里做过的一件事 */
 export interface DreamBoardItem {

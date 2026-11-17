@@ -46,7 +46,7 @@ test('大类锚点全局唯一，且分组非空', () => {
   }
 });
 
-test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', () => {
+test('单职责大类（顺序即导航顺序；2026-11-18 新增「外设接入」后为 8 个）', () => {
   assert.deepEqual(
     SETTINGS_DOMAINS.map((domain) => [domain.id, domain.label]),
     [
@@ -54,6 +54,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       ['interface', '界面与检索'],
       ['data', '知识库数据'],
       ['sync', '多端同步'],
+      ['peripheral', '外设接入'],
       ['update', '版本与更新'],
       ['app', '本机应用'],
       ['agent', 'Agent 与自动化'],
@@ -66,9 +67,10 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       interface: ['account-appearance', 'data-synonyms'],
       data: ['data-location', 'data-backup', 'storage-trash', 'storage-assets', 'data-danger'],
       sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
+      peripheral: ['peripheral-doxent'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
-      agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-doxent', 'agent-tools'],
+      agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
     },
   );
   // 混装桶拆开后的归位：外观不在账户里、搜索同义词不在数据里、版本与卸载不在更新里
@@ -83,6 +85,11 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
 test('能力开关关掉时，对应的大类与分组一起消失', () => {
   const noAgent = visibleSettingsDomains({ agent: false, serverUpdate: true });
   assert.equal(noAgent.some((domain) => domain.id === 'agent'), false, 'Agent 与自动化应整个隐藏');
+  assert.equal(
+    noAgent.some((domain) => domain.id === 'peripheral'),
+    false,
+    '「外设接入」当前只有 owner 级的办公本绑定，管理面关闭时应整类隐藏',
+  );
   assert.equal(noAgent.some((domain) => domain.id === 'account'), true, '账户与访问不受影响');
 
   // 三张更新卡片都挂 serverUpdate：关掉后「版本与更新」整类消失，但「本机应用」还在（版本信息常驻）
@@ -116,6 +123,11 @@ test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出
     ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-tools'],
     '手机端「外部接入」不该出现（Agent 令牌不能下发到手机），其余 Agent 分组都应可用',
   );
+  assert.equal(
+    mobile.some((domain) => domain.id === 'peripheral'),
+    false,
+    '手机不出现「外设接入」：办公本绑定要在本机装技能、起官方 CLI、开浏览器登录',
+  );
   // 未绑定中枢：两个新能力位都是 false → Agent 整类不登记（导航里不留点不动的空大类）
   const unbound = visibleSettingsDomains({ agent: false, serverUpdate: true, apkUpdate: true });
   assert.equal(unbound.some((domain) => domain.id === 'agent'), false, '手机未绑定中枢时不该出现 Agent 大类');
@@ -125,7 +137,7 @@ test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出
   // 桌面端两个能力位恒 true：7 个分组与顺序原样不变（能力位引入不能悄悄改桌面导航）
   assert.deepEqual(
     visibleSettingsDomains(FULL).find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-doxent', 'agent-tools'],
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
   );
 });
 
@@ -319,7 +331,7 @@ test('「视频理解模型」「自动整理（梦境思考）」与「任务�
   //   见 docs/AGENT-CONSOLE.md 与 CONTRACT-video-inbox.md §4.3）
   assert.deepEqual(
     SETTINGS_DOMAINS.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-doxent', 'agent-tools'],
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
   );
 });
 
@@ -437,9 +449,17 @@ test('能力关掉时旧链接不会把用户留在不存在的大类里', () =>
 });
 
 test('办公本接入：分组名不带品牌，品牌放在分组内的类型下拉里', () => {
-  const group = SETTINGS_DOMAINS.flatMap((domain) => domain.groups).find((item) => item.id === 'agent-doxent');
+  const group = SETTINGS_DOMAINS.flatMap((domain) => domain.groups).find((item) => item.id === 'peripheral-doxent');
   assert.ok(group, '找不到「办公本接入」分组');
   assert.equal(group?.label, '办公本接入');
+  // 2026-11-18 用户反馈：办公本接入接的是外部设备，不该待在「Agent 与自动化」里
+  const domain = SETTINGS_DOMAINS.find((item) => item.groups.some((group) => group.id === 'peripheral-doxent'));
+  assert.equal(domain?.id, 'peripheral', '「办公本接入」应归属「外设接入」大类');
+  assert.equal(
+    SETTINGS_DOMAINS.find((item) => item.id === 'agent')?.groups.some((group) => group.id === 'peripheral-doxent'),
+    false,
+    '「办公本接入」不该再出现在「Agent 与自动化」里',
+  );
   assert.doesNotMatch(group?.label || '', /讯飞|Doxent/, '品牌不该再写进分组名');
 
   const section = fs.readFileSync(path.join(settingsDir, 'DoxentSection.vue'), 'utf8');
@@ -451,4 +471,29 @@ test('办公本接入：分组名不带品牌，品牌放在分组内的类型�
   assert.match(section, /随「设置」分类同步/, '卡片要说明类型与登录凭据的同步范围');
   assert.match(section, /登录凭据/, '卡片要说明登录凭据会同步');
   assert.match(section, /settingsEnabled|syncDetail/, '同步应用阶段要有可见状态');
+});
+
+
+test('提炼看板：默认全部折叠，只露最近 3 条，查看更多最多 10 条', () => {
+  const section = fs.readFileSync(path.join(settingsDir, 'DreamSection.vue'), 'utf8');
+  assert.match(section, /BOARD_PREVIEW_ROUNDS = 3/, '默认应只露最近 3 条');
+  assert.match(section, /BOARD_MAX_ROUNDS = 10/, '展开后最多 10 条，不能再多');
+  assert.match(section, /flag === undefined \? false : flag/, '轮次默认必须是折叠的');
+  assert.match(section, /查看更多（还有/, '底部要有「查看更多」按钮');
+  // 服务端也要把回看上限从 5 提到 10：界面 slice 只负责收口，数据不够仍然显示不全
+  const server = fs.readFileSync(
+    path.resolve(webSrc, '..', '..', 'server', 'src', 'assistant', 'dreamBoard.ts'),
+    'utf8',
+  );
+  assert.match(server, /DREAM_BOARD_ROUNDS = 10/, '服务端看板回看上限应为 10 轮');
+});
+
+test('版本信息：提供本机软件更新入口（桌面直连更新，其余形态跳更新分组）', () => {
+  const section = fs.readFileSync(path.join(settingsDir, 'AppVersionSection.vue'), 'utf8');
+  assert.match(section, /更新本机软件/, '版本信息分组里要有更新入口');
+  assert.match(section, /applySourceUpdate/, '源码模式应能直接拉源码重建');
+  assert.match(section, /applyDesktopInstallerUpdate/, '安装包模式应能直接下载安装');
+  assert.match(section, /panel-update-server/, '服务端形态要能跳到服务器更新分组');
+  assert.match(section, /panel-update-android/, '安卓形态要能跳到安卓端更新分组');
+  assert.match(section, /appUpdate\.check/, '安卓端复用 OTA 检查');
 });

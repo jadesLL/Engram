@@ -34,6 +34,11 @@
  * 「外部接入」组仍按管理面能力位只在桌面端 / 中枢出现（Agent 令牌不能下发到手机），
  * 「工具与手册」由 MCP 工具清单改为 CLI 命令参考（数据源 lib/cliReference.ts），锚点与顺序不变。
  *
+ * 2026-11-18（peripheral）：用户反馈「办公本接入不该在 AI 里面」——它接入的是外部设备，
+ * 不是 Agent 能力，因此从「Agent 与自动化」移出，新增单职责大类「外设接入」。
+ * 大类放在「多端同步」之后（两者都回答「怎么把外部的东西接进来」），分组名保持中性，
+ * 品牌仍由分组内的「办公本类型」下拉选择；锚点同步改为 peripheral-doxent。
+ *
  * **导航顺序 = 页面渲染顺序**（SettingsView.vue 里各大类的分组必须按本文件登记顺序渲染）。
  * 2026-09-27 用户报的「导航里第 2 项、页面上第 4 块」（梦境思考插在两个 Agent 分组中间）
  * 就是这条被破坏的结果：点击锚点跳到最后一块、滚动高亮顺序也乱。settingsDomains.test.ts
@@ -48,6 +53,7 @@ export type SettingsDomainId =
   | 'interface'
   | 'data'
   | 'sync'
+  | 'peripheral'
   | 'update'
   | 'app'
   | 'agent';
@@ -164,6 +170,19 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     ],
   },
   {
+    id: 'peripheral',
+    label: '外设接入',
+    desc: '把办公本这类外部设备接进来，让内置 Agent 直接调阅其中的资料。',
+    icon: 'plug',
+    groups: [
+      // 办公本接入（2026-11）：绑定办公本账号（目前只支持讯飞 Doxent）后，内置 Agent 经官方
+      // skill + CLI 读写办公本的笔记 / Office 文档 / 书籍 / 日程。品牌选择在分组内的「办公本类型」
+      // 下拉里，分组名保持中性。绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，
+      // 同属 owner 级管理面，所以挂 agent（手机恒 false，整个「外设接入」大类不出现）。
+      { id: 'peripheral-doxent', label: '办公本接入', icon: 'book-open', need: 'agent' },
+    ],
+  },
+  {
     id: 'update',
     label: '版本与更新',
     desc: '三端各自的版本更新通道：服务器、桌面端、安卓端。',
@@ -216,11 +235,6 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       // Agent 管理面的端出现：手机只有同步成员令牌，Agent 令牌不能下发到手机，所以这一组挂 agent
       // （android-local 为 false）且不渲染。
       { id: 'agent-target', label: '外部接入', icon: 'plug', need: 'agent' },
-      // 办公本接入（2026-11）：绑定办公本账号（目前只支持讯飞 Doxent）后，内置 Agent 经官方
-      // skill + CLI 读写办公本的笔记 / Office 文档 / 书籍 / 日程。品牌选择在分组内的「办公本类型」
-      // 下拉里，分组名保持中性。绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，
-      // 同属 owner 级管理面，所以与「外部接入」一样挂 agent（手机恒 false，不渲染组）。
-      { id: 'agent-doxent', label: '办公本接入', icon: 'book-open', need: 'agent' },
       { id: 'agent-tools', label: '工具与手册', icon: 'wrench', need: 'agentConsole' },
     ],
   },

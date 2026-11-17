@@ -130,6 +130,8 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
 }
 .panel-head {
   align-items: flex-start;
+  padding: 0 2px 16px;
+  border-bottom: 0;
 }
 .readonly-badge {
   flex: none;
@@ -198,16 +200,17 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
 .preset-card {
   display: flex;
   flex-direction: column;
-  padding: 14px 15px 13px;
+  padding: 16px 18px 15px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: 16px;
   background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(29, 27, 23, 0.035);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 .preset-card.is-current {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 0 0 1px var(--accent-soft);
-  background: color-mix(in srgb, var(--accent-soft) 45%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+  background: var(--card-bg);
 }
 .preset-card.is-broken {
   border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
@@ -220,7 +223,7 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
 }
 .preset-head h4 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
 }
 .preset-badge {
@@ -244,8 +247,8 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
   flex: 1;
   margin: 8px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 12.5px;
+  line-height: 1.65;
 }
 .preset-broken {
   margin: 6px 0 0;
