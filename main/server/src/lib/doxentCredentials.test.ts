@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   clearDoxentSession,
+  describeDoxentAccount,
+  doxentAccountDisplay,
   doxentCliDir,
   doxentCredentialPaths,
   doxentSessionDigest,
@@ -94,4 +96,41 @@ test('会话文件读坏数据返回 null（不能把坏 JSON 当登录态）', 
   assert.equal(readDoxentSession(options), null);
   fs.writeFileSync(paths.session, '{"userId":"u"}', 'utf8');
   assert.equal(readDoxentSession(options), null);
+});
+
+test('当前账号展示：手机号/邮箱/用户名脱敏，旧会话用用户 ID 尾号兜底', () => {
+  assert.deepEqual(describeDoxentAccount({ account: '13812345678', userId: 'u' }), {
+    display: '138 **** 5678',
+    recorded: true,
+  });
+  assert.deepEqual(describeDoxentAccount({ account: '+86 138-1234-5678', userId: 'u' }), {
+    display: '138 **** 5678',
+    recorded: true,
+  });
+  assert.deepEqual(describeDoxentAccount({ account: 'alice@example.com', userId: 'u' }), {
+    display: 'al***@example.com',
+    recorded: true,
+  });
+  assert.deepEqual(describeDoxentAccount({ account: '刘子谕', userId: 'u' }), {
+    display: '刘子谕',
+    recorded: true,
+  });
+  // 扫码 / 旧版会话没有 account：用 userId 尾号兜底，并明确标记不是官方记录的账号
+  assert.deepEqual(describeDoxentAccount({ account: '', userId: '211029004152330250' }), {
+    display: '用户 ID 2110 **** 0250',
+    recorded: false,
+  });
+  assert.equal(describeDoxentAccount({ account: '', userId: '' }), null);
+});
+
+test('doxentAccountDisplay 从会话文件派生展示值；没有会话文件时返回 null', () => {
+  const home = tempHome();
+  const options = { env: {}, home };
+  assert.equal(doxentAccountDisplay(options), null);
+
+  writeDoxentSession({ ...SESSION, account: '13812345678' }, options);
+  assert.deepEqual(doxentAccountDisplay(options), { display: '138 **** 5678', recorded: true });
+
+  clearDoxentSession(options);
+  assert.equal(doxentAccountDisplay(options), null);
 });
