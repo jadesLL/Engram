@@ -436,6 +436,48 @@
     </div>
 
     <footer class="chat-composer">
+      <!-- 首启引导：默认模型与标准模式都已配好，只差一个 API Key。桌面/手机共用这一块，
+           窄窗时输入框与按钮自动折行；保存成功后立刻收起，不挡对话。 -->
+      <section v-if="showAgentSetup" class="agent-setup" aria-label="内置 Agent 首次使用">
+        <header class="setup-head">
+          <span class="setup-icon"><Icon name="lock" :size="13" /></span>
+          <div class="setup-copy">
+            <b>填入 API Key 就能开始用</b>
+            <span>默认模型与标准模式已经配好，只差这一项；密钥只存本机。</span>
+          </div>
+          <button
+            class="setup-dismiss"
+            type="button"
+            aria-label="稍后配置"
+            v-tooltip="'稍后配置：入口仍在右上角齿轮里'"
+            @click="dismissAgentSetup"
+          >
+            <Icon name="x" :size="13" />
+          </button>
+        </header>
+        <form class="setup-form" @submit.prevent="saveAgentKey">
+          <input
+            v-model="keyDraft"
+            class="setup-key"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="DeepSeek API Key"
+            placeholder="DeepSeek API Key（sk-…）"
+            :disabled="keySaving"
+          />
+          <button class="btn primary small" type="submit" :disabled="!keyDraft.trim() || keySaving">
+            {{ keySaving ? '正在连接…' : '保存并开始' }}
+          </button>
+        </form>
+        <p v-if="keySaving" class="setup-note">首次保存会启动内置 Agent，可能需要几十秒。</p>
+        <p v-else-if="keyError" class="setup-error">{{ keyError }}</p>
+        <p v-else class="setup-note">
+          还没有密钥？到 platform.deepseek.com 创建。要用第三方模型或高级选项，
+          <button type="button" class="setup-link" @click="openAgentSettings">打开设置</button>。
+        </p>
+      </section>
+
       <!-- Agent 提问：对话最下侧的选项弹窗（贴着输入区上方，engram ask 正挂起等这次点选） -->
       <section v-if="chat.pendingQuestions.length" class="ask-pop" role="group" aria-label="Agent 提问">
         <header class="ask-head">
@@ -692,6 +734,8 @@ import { sessionSourceBadge, type SessionSourceBadge } from '../lib/sessionSourc
 import { useSyncStore } from '../stores/sync';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { useTouchPointer } from '../lib/pointer';
+import { errorMessage, putOfficialModels } from '../lib/agentConsoleApi';
+import { normalizeAgentApiKey, shouldShowAgentSetup } from '../lib/agentSetup';
 
 /**
  * overlay：宿主把它当叠层抽屉用（≤1024 覆盖正文）。
@@ -719,6 +763,26 @@ const agentHint = computed(() => {
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+
+/* ===== 首启引导：模型与预设已配好，只让用户填一个 API Key ===== */
+/** `/api/assistant/status` 的模型配置状态；null = 还没读到（按已配置处理，不闪设置卡） */
+const agentStatus = ref<{ modelConfigured?: boolean } | null>(null);
+const keyDraft = ref('');
+const keySaving = ref(false);
+const keyError = ref('');
+/** 本次会话里刚保存成功：不必等下一次状态刷新，立即收掉引导 */
+const keyJustSaved = ref(false);
+/** 用户点过「稍后」：本地记一笔，避免用自定义模型（无需 Key）的人每次都被这张卡打扰 */
+const SETUP_DISMISS_KEY = 'agentSetupDismissed';
+const setupDismissed = ref(false);
+try {
+  setupDismissed.value = localStorage.getItem(SETUP_DISMISS_KEY) === '1';
+} catch {
+  /* 隐私模式 / 无存储：按未关闭处理 */
+}
+const showAgentSetup = computed(
+  () => !keyJustSaved.value && !setupDismissed.value && shouldShowAgentSetup(agentStatus.value, capabilities.value.features)
+);
 /** 触屏（手机）：输入框提示不再写「Enter 发送，Shift+Enter 换行」——手机上那是噪声 */
 const touchPointer = useTouchPointer();
 
@@ -1490,6 +1554,49 @@ function openAgentSettings() {
   void router.push('/settings/agent-console');
 }
 
+/**
+ * 首启引导的状态来源：只读 `/api/assistant/status` 的 modelConfigured（旧服务端没有该字段，
+ * 按「已配置」处理）。放在抽屉挂载时拉一次；保存成功后本地直接收掉引导，不再等轮询。
+ */
+async function loadAgentStatus(): Promise<void> {
+  try {
+    const { data } = await api.get<{ modelConfigured?: boolean }>('/api/assistant/status');
+    agentStatus.value = data;
+  } catch {
+    // 读不到状态就不显示引导：宁可少一块，也不要让用户以为「没配好」
+    agentStatus.value = null;
+  }
+}
+
+/** 首启保存 Key：复用控制台的官方模型接口（手机端已窄代理），保存即写入 dsh 凭据 */
+async function saveAgentKey(): Promise<void> {
+  const key = normalizeAgentApiKey(keyDraft.value);
+  if (!key || keySaving.value) return;
+  keySaving.value = true;
+  keyError.value = '';
+  try {
+    await putOfficialModels({ apiKey: key });
+    keyDraft.value = '';
+    keyJustSaved.value = true;
+    notify.success('API Key 已保存，可以开始对话了');
+    focusComposer();
+  } catch (error) {
+    keyError.value = errorMessage(error, '保存失败，请检查网络后重试');
+  } finally {
+    keySaving.value = false;
+  }
+}
+
+/** 「稍后」：本次与后续会话都不再弹这张卡；设置页入口仍在齿轮里 */
+function dismissAgentSetup(): void {
+  setupDismissed.value = true;
+  try {
+    localStorage.setItem(SETUP_DISMISS_KEY, '1');
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
+
 async function stopRun() {
   if (stopping.value || !chat.currentRun) return;
   stopping.value = true;
@@ -1731,6 +1838,8 @@ onMounted(() => {
   }
   // 会话列表要标「来自 <设备名>」：需要本机节点 id（同步状态），抽屉自己订阅一份
   sync.subscribe();
+  // 首启引导：没配模型时在输入区上方给一个只填 Key 的入口（不阻塞已有会话的浏览）
+  void loadAgentStatus();
   // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦。
   // 嵌入形态（全屏 Agent 页）同理：宿主页不置 chatDrawerOpen（置了会让 Home 再挂一只真抽屉），
   // 所以这里按 props 判定，否则全屏页会是空白转录。
@@ -3551,6 +3660,121 @@ onUnmounted(() => {
   border-radius: 9px;
   color: var(--text-faint);
   cursor: default;
+}
+
+/* ===== 首启引导：主色细边框 + 浅底，只占输入区上方一小块 ===== */
+.agent-setup {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 30%, var(--border));
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+
+.setup-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.setup-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--card-bg);
+  color: var(--accent, #4d8aff);
+}
+
+.setup-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.setup-copy b {
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.setup-copy span {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.setup-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.setup-dismiss:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+  color: var(--text);
+}
+
+.setup-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.setup-key {
+  flex: 1 1 180px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.setup-key:focus {
+  outline: none;
+  border-color: var(--accent, #4d8aff);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.setup-note,
+.setup-error {
+  margin: 6px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.setup-error {
+  color: var(--danger);
+}
+
+.setup-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent, #4d8aff);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.setup-link:hover {
+  text-decoration: underline;
 }
 
 .chat-composer {

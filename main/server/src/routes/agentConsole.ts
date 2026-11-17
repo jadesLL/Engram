@@ -11,6 +11,7 @@ import {
 } from '../assistant/agentConsole.js';
 import { ConsoleRpcError, createConsoleRpc } from '../assistant/agentConsoleRpc.js';
 import { bundledDshHome, bundledDshVersion } from '../assistant/config.js';
+import { pickDefaultPresetId } from '../assistant/agentPresets.js';
 import { DEFAULT_OFFICIAL_INPUT_MODALITIES, normalizeInputModalities } from '../assistant/modelCapabilities.js';
 import { mirrorAgentModelConfig } from '../sync/agentModelSync.js';
 
@@ -723,7 +724,9 @@ async function presetsPayload(origin: string): Promise<any> {
   });
   return {
     writable: describe?.writable !== false,
-    selected: String(viewValue(registry).selectedDefault ?? rawPresets.find((item) => item.isDefault)?.id ?? ''),
+    // 用户没选过、DSH 也没标默认时按「标准模式」展示：聊天不挂 preset（见 agentPatch.ts），
+    // 这里只影响控制台/网页工作台的新任务，兜底后设置页不会出现「还没有可用的默认预设」。
+    selected: pickDefaultPresetId(viewValue(registry).selectedDefault, rawPresets),
     revision: viewRevision(registry),
     presets,
   };

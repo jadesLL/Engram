@@ -131,7 +131,8 @@ export interface UpdateOfficialModelsBody {
   baseURL?: string;
   models?: OfficialModelEntry[];
   maxTokens?: number;
-  expectedRevision: number;
+  /** 乐观锁版本；不传时服务端按当前 revision 写（首启只填 Key 时不必先读一次模型目录） */
+  expectedRevision?: number;
 }
 
 export interface UpsertProviderBody {

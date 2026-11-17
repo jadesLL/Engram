@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { DATA_DIR } from '../config.js';
 import { getSetting, setSetting } from '../lib/db.js';
+import { credentialsFileHasRefs } from '../lib/credentialsFile.js';
 import { nativePathForPlainNode } from './agentNode.js';
 import { normalizeAgentPermissionMode, type AgentPermissionMode } from './permissionMode.js';
 
@@ -143,22 +144,24 @@ export function bundledSdkClientVersion(): string | null {
  * 三个来源任一命中即算已配置：
  *  1. 旧版 Engram 存的 Key（继续作为官方 Provider 凭据注入）；
  *  2. 进程环境变量 DEEPSEEK_API_KEY（部署时注入）；
- *  3. dsh 自己的凭据文件 `$DSH_HOME/.credentials.yaml`——控制台「设置 → 模型」保存的 Key
- *     就写在这里（dsh-credentials-local），文件里出现任意 key: value 即视为配过。
+ *  3. dsh 自己的凭据文件 `$DSH_HOME/.credentials.yaml` 的 **refs**——控制台「设置 → 模型」
+ *     保存的 Key 写在这里（dsh-credentials-local）。
  *
- * 只用来避免「先建一个必然失败的空会话」；具体调用失败仍由 dsh 报错。
+ * 注意只能看 refs：该文件同时存 `records:`（控制台启动时写入的浏览器会话授权等），
+ * 把整份文件里任意 key: value 都当成「配过 Key」会在打开过控制台后误判，首启引导再也不出现。
+ *
+ * 只用来避免「先建一个必然失败的空会话」与驱动首启引导；具体调用失败仍由 dsh 报错。
  */
 export function agentModelConfigured(): boolean {
   if ((getAgentConfig().apiKey || '').trim()) return true;
   if ((process.env.DEEPSEEK_API_KEY || '').trim()) return true;
-  const files = [path.join(bundledDshHome(), '.credentials.yaml'), path.join(bundledDshHome(), '.env')];
-  for (const file of files) {
-    try {
-      const text = fs.readFileSync(file, 'utf8');
-      if (/^\s*[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*\S+/m.test(text)) return true;
-    } catch {
-      /* 没有这个文件 */
-    }
+  if (credentialsFileHasRefs(path.join(bundledDshHome(), '.credentials.yaml'))) return true;
+  // .env 是行式 KEY=VALUE（没有 refs 分区），整行即凭据
+  try {
+    const text = fs.readFileSync(path.join(bundledDshHome(), '.env'), 'utf8');
+    if (/^\s*[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*\S+/m.test(text)) return true;
+  } catch {
+    /* 没有这个文件 */
   }
   return false;
 }
