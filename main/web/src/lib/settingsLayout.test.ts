@@ -58,11 +58,28 @@ test('桌面端：目录列与内容列是两个独立滚动容器', () => {
     '壳层少了 min-height: 0：网格行不肯收窄，两列都滚不起来',
   );
   const nav = ruleBody(css, '.settings-nav');
-  assert.match(nav, /overflow-y:\s*auto/, '目录列不再是滚动容器：最下面几个大类又看不到了');
+  /* 2026-11-17：滚动权下放到中间的目录列表（搜索框与底部状态条钉住），整列只管裁切。 */
+  assert.match(
+    nav,
+    /overflow:\s*hidden/,
+    '目录列不再裁住溢出内容：分组列表一多，条目会从盒子底下漏出来压到底部状态条上（2026-11-17 用户报的「文字都飞出去了」）',
+  );
   assert.doesNotMatch(
     nav,
     /position:\s*sticky/,
     '目录列退回 position: sticky：它只在整页滚动时才有意义，视口外的目录项永远钉不出来（2026-09-28 的 bug）',
+  );
+  const navList = ruleBody(css, '.settings-nav-list');
+  assert.match(navList, /overflow-y:\s*auto/, '目录列表不再是滚动容器：最下面几个大类又看不到了');
+  assert.match(
+    navList,
+    /min-height:\s*0/,
+    '目录列表少了 min-height: 0：它在 flex 列里撑不到可用高度，也滚不起来',
+  );
+  assert.doesNotMatch(
+    navList,
+    /flex:\s*0\s+0/,
+    '目录列表被钉成不收缩也不生长：整列只裁切不滚动，分组一多最后几个二级分组就滚不出来了',
   );
   assert.match(
     ruleBody(css, '.settings-content'),

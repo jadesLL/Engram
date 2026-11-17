@@ -609,19 +609,29 @@ function computeActiveGroup(): string {
   return current;
 }
 
-/** 二级项滚出目录列可视区时，把目录轻微滚到能看见它的位置（目录本身是滚动容器） */
-function revealActiveNavItem() {
+/**
+ * 左栏真正的滚动容器：中间的目录列表（2026-11-17 起顶部搜索与底部状态条各自钉住，
+ * 只有列表在滚；整列 .settings-nav 只负责裁切）。取不到列表时退回整列，别让滚动权凭空消失。
+ */
+function navScroller(): HTMLElement | null {
   const nav = navEl.value;
-  if (!nav || !activeGroup.value) return;
-  const item = nav.querySelector<HTMLElement>(
+  if (!nav) return null;
+  return nav.querySelector<HTMLElement>('.settings-nav-list') ?? nav;
+}
+
+/** 二级项滚出目录列表可视区时，把列表轻微滚到能看见它的位置 */
+function revealActiveNavItem() {
+  const scroller = navScroller();
+  if (!scroller || !activeGroup.value) return;
+  const item = scroller.querySelector<HTMLElement>(
     '.settings-nav-subitem[data-anchor="' + CSS.escape(activeGroup.value) + '"]',
   );
   if (!item) return;
-  const navRect = nav.getBoundingClientRect();
+  const boxRect = scroller.getBoundingClientRect();
   const itemRect = item.getBoundingClientRect();
   const pad = 8;
-  if (itemRect.top < navRect.top + pad) nav.scrollTop -= navRect.top + pad - itemRect.top;
-  else if (itemRect.bottom > navRect.bottom - pad) nav.scrollTop += itemRect.bottom - (navRect.bottom - pad);
+  if (itemRect.top < boxRect.top + pad) scroller.scrollTop -= boxRect.top + pad - itemRect.top;
+  else if (itemRect.bottom > boxRect.bottom - pad) scroller.scrollTop += itemRect.bottom - (boxRect.bottom - pad);
 }
 
 function syncActiveGroupFromScroll() {
