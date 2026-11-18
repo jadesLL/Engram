@@ -418,6 +418,15 @@ object SyncOpText {
     }
 
     /**
+     * 本端推送的页面只是旧版本（没有本地改动）：中枢直接回最新版，本端写回。
+     * 与 desktop 端 client.ts 的 push-stale 同措辞，避免两边日志说法不一致。
+     */
+    fun describePushStale(path: String, title: String?): String {
+        val name = title?.takeIf { it.isNotBlank() } ?: pageTitle(path)
+        return "页面「$name」本端是旧版本（没有本地改动），已按中枢最新版写回"
+    }
+
+    /**
      * 兜底：中枢下发了本端不认识的同步类型（协议比本端新）。
      *
      * session / board 两类是「已知但不镜像」——手机不存会话与看板，读的是中枢那一份（窄代理）；

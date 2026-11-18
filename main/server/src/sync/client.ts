@@ -1025,6 +1025,9 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       const ackedRevision = Number(res.revision || 0);
       // ack 内容与本端不同 → hub 做过合并/规范化，以 hub 为准写回
       const merged = res.content !== undefined && res.content !== raw;
+      // 中枢判定「本端只是旧版本、没有本地改动」：内容会写回，但不是「双方都改了」，
+      // 不能记成 push-merged，否则用户会以为自己有一次不存在的编辑被合并。
+      const stale = res.merge === 'stale';
       if (merged) {
         applyRemotePage(item.target, String(res.content), ackedRevision);
         // 合并是「本端内容被别人改过」的唯一信号，旧版只在界面看板里体现为内容变了，
@@ -1033,15 +1036,25 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
         const op = res.op as SyncOpSummary | undefined;
         if (!String(item.target).startsWith('AIWorks/')) {
           const delta = op?.added || op?.removed ? `（合并后 ${formatLineDelta(op.added, op.removed)}）` : '';
-          logEvent('info', 'push-merged', `页面「${op?.title || item.target}」本端与中枢都有改动，已按中枢合并结果写回本端${delta}`, {
-            path: item.target,
-            title: op?.title,
-            revision: ackedRevision,
-            added: op?.added,
-            removed: op?.removed,
-            localBytes: Buffer.byteLength(raw, 'utf8'),
-            mergedBytes: Buffer.byteLength(String(res.content), 'utf8'),
-          });
+          if (stale) {
+            logEvent('info', 'push-stale', `页面「${op?.title || item.target}」本端是旧版本（没有本地改动），已按中枢最新版写回`, {
+              path: item.target,
+              title: op?.title,
+              revision: ackedRevision,
+              localBytes: Buffer.byteLength(raw, 'utf8'),
+              mergedBytes: Buffer.byteLength(String(res.content), 'utf8'),
+            });
+          } else {
+            logEvent('info', 'push-merged', `页面「${op?.title || item.target}」本端与中枢都有改动，已按中枢合并结果写回本端${delta}`, {
+              path: item.target,
+              title: op?.title,
+              revision: ackedRevision,
+              added: op?.added,
+              removed: op?.removed,
+              localBytes: Buffer.byteLength(raw, 'utf8'),
+              mergedBytes: Buffer.byteLength(String(res.content), 'utf8'),
+            });
+          }
         }
       } else {
         setPageSyncRevision(item.target, ackedRevision);

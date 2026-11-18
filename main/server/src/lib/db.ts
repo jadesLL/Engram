@@ -783,7 +783,7 @@ export function migrate() {
   // 旧库增量加列（CREATE TABLE IF NOT EXISTS 不会给既有表补列）；旧行 hash 为空，
   // 成员端走「无条件拉一次」的兼容路径。
   ensureColumn('sync_oplog', 'hash', `TEXT NOT NULL DEFAULT ''`);
-  // 每页版本快照（保留最近 10 版）：三方合并的祖先来源
+  // 每页版本快照（保留最近若干版）：三方合并的祖先来源
   db.prepare(`CREATE TABLE IF NOT EXISTS page_revisions (
     path TEXT NOT NULL,
     revision INTEGER NOT NULL,
@@ -791,6 +791,16 @@ export function migrate() {
     node_id TEXT NOT NULL DEFAULT '',
     ts TEXT NOT NULL,
     PRIMARY KEY(path, revision)
+  )`).run();
+  // 每页**正文**出现过的 hash 历史（不随版本快照裁剪）。
+  // 祖先版本被高频自动保存挤出保留窗口时，中枢靠它分辨「成员只是拿着旧稿」还是
+  // 「真有无法合并的本地改动」：命中历史 hash 说明内容没改过，直接按中枢版本处理，
+  // 不再生成 xxx-时间戳.md 冲突副本。正文 hash 忽略 frontmatter 的更新日期。
+  db.prepare(`CREATE TABLE IF NOT EXISTS page_body_hashes (
+    path TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY(path, hash)
   )`).run();
   // 同步群组成员（中枢端）：为每个成员设备命名并签发专属 token
   db.prepare(`CREATE TABLE IF NOT EXISTS sync_peers (

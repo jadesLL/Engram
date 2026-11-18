@@ -52,6 +52,7 @@ import {
   appendOplog,
   getPageRevision,
   getPageSyncRevision,
+  isKnownPageBody,
   nextRevision,
   savePageRevision,
   setPageSyncRevision,
@@ -381,8 +382,12 @@ export interface PushApplyResult {
   revision: number;
   /** hub 侧最终内容（可能与推送内容不同：合并/规范化）；非页面操作为空 */
   content?: string;
-  /** 页面写入方式：direct=直接应用；merged=字符级三方合并；conflict=无法融合按修改时间最新者胜 */
-  merge?: 'direct' | 'merged' | 'conflict';
+  /**
+   * 页面写入方式：direct=直接应用；merged=字符级三方合并；conflict=无法融合按修改时间最新者胜；
+   * stale=推送方拿的只是本页旧版本（正文 hash 命中历史版本，无本地改动），按中枢版本回执、
+   * 不产生冲突副本。
+   */
+  merge?: 'direct' | 'merged' | 'conflict' | 'stale';
   /** conflict 时败者内容的另存副本路径（AIWorks 系统区或空内容不产生副本） */
   copyPath?: string | null;
   /** conflict 时是否由推送方内容胜出（false=中枢版本更新，推送方改动被另存） */
@@ -447,7 +452,23 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     const ancestor = getPageRevision(target, base);
     const theirsMs = Number(push.mtime || 0);
     if (ancestor === null) {
-      // 祖先缺失（离线太久/快照被裁剪/双方各自创建）：无法融合，整页按最新裁决
+      // 祖先缺失（离线太久/高频自动保存把版本快照挤出窗口/双方各自创建）：无法融合。
+      // 先分辨「只是旧稿」还是「真有改不了的内容」：推送正文命中本页历史版本、且源文件
+      // 不比中枢新（不是离线回滚），说明用户没改过任何东西，只是设备休眠/离线回来补推——
+      // 直接回中枢版本，不生成冲突副本。
+      if (isKnownPageBody(target, raw) && theirsMs <= mtimeMsOf(target)) {
+        return {
+          ok: true,
+          seq: 0,
+          revision: getPageSyncRevision(target),
+          content: hubRaw,
+          merge: 'stale',
+          copyPath: null,
+          theirWins: false,
+          op: summarizePageChange(target, hubRaw, hubRaw),
+        };
+      }
+      // 整页按最新裁决
       const resolved = applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
       const result = commit('page', target, actorId, {});
       return {
