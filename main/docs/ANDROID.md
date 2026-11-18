@@ -157,6 +157,15 @@ main/mobile/
 - **提醒**：应用内是那枚绿色更新图标 + 设置页徽标；退到后台时下载完成会发一条系统通知（Android 13+ 需通知权限，面板上给「允许通知」按钮按需申请）。
 - **边界**：调试包（`versionName` 带 `-local-first-debug` 后缀）不参与覆盖安装——它与正式包 `applicationId` 不同，装正式包会变成两个 App 并存，面板会说明原因；远端 Release 必须有 `.apk` 附件（发版 dispatch 勾选 `binaries` 才会上传）；签名必须与已装版本一致才能覆盖升级，keystore 丢失只能卸载重装。
 
+## 导出 PDF 与长图（D 类）
+
+阅读顶栏 / 编辑顶栏 / 右键菜单的「导出」在手机上与桌面共用同一套 Web 实现（`web/src/lib/pageExportCapture.ts`）。手机档顶栏第一行仍只放 返回编辑 / 目录 / 主题 / 更多，导出收在「更多」面板的「导出 PDF / 导出长图」两个按钮里。原生侧只提供两个出口，桥名 `EngramPageExport`（`PageExportBridge.java`，在 `MainActivity.onCreate` 里与系统栏 / 指纹 / 收集箱抓取同一时机安装）：
+
+- **长图**：Web 侧把导出稿（`.engram-export-doc`）用 SVG foreignObject 光栅化成 PNG，再调 `EngramPageExport.saveImage(dataUrl, name)`。原生侧解码后走 SAF `ACTION_CREATE_DOCUMENT` 让用户选位置，后台线程落盘并 toast；与整库备份 / 普通下载同一口径，**不申请存储权限**。输出高度上限 12000px（低端机 canvas 分配上限），超过时 Web 侧直接提示改用 PDF。
+- **PDF**：调 `EngramPageExport.printPage(name)` → 系统 `PrintManager`，用 WebView 的打印适配器按 A4 输出，打印面板里选「另存为 PDF」。打印媒体下网页只渲染 `#engram-export-root`（`web/src/styles/pageExport.css` 的 `@media print`），工具栏 / 侧栏 / 浮层都不进 PDF，文字可选中，标题与图片有分页保护。
+- **降级**：网页检测不到 `EngramPageExport`（桌面 / Docker 浏览器 / 旧壳）时，长图退回 `a[download]`，PDF 退回 `window.print()`；桌面 Electron 另走 `wikiDesktop.exportPdf`（主进程 `printToPDF` 直接落盘）。
+- **清理**：`PrintManager` 没有关闭回调，导出稿在离屏 DOM 里保留 5 分钟再回收，避免打印预览取内容时已经删掉；`onDestroy` 会清掉待保存的 PNG 字节。
+
 ## 本地开发与验证
 
 环境依赖：JDK 21、Android SDK platform/build-tools 35、Node 22 和仓库 pnpm 依赖。下载或安装环境文件前必须按仓库规则取得用户许可。

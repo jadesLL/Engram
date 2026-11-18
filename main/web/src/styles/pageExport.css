@@ -1,0 +1,485 @@
+/*
+ * 单页导出（PDF / 长图）的样式。
+ *
+ * 这份 CSS 有两个消费者：
+ *  1. 屏幕：`#engram-export-root` 挂在 body 末尾、放在视口外，用来量高度与做长图栅格化；
+ *  2. 打印：`@media print` 只留导出根，桌面窗口 / Docker 浏览器 / Electron printToPDF /
+ *     Android PrintManager 打出来的都是同一个版心。
+ *
+ * 因为长图会把导出 DOM 塞进 SVG foreignObject，SVG 文档里没有应用的 CSS 变量，
+ * 所以这里全部用字面色值；导出永远是浅色纸面，不跟随应用深色主题。
+ */
+
+#engram-export-root {
+  position: fixed;
+  top: 0;
+  left: -32000px;
+  width: 860px;
+  z-index: -1;
+  pointer-events: none;
+  color-scheme: light;
+}
+
+.engram-export-doc,
+.engram-export-doc * {
+  box-sizing: border-box;
+}
+
+.engram-export-doc {
+  width: 860px;
+  padding: 40px;
+  background: #f3efe6;
+  color: #1d1b17;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.engram-export-doc .xe-card {
+  width: 100%;
+  padding: 52px 48px 40px;
+  background: #fffefb;
+  border: 1px solid rgba(20, 26, 40, 0.08);
+  border-radius: 18px;
+}
+
+/* ---------- 页头 ---------- */
+
+.engram-export-doc .xe-head {
+  padding-bottom: 24px;
+  margin-bottom: 30px;
+  border-bottom: 1px solid rgba(20, 26, 40, 0.08);
+}
+
+.engram-export-doc .xe-kicker {
+  margin-bottom: 10px;
+  color: #8a7f6a;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.engram-export-doc .xe-title {
+  margin: 0 0 14px;
+  color: #1d1b17;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.engram-export-doc .xe-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  color: #6f6d6a;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.engram-export-doc .xe-meta > span {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.engram-export-doc .xe-dot {
+  color: #c6c0b4;
+}
+
+.engram-export-doc .xe-type {
+  color: #5f5d5b;
+  font-weight: 600;
+}
+
+.engram-export-doc .xe-tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #edf2ff;
+  color: #2450cf;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ---------- 正文 ---------- */
+
+.engram-export-doc .xe-content {
+  color: #26231f;
+  font-size: 16px;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.engram-export-doc .xe-content > *:first-child {
+  margin-top: 0;
+}
+
+.engram-export-doc .xe-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.engram-export-doc .xe-content h1,
+.engram-export-doc .xe-content h2,
+.engram-export-doc .xe-content h3,
+.engram-export-doc .xe-content h4,
+.engram-export-doc .xe-content h5,
+.engram-export-doc .xe-content h6 {
+  margin: 1.6em 0 0.65em;
+  color: #1d1b17;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.engram-export-doc .xe-content h1 { font-size: 26px; }
+.engram-export-doc .xe-content h2 { font-size: 22px; }
+.engram-export-doc .xe-content h3 { font-size: 19px; }
+.engram-export-doc .xe-content h4 { font-size: 17px; }
+.engram-export-doc .xe-content h5 { font-size: 15px; }
+.engram-export-doc .xe-content h6 { font-size: 14px; color: #5f5d5b; }
+
+.engram-export-doc .xe-content p {
+  margin: 0.9em 0;
+}
+
+.engram-export-doc .xe-content a {
+  color: #2b5ce6;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(43, 92, 230, 0.28);
+}
+
+.engram-export-doc .xe-content strong { font-weight: 700; }
+.engram-export-doc .xe-content em { font-style: italic; }
+.engram-export-doc .xe-content del { color: #8d8a84; }
+
+.engram-export-doc .xe-content ul,
+.engram-export-doc .xe-content ol {
+  margin: 0.9em 0;
+  padding-left: 1.6em;
+}
+
+.engram-export-doc .xe-content li {
+  margin: 0.35em 0;
+}
+
+.engram-export-doc .xe-content li > p {
+  margin: 0.25em 0;
+}
+
+.engram-export-doc .xe-content blockquote {
+  margin: 1.2em 0;
+  padding: 4px 0 4px 18px;
+  border-left: 3px solid #d9ccb2;
+  color: #5f5d5b;
+}
+
+.engram-export-doc .xe-content blockquote p {
+  margin: 0.45em 0;
+}
+
+.engram-export-doc .xe-content hr {
+  height: 0;
+  margin: 2em 0;
+  border: 0;
+  border-top: 1px solid rgba(20, 26, 40, 0.1);
+}
+
+.engram-export-doc .xe-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.2em auto;
+  border-radius: 8px;
+}
+
+.engram-export-doc .xe-content figure {
+  margin: 1.2em 0;
+}
+
+.engram-export-doc .xe-content figcaption {
+  margin-top: 6px;
+  color: #7c7a77;
+  font-size: 13px;
+  text-align: center;
+}
+
+.engram-export-doc .xe-content code {
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: #f1ede4;
+  color: #453f35;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.88em;
+}
+
+.engram-export-doc .xe-content pre {
+  margin: 1.2em 0;
+  padding: 16px 18px;
+  overflow: visible;
+  border: 1px solid rgba(20, 26, 40, 0.08);
+  border-radius: 10px;
+  background: #f6f3ec;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.engram-export-doc .xe-content pre code {
+  padding: 0;
+  background: transparent;
+  color: #2d2a25;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.engram-export-doc .xe-content table {
+  width: 100%;
+  margin: 1.2em 0;
+  border-collapse: collapse;
+  font-size: 14px;
+  table-layout: auto;
+}
+
+.engram-export-doc .xe-content th,
+.engram-export-doc .xe-content td {
+  padding: 8px 10px;
+  border: 1px solid rgba(20, 26, 40, 0.12);
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.engram-export-doc .xe-content thead th {
+  background: #f7f3ea;
+  font-weight: 600;
+}
+
+.engram-export-doc .xe-content tbody tr:nth-child(even) td {
+  background: #fcfaf5;
+}
+
+.engram-export-doc .xe-content .vditor-task {
+  padding-left: 0.2em;
+  list-style: none;
+}
+
+.engram-export-doc .xe-content .vditor-task li {
+  list-style: none;
+}
+
+.engram-export-doc .xe-content input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  margin: 0 6px 0 0;
+  vertical-align: -2px;
+  accent-color: #2b5ce6;
+}
+
+.engram-export-doc .xe-content sup {
+  font-size: 0.72em;
+  line-height: 0;
+}
+
+.engram-export-doc .xe-content mark {
+  padding: 0 0.1em;
+  background: #fff0b3;
+  color: inherit;
+}
+
+.engram-export-doc .xe-content kbd {
+  padding: 1px 5px;
+  border: 1px solid rgba(20, 26, 40, 0.18);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fff;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 0.84em;
+}
+
+/* Vditor 注入的标题锚点 / 复制按钮不进入导出稿 */
+.engram-export-doc .xe-content .vditor-anchor,
+.engram-export-doc .xe-content .vditor-copy,
+.engram-export-doc .xe-content .vditor-toc {
+  display: none !important;
+}
+
+.engram-export-doc .xe-img-missing {
+  display: block;
+  margin: 1.2em 0;
+  padding: 18px 16px;
+  border: 1px dashed rgba(20, 26, 40, 0.2);
+  border-radius: 8px;
+  color: #7c7a77;
+  font-size: 13px;
+  text-align: center;
+}
+
+.engram-export-doc .xe-empty {
+  color: #7c7a77;
+}
+
+/* ---------- 代码高亮（Vditor 的 hljs 类名，固定 github 浅色主题） ---------- */
+
+.engram-export-doc .hljs-comment,
+.engram-export-doc .hljs-quote { color: #6a737d; font-style: italic; }
+.engram-export-doc .hljs-keyword,
+.engram-export-doc .hljs-selector-tag,
+.engram-export-doc .hljs-literal,
+.engram-export-doc .hljs-type { color: #d73a49; }
+.engram-export-doc .hljs-string,
+.engram-export-doc .hljs-regexp,
+.engram-export-doc .hljs-addition { color: #032f62; }
+.engram-export-doc .hljs-number,
+.engram-export-doc .hljs-symbol,
+.engram-export-doc .hljs-bullet,
+.engram-export-doc .hljs-variable,
+.engram-export-doc .hljs-template-variable { color: #005cc5; }
+.engram-export-doc .hljs-title,
+.engram-export-doc .hljs-section,
+.engram-export-doc .hljs-name,
+.engram-export-doc .hljs-selector-id,
+.engram-export-doc .hljs-selector-class { color: #6f42c1; }
+.engram-export-doc .hljs-attr,
+.engram-export-doc .hljs-attribute,
+.engram-export-doc .hljs-built_in,
+.engram-export-doc .hljs-meta { color: #e36209; }
+.engram-export-doc .hljs-deletion { color: #b31d28; background: #ffeef0; }
+.engram-export-doc .hljs-emphasis { font-style: italic; }
+.engram-export-doc .hljs-strong { font-weight: 700; }
+
+/* ---------- 页脚 ---------- */
+
+.engram-export-doc .xe-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 34px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(20, 26, 40, 0.08);
+  color: #8d8a84;
+  font-size: 12px;
+}
+
+.engram-export-doc .xe-brand {
+  color: #5f5d5b;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 打印：只留导出稿，A4 分页 ---------- */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm 14mm 18mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* 应用本体、Teleport 出来的浮层 / toast 一律不打 */
+  body > *:not(#engram-export-root) {
+    display: none !important;
+  }
+
+  #engram-export-root {
+    display: block !important;
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    width: auto !important;
+    z-index: auto !important;
+    pointer-events: auto !important;
+  }
+
+  .engram-export-doc {
+    width: auto;
+    padding: 0;
+    background: #fff;
+    font-size: 10.5pt;
+    line-height: 1.75;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .engram-export-doc .xe-card {
+    width: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+  }
+
+  .engram-export-doc .xe-head {
+    padding-bottom: 14pt;
+    margin-bottom: 16pt;
+  }
+
+  .engram-export-doc .xe-title {
+    font-size: 22pt;
+  }
+
+  .engram-export-doc .xe-kicker {
+    font-size: 9pt;
+  }
+
+  .engram-export-doc .xe-meta {
+    font-size: 9pt;
+  }
+
+  .engram-export-doc .xe-content {
+    color: #1d1b17;
+    font-size: 10.5pt;
+    line-height: 1.8;
+  }
+
+  .engram-export-doc .xe-content h1 { font-size: 16pt; }
+  .engram-export-doc .xe-content h2 { font-size: 14pt; }
+  .engram-export-doc .xe-content h3 { font-size: 12.5pt; }
+  .engram-export-doc .xe-content h4 { font-size: 11.5pt; }
+  .engram-export-doc .xe-content h5,
+  .engram-export-doc .xe-content h6 { font-size: 10.5pt; }
+
+  .engram-export-doc .xe-content h1,
+  .engram-export-doc .xe-content h2,
+  .engram-export-doc .xe-content h3,
+  .engram-export-doc .xe-content h4 {
+    break-after: avoid-page;
+  }
+
+  .engram-export-doc .xe-content pre,
+  .engram-export-doc .xe-content blockquote,
+  .engram-export-doc .xe-content table,
+  .engram-export-doc .xe-content img,
+  .engram-export-doc .xe-content figure {
+    break-inside: avoid;
+  }
+
+  .engram-export-doc .xe-content img {
+    max-height: 220mm;
+    object-fit: contain;
+  }
+
+  .engram-export-doc .xe-content a {
+    color: inherit;
+    border-bottom: 0;
+  }
+
+  .engram-export-doc .xe-content pre code {
+    font-size: 8.5pt;
+  }
+
+  .engram-export-doc .xe-foot {
+    margin-top: 18pt;
+    padding-top: 8pt;
+  }
+}

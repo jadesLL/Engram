@@ -265,6 +265,7 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | `window.__engramJoinLink(raw)` → 返回 true 才算送达 | `MainActivity.java` | `lib/joinLink.ts` | 无调用；粘贴链接仍可用 |
 | `window.__engramShareInbox(delivery)` | `MainActivity.java` | `lib/shareInbox.ts` | 无分享入口 |
 | `EngramInboxRender` + `window.__engramInboxRenderResult(id, payload)` | `InboxRender.java` | `lib/inboxRender.ts` | 走服务端抓取，失败给原错误提示 |
+| `EngramPageExport.saveImage(dataUrl, name)` / `EngramPageExport.printPage(name)` | `PageExportBridge.java`（SAF 另存为 + PrintManager） | `lib/pageExportCapture.ts` | 无桥：长图退回 `a[download]`、PDF 退回 `window.print()`（桌面 / Docker 浏览器可用）；Android 长图输出上限 12000px，超长提示改用 PDF |
 | 后台同步权限（**非 JS 桥**，host + 本地接口）：`BackgroundSyncHost` + `POST /api/sync/background/permissions`；保活为 `SyncGraceService`（`dataSync` 前台服务） | `MainActivity.java`（实现宿主）/ `SyncGraceService.kt` / `SyncPermissions.java` | `lib/backgroundSync.ts` + `SyncPanel.vue`（`/api/sync/status` 的 `background` 字段） | 桌面 / Docker 无 `background` 字段 → 卡片整块隐藏；没有宿主时申请接口为 no-op，状态照常可读 |
 
 **Windows 桥**：`main/desktop/preload.js` 通过 `contextBridge` 暴露 `window.wikiDesktop`（约 30 个方法，见文件）；Web 侧在 19 处调用，全部必须做「无桥不渲染/不调用」判断（样板：`App.vue` 用桥存在性判标题栏；`biometric.ts` 用 null 判降级）。

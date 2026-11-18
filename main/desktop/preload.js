@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   getLocalPort: () => ipcRenderer.invoke('get-local-port'),
   // 更改本地服务端口（占用预检通过后写入 config.json 并重启内嵌后端；未变化返回 { same }，失败返回 { error }）
   setLocalPort: (port) => ipcRenderer.invoke('set-local-port', port),
+  // ---------- 单页导出（阅读 / 编辑页的「导出 PDF / 长图」） ----------
+  // 导出 PDF：主进程用 printToPDF 按页面里的 #engram-export-root 出 A4，再弹另存为。
+  // 返回 { filePath } / { canceled } / { error }。
+  exportPdf: (name) => ipcRenderer.invoke('desktop-export-pdf', name),
+  // 保存长图：页面传 PNG 字节（ArrayBuffer），主进程弹另存为后落盘。
+  // 返回 { filePath } / { canceled } / { error }。
+  saveExportFile: (name, bytes) => ipcRenderer.invoke('desktop-save-export', name, bytes),
   // ---------- 局域网访问（设置 → 同步群组：把本机当同步中枢时用） ----------
   // 查询开关状态（{ enabled }）：enabled=true 时内嵌服务监听 0.0.0.0，局域网设备可连
   getLanAccess: () => ipcRenderer.invoke('get-lan-access'),

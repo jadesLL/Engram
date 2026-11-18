@@ -2795,3 +2795,66 @@ async function rebuildDesktopShortcut() {
 }
 
 ipcMain.handle('desktop-rebuild-shortcut', () => rebuildDesktopShortcut());
+
+// ---------- 单页导出（阅读 / 编辑页的「导出 PDF / 长图」） ----------
+/**
+ * 导出文件名只取 basename：渲染进程传来的名字不能带路径，避免越出用户选择的目录。
+ * 扩展名由主进程补，页面只负责给出可读的标题。
+ */
+function exportFileName(rawName, extension) {
+  const base = path.basename(String(rawName || ''))
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Engram 导出';
+  return base.toLowerCase().endsWith(`.${extension}`) ? base : `${base}.${extension}`;
+}
+
+// 页面里已经挂好 #engram-export-root（@media print 只显示它）：主进程按打印媒体出 A4 PDF，
+// 再让用户选保存位置。比浏览器「打印 → 另存为 PDF」少一次预览确认，也不依赖系统打印驱动。
+ipcMain.handle('desktop-export-pdf', async (event, rawName) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return { error: '窗口已关闭' };
+    const name = exportFileName(rawName, 'pdf');
+    const pdf = await win.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    const target = await dialog.showSaveDialog(win, {
+      title: '导出为 PDF',
+      defaultPath: path.join(app.getPath('downloads'), name),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (target.canceled || !target.filePath) return { canceled: true };
+    await fs.promises.writeFile(target.filePath, pdf);
+    log(`[export] PDF 已保存：${target.filePath}（${pdf.length} bytes）`);
+    return { filePath: target.filePath };
+  } catch (error) {
+    return { error: `导出 PDF 失败：${describeError(error)}` };
+  }
+});
+
+// 长图（PNG）由页面栅格化后把字节传进来，主进程只负责「另存为」与落盘。
+ipcMain.handle('desktop-save-export', async (event, rawName, bytes) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return { error: '窗口已关闭' };
+    const name = exportFileName(rawName, 'png');
+    const buffer = Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : (bytes || []));
+    if (!buffer.length) return { error: '导出的图片为空' };
+    if (buffer.length > 200 * 1024 * 1024) return { error: '导出的图片超过 200MB，请改用 PDF 导出' };
+    const target = await dialog.showSaveDialog(win, {
+      title: '导出为长图',
+      defaultPath: path.join(app.getPath('downloads'), name),
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    });
+    if (target.canceled || !target.filePath) return { canceled: true };
+    await fs.promises.writeFile(target.filePath, buffer);
+    log(`[export] 长图已保存：${target.filePath}（${buffer.length} bytes）`);
+    return { filePath: target.filePath };
+  } catch (error) {
+    return { error: `保存长图失败：${describeError(error)}` };
+  }
+});

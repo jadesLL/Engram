@@ -72,6 +72,8 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
     private BiometricUnlock biometricUnlock;
     /** 收集箱渲染后抓取：服务端抓到 JS 空壳页时用离屏 WebView 渲染，见 InboxRender。 */
     private InboxRender inboxRender;
+    /** 单页导出（PDF / 长图）：系统打印与 SAF 另存为都离不开 Activity，见 PageExportBridge。 */
+    private PageExportBridge pageExport;
     /** 应用内在线更新的宿主（安装器/权限页/通知都离不开 Activity），见 AppUpdater。 */
     private UpdateHost updateHost;
     /**
@@ -103,6 +105,9 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
             // 收集箱渲染后抓取同样要在加载页面前装好桥（服务端 needs-render 时网页会来调用）
             inboxRender = new InboxRender(this, shellWebView);
             inboxRender.install();
+            // 单页导出：PDF 走系统打印面板、长图走 SAF 另存为，两者都要在页面加载前装桥
+            pageExport = new PageExportBridge(this, shellWebView);
+            pageExport.install();
         }
         showStartupOverlay();
         startupSurfaceReady = true;
@@ -344,6 +349,11 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
         updateHost = null;
         // 宿主静态持有 Activity：销毁时必须摘掉，否则泄漏（与本机服务实例是否还在无关）
         EngramLocalServer.setBackgroundSyncHost(null);
+        // 导出桥待保存的 PNG 字节可能几十 MB：销毁时立刻丢掉，别等 GC
+        if (pageExport != null) {
+            pageExport.onDestroy();
+            pageExport = null;
+        }
         super.onDestroy();
     }
 
@@ -627,6 +637,8 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
         super.onActivityResult(requestCode, resultCode, data);
         // 系统凭据验证（API 23-27 的锁屏验证）由 BiometricUnlock 自己收口，别落到下载逻辑里
         if (biometricUnlock != null && biometricUnlock.onActivityResult(requestCode, resultCode, data)) return;
+        // 导出长图的 SAF 结果先交给导出桥：它与下载共用 startActivityForResult，必须按 requestCode 分开
+        if (pageExport != null && pageExport.onActivityResult(requestCode, resultCode, data)) return;
         if (requestCode != REQUEST_CREATE_DOCUMENT) return;
         final String url = pendingDownloadUrl;
         final String cookie = pendingDownloadCookie;

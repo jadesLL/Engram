@@ -7,6 +7,8 @@ import { installSystemInsets } from './lib/systemInsets';
 import { installBackHandler, installRouterBack } from './lib/androidBack';
 import './styles/main.css';
 import './styles/settings.css';
+// 单页导出（PDF / 长图）：屏幕外导出稿与 @media print 的 A4 版心
+import './styles/pageExport.css';
 // 首页看板模块之间的公共皮肤（抬头 / 卡片 / 行 / 徽章）：跨组件复用，写在全局表里
 import './styles/homeBoard.css';
 
