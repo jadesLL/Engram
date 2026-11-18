@@ -90,6 +90,11 @@ test('images only load workspace-local sources', () => {
   assert.match(remote, /<a class="md-link" href="https:\/\/cdn.example.com\/a.png"/);
   assert.ok(!remote.includes('<img'));
   assert.match(renderMarkdown('![坏](javascript:void)'), /!\[坏\]\(javascript:void\)/);
+  // 正文里设过宽度的图片（`#w=`）在对话正文里也按同一宽度呈现
+  assert.match(
+    renderMarkdown('![图](/media/abc/pic.png#w=320)'),
+    /<img class="md-img" src="\/media\/abc\/pic.png#w=320" alt="图" loading="lazy" style="width:320px;max-width:100%;height:auto">/
+  );
 });
 
 test('fenced code blocks keep their body verbatim and survive streaming', () => {

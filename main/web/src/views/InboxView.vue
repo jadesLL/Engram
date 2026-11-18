@@ -304,6 +304,7 @@ import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import { wrapTables } from '../lib/markdownTableWrap';
+import { applyImageWidths } from '../lib/imageWidth';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useInboxStore, type InboxItem, type InboxUpload } from '../stores/inbox';
@@ -758,6 +759,8 @@ async function renderMarkdown(markdown: string) {
   const host = reviewBody.value;
   if (!host) return;
   await Vditor.preview(host, markdown, vditorPreviewOptions(document.documentElement.classList.contains('dark')));
+  // 图片宽度写在 URL fragment（`#w=`）里，Vditor 只认 src；渲染后补一次 inline width
+  applyImageWidths(host);
   // Vditor 直出原生 table：不包滚动容器，宽表会把弹窗（手机上是 94vw）连正文一起撑破
   wrapTables(host, 'review-table-scroll');
 }

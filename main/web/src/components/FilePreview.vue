@@ -175,6 +175,7 @@ import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import { applyImageWidths } from '../lib/imageWidth';
 import {
   decorateCitationsIn,
   handleCitationEvent,
@@ -706,6 +707,8 @@ async function loadFile() {
         data.text,
         vditorPreviewOptions(document.documentElement.classList.contains('dark')),
       );
+      // 图片宽度写在 URL fragment（`#w=`）里，Vditor 只认 src；渲染后补一次 inline width
+      if (mdEl.value) applyImageWidths(mdEl.value);
       // Vditor 直出原生 table：宽表会连整个预览区一起撑宽（触屏上正文被推出视野，只能整页横拖）
       if (mdEl.value) wrapTables(mdEl.value, 'fp-table-scroll');
       // 报告类 Markdown 里的 `[1]` 也补成可点角标：与 Wiki 阅读页、客户洞察页行为一致

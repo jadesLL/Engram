@@ -10,6 +10,7 @@
  * 按标准合并成一行会把内容挤没）。
  */
 import { wikiTargetFromHref, wikiUrl } from './wikiLinks.ts';
+import { imageWidthFromSrc } from './imageWidth.ts';
 
 /** 链接协议白名单：站外 http(s)、mailto、站内绝对/相对路径、锚点（含 `#wiki/` 双链）。 */
 const SAFE_HREF = /^(?:https?:\/\/|mailto:|\/|\.{0,2}\/|#)/i;
@@ -102,7 +103,9 @@ function inlineToken(match: RegExpExecArray, source: string, depth: number): str
 
 function imageToken(alt: string, src: string): string {
   if (SAFE_IMAGE.test(src)) {
-    return `<img class="md-img" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy">`;
+    const width = imageWidthFromSrc(src);
+    const style = width ? ` style="width:${width}px;max-width:100%;height:auto"` : '';
+    return `<img class="md-img" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy"${style}>`;
   }
   if (SAFE_HREF.test(src)) {
     return `<a class="md-link" href="${escapeHtml(src)}" target="_blank" rel="noopener noreferrer">${escapeHtml(alt || src)}</a>`;

@@ -377,6 +377,7 @@ import {
 } from '../lib/contentWidth';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { stripTrailingEmptyTableRows } from '../lib/markdownTableCleanup';
+import { applyImageWidths } from '../lib/imageWidth';
 import { documentTitleParts } from '../lib/documentTitle';
 import { headingFoldRanges } from '../lib/readingFold';
 import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
@@ -1047,6 +1048,8 @@ async function renderMarkdown() {
   try {
     await Vditor.preview(next, source, vditorPreviewOptions(props.dark));
     if (version !== renderVersion) return;
+    // 图片宽度写在 URL fragment（`#w=`）里，Vditor 只认 src；渲染后补一次 inline width
+    applyImageWidths(next);
     wrapTables(next);
     addImageCaptions(next);
     prepareHeadings(next);
