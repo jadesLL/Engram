@@ -152,5 +152,9 @@ class SyncOpTextTest {
             SyncOpText.describePushMerged("Wiki/概念/A.md", "A", 2, 1, 7, 9),
         )
         assertTrue(SyncOpText.describeUnknownKind("future-op").contains("future-op"))
+        assertEquals(
+            "页面「A」本端是旧版本（没有本地改动），已按中枢最新版写回",
+            SyncOpText.describePushStale("Wiki/概念/A.md", "A"),
+        )
     }
 }

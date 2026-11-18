@@ -223,6 +223,7 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'push-received': { label: '收到成员推送', category: '推送' },
   'push-rejected': { label: '推送被拒绝', category: '推送' },
   'push-merged': { label: '自动合并', category: '推送' },
+  'push-stale': { label: '旧版本回退', category: '推送' },
   'apply-failed': { label: '应用远端变更失败', category: '推送' },
   'move-superseded': { label: '改名收敛', category: '推送' },
   'local-broadcast': { label: '本机改动已广播', category: '推送' },

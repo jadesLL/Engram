@@ -9,8 +9,17 @@ import { db, getSetting, setSetting, now } from '../lib/db.js';
 
 /** oplog 最大保留条数；超出后最老的被裁剪，对应节点需全量对账 */
 const OPLOG_KEEP = 5000;
-/** 每页保留的版本快照数（三方合并祖先来源） */
-const PAGE_REVISION_KEEP = 10;
+/**
+ * 每页保留的版本快照数（三方合并祖先来源）。
+ *
+ * 原来是 10：编辑器自动保存动辄几秒一版，一篇正在写的页面半小时就能攒出几十版，
+ * 把另一台设备上次同步的基准挤出窗口；那台设备休眠/离线回来补推时中枢找不到祖先，
+ * 只能整页按 mtime 裁决，于是凭空多出「原名-时间戳.md」冲突副本。50 版足够覆盖
+ * 一次正常的编辑时段，配合 page_body_hashes 的旧稿识别，纯落后不再产生副本。
+ */
+const PAGE_REVISION_KEEP = 50;
+/** 每页保留的正文 hash 条数（只存 hash，不存正文；用于识别「没改过的旧稿」） */
+const PAGE_BODY_HASH_KEEP = 500;
 
 /**
  * 同步对象类型：
@@ -102,7 +111,75 @@ export function getOpsSince(since: number, limit = 500): SyncOp[] {
     .all(since, limit) as SyncOp[];
 }
 
+/**
+ * 页面正文的内容指纹：去掉 frontmatter 里随每次保存都会变的更新日期，
+ * 只比较用户真正写下的内容。行尾差异（CRLF/LF）与首尾空行也一并抹平。
+ */
+export function pageBodyHash(content: string): string {
+  return crypto.createHash('sha256').update(pageBodyOf(content), 'utf8').digest('hex');
+}
+
+function pageBodyOf(content: string): string {
+  const text = String(content ?? '').replace(/\r\n/g, '\n');
+  const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) return text.trim();
+  const meta = match[1]
+    .split('\n')
+    .filter((line) => !/^\s*(更新日期|修改日期|更新|updated|updated_at)\s*:/.test(line));
+  return `${meta.join('\n')}\n${text.slice(match[0].length)}`.trim();
+}
+
+/**
+ * 记录该页正文出现过的一个版本（只存 hash）。旧库在首次用到时从 page_revisions 回填，
+ * 覆盖最近保留的若干版；之后每次提交都会补进来。
+ */
+function rememberPageBodyHash(path: string, content: string): void {
+  const hash = pageBodyHash(content);
+  db.prepare(
+    `INSERT INTO page_body_hashes(path, hash, ts) VALUES(?,?,?)
+     ON CONFLICT(path, hash) DO UPDATE SET ts=excluded.ts`
+  ).run(path, hash, now());
+  db.prepare(
+    `DELETE FROM page_body_hashes WHERE path = ? AND hash NOT IN (
+       SELECT hash FROM page_body_hashes WHERE path = ? ORDER BY ts DESC LIMIT ?
+     )`
+  ).run(path, path, PAGE_BODY_HASH_KEEP);
+}
+
+let bodyHashesBackfilled = false;
+function ensurePageBodyHashes(): void {
+  if (bodyHashesBackfilled) return;
+  bodyHashesBackfilled = true;
+  try {
+    const rows = db.prepare(`SELECT path, content, ts FROM page_revisions`).all() as {
+      path: string;
+      content: string;
+      ts: string;
+    }[];
+    const insert = db.prepare(
+      `INSERT INTO page_body_hashes(path, hash, ts) VALUES(?,?,?)
+       ON CONFLICT(path, hash) DO UPDATE SET ts=CASE WHEN excluded.ts > ts THEN excluded.ts ELSE ts END`
+    );
+    db.transaction(() => {
+      for (const row of rows) insert.run(row.path, pageBodyHash(row.content), row.ts);
+    })();
+  } catch {
+    // 老库还没跑迁移等异常：下次进程启动再试，不能阻塞同步
+    bodyHashesBackfilled = false;
+  }
+}
+
+/** 这个正文版本该页历史上是否出现过（出现过 = 推送方只是旧稿，没有本地改动） */
+export function isKnownPageBody(path: string, content: string): boolean {
+  ensurePageBodyHashes();
+  const hit = db
+    .prepare(`SELECT 1 FROM page_body_hashes WHERE path = ? AND hash = ?`)
+    .get(path, pageBodyHash(content));
+  return Boolean(hit);
+}
+
 export function savePageRevision(path: string, revision: number, content: string, nodeId: string): void {
+  ensurePageBodyHashes();
   db.prepare(
     `INSERT INTO page_revisions(path, revision, content, node_id, ts) VALUES(?,?,?,?,?)
      ON CONFLICT(path, revision) DO UPDATE SET content=excluded.content, node_id=excluded.node_id, ts=excluded.ts`
@@ -112,6 +189,8 @@ export function savePageRevision(path: string, revision: number, content: string
        SELECT revision FROM page_revisions WHERE path = ? ORDER BY revision DESC LIMIT ?
      )`
   ).run(path, path, PAGE_REVISION_KEEP);
+  // hash 表不随正文快照裁剪：祖先版本被高频保存挤掉后，仍能认出「没改过的旧稿」
+  rememberPageBodyHash(path, content);
 }
 
 export function getPageRevision(path: string, revision: number): string | null {

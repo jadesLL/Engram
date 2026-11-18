@@ -704,7 +704,10 @@ class SyncEngine(
                 db.writeSyncedPage(target, authoritative, revision)
                 recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
                 // 本端内容与中枢回执不同 = 中枢做过合并：本端已被写回，日志里必须有一句解释
-                if (authoritative != raw) recordPushMerged(target, ack, raw, authoritative, revision)
+                if (authoritative != raw) {
+                    if (ack.optString("merge") == "stale") recordPushStale(target, ack, raw, authoritative, revision)
+                    else recordPushMerged(target, ack, raw, authoritative, revision)
+                }
             }
             "file" -> {
                 val file = db.file(target)
@@ -1288,6 +1291,24 @@ class SyncEngine(
             .put("localBytes", localBytes).put("mergedBytes", mergedBytes)
         title?.takeIf { it.isNotBlank() }?.let { data.put("title", it) }
         db.log("info", "push-merged", SyncOpText.describePushMerged(path, title, added, removed, localBytes, mergedBytes), data)
+    }
+
+    /**
+     * 中枢判定本端只是旧版本（正文没改过，设备休眠/离线回来后补推）：内容会被写回，
+     * 但不是「双方都改了」，不能记成 push-merged，否则用户会以为自己有一次不存在的编辑被合并。
+     */
+    private fun recordPushStale(path: String, ack: JSONObject, localRaw: String, hubRaw: String, revision: Int) {
+        if (!SyncOpText.isNoteworthyPush(path)) return
+        val title = ack.optJSONObject("op")?.optString("title")
+        val localBytes = localRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        val mergedBytes = hubRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        roundChanges += 1
+        val data = JSONObject()
+            .put("kind", SyncOpText.KIND_PAGE).put("verb", "stale").put("path", path)
+            .put("revision", revision)
+            .put("localBytes", localBytes).put("mergedBytes", mergedBytes)
+        title?.takeIf { it.isNotBlank() }?.let { data.put("title", it) }
+        db.log("info", "push-stale", SyncOpText.describePushStale(path, title), data)
     }
 
     /**
