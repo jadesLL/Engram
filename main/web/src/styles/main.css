@@ -27,10 +27,10 @@
   /* color-scheme 必须显式声明：否则系统深色时原生控件（select 弹层/滚动条）会跟系统而非应用主题 */
   color-scheme: light;
   /* UI 2.0 令牌收敛：中性色由冷灰改暖灰，强调色统一为 Engram Blue（2026-10 方案 A 精修：纸色更暖、蓝色更自信） */
-  --bg: #f5f6f9;
+  --bg: #f5f3ee;
   /* 液态玻璃底：三团柔光 + 浅蓝纸底（2026-11 全局玻璃化） */
   /* 2026-11 第六轮：底色改纯色，不再用柔光渐变（渐变会在卡片后面显出一道道色带） */
-  --app-bg: #f5f6f9;
+  --app-bg: #f5f3ee;
   --glass-fill: rgba(255,255,255,.2);
   --glass-sheen: linear-gradient(140deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.26) 32%, rgba(255,255,255,.1) 62%, rgba(255,255,255,.22) 100%);
   --glass-edge: rgba(255,255,255,.62);
@@ -44,10 +44,10 @@
   --glass-fill-strong: rgba(255,255,255,.46);
   --glass-fill-soft: rgba(255,255,255,.14);
   --glass-rim: 0 0 0 1px rgba(255,255,255,.5) inset;
-  --bg-secondary: #faf9f7;
-  --bg-tertiary: #f0eeeb;
+  --bg-secondary: #faf8f3;
+  --bg-tertiary: #f0ede6;
   /* 卡片底色半透明（2026-11 全局玻璃化）：70% 白盖在网格上仍是纸面，但会透出底下柔光 */
-  --card-bg: #ffffff;
+  --card-bg: #fffefb;
   /* 必须完全不透的场合（画布 / 二维码 / 文档预览白纸）用它，别改 --card-bg */
   --card-solid: #ffffff;
   /* 首页卡片材质：白卡浮起 / 白卡贴纸（描边无投影）/ 轻状态卡（2026-11-10 卡片美化；2026-11-17 操作卡并入白卡） */
@@ -111,6 +111,23 @@
     0 36px 70px -34px rgba(28,32,60,.55);
   --radius: 14px;
   --radius-control: 9px;
+  /*
+   * 卡片系统 v2（2026-11-18）：暖纸底 + 暖白卡 + 发丝线；数字用衬线体做“编辑感”。
+   * 只服务卡片面，不要把它们当成全站圆角/边框令牌使用。
+   */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", "Songti SC", serif;
+  --card-radius: 16px;
+  --card-pad: 17px;
+  --card-line: #e9e5dd;
+  --card-line-soft: #f1eee7;
+  --card-shadow: 0 1px 2px rgba(30, 27, 22, 0.035);
+  --card-shadow-hover: 0 1px 2px rgba(30, 27, 22, 0.04), 0 16px 32px -26px rgba(30, 27, 22, 0.35);
+  /* AI 强调色：只给 Agent 摘要/建议类内容，不替代品牌蓝 */
+  --ai: #bf5b3c;
+  --ai-soft: #fbefe9;
+  --ai-line: #f0ded3;
+  --ai-line-strong: #e7cdbd;
+  --ai-glow: rgba(191, 91, 60, 0.09);
   /* 类型徽章四色（方案 A：灵感=琥珀 / 概念=蓝 / 实体=紫 / 资料=青），首页「最近更新」与看板标签共用 */
   --badge-idea: #a15c07;
   --badge-idea-soft: #fbf0dd;
@@ -233,6 +250,15 @@ html.dark {
   --card-bg: #181b21;
   --card-solid: #181b21;
   --surface-status: rgba(255, 255, 255, 0.05);
+  --card-line: rgba(255, 255, 255, 0.09);
+  --card-line-soft: rgba(255, 255, 255, 0.06);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --card-shadow-hover: 0 1px 2px rgba(0, 0, 0, 0.28), 0 16px 32px -24px rgba(0, 0, 0, 0.62);
+  --ai: #e0906f;
+  --ai-soft: rgba(224, 144, 111, 0.12);
+  --ai-line: rgba(224, 144, 111, 0.22);
+  --ai-line-strong: rgba(224, 144, 111, 0.34);
+  --ai-glow: rgba(224, 144, 111, 0.12);
   --glass-bg: rgba(40, 39, 38, 0.72);
   --glass-blur: saturate(140%) blur(24px);
   --bg-hover: rgba(255, 255, 255, 0.06);
@@ -1004,8 +1030,7 @@ html.kb-open .content {
 }
 #app .editor-view .vditor-toolbar { border-radius: 12px; padding: 4px 8px; }
 
-/* ⑤ 壳层收口：首页模块卡、设置左栏、侧栏都回到纸面（原来各自带玻璃） */
-#app .shell,
+/* ⑤ 壳层收口：设置左栏、侧栏回到纸面；首页模块卡由 HomeModuleShell 自己画卡面（v2） */
 #app .settings-nav,
 #app .sidebar {
   background-color: var(--card-bg) !important;
@@ -1015,7 +1040,6 @@ html.kb-open .content {
   border-color: var(--border);
   box-shadow: var(--shadow-card);
 }
-#app .shell { border-width: 1px; border-style: solid; border-radius: 14px; padding: 16px 18px; }
 #app .settings-nav { border-radius: 14px; }
 
 /* ⑥ 收纳区说明文字行高：1.2 挤成两行贴在一起，抬到 1.5 */

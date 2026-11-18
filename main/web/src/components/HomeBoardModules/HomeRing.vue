@@ -49,8 +49,8 @@ const topLabel = computed(() => top.value?.label || '');
 </script>
 
 <style scoped>
-.ring-card { padding: 14px 16px 10px; }
-.ring-wrap { display: flex; align-items: center; gap: 16px; }
+.ring-card { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; }
+.ring-wrap { display: flex; align-items: center; gap: 16px; flex: 1; min-height: 0; }
 .ring {
   --p: 0;
   width: 84px;
@@ -74,25 +74,26 @@ const topLabel = computed(() => top.value?.label || '');
 .ring { position: relative; }
 .ring-value,
 .ring-label { position: relative; z-index: 1; }
-.ring-value { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.ring-value { font-family: var(--font-display); font-size: 24px; font-weight: 400; font-variant-numeric: lining-nums tabular-nums; line-height: 1; }
 .ring-label { font-size: 10.5px; color: var(--text-faint); }
 .ring-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ring-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 6px;
-  margin: 0 -6px;
-  border-radius: 7px;
-  font-size: 12.5px;
+  flex: 1;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 0;
+  font-size: 10.5px;
   text-align: left;
 }
-.ring-row + .ring-row { border-top: 1px solid var(--border); }
-.ring-row:hover { background: var(--bg-secondary); }
+.ring-row + .ring-row { border-top: 1px solid var(--card-line-soft); }
+.ring-row:hover .ring-name { color: var(--accent); }
 .ring-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.ring-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.ring-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; }
 .ring-name { color: var(--text-secondary); }
-.ring-num { margin-left: auto; font-weight: 600; }
-.ring-pct { width: 38px; text-align: right; color: var(--text-faint); font-size: 11px; }
-.ring-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 11px; }
+.ring-num { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; }
+.ring-pct { width: 32px; text-align: right; color: var(--text-faint); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.ring-foot { margin-top: auto; padding-top: 9px; border-top: 1px solid var(--card-line-soft); font-size: 10px; color: var(--text-faint); }
 </style>

@@ -1081,7 +1081,8 @@ function updateCaptureCardVisibility() {
     captureCardVisible.value = false;
     return;
   }
-  const card = document.querySelector<HTMLElement>('.board-grid .home-action.editor');
+  /* 卡片 v2 的灵感卡可能是一行横条 / 竖卡 / 多行编辑器，不能再只认 .editor 版式 */
+  const card = document.querySelector<HTMLElement>('.board-grid .home-action');
   if (!card) {
     captureCardVisible.value = false;
     return;

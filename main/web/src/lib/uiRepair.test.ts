@@ -63,7 +63,7 @@ test('首页：快速灵感卡可见时收起 FAB，不再压输入区', () => {
   const home = read('views/Home.vue');
   assert.match(home, /const captureCardVisible = ref\(/, '没有快速灵感卡可见状态');
   assert.match(home, /!captureCardVisible\.value/, 'FAB 没有把可见的快速灵感卡排除在外');
-  assert.match(home, /document\.querySelector<HTMLElement>\('\.board-grid \.home-action\.editor'\)/, '没有测量快速灵感卡位置');
+  assert.match(home, /document\.querySelector<HTMLElement>\('\.board-grid \.home-action'\)/, '没有测量快速灵感卡位置');
 });
 
 test('更新入口：手机档下移到 64px，不再压页面标题', () => {

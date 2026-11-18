@@ -1,21 +1,23 @@
 <template>
-  <!-- 运行状态：版本 / 运行形态 / 队列 / 同步，一句话一件事（点一行去对应设置） -->
+  <!-- 运行状态：版本 / 运行形态 / 队列 / 同步，四格说完（点一格去对应设置） -->
   <div class="hb-card system-card">
-    <button
-      v-for="row in rows"
-      :key="row.key"
-      class="sys-row"
-      type="button"
-      :class="{ warn: row.warn }"
-      @click="$emit('go', row.path)"
-    >
-      <span class="sys-ic"><Icon :name="row.icon" :size="14" /></span>
-      <span class="sys-main">
-        <span class="sys-label">{{ row.label }}</span>
-        <span class="sys-value">{{ row.value }}</span>
-      </span>
-      <span v-if="row.badge" class="hb-pill" :class="{ over: row.warn, plain: !row.warn }">{{ row.badge }}</span>
-    </button>
+    <div class="status-grid">
+      <button
+        v-for="cell in cells"
+        :key="cell.key"
+        class="status-cell"
+        type="button"
+        :class="{ warn: cell.warn }"
+        @click="$emit('go', cell.path)"
+      >
+        <span class="k">{{ cell.label }}</span>
+        <span class="v">{{ cell.value }}</span>
+      </button>
+    </div>
+    <p class="status-line">
+      <i class="status-dot" :class="{ warn: queue.warn }" aria-hidden="true" />
+      {{ runtimeLabel }} · {{ counts.concepts }} 概念 / {{ counts.entities }} 实体 / {{ formatCount(counts.files) }} 资料
+    </p>
   </div>
 </template>
 
@@ -27,7 +29,6 @@
  * 首页的轮询已经在刷）、同步（sync store 的通道模型）。都是现成的共享状态，不额外发请求。
  */
 import { computed } from 'vue';
-import Icon from '../Icon.vue';
 import { APP_VERSION } from '../../version.ts';
 import { useAppStore } from '../../stores/app';
 import { useSyncStore } from '../../stores/sync';
@@ -58,98 +59,64 @@ const queue = computed(() => {
   const pending = Number(jobs.pending || 0);
   const failed = Number(jobs.failed || 0);
   const parts: string[] = [];
-  if (running) parts.push(`执行中 ${running}`);
+  if (running) parts.push(`执行 ${running}`);
   if (pending) parts.push(`排队 ${pending}`);
   if (failed) parts.push(`失败 ${failed}`);
-  return { text: parts.length ? parts.join(' · ') : '空闲', warn: failed > 0, badge: failed > 0 ? String(failed) : '' };
+  return { text: parts.length ? parts.join(' · ') : '空闲', warn: failed > 0 };
 });
 
-const rows = computed(() => {
-  const queueView = queue.value;
-  return [
-    {
-      key: 'version',
-      icon: 'refresh',
-      label: '版本',
-      value: APP_VERSION,
-      badge: '',
-      warn: false,
-      path: '/settings?section=update',
-    },
-    {
-      key: 'runtime',
-      icon: 'server',
-      label: '运行形态',
-      value: runtimeLabel.value,
-      badge: capabilities.value.agentMode === 'hub' ? props.agentName : '',
-      warn: false,
-      path: '/settings',
-    },
-    {
-      key: 'library',
-      icon: 'report',
-      label: '知识库',
-      value: `${props.counts.concepts} 概念 · ${props.counts.entities} 实体 · ${formatCount(props.counts.files)} 资料`,
-      badge: '',
-      warn: false,
-      path: '/search',
-    },
-    {
-      key: 'queue',
-      icon: 'activity',
-      label: '后台任务',
-      value: queueView.text,
-      badge: queueView.badge,
-      warn: queueView.warn,
-      path: '/settings?section=agent',
-    },
-    {
-      key: 'sync',
-      icon: 'plug',
-      label: '多端同步',
-      value: sync.configured ? '已配置' : '未配置',
-      badge: sync.configured && sync.pending ? String(sync.pending) : '',
-      warn: false,
-      path: '/settings?section=sync',
-    },
-  ];
-});
+const cells = computed(() => [
+  { key: 'version', label: '版本', value: APP_VERSION, warn: false, path: '/settings?section=update' },
+  { key: 'runtime', label: '运行形态', value: runtimeLabel.value, warn: false, path: '/settings' },
+  { key: 'queue', label: '后台任务', value: queue.value.text, warn: queue.value.warn, path: '/settings?section=agent' },
+  { key: 'sync', label: '多端同步', value: sync.configured ? '已配置' : '未配置', warn: false, path: '/settings?section=sync' },
+]);
 </script>
 
 <style scoped>
-.system-card { padding: 6px 14px; }
-.sys-row {
-  width: 100%;
+.system-card { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; }
+.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; flex: 1; min-height: 0; }
+.status-cell {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  text-align: left;
-  border-radius: 8px;
-}
-.sys-row + .sys-row { border-top: 1px solid var(--border); }
-.sys-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.sys-ic {
-  width: 26px;
-  height: 26px;
-  flex: none;
-  display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: center;
-  border-radius: 8px;
-  background: var(--bg-tertiary, var(--bg));
-  color: var(--text-secondary);
-}
-.sys-row:hover .sys-ic { background: var(--accent-soft); color: var(--accent); }
-.sys-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-.sys-label { flex: none; font-size: 12px; color: var(--text-faint); }
-.sys-value {
+  gap: 2px;
   min-width: 0;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  text-align: left;
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+.status-cell:hover { background: var(--accent-soft); }
+.status-cell:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.status-cell .k { font-size: 9px; color: var(--text-faint); }
+.status-cell .v {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-.sys-row.warn .sys-value { color: var(--danger); }
+.status-cell.warn .v { color: var(--danger); }
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 9px 0 0;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-dot { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--success); }
+.status-dot.warn { background: var(--danger); }
+@container (max-width: 240px) {
+  .status-grid { grid-template-columns: 1fr; }
+  .status-line { display: none; }
+}
 </style>

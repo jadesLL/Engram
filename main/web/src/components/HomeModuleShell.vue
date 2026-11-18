@@ -1,5 +1,5 @@
 <template>
-  <section ref="root" class="shell" :class="[`tone-${meta.tone}`, { managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90 }]" :style="{ padding: `${padding}px` }"
+  <section ref="root" class="shell" :class="[`tone-${meta.tone}`, `tier-${tier}`, { managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90, 'ai-card': kind === 'digest', 'auto-height': autoHeight }]"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
     <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
     <header v-if="tier === 'standard' && !functional" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><span v-if="summary.header" class="shell-meta">{{ summary.header }}</span><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
@@ -10,7 +10,7 @@
         <button v-if="expanded" class="detail-backdrop" type="button" aria-label="关闭详情" @click="closeDetail" />
         <div class="shell-body" :class="{ 'detail-panel': expanded }">
           <header v-if="expanded" class="detail-head"><h2>{{ title }}</h2><button ref="closeButton" class="detail-close" type="button" aria-label="关闭详情" @click="closeDetail">×</button></header>
-          <div class="module-content"><slot :expanded="expanded" :open="openDetail" :close="closeDetail" /></div>
+          <div ref="contentEl" class="module-content"><slot :expanded="expanded" :open="openDetail" :close="closeDetail" :body-height="bodySize.h" /></div>
         </div>
       </div>
     </Teleport>
@@ -35,9 +35,12 @@ import { registerBackHandler } from '../lib/androidBack';
 import { moduleMeta, type ModuleKind } from '../lib/homeBoard.ts';
 import { GRID_COLS, GRID_MAX_H } from '../lib/homeGrid.ts';
 import { cardTier } from '../lib/homeCardPresentation.ts';
-const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; captureStyle?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary }>();
+const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; captureStyle?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary; autoHeight?: boolean }>();
 const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null), settings = ref<HTMLDialogElement | null>(null), closeButton = ref<HTMLButtonElement | null>(null);
+const contentEl = ref<HTMLElement | null>(null);
+/** 卡面正文的实际高度（像素）：列表模块据此决定显示几行，避免卡片内出现内部滚动条 */
+const bodySize = ref({ w: 0, h: 0 });
 const size = ref({ w: 300, h: 300 });
 /** 尺寸菜单里的格子边长：卡片宽度减去格间 14px 留白后均分，让「1 格多大」看得见 */
 const cellPx = computed(() => {
@@ -55,16 +58,12 @@ const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[
 const functional = computed(() => props.kind === 'ask' || props.kind === 'capture');
 const compact = computed(() => {
   if (functional.value) return false;
-  if (tier.value === 'tile') return true;
-  if (props.kind === 'heat') return !(props.width >= 2 && props.height >= 2);
-  if (props.kind === 'shortcuts') return tier.value !== 'bar';
-  return true;
-});
-/** 一行高的横条统一 12px 内边距：同步条与记想法条并排时内容线对齐，不再按像素宽度分 6 / 10 两档 */
-const padding = computed(() => {
-  if (tier.value === 'bar') return 12;
-  if (functional.value) return props.width === 1 ? 7 : 16;
-  return size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 16;
+  /* 横条快捷入口本身就是一排名片，必须渲染正文；其余横条/磁贴/竖条用摘要。 */
+  if (props.kind === 'shortcuts' && tier.value === 'bar') return false;
+  /* 磁贴 / 横条 / 竖条放不下模块正文，继续用摘要；标准卡一律渲染真实内容。 */
+  if (tier.value === 'tile' || tier.value === 'bar' || tier.value === 'column') return true;
+  /* 极小的标准卡（用户把卡拖得很小）也退回摘要，避免正文挤成一团 */
+  return size.value.w < 150 || size.value.h < 130;
 });
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
@@ -85,6 +84,7 @@ function onDetailKey(event: KeyboardEvent) {
 }
 function onDialogClick(event: MouseEvent) { if (event.target === settings.value) settings.value?.close(); }
 let observer: ResizeObserver | null = null;
+let contentObserver: ResizeObserver | null = null;
 let hold: ReturnType<typeof setTimeout> | null = null;
 let down: { x: number; y: number } | null = null;
 let held = false;
@@ -99,8 +99,8 @@ function onPointerDown(event: PointerEvent) {
 function moveHold(event: PointerEvent) { if (hold && down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) clearHold(); }
 function suppressClick(event: MouseEvent) { if (held) { event.preventDefault(); event.stopPropagation(); held = false; } }
 // 读布局尺寸而非变换后的屏幕尺寸，整体缩放不应触发卡片内容和内边距重新分档。
-onMounted(() => { observer = new ResizeObserver(([entry]) => { const box = entry.borderBoxSize[0]; size.value = { w: box?.inlineSize ?? root.value?.offsetWidth ?? entry.contentRect.width, h: box?.blockSize ?? root.value?.offsetHeight ?? entry.contentRect.height }; }); if (root.value) observer.observe(root.value); window.addEventListener('pointermove', moveHold); window.addEventListener('pointerup', clearHold); window.addEventListener('pointercancel', clearHold); });
-onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconnect(); clearHold(); window.removeEventListener('pointermove', moveHold); window.removeEventListener('pointerup', clearHold); window.removeEventListener('pointercancel', clearHold); });
+onMounted(() => { observer = new ResizeObserver(([entry]) => { const box = entry.borderBoxSize[0]; size.value = { w: box?.inlineSize ?? root.value?.offsetWidth ?? entry.contentRect.width, h: box?.blockSize ?? root.value?.offsetHeight ?? entry.contentRect.height }; }); if (root.value) observer.observe(root.value); contentObserver = new ResizeObserver(([entry]) => { bodySize.value = { w: entry.contentRect.width, h: entry.contentRect.height }; }); if (contentEl.value) contentObserver.observe(contentEl.value); window.addEventListener('pointermove', moveHold); window.addEventListener('pointerup', clearHold); window.addEventListener('pointercancel', clearHold); });
+onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconnect(); contentObserver?.disconnect(); clearHold(); window.removeEventListener('pointermove', moveHold); window.removeEventListener('pointerup', clearHold); window.removeEventListener('pointercancel', clearHold); });
 </script>
 <style scoped>
 .shell {
@@ -109,45 +109,75 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   height:100%;
   min-width:0;
   min-height:0;
-  padding:20px;
-  /* 2026-11 液态玻璃卡：低填充 + 大模糊 + 斜向反光 + 边缘高光 */
-  border:1px solid var(--glass-edge);
-  border-radius:24px;
-  background-color: var(--glass-fill);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  box-shadow:var(--shadow-card);
+  padding:var(--card-pad,17px);
+  /* 卡片 v2：暖白纸卡 + 1px 发丝线 + 极轻接触阴影，不再用玻璃填充 */
+  border:1px solid var(--card-line);
+  border-radius:var(--card-radius,16px);
+  background:var(--card-bg);
+  box-shadow:var(--card-shadow);
   display:flex;
   flex-direction:column;
   overflow:hidden;
   container-type:size;
-  transition:box-shadow .2s,border-color .2s,transform .2s;
+  transition:box-shadow .18s ease,border-color .18s ease,transform .18s ease;
 }
 .shell:not(.managing):not(.dragging):hover {
-  box-shadow:var(--shadow-card-hover);
+  box-shadow:var(--card-shadow-hover);
   transform:translateY(-1px);
+}
+.shell.tier-bar { padding:12px; }
+.shell.tier-tile { padding:7px; }
+.shell.micro { padding:6px; border-radius:12px; }
+/*
+ * 手机单列：外壳高度由内容决定。
+ * 关键：container-type:size 自带 size containment，会把“没有固定高度”的外壳算成 0 高；
+ * 自动高度时必须退回 inline-size（只保留宽度容器查询），否则正文会被压扁再裁掉。
+ * 详情浮层在 Teleport 里、已不在 .shell 内，不受这条规则影响。
+ */
+.shell.auto-height {
+  height:auto;
+  container-type:inline-size;
+}
+.shell.auto-height .shell-content { flex:none; overflow:visible; }
+/* .shell-content 是 row flex：正文列必须 flex:1 才吃满卡宽；只把高度交给内容，不要连宽度一起缩 */
+.shell.auto-height .shell-body { flex:1 1 auto; min-width:0; overflow:visible; }
+.shell.auto-height .module-content { flex:none; overflow:visible; }
+.shell.auto-height :deep(.adaptive-summary) { flex:none; height:auto; }
+@media (max-width:768px) {
+  .shell { padding:14px; }
+  .shell.tier-bar { padding:11px; }
+  .shell.tier-tile { padding:7px; }
 }
 .shell:focus-visible {
   outline:2px solid var(--accent);
   outline-offset:-3px;
 }
-/* 三档卡面（2026-11-10 卡片美化；2026-11-17 操作卡并入白卡）：材质只决定「谁浮在前面」，
-   不改变格位、命中区与拖拽。数据卡浮起（投影）、列表/操作卡白卡贴纸（描边无投影）、状态卡轻卡。
-   操作卡不再整块内凹——和状态卡并排时一浮一陷会读成两套设计；输入性交给聚焦描边与主色按钮。
-   深色材质见 main.css 的 --surface-status。 */
-.shell.tone-data { background:var(--card-bg); border-color:transparent; box-shadow:var(--shadow-card); }
-.shell.tone-list { background:var(--card-bg); border-color:var(--border); box-shadow:none; }
-.shell.tone-list:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
-.shell.tone-action { background:var(--card-bg); border-color:var(--border); box-shadow:none; }
-.shell.tone-action:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
-.shell.tone-status { background:var(--surface-status); border-color:var(--border); box-shadow:none; }
-.shell.tone-status:not(.managing):not(.dragging):hover { box-shadow:var(--shadow-raised); }
+/* 材质统一：数据 / 列表 / 操作 / 状态都回到同一张暖白卡，层级交给内容与字号 */
+.shell.tone-data,
+.shell.tone-list,
+.shell.tone-action,
+.shell.tone-status { background:var(--card-bg); border-color:var(--card-line); box-shadow:var(--card-shadow); }
+/* Agent 摘要：整张卡用陶土色轻铺一层，只在 AI 卡上出现 */
+.shell.ai-card { background:linear-gradient(145deg, var(--ai-soft) 0%, var(--card-bg) 64%); border-color:var(--ai-line); }
+.shell.ai-card:not(.managing):not(.dragging):hover { border-color:var(--ai-line-strong); }
+.shell.ai-card .shell-head h3::after {
+  content:'AI';
+  flex:none;
+  margin-left:2px;
+  padding:1px 5px;
+  border-radius:4px;
+  background:var(--ai-soft);
+  color:var(--ai);
+  font-size:9px;
+  line-height:1.5;
+  font-weight:700;
+  letter-spacing:.04em;
+}
 .shell-head {
   display:flex;
   gap:7px;
   align-items:center;
-  margin-bottom:8px;
+  margin-bottom:13px;
   flex:none;
 }
 .shell-head h3 {
@@ -160,33 +190,32 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   white-space:nowrap;
   text-overflow:ellipsis;
   font-size:12.5px;
-  font-weight:600;
-  letter-spacing:0.01em;
+  font-weight:650;
+  letter-spacing:0.005em;
   color:var(--text);
 }
-/* 卡头不再画彩色图标块：15px 线性图标直接落在标题前，层级交给卡内数字，标题只负责识别 */
+/* 卡头只留 15px 线性图标，不再画彩色图标块 */
 .shell-head h3 :deep(svg) {
-  color:var(--text-muted);
+  color:var(--text-faint);
   flex:none;
 }
-.shell.tone-data .shell-head h3 :deep(svg) { color:var(--accent); }
 /* 卡头右侧一句上下文（条数 / 近 7 天 / 按到期日）：有就显示，没有不留空 */
 .shell-meta {
   flex:none;
-  font-size:11.5px;
+  font-size:10.5px;
   line-height:1.2;
   color:var(--text-faint);
   font-variant-numeric:tabular-nums;
   white-space:nowrap;
 }
 .shell-expand {
-  width:26px;
-  height:26px;
+  width:22px;
+  height:22px;
   flex:none;
   display:flex;
   align-items:center;
   justify-content:center;
-  border-radius:8px;
+  border-radius:6px;
   background:transparent;
   border:0;
   color:var(--text-faint);
@@ -203,6 +232,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   background:var(--accent-soft);
   border-color:transparent;
 }
+/* 编辑态右上角是手机的三枚工具（上移/下移/隐藏），详情箭头让位 */
+.shell.managing .shell-expand { display:none; }
 .shell-content,.shell-body,.module-content {
   min-width:0;
   min-height:0;
@@ -218,6 +249,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   overflow:hidden;
 }
 .module-content {
+  display:flex;
+  flex-direction:column;
   overflow:auto;
   scrollbar-width:thin;
 }
@@ -293,11 +326,11 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   width:min(680px,100%);
   max-height:85dvh;
   padding:28px;
-  border:1px solid var(--border);
-  border-radius:24px;
+  border:1px solid var(--card-line);
+  border-radius:18px;
   background:var(--card-bg);
   color:var(--text);
-  box-shadow:var(--shadow-card);
+  box-shadow:var(--shadow-dialog);
   animation:detail-pop .22s cubic-bezier(.2,.9,.3,1.06);
 }
 @keyframes detail-fade { from { opacity:0; } }
@@ -333,8 +366,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   margin:auto;
   width:min(420px,calc(100% - 32px));
   padding:24px;
-  border:1px solid var(--border);
-  border-radius:22px;
+  border:1px solid var(--card-line);
+  border-radius:16px;
   background:var(--card-bg);
   color:var(--text);
 }
@@ -412,6 +445,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   background:transparent;
   border:0;
   box-shadow:none;
+  padding:0;
 }
 .module-content :deep(.hb-row) {
   padding-left:0;

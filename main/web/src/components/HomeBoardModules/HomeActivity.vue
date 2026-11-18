@@ -26,10 +26,11 @@
 import { computed } from 'vue';
 import { pageBadge, sinceShort } from '../../lib/homeBoardData.ts';
 
-const props = defineProps<{ items: any[]; limit: number }>();
+const props = defineProps<{ items: any[]; limit: number; bodyHeight?: number }>();
 defineEmits<{ (e: 'go', path: string): void }>();
 
-const shown = computed(() => (props.items || []).slice(0, Math.max(1, props.limit || 5)));
+const capacity = computed(() => (props.bodyHeight ? Math.max(1, Math.floor(props.bodyHeight / 36)) : 99));
+const shown = computed(() => (props.items || []).slice(0, Math.min(Math.max(1, props.limit || 5), capacity.value)));
 
 const COLORS: Record<string, string> = {
   // 键来自 pageBadge().cls（tb-idea / tb-concept / tb-entity / tb-note）：带连字符必须用字符串键
@@ -44,12 +45,14 @@ function dotColor(page: any): string {
 </script>
 
 <style scoped>
-.activity { display: flex; flex-direction: column; padding-left: 4px; }
+.activity { display: flex; flex-direction: column; flex: 1; min-height: 0; padding-left: 4px; }
 .activity-item {
   position: relative;
   display: flex;
   gap: 10px;
-  padding: 7px 8px 7px 14px;
+  padding: 6px 0 6px 14px;
+  flex: 1;
+  min-height: 36px;
   border-radius: 8px;
   text-align: left;
 }
@@ -60,7 +63,7 @@ function dotColor(page: any): string {
   bottom: 0;
   left: 8px;
   width: 2px;
-  background: var(--border);
+  background: var(--card-line-soft);
 }
 .activity-item:first-child::before { top: 50%; }
 .activity-item:last-child::before { bottom: 50%; }
@@ -83,7 +86,7 @@ function dotColor(page: any): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 550;
 }
 </style>

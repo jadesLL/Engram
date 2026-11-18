@@ -51,23 +51,24 @@ function go(path: string) {
 .welcome-cards {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px;
 }
 .welcome-card {
   flex: 1 1 150px;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px 13px;
+  gap: 9px;
+  padding: 8px 10px;
   min-width: 0;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  border: 1px solid var(--card-line-soft);
+  border-radius: 8px;
   background: var(--bg-secondary);
   text-align: left;
-  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
 }
 .welcome-card:hover {
   background: var(--accent-soft);
+  border-color: var(--accent-soft);
 }
 .welcome-card:active { transform: translateY(1px); }
 .welcome-card:focus-visible {
@@ -76,22 +77,20 @@ function go(path: string) {
   background: var(--accent-soft);
 }
 .wc-icon {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  /* 白色图标小砖：浮在底色块上，hover 不变化 */
+  border-radius: 7px;
   background: var(--card-bg);
-  box-shadow: var(--shadow-raised);
   color: var(--accent);
   transition: background 150ms ease, color 150ms ease;
 }
-.wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wc-text strong { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--text); }
-.wc-text em { font-style: normal; font-size: 11.5px; color: var(--text-muted, var(--text-faint)); }
+.wc-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wc-text strong { font-size: 12.5px; font-weight: 600; line-height: 1.4; color: var(--text); }
+.wc-text em { font-style: normal; font-size: 10px; color: var(--text-muted, var(--text-faint)); }
 .short-label { display: none; }
 @container (max-width: 520px) {
   .full-label { display: none; }
@@ -102,7 +101,7 @@ function go(path: string) {
 @container (max-height: 140px) {
   .welcome-cards {
     flex-wrap: nowrap;
-    gap: 2px;
+    gap: 6px;
     height: 100%;
     align-items: stretch;
   }
@@ -111,14 +110,14 @@ function go(path: string) {
     min-width: 0;
     flex-direction: column;
     justify-content: center;
-    gap: 6px;
-    padding: 6px 2px;
+    gap: 5px;
+    padding: 6px 4px;
     text-align: center;
-    /* 横条档保持透明轻量，不用底色块 */
-    background: transparent;
+    background: var(--bg-secondary);
+    border-color: var(--card-line-soft);
   }
-  .welcome-card:hover { background: var(--bg-secondary); }
-  .wc-icon { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); box-shadow: none; }
+  .welcome-card:hover { background: var(--accent-soft); }
+  .wc-icon { width: 25px; height: 25px; border-radius: 7px; background: var(--card-bg); }
   /* 主操作给实底：横条档也只有「新建页面」是蓝的，其余都是中性图标 */
   .welcome-card.primary .wc-icon { background: var(--accent); color: #fff; }
   .welcome-card.primary .wc-text strong { color: var(--text); font-weight: 600; }
