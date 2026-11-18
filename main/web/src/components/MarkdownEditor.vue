@@ -95,6 +95,75 @@
       </div>
     </div>
 
+    <!-- AI 工具栏菜单：插入 / 改写 / 接写 / 全文美化。落点用 fixed 视口坐标（工具栏可横滚，
+         菜单不能留在滚动容器里）；点空白、滚动、Esc 都收起。 -->
+    <Teleport to="body">
+      <template v-if="aiMenuOpen">
+        <div class="ai-menu-mask" @click="closeAiMenu" />
+        <div
+          ref="aiMenuEl"
+          class="ai-menu card"
+          role="menu"
+          aria-label="AI 写作"
+          :style="{ top: aiMenuPos.top + 'px', left: aiMenuPos.left + 'px' }"
+          @keydown.esc.stop="closeAiMenu"
+        >
+          <button type="button" class="ai-menu-row" role="menuitem" @click="startAiFromMenu('insert')">
+            <span class="ai-menu-icon"><Icon name="ai" :size="17" /></span>
+            <span class="ai-menu-text"><b>让 AI 写在这里</b><small>给一句要求，内容直接插到光标处</small></span>
+          </button>
+          <button
+            type="button"
+            class="ai-menu-row"
+            role="menuitem"
+            :disabled="!aiMenuSelection"
+            @click="startAiFromMenu('rewrite')"
+          >
+            <span class="ai-menu-icon"><Icon name="markdown" :size="17" /></span>
+            <span class="ai-menu-text">
+              <b>改写选中文字</b>
+              <small>{{ aiMenuSelection ? '替换选中的这一段' : '先在正文里选中文字' }}</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="ai-menu-row"
+            role="menuitem"
+            :disabled="!aiMenuSelection"
+            @click="startAiFromMenu('continue')"
+          >
+            <span class="ai-menu-icon"><Icon name="chevron-down" :size="17" /></span>
+            <span class="ai-menu-text">
+              <b>接着往下写</b>
+              <small>{{ aiMenuSelection ? '把新内容接在选中内容之后' : '先选中要接着写的那段' }}</small>
+            </span>
+          </button>
+          <div class="ai-menu-sep" role="separator" />
+          <button type="button" class="ai-menu-row" role="menuitem" @click="startAiFromMenu('beautify')">
+            <span class="ai-menu-icon"><Icon name="ai" :size="17" /></span>
+            <span class="ai-menu-text"><b>全文格式美化</b><small>补齐标题、列表、表格与空行，先预览再应用</small></span>
+          </button>
+        </div>
+      </template>
+    </Teleport>
+
+    <!-- 就地 AI 对话框：生成 / 预览 / 应用都在这里；正文落点由编辑器记下的 Range 决定 -->
+    <EditorAiDialog
+      :open="aiOpen"
+      :mode="aiMode"
+      :anchor-hint="aiAnchorHint"
+      :selection-text="aiSelectionText"
+      :busy="aiBusy"
+      :error="aiError"
+      :preview="aiPreview"
+      :stats="aiStats"
+      @close="closeAiDialog"
+      @submit="runAi"
+      @apply="applyAiPreview"
+      @discard="closeAiDialog"
+      @regenerate="runAi(aiLastInstruction)"
+    />
+
     <!-- 手机档工具栏尾部「插入」打开的分组底部面板：遮罩 + 抓柄 + 22px 顶圆角 + 44px 行高。
          动作全部落到 Vditor 自己的插入/面板上（insertValue / 链接面板 / 双链弹窗），不另造编辑器状态。 -->
     <Teleport to="body">
@@ -204,6 +273,7 @@ import { BP_MOBILE } from '../lib/layoutBreakpoints';
 import { notify } from '../lib/notify';
 import EditorImageResizer from './EditorImageResizer.vue';
 import EditorTableBar from './EditorTableBar.vue';
+import EditorAiDialog from './EditorAiDialog.vue';
 import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
@@ -212,6 +282,12 @@ import {
   isLocalMediaImageSrc,
   withImageWidth,
 } from '../lib/imageWidth';
+import {
+  editorAiErrorMessage,
+  isEditorAiAbort,
+  requestEditorAi,
+  type EditorAiTask,
+} from '../lib/editorAi';
 import {
   cellStartOffset,
   columnIndexAt,
@@ -249,6 +325,8 @@ const props = defineProps<{
   mode?: 'ir' | 'sv';
   /** 当前页面的 id：粘贴/拖入的图片会存成这个页面的私有资产（见 lib/pageAssets.ts） */
   pageId?: string;
+  /** 页面标题：就地 AI 的语境（模型据此判断该写什么） */
+  title?: string;
   /** 全屏编辑状态：由父级持有（要连同页头/状态栏一起让位），这里只负责图标与提示 */
   fullscreen?: boolean;
 }>();
@@ -316,6 +394,31 @@ let savedSelectionRange: Range | null = null;
 /** 最近一次 pointerdown 的视口坐标：用来区分「拖选结束的那次 click」和普通单击 */
 let pointerDownAt: { x: number; y: number } | null = null;
 let savedSelectionText = '';
+
+/* ---------- 就地 AI（插入 / 改写 / 接写 / 全文美化） ----------
+ * 落点是打开对话框那一刻记下的 DOM Range（面板抢焦点、滚动、点菜单都不会丢）；
+ * 生成期间正文可能被外部改动——应用前会校验 Range 仍连在编辑器 DOM 上，不行就退到文末。
+ * 一次只跑一个请求：取消/关闭会 abort，避免结果回来时覆盖用户已经改过的内容。 */
+const aiOpen = ref(false);
+const aiMode = ref<EditorAiTask>('insert');
+const aiBusy = ref(false);
+const aiError = ref('');
+const aiPreview = ref('');
+const aiStats = ref<{ before: number; after: number } | null>(null);
+const aiAnchorHint = ref('');
+const aiSelectionText = ref('');
+const aiMenuOpen = ref(false);
+const aiMenuEl = ref<HTMLElement>();
+const aiMenuPos = ref({ top: 0, left: 0 });
+const aiMenuSelection = ref('');
+let aiRange: Range | null = null;
+let aiLastInstruction = '';
+let aiAbort: AbortController | null = null;
+let aiRequestSeq = 0;
+/** 右键点时记下的收起光标（「在此处插入」的默认落点） */
+let contextPointRange: Range | null = null;
+const AI_CONTEXT_BEFORE = 6000;
+const AI_CONTEXT_AFTER = 3000;
 
 /** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
 const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g;
@@ -503,6 +606,10 @@ const TOOLBAR_ICONS: Record<string, string[]> = {
   'edit-mode': ['M12 20h9', 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'],
   fullscreen: ['M8 3H5a2 2 0 0 0-2 2v3', 'M21 8V5a2 2 0 0 0-2-2h-3', 'M3 16v3a2 2 0 0 0 2 2h3', 'M16 21h3a2 2 0 0 0 2-2v-3'],
   outline: ['M21 12h-8', 'M21 6H8', 'M21 18h-8', 'M3 6v4c0 1.1.9 2 2 2h3', 'M3 10v6c0 1.1.9 2 2 2h3'],
+  ai: [
+    'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
+    'M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z',
+  ],
 };
 
 function toolbarIconSvg(paths: string[]): string {
@@ -583,13 +690,23 @@ const insertToolbarItem = {
   icon: toolbarIconSvg(['M12 5v14', 'M5 12h14']),
   click: () => openInsertPanel(),
 };
+/**
+ * 就地 AI 入口：点开是「插入 / 改写 / 接写 / 全文美化」四项。
+ * 与右键菜单共用同一套动作；按钮 mousedown.prevent，点它不会丢掉当前选区。
+ */
+const aiToolbarItem = {
+  name: 'engram-ai',
+  tip: 'AI 写作（插入 / 改写 / 全文美化）',
+  icon: toolbarIconSvg(TOOLBAR_ICONS.ai),
+  click: () => openAiMenu(),
+};
 
 // 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变
 const mobileToolbar = [
   'headings', 'bold', 'italic', 'list', 'ordered-list',
   wikilinkToolbarItem,
   'link', 'undo', 'edit-mode', readingToolbarItem,
-  insertToolbarItem,
+  aiToolbarItem, insertToolbarItem,
 ];
 // UI 2.0 mockup 4.3：按「格式 / 段落 / 插入 / 历史」四段分组；
 // 双链、源码切换、全屏、大纲、沉浸阅读是 Engram 专有入口，收在末尾同一段里
@@ -597,6 +714,7 @@ const desktopToolbar = [
   'headings', 'bold', 'italic', 'strike', '|',
   'quote', 'list', 'ordered-list', 'check', '|',
   'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
+  aiToolbarItem, '|',
   'undo', 'redo', '|',
   'edit-mode', fullscreenToolbarItem, 'outline', readingToolbarItem,
 ];
@@ -941,12 +1059,17 @@ function bindKeys() {
   el.addEventListener('pointerdown', (e: PointerEvent) => {
     beginUserEditing();
     pointerDownAt = { x: e.clientX, y: e.clientY };
+    contextPointRange = null;
     if ((e.target as HTMLElement).closest('.vditor-toolbar button')) {
       userInputPending = true;
     }
   }, true);
   el.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.isTrusted) beginUserEditing();
+    if (e.key === 'Escape' && aiMenuOpen.value) {
+      closeAiMenu();
+      return;
+    }
     if (e.isComposing) { composing = true; return; }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
@@ -972,6 +1095,19 @@ function bindKeys() {
   el.addEventListener('click', keepCodeBlockSelection, true);
   // 监听 edit-mode 切换（Vditor 内部 setEditMode 改 currentMode 但无事件，轮询 DOM class）
   observeEditMode();
+  // AI 工具栏按钮：mousedown.prevent 保住当前选区，点按钮不会把要改写的那段丢掉
+  el.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-ai"]')
+    ?.addEventListener('mousedown', (e) => e.preventDefault());
+  // 菜单跟着视口走：桌面重算落点；手机是贴底面板，宽度变化不影响。编辑器内滚动则收起。
+  window.addEventListener('resize', onAiMenuResize);
+  el.addEventListener('scroll', closeAiMenu, true);
+}
+
+/** resize 时重算桌面菜单的落点；手机贴底面板不因高度/宽度变化被无故收起 */
+function onAiMenuResize() {
+  if (!aiMenuOpen.value) return;
+  if (window.matchMedia('(max-width: ' + BP_MOBILE + 'px)').matches) return;
+  positionAiMenu();
 }
 
 /* ---------- 表格增删行列 ----------
@@ -1890,8 +2026,16 @@ function restoreEditorSelection() {
 
 function handleEditorContextMenu(event: MouseEvent) {
   const target = event.target as HTMLElement;
-  if (target.closest('.vditor-toolbar, .vditor-panel, .link-popup')) return;
+  if (target.closest('.vditor-toolbar, .vditor-panel, .link-popup, .ai-menu')) return;
   event.preventDefault();
+  // 右键落点：在选区里右键保住选区（改写/接写要用），在选区外右键把光标收拢到点击处
+  const point = rangeAtPoint(event.clientX, event.clientY);
+  const selection = window.getSelection();
+  if (selection && point && !pointInsideSelection(selection, event.clientX, event.clientY)) {
+    selection.removeAllRanges();
+    selection.addRange(point);
+  }
+  contextPointRange = point ? point.cloneRange() : null;
   captureEditorSelection();
   emit('context-menu', {
     x: event.clientX,
@@ -2407,6 +2551,399 @@ async function onInsertFilePicked(event: Event): Promise<void> {
   }
 }
 
+// ---------- 就地 AI：落点、菜单、请求与应用 ----------
+
+/** 当前编辑模式对应的可编辑根节点（ir / sv 都是 contenteditable，上下文按它的文本算） */
+function editorSurface(): HTMLElement | null {
+  if (!vditor) return null;
+  const mode = vditor.getCurrentMode();
+  const root = mode === 'sv'
+    ? vditor.vditor.sv?.element
+    : mode === 'wysiwyg'
+      ? vditor.vditor.wysiwyg?.element
+      : vditor.vditor.ir?.element;
+  return (root as HTMLElement | undefined) ?? null;
+}
+
+/** 右键落点 → 光标 Range；点在正文空白处时退到文末 */
+function rangeAtPoint(x: number, y: number): Range | null {
+  const host = vditorEl.value;
+  if (!host) return null;
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  let range: Range | null = null;
+  if (typeof doc.caretRangeFromPoint === 'function') {
+    range = doc.caretRangeFromPoint(x, y);
+  } else if (typeof doc.caretPositionFromPoint === 'function') {
+    const position = doc.caretPositionFromPoint(x, y);
+    if (position) {
+      range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+    }
+  }
+  if (range && host.contains(range.startContainer)) return range;
+  return endOfEditorRange();
+}
+
+function endOfEditorRange(): Range | null {
+  const surface = editorSurface();
+  if (!surface) return null;
+  const range = document.createRange();
+  range.selectNodeContents(surface);
+  range.collapse(false);
+  return range;
+}
+
+function rangeIsConnected(range: Range | null): boolean {
+  const host = vditorEl.value;
+  return Boolean(range && host && range.startContainer.isConnected && host.contains(range.startContainer));
+}
+
+/** 点击点是否落在当前选区的矩形里：在选区内右键保住选区，在选区外右键收拢到点击处 */
+function pointInsideSelection(selection: Selection, x: number, y: number): boolean {
+  if (selection.isCollapsed || selection.rangeCount === 0) return false;
+  return Array.from(selection.getRangeAt(0).getClientRects()).some(
+    (rect) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom,
+  );
+}
+
+/** 光标前后的纯文本上下文（DOM 文本，不含 Markdown 记号，给模型当语境足够） */
+function contextAroundRange(range: Range | null): { before: string; after: string } {
+  const surface = editorSurface();
+  if (!range || !surface || !surface.contains(range.startContainer) || !surface.contains(range.endContainer)) {
+    return { before: '', after: '' };
+  }
+  try {
+    const beforeRange = document.createRange();
+    beforeRange.selectNodeContents(surface);
+    beforeRange.setEnd(range.startContainer, range.startOffset);
+    const afterRange = document.createRange();
+    afterRange.setStart(range.endContainer, range.endOffset);
+    afterRange.setEnd(surface, surface.childNodes.length);
+    return {
+      before: beforeRange.toString().slice(-AI_CONTEXT_BEFORE).trim(),
+      after: afterRange.toString().slice(0, AI_CONTEXT_AFTER).trim(),
+    };
+  } catch {
+    return { before: '', after: '' };
+  }
+}
+
+/** 结果像块级 Markdown（标题 / 列表 / 表格 / 代码块 / 多段） */
+function looksBlockMarkdown(text: string): boolean {
+  return /(^|\n)(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~|\|)/.test(text) || /\n\s*\n/.test(text);
+}
+
+/** 把选区放回编辑器（面板抢过焦点后也能恢复） */
+function restoreAiRange(range: Range | null): boolean {
+  if (!rangeIsConnected(range)) return false;
+  const node = range!.startContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  element?.closest<HTMLElement>('[contenteditable="true"]')?.focus({ preventScroll: true });
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range!);
+  return true;
+}
+
+function positionAiMenu() {
+  const button = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-ai"]');
+  if (!button) return;
+  const rect = button.getBoundingClientRect();
+  const width = 248;
+  const height = 236;
+  let left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 6);
+  aiMenuPos.value = { top: Math.round(top), left: Math.round(left) };
+}
+
+function openAiMenu() {
+  if (!ready || !vditor) return;
+  closeInsertPanel(false);
+  closeActionsSheet(false);
+  linkPopup.value = false;
+  hideSelectionBar();
+  hideTableBar();
+  // 快照当前选区：菜单按钮拿到焦点后，窗口选区可能已经不可读
+  const range = selectionRangeInEditor();
+  const selected = range && !range.collapsed ? (window.getSelection()?.toString() || '').trim() : '';
+  aiMenuSelection.value = selected;
+  savedSelectionRange = range ? range.cloneRange() : null;
+  savedSelectionText = selected || vditor.getSelection() || '';
+  positionAiMenu();
+  aiMenuOpen.value = true;
+  void nextTick(() => aiMenuEl.value?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true }));
+}
+
+function closeAiMenu() {
+  aiMenuOpen.value = false;
+}
+
+function startAiFromMenu(mode: EditorAiTask) {
+  const selection = aiMenuSelection.value;
+  closeAiMenu();
+  if (mode === 'rewrite' || mode === 'continue') {
+    let range = selectionRangeInEditor();
+    if (!range || range.collapsed) {
+      range = rangeIsConnected(savedSelectionRange) ? savedSelectionRange : null;
+    }
+    if (!range || range.collapsed) {
+      notify.info(mode === 'rewrite' ? '先在正文里选中要改写的文字' : '先选中要接着写的那段文字');
+      return;
+    }
+    const text = selection || (window.getSelection()?.toString() || '').trim() || savedSelectionText;
+    if (!text) {
+      notify.info('没有读到选中的文字，请重新选择');
+      return;
+    }
+    if (mode === 'rewrite') {
+      aiRange = range.cloneRange();
+      aiSelectionText.value = text;
+      aiAnchorHint.value = `将替换选中的 ${text.length} 个字`;
+    } else {
+      const collapsed = range.cloneRange();
+      collapsed.collapse(false);
+      aiRange = collapsed;
+      aiSelectionText.value = text;
+      aiAnchorHint.value = `接在选中的 ${text.length} 个字之后`;
+    }
+    openAiDialog(mode);
+    return;
+  }
+  if (mode === 'beautify') {
+    openAiBeautify();
+    return;
+  }
+  openAiInsert();
+}
+
+/** 打开 AI 对话框（调用方负责先设好 aiRange / aiSelectionText / aiAnchorHint） */
+function openAiDialog(mode: EditorAiTask) {
+  if (!vditor) return;
+  closeInsertPanel(false);
+  closeActionsSheet(false);
+  linkPopup.value = false;
+  hideSelectionBar();
+  hideTableBar();
+  aiMode.value = mode;
+  aiBusy.value = false;
+  aiError.value = '';
+  aiPreview.value = '';
+  aiStats.value = null;
+  aiLastInstruction = '';
+  aiOpen.value = true;
+}
+
+/** 右键菜单「AI 在此处插入」：落点 = 右键处光标 / 当前光标 / 文末 */
+function openAiInsert() {
+  if (!vditor) return;
+  let range = selectionRangeInEditor();
+  if (range) {
+    range = range.cloneRange();
+    if (!range.collapsed) range.collapse(true);
+  } else if (rangeIsConnected(savedSelectionRange)) {
+    range = savedSelectionRange!.cloneRange();
+    if (!range.collapsed) range.collapse(true);
+  } else if (rangeIsConnected(contextPointRange)) {
+    range = contextPointRange!.cloneRange();
+  } else {
+    range = endOfEditorRange();
+  }
+  if (!range) {
+    notify.info('编辑器还没准备好，稍后再试');
+    return;
+  }
+  aiRange = range;
+  aiSelectionText.value = '';
+  aiAnchorHint.value = '内容会插入到当前光标位置';
+  openAiDialog('insert');
+}
+
+/** 右键菜单「AI 改写选中文字」：落点 = 选区 */
+function openAiRewrite() {
+  if (!vditor) return;
+  let range = selectionRangeInEditor();
+  if (!range || range.collapsed) {
+    range = rangeIsConnected(savedSelectionRange) ? savedSelectionRange : null;
+  }
+  if (!range || range.collapsed) {
+    notify.info('先在正文里选中要改写的文字');
+    return;
+  }
+  const text = (window.getSelection()?.toString() || '').trim() || vditor.getSelection() || savedSelectionText;
+  if (!text) {
+    notify.info('没有读到选中的文字，请重新选择');
+    return;
+  }
+  aiRange = range.cloneRange();
+  aiSelectionText.value = text;
+  aiAnchorHint.value = `将替换选中的 ${text.length} 个字`;
+  openAiDialog('rewrite');
+}
+
+/** 右键菜单「AI 在选中内容后接写」：落点 = 选区末端 */
+function openAiContinue() {
+  if (!vditor) return;
+  let range = selectionRangeInEditor();
+  if (!range || range.collapsed) {
+    range = rangeIsConnected(savedSelectionRange) ? savedSelectionRange : null;
+  }
+  if (!range || range.collapsed) {
+    notify.info('先选中要接着写的那段文字');
+    return;
+  }
+  const text = (window.getSelection()?.toString() || '').trim() || vditor.getSelection() || savedSelectionText;
+  if (!text) {
+    notify.info('没有读到选中的文字，请重新选择');
+    return;
+  }
+  const collapsed = range.cloneRange();
+  collapsed.collapse(false);
+  aiRange = collapsed;
+  aiSelectionText.value = text;
+  aiAnchorHint.value = `接在选中的 ${text.length} 个字之后`;
+  openAiDialog('continue');
+}
+
+/** 右键 / 工具栏「全文格式美化」 */
+function openAiBeautify() {
+  if (!vditor) return;
+  const document = markdownLinksToWiki(stableEditorValue());
+  if (!document.trim()) {
+    notify.info('页面还没有内容，先写一点再用格式美化');
+    return;
+  }
+  aiRange = null;
+  aiSelectionText.value = '';
+  aiAnchorHint.value = '整理整篇正文，应用前可预览';
+  openAiDialog('beautify');
+}
+
+function closeAiDialog() {
+  aiRequestSeq += 1;
+  if (aiAbort) {
+    aiAbort.abort();
+    aiAbort = null;
+  }
+  aiOpen.value = false;
+  aiBusy.value = false;
+  aiError.value = '';
+  aiPreview.value = '';
+  aiStats.value = null;
+  aiRange = null;
+  aiSelectionText.value = '';
+  aiAnchorHint.value = '';
+  aiLastInstruction = '';
+}
+
+async function runAi(instruction: string) {
+  if (!vditor || aiBusy.value || !aiOpen.value) return;
+  const mode = aiMode.value;
+  const seq = ++aiRequestSeq;
+  aiBusy.value = true;
+  aiError.value = '';
+  aiPreview.value = '';
+  aiStats.value = null;
+  aiLastInstruction = instruction;
+  const controller = new AbortController();
+  aiAbort = controller;
+  try {
+    if (mode === 'beautify') {
+      const document = markdownLinksToWiki(stableEditorValue());
+      const result = await requestEditorAi({
+        task: 'beautify',
+        title: props.title || '',
+        document,
+      }, controller.signal);
+      if (seq !== aiRequestSeq) return;
+      aiPreview.value = result.text;
+      aiStats.value = { before: document.trim().length, after: result.text.trim().length };
+      return;
+    }
+
+    const range = aiRange;
+    const context = contextAroundRange(range);
+    const result = await requestEditorAi({
+      task: mode,
+      instruction,
+      title: props.title || '',
+      selection: mode === 'insert' ? '' : aiSelectionText.value,
+      before: context.before,
+      after: context.after,
+    }, controller.signal);
+    if (seq !== aiRequestSeq) return;
+    if (!applyAiResult(mode, result.text, range)) {
+      aiError.value = '找不到原来的写入位置（页面可能已被改动），请重新选择位置再试';
+      return;
+    }
+    closeAiDialog();
+    notify.success(
+      mode === 'rewrite' ? '已用 AI 改写选中文字' : mode === 'continue' ? '已接着写入' : '已插入 AI 内容',
+    );
+  } catch (error) {
+    if (seq !== aiRequestSeq) return;
+    if (isEditorAiAbort(error)) return;
+    aiError.value = editorAiErrorMessage(error);
+  } finally {
+    if (seq === aiRequestSeq) {
+      aiBusy.value = false;
+      aiAbort = null;
+    }
+  }
+}
+
+/** 把生成结果落回记下的位置：rewrite 先删选区，其余在光标处插入（块级内容自动补空行） */
+function applyAiResult(mode: EditorAiTask, raw: string, range: Range | null): boolean {
+  if (!vditor) return false;
+  const text = String(raw || '').trim();
+  if (!text) return false;
+  if (!restoreAiRange(range)) {
+    // rewrite / continue 找不到原位置就放弃（结果可能已经对不上原文）；insert 退到文末
+    if (mode !== 'insert') return false;
+    const fallback = endOfEditorRange();
+    if (!fallback || !restoreAiRange(fallback)) return false;
+  }
+  beginUserEditing();
+  userInputPending = true;
+  // 删除 + 插入会连续触发 input：先压住中间态，落定后统一 emit 一次（撤销栈仍在 Vditor 里）
+  syncingModelValue = true;
+  const block = looksBlockMarkdown(text);
+  try {
+    if (mode === 'rewrite') {
+      vditor.deleteValue();
+      vditor.insertValue(block ? '\n\n' + text + '\n\n' : text);
+    } else {
+      let next = text;
+      if (block) {
+        const context = range ? contextAroundRange(range) : { before: '', after: '' };
+        if (context.before.trim() && !next.startsWith('\n')) next = '\n\n' + next;
+        if (context.after.trim() && !next.endsWith('\n')) next += '\n\n';
+      }
+      vditor.insertValue(next);
+    }
+  } finally {
+    beginUserEditing();
+  }
+  vditor.focus();
+  void nextTick(() => emitEditorValue());
+  return true;
+}
+
+/** 全文美化「应用到正文」：整篇替换，保留 AI 管理注释与双链形态 */
+function applyAiPreview() {
+  if (!vditor || !aiPreview.value.trim()) return;
+  const next = restoreIngestComments(aiPreview.value);
+  beginUserEditing();
+  applyEditorMarkdown(stripIngestComments(wikiLinksToMarkdown(next)), false);
+  emitEditorValue();
+  notify.success('已应用 AI 格式美化');
+  closeAiDialog();
+}
+
 // ---------- 对外接口 ----------
 
 function getSelectionText(): string {
@@ -2560,6 +3097,15 @@ watch(
   { immediate: true }
 );
 
+/* 换页/进阅读（父级把编辑器藏起来）时收起就地 AI：结果不能再落回上一页的 Range */
+watch(
+  () => props.pageId,
+  () => {
+    if (aiMenuOpen.value) closeAiMenu();
+    if (aiOpen.value) closeAiDialog();
+  }
+);
+
 function syncIfPending() {
   modelSync.setEnvironment(ready, !editorHidden());
 }
@@ -2605,6 +3151,9 @@ onUnmounted(() => {
   floatingHintCleanup?.();
   unregisterInsertBack?.();
   unregisterInsertBack = null;
+  window.removeEventListener('resize', onAiMenuResize);
+  if (aiAbort) aiAbort.abort();
+  aiAbort = null;
   mobileViewport.removeEventListener('change', onMobileViewportChange);
   vditor?.destroy();
 });
@@ -2626,11 +3175,20 @@ defineExpose({
   copySelection,
   pasteClipboard,
   selectAll,
+  /** 右键菜单 / 父级入口：在光标处让 AI 写、改写选区、接写、全文格式美化 */
+  openAiInsert,
+  openAiRewrite,
+  openAiContinue,
+  openAiBeautify,
 });
 onMounted(() => {
   init();
   // 安卓返回键：插入面板开着时先关面板（只认领本组件的这一层）
   unregisterInsertBack = registerBackHandler(() => {
+    if (aiMenuOpen.value) {
+      closeAiMenu();
+      return true;
+    }
     if (actionsSheet.value) {
       closeActionsSheet();
       return true;
@@ -2789,10 +3347,12 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   border-left: none;
   background: var(--border);
 }
-/* 双链 / 沉浸阅读作为强调入口 */
+/* 双链 / 沉浸阅读 / AI 作为强调入口 */
 :deep(.vditor-toolbar button[data-type="wikilink"]),
+:deep(.vditor-toolbar button[data-type="engram-ai"]),
 :deep(.vditor-toolbar button[data-type="reading"]) { color: var(--accent); }
 :deep(.vditor-toolbar button[data-type="wikilink"]:hover),
+:deep(.vditor-toolbar button[data-type="engram-ai"]:hover),
 :deep(.vditor-toolbar button[data-type="reading"]:hover) {
   background: var(--accent-soft);
   color: var(--accent);
@@ -2890,6 +3450,74 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   width: min(320px, calc(100vw - 48px));
   padding: 8px;
   box-shadow: var(--shadow);
+}
+/* ---------- AI 工具栏菜单 ----------
+   Teleport 到 body、fixed 视口坐标：工具栏在手机档是横向滚动容器，菜单留在里面会被裁掉。
+   遮罩只负责点空白收起，不压暗页面（它是轻量浮层，不是模态框）。 */
+.ai-menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-popup) - 1);
+  background: transparent;
+}
+.ai-menu {
+  position: fixed;
+  z-index: var(--z-popup);
+  width: 248px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-dialog);
+}
+.ai-menu-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.ai-menu-row:hover,
+.ai-menu-row:focus-visible { background: var(--bg-hover); outline: none; }
+.ai-menu-row:disabled { opacity: 0.45; }
+.ai-menu-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ai-menu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ai-menu-text b { font-size: 13.5px; font-weight: 600; }
+.ai-menu-text small { font-size: 11.5px; line-height: 1.35; color: var(--text-secondary); }
+.ai-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+@media (max-width: 768px) {
+  /* 手机上 AI 菜单也按贴底动作面板的尺寸走，手指点得准 */
+  .ai-menu {
+    left: 0 !important;
+    right: 0;
+    top: auto !important;
+    bottom: 0;
+    width: 100%;
+    padding: 8px 12px calc(12px + var(--safe-bottom));
+    border-radius: 20px 20px 0 0;
+    border-bottom: 0;
+  }
+  .ai-menu-row { min-height: 52px; padding: 8px 10px; }
+  .ai-menu-icon { width: 34px; height: 34px; border-radius: 10px; }
+  .ai-menu-text b { font-size: 14.5px; }
+  .ai-menu-text small { font-size: 12px; }
+  .ai-menu-mask { background: rgba(20, 18, 15, 0.42); }
 }
 .link-popup input { width: 100%; }
 .link-list { margin-top: 6px; max-height: 220px; overflow-y: auto; }

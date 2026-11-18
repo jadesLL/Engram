@@ -12,6 +12,7 @@ import { registerStaticAssetCache } from './lib/staticAssets.js';
 import { ensureJwtSecret, ensureDefaultPassword, authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { pageRoutes } from './routes/pages.js';
+import { editorAiRoutes } from './routes/editorAi.js';
 import { fileRoutes } from './routes/files.js';
 import { ideaRoutes } from './routes/ideas.js';
 import { inboxRoutes } from './routes/inbox.js';
@@ -151,6 +152,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(runtimeRoutes);
   await app.register(healthRoutes);
   await app.register(pageRoutes);
+  await app.register(editorAiRoutes);
   await app.register(fileRoutes);
   await app.register(ideaRoutes);
   await app.register(inboxRoutes);
