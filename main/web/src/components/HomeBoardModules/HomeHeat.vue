@@ -7,11 +7,17 @@
       <template v-else>
         <div v-if="strip" class="heat-strip" :style="{gridTemplateColumns:`repeat(${shown.length},minmax(0,1fr))`}"><div v-for="cell in shown" :key="cell.date"><button type="button" class="heat-cell" :class="`l${cell.level}`" :aria-label="`${cell.date}：${cell.count} 篇页面最近更新`" :title="`${cell.date} · ${cell.count} 篇页面最近更新`" @click="selectDate(cell.date)" /><time>{{ Number(cell.date.slice(8)) }}日</time></div></div>
         <div v-else class="heat-calendar">
-          <div></div><div class="heat-week-dates" :style="{gridTemplateColumns:`repeat(${visibleWeeks},20px)`}"><time v-for="(cell, wi) in weekStarts" :key="cell.date">{{ weekLabel(wi) }}</time></div>
-          <div class="heat-weekdays"><span v-for="day in ['日','一','二','三','四','五','六']" :key="day">{{ day }}</span></div>
-          <div class="heat-grid" :style="{gridTemplateColumns:`repeat(${visibleWeeks},20px)`}"><button v-for="(cell,i) in shown" :key="cell.date" type="button" class="heat-cell" :class="[`l${cell.level}`,{future:cell.future,selected:cell.date===selected,today:cell.date===latest?.date}]" :style="{gridColumn:Math.floor(i/7)+1,gridRow:i%7+1}" :disabled="cell.future" :aria-label="`${cell.date}${cell.date===latest?.date?'（今天）':''}：${cell.count} 篇页面最近更新`" :aria-pressed="cell.date===selected" :title="cell.future?'未来日期':`${cell.date}${cell.date===latest?.date?'（今天）':''} · ${cell.count} 篇页面最近更新`" @click="selectDate(cell.date)" /></div>
+          <div></div><div class="heat-week-dates" :style="{gridTemplateColumns:`repeat(${visibleWeeks},${cellPx}px)`}"><time v-for="(cell, wi) in weekStarts" :key="cell.date">{{ weekLabel(wi) }}</time></div>
+          <div class="heat-weekdays" :style="{gridTemplateRows:`repeat(7,${cellPx}px)`}"><span v-for="day in ['日','一','二','三','四','五','六']" :key="day">{{ day }}</span></div>
+          <div class="heat-grid" :style="{gridTemplateColumns:`repeat(${visibleWeeks},${cellPx}px)`,gridTemplateRows:`repeat(7,${cellPx}px)`}"><button v-for="(cell,i) in shown" :key="cell.date" type="button" class="heat-cell" :class="[`l${cell.level}`,{future:cell.future,selected:cell.date===selected,today:cell.date===latest?.date}]" :style="{gridColumn:Math.floor(i/7)+1,gridRow:i%7+1}" :disabled="cell.future" :aria-label="`${cell.date}${cell.date===latest?.date?'（今天）':''}：${cell.count} 篇页面最近更新`" :aria-pressed="cell.date===selected" :title="cell.future?'未来日期':`${cell.date}${cell.date===latest?.date?'（今天）':''} · ${cell.count} 篇页面最近更新`" @click="selectDate(cell.date)" /></div>
         </div>
       </template>
+      <div v-if="!narrow && size.h > 340 && recentActive.length" class="heat-recent">
+        <span class="heat-recent-label">最近活跃</span>
+        <button v-for="cell in recentActive" :key="cell.date" type="button" class="heat-recent-day" @click="selectDate(cell.date)">
+          <time>{{ shortDate(cell.date) }}</time><b>{{ cell.count }}</b> 篇
+        </button>
+      </div>
       <div v-if="!narrow && size.h > 180" class="heat-foot"><span>{{ shortDate(shown[0]?.date) }}—{{ shortDate(latest?.date) }} · {{ total }} 篇</span><span class="heat-legend">少 <i v-for="level in 5" :key="level" :class="`l${level-1}`" /> 多</span></div>
     </template>
     <dialog ref="dateDialog" class="heat-date-dialog" @click="onBackdrop"><header><h3>知识热力</h3><button type="button" aria-label="关闭日期详情" @click="dateDialog?.close()">×</button></header><div class="heat-detail"><label>查看日期 <input v-model="selected" type="date" :min="cells[0]?.date" :max="latest?.date" /></label><p>{{ selected }} · {{ selectedCount }} 篇页面最近更新</p></div><p class="heat-note">按页面最近更新时间统计，每篇页面计入一天。</p></dialog>
@@ -31,7 +37,15 @@ const latest=computed(()=>past.value.at(-1));
 const total=computed(()=>past.value.reduce((sum,c)=>sum+c.count,0));
 const active=computed(()=>past.value.filter(c=>c.count>0).length);
 const tiny=computed(()=>size.value.h<55),narrow=computed(()=>size.value.w<100),strip=computed(()=>size.value.h<160);
-const visibleWeeks=computed(()=>Math.min(weeks.value,size.value.w<380?8:Math.max(2,Math.floor((size.value.w-20)/22))));
+const visibleWeeks=computed(()=>Math.min(weeks.value,Math.max(2,Math.floor((size.value.w-20)/22))));
+/** 格子边长同时受宽高约束：宽度优先填满卡面，高度不够时再收小，保持正方格 */
+const cellPx=computed(()=>{
+  const weeks=visibleWeeks.value;
+  const widthBased=Math.floor((size.value.w-20-(weeks-1)*3)/weeks);
+  const heightBased=Math.floor((size.value.h-(size.value.h>160?48:0)-12-30)/7);
+  return Math.max(12,Math.min(26,widthBased,Math.max(10,heightBased)));
+});
+const recentActive=computed(()=>past.value.filter(c=>c.count>0).slice(-3).reverse());
 const shown=computed(()=>strip.value?past.value.slice(-Math.max(2,Math.min(7,Math.floor(size.value.w/20)))):cells.value.slice(-visibleWeeks.value*7));
 const weekStarts=computed(()=>shown.value.filter((_,i)=>i%7===0));
 const dayList=computed(()=>past.value.slice(-Math.max(1,Math.min(14,Math.floor((size.value.h-(size.value.h>160?48:0)-4)/31)))));
@@ -53,13 +67,12 @@ onUnmounted(()=>{observer?.disconnect();stopBack?.();});
 .heat-summary small {display:block;font-size:10px;color:var(--text-muted, var(--text-faint));margin-top:3px}
 .heat-calendar {overflow:hidden;display:grid;grid-template-columns:12px auto;grid-template-rows:12px minmax(0,1fr);gap:5px;justify-content:center;flex:1;min-width:0;min-height:0}
 .heat-week-dates {display:grid;gap:3px;text-align:center;color:var(--text-muted, var(--text-faint));font-size:11px;line-height:1.2;min-width:0;font-variant-numeric:tabular-nums}
-/* 20px 周列下月份标签会略宽：允许溢出到相邻空格/卡片留白，不裁成「10/1」 */
+/* 月份标签可能略宽于格宽：允许溢出到相邻空格/卡片留白，不裁成「10/1」 */
 .heat-week-dates time {white-space:nowrap;min-width:0;overflow:visible}
 /* 最后一个月份贴着卡片右边时会把「11/15」截成「11/」：改为右对齐，向格内收 */
 .heat-week-dates time:last-child {text-align:right}
 .heat-weekdays {min-height:0;display:grid;grid-template-rows:repeat(7,20px);gap:3px;align-content:center;align-items:center;color:var(--text-muted, var(--text-faint));font-size:11px;line-height:1.1}
-/* 格子保持近正方：8 周不变，列宽固定 20px 并整体居中；行高同理。
-   原来列宽吃满卡片，27×18 的扁格读起来像条形图。 */
+/* 格子保持近正方：边长由 cellPx 按卡宽/卡高算，居中排布；不会再出现固定 20px 留下两侧大片空白。 */
 .heat-grid {display:grid;grid-template-rows:repeat(7,20px);gap:3px;align-content:center;min-width:0;min-height:0;flex:1}
 .heat-cell {width:100%;height:100%;padding:0;min-width:0;min-height:0;border-radius:3px;background:var(--bg-tertiary)}
 .heat-cell.future {opacity:.15;cursor:default}
@@ -72,6 +85,11 @@ onUnmounted(()=>{observer?.disconnect();stopBack?.();});
 .heat-card .l2 {background:color-mix(in srgb,var(--accent) 42%,var(--card-bg))}
 .heat-card .l3 {background:color-mix(in srgb,var(--accent) 66%,var(--card-bg))}
 .heat-card .l4 {background:var(--accent)}
+.heat-recent {display:flex;align-items:center;gap:7px;flex:none;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--card-line-soft);font-size:10px;color:var(--text-faint)}
+.heat-recent-label {font-weight:600;color:var(--text-secondary)}
+.heat-recent-day {display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 7px;border-radius:6px;background:var(--bg-secondary);color:var(--text-secondary);font-size:10px}
+.heat-recent-day:hover {background:var(--accent-soft);color:var(--accent)}
+.heat-recent-day b {color:var(--accent);font-weight:650;font-variant-numeric:tabular-nums}
 .heat-foot {margin-top:auto;padding-top:9px;display:flex;justify-content:space-between;gap:8px;font-size:10.5px;color:var(--text-muted, var(--text-faint));flex:none;border-top:1px solid var(--card-line-soft)}
 .heat-legend {display:flex;align-items:center;gap:3px}
 .heat-legend i {width:9px;height:9px;border-radius:2px;background:var(--bg-tertiary)}

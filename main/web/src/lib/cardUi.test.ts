@@ -96,3 +96,16 @@ test('卡片 v2：低价值卡有明确的数据形状', () => {
   const roam = read('components/HomeBoardModules/HomeRoam.vue');
   assert.match(roam, /roam-tags/, '随机漫游没有补上页面元信息');
 });
+
+test('卡片 v2：知识热力按卡宽铺满，高卡用最近活跃补高度', () => {
+  const heat = read('components/HomeBoardModules/HomeHeat.vue');
+  assert.match(heat, /const cellPx=computed/, '热力格仍写死 20px：8 周会留下两侧大片空白');
+  assert.match(heat, /recentActive/, '高卡没有最近活跃行，底部仍会空一大块');
+  assert.match(heat, /gridTemplateColumns:`repeat\(\$\{visibleWeeks\},\$\{cellPx\}px\)`/, '热力格列宽没有跟卡宽联动');
+  const shell = read('components/HomeModuleShell.vue');
+  assert.match(
+    shell,
+    /\.shell\.auto-height :deep\(\.heat-calendar\)/,
+    '手机 auto-height 下热力日历又用 flex:1，网格会被压成 0',
+  );
+});
