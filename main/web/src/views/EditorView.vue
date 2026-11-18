@@ -84,6 +84,12 @@
           </template>
         </BackTrailMenu>
         <div class="spacer"></div>
+        <!-- 导出当前页：编辑态也能直接出 PDF / 长图，不必先切阅读视图 -->
+        <PageExportMenu
+          trigger-class="btn small topbar-export"
+          :icon-size="14"
+          :meta="exportMeta"
+        />
         <!-- 正文宽度：按可用区百分比（默认 70%），阅读视图与编辑视图共用同一份偏好 -->
         <div ref="widthPickerEl" class="width-picker" @keydown.esc="widthMenuOpen = false">
           <button
@@ -590,6 +596,9 @@ import {
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
 import { documentTitleParts } from '../lib/documentTitle';
+import { exportPageImage, exportPagePdf } from '../lib/pageExportCapture';
+import type { PageExportMeta } from '../lib/pageExport';
+import PageExportMenu from '../components/PageExportMenu.vue';
 import DocumentTitle from '../components/DocumentTitle.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
@@ -820,6 +829,19 @@ async function changeRawSection(value?: string) {
   }
 }
 const tags = ref<string[]>([]);
+/* 导出当前页的元数据：标题 / 正文 / 类型 / 标签都取编辑页当前这一份（含未保存改动），
+   与阅读视图走同一个渲染入口；原始资料的日期前缀交给导出稿拆开显示 */
+const exportMeta = computed<PageExportMeta>(() => ({
+  title: title.value || displayTitle.value,
+  markdown: content.value,
+  // 与阅读视图的 typeLabel 同口径：原始资料用二级分类名，Wiki 页面用页面类型文案
+  typeLabel: isRawPage.value
+    ? rawReadingLabel.value
+    : (PAGE_KINDS.find((kind) => kind.value === pageType.value)?.label || '知识页面'),
+  tags: tags.value,
+  updatedAt: page.value?.updated_at,
+  formatDocumentTitle: isRawPage.value,
+}));
 const tagDraft = ref('');
 /* 标签输入按需展开：「+ 标签」是虚线 pill，点开才出现输入框（mockup 4.3） */
 const tagEditing = ref(false);
@@ -1594,6 +1616,19 @@ function pageContextItems(separatorBefore = false): ContextMenuItem[] {
       label: '复制页面链接',
       icon: 'link',
       action: () => copyText(window.location.href),
+    },
+    {
+      id: 'export-page-pdf',
+      label: '导出为 PDF',
+      icon: 'pdf',
+      separatorBefore: true,
+      action: () => void exportPagePdf(exportMeta.value),
+    },
+    {
+      id: 'export-page-image',
+      label: '导出为长图',
+      icon: 'image',
+      action: () => void exportPageImage(exportMeta.value),
     },
   ];
 }

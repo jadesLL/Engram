@@ -36,6 +36,15 @@
         <Icon :name="dark ? 'sun' : 'moon'" :size="17" />
       </button>
 
+      <!-- 导出当前页：PDF（打印通道）与整篇长图；手机档收进「更多」面板（见下方设置面板） -->
+      <PageExportMenu
+        v-if="!compactToolbar"
+        class="export-tool"
+        trigger-class="reading-tool"
+        :icon-size="16"
+        :meta="exportMeta"
+      />
+
       <!-- 本页目录：一级开关（原先埋在「显示」二级菜单里，读者翻不到）。
            宽屏切右侧常驻目录列（跟随持久偏好），≤1024px 开合贴底浮层面板（只属于本次阅读） -->
       <button
@@ -190,6 +199,30 @@
                   :aria-checked="preferences.numberedHeadings"
                   @click="toggleNumberingMenu"
                 ><span class="check" :class="{ on: preferences.numberedHeadings }"></span>标题编号</button>
+              </div>
+            </div>
+
+            <!-- 手机档：导出收进「更多」设置面板。顶栏第一行必须留给 返回编辑 / 目录 / 主题 / 更多，
+                 再多一颗带文案的「导出」会把 360px 档的「更多」挤到第二行（实测 412px 也只剩 68px） -->
+            <div v-if="compactToolbar" class="reading-export-block">
+              <div class="reading-export-label">导出</div>
+              <div class="reading-export-actions">
+                <button
+                  type="button"
+                  :disabled="exportBusy"
+                  @click="runExport('pdf')"
+                >
+                  <Icon name="pdf" :size="15" />
+                  {{ exportBusy ? '生成中…' : '导出 PDF' }}
+                </button>
+                <button
+                  type="button"
+                  :disabled="exportBusy"
+                  @click="runExport('image')"
+                >
+                  <Icon name="image" :size="15" />
+                  {{ exportBusy ? '生成中…' : '导出长图' }}
+                </button>
               </div>
             </div>
           </div>
@@ -383,6 +416,9 @@ import { headingFoldRanges } from '../lib/readingFold';
 import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
 import { registerBackHandler } from '../lib/androidBack';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import type { PageExportMeta } from '../lib/pageExport';
+import { exportPageImage, exportPagePdf } from '../lib/pageExportCapture';
+import PageExportMenu from './PageExportMenu.vue';
 import {
   decorateCitationsIn,
   handleCitationEvent,
@@ -468,6 +504,19 @@ const readProgress = ref(0);
 const rendering = ref(false);
 const mobileOutlineOpen = ref(false);
 const moreOpen = ref(false);
+/* 手机档「更多」面板里的导出动作（桌面/平板走顶栏 PageExportMenu，两处共用 capture 模块） */
+const exportBusy = ref(false);
+async function runExport(kind: 'pdf' | 'image'): Promise<void> {
+  if (exportBusy.value) return;
+  exportBusy.value = true;
+  closeMore();
+  try {
+    if (kind === 'pdf') await exportPagePdf(exportMeta.value);
+    else await exportPageImage(exportMeta.value);
+  } finally {
+    exportBusy.value = false;
+  }
+}
 const metrics = ref({ units: 0, minutes: 1 });
 const toolbarHeight = ref(56);
 const viewportHeight = ref(0);
@@ -574,6 +623,16 @@ const typeLabel = computed(() => {
     note: '知识页面',
   }[props.pageType] || '知识页面');
 });
+/* 导出当前页需要的元数据：标题拆日期、类型标签、标签与更新时间都直接取阅读视图这一份，
+   导出稿不会因为「页面类型 / 标签刚改过还没保存」之类的路径和屏幕上看到的对不上 */
+const exportMeta = computed<PageExportMeta>(() => ({
+  title: props.title || documentTitle.value.name,
+  markdown: props.markdown,
+  typeLabel: typeLabel.value,
+  tags: props.tags,
+  updatedAt: props.updatedAt,
+  formatDocumentTitle: props.formatDocumentTitle,
+}));
 /* 本页关联：展示交给底部胶囊里的 RelatedMenu（原先正文尾部有一行折叠摘要，
  * 展开态记在 localStorage；本次连同那一行一起去掉，面板开合不再跨会话记忆） */
 const relatedMenuRef = ref<InstanceType<typeof RelatedMenu>>();
@@ -2268,6 +2327,42 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   box-shadow: none;
 }
+/* 手机档「更多」里的导出块：与上面的字号 / 宽度 / 显示同为一组设置，用分隔线隔开 */
+.reading-export-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.reading-export-label {
+  padding: 0 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.reading-export-actions {
+  display: flex;
+  gap: 8px;
+}
+.reading-export-actions button {
+  flex: 1;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.reading-export-actions button:active { background: var(--control-bg-pressed); }
+.reading-export-actions button:disabled { opacity: 0.55; cursor: default; }
 
 @media (max-width: 1024px) {
   .reading-toolbar { flex-wrap: wrap; }
@@ -2379,6 +2474,8 @@ onBeforeUnmount(() => {
     width: 36px;
     padding: 0;
   }
+  /* 导出排在主题之后、「更多」之前：第一行依次是 返回编辑 / 目录 / 主题 / 导出 / 更多 */
+  .export-tool { order: 4; }
   .more-tool { order: 4; margin-left: auto; padding: 0 12px; }
   /* 返回入口外面包着悬停下拉容器：让它独占第二行，里面的按钮撑满整行 */
   .reading-toolbar :deep(.back-trail) {
