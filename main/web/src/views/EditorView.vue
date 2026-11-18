@@ -240,6 +240,7 @@
           :dark="isDark"
           :mode="app.editorMode"
           :page-id="page?.id"
+          :title="title"
           :fullscreen="fullscreen"
           @save="save(true)"
           @open-wikilink="openWikilink"
@@ -1478,6 +1479,48 @@ function editorBaseItems(selection: string): ContextMenuItem[] {
   ];
 }
 
+/** 编辑页右键的 AI 入口：直接改正文（结果落到编辑器，不转去聊天抽屉） */
+function editorAiItems(selection: string): ContextMenuItem[] {
+  if (selection) {
+    return [
+      {
+        id: 'ai-rewrite-selection',
+        label: 'AI 改写选中文字',
+        icon: 'pencil',
+        separatorBefore: true,
+        action: () => editorRef.value?.openAiRewrite(),
+      },
+      {
+        id: 'ai-continue-selection',
+        label: 'AI 在选中内容后接写',
+        icon: 'chevron-down',
+        action: () => editorRef.value?.openAiContinue(),
+      },
+      {
+        id: 'ai-beautify-selection',
+        label: 'AI 全文格式美化',
+        icon: 'markdown',
+        action: () => editorRef.value?.openAiBeautify(),
+      },
+    ];
+  }
+  return [
+    {
+      id: 'ai-insert-here',
+      label: 'AI 在此处插入…',
+      icon: 'ai',
+      separatorBefore: true,
+      action: () => editorRef.value?.openAiInsert(),
+    },
+    {
+      id: 'ai-beautify-page',
+      label: 'AI 全文格式美化',
+      icon: 'markdown',
+      action: () => editorRef.value?.openAiBeautify(),
+    },
+  ];
+}
+
 function showContextMenu(
   request: SelectionContextMenuRequest,
   source: 'editor' | 'reading' | 'file',
@@ -1486,6 +1529,7 @@ function showContextMenu(
   let items: ContextMenuItem[];
   if (source === 'editor') {
     items = editorBaseItems(selection);
+    items.push(...editorAiItems(selection));
     items.push(...(selection ? selectionBusinessItems(selection) : pageContextItems(true)));
   } else if (selection) {
     items = [
