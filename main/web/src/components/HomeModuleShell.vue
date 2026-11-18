@@ -143,6 +143,11 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .shell.auto-height .shell-body { flex:1 1 auto; min-width:0; overflow:visible; }
 .shell.auto-height .module-content { flex:none; overflow:visible; }
 .shell.auto-height :deep(.adaptive-summary) { flex:none; height:auto; }
+/* 热力卡在手机 auto-height 下不能让日历 flex:1（basis:0 会把网格压成 0）；高度交给格子算 */
+.shell.auto-height :deep(.heat-card) { height:auto; }
+.shell.auto-height :deep(.heat-calendar),
+.shell.auto-height :deep(.heat-strip),
+.shell.auto-height :deep(.heat-days) { flex:none; }
 @media (max-width:768px) {
   .shell { padding:14px; }
   .shell.tier-bar { padding:11px; }
