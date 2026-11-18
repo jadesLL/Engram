@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Engram 编辑器 · Markdown 工具栏评审</title>
+<style>
+  :root {
+    --paper: #f6f2ea;
+    --paper-2: #fbf8f2;
+    --card: #fffdf9;
+    --ink: #2b2722;
+    --ink-2: #5d564c;
+    --ink-3: #8a8175;
+    --line: #e4ddd1;
+    --line-2: #efe9df;
+    --accent: #c2683f;
+    --accent-soft: #f7e7dc;
+    --green: #3f7a5a;
+    --green-soft: #e7f2ea;
+    --amber: #9a6a1f;
+    --amber-soft: #f8eeda;
+    --red: #a64132;
+    --red-soft: #f8e3df;
+    --blue: #3f6285;
+    --blue-soft: #e6eef6;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(43, 39, 34, .04), 0 14px 34px -22px rgba(43, 39, 34, .35);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 12% -10%, #fff9ef 0%, transparent 60%),
+      var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 90px; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 54px 0 30px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 11px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--paper-2);
+    color: var(--ink-2); font-size: 12px; letter-spacing: .06em;
+  }
+  .kicker i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  h1 {
+    margin: 16px 0 10px; font-size: clamp(30px, 4.2vw, 46px);
+    line-height: 1.18; letter-spacing: -.02em; font-weight: 720;
+  }
+  .lede { max-width: 820px; margin: 0; color: var(--ink-2); font-size: 16.5px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 16px; color: var(--ink-3); font-size: 12.5px; }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 26px; }
+  .stat { padding: 15px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); }
+  .stat b { display: block; font-size: 25px; font-weight: 720; letter-spacing: -.02em; }
+  .stat span { color: var(--ink-3); font-size: 12.5px; }
+  @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  /* ---------- toc ---------- */
+  .toc {
+    position: sticky; top: 0; z-index: 20; margin: 0 -28px 26px; padding: 10px 28px;
+    background: color-mix(in srgb, var(--paper) 82%, transparent);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2);
+    display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  }
+  .toc::-webkit-scrollbar { display: none; }
+  .toc a {
+    flex: none; padding: 6px 11px; border-radius: 999px;
+    color: var(--ink-2); font-size: 12.5px; border: 1px solid transparent;
+  }
+  .toc a:hover { background: var(--card); border-color: var(--line); text-decoration: none; color: var(--ink); }
+
+  /* ---------- sections ---------- */
+  section { margin: 40px 0; scroll-margin-top: 64px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .sec-head .no { color: var(--accent); font-family: var(--mono); font-size: 12px; letter-spacing: .08em; }
+  h2 { margin: 0; font-size: 24px; letter-spacing: -.01em; }
+  .sec-sub { margin: 0 0 18px; color: var(--ink-3); font-size: 13.5px; max-width: 900px; }
+
+  .note {
+    display: flex; gap: 10px; padding: 12px 15px; margin: 16px 0;
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 10px; background: var(--paper-2); color: var(--ink-2); font-size: 13.5px;
+  }
+  .note b { color: var(--ink); }
+
+  /* ---------- toolbar mock ---------- */
+  .toolbar-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); overflow: hidden; }
+  .toolbar-card + .toolbar-card { margin-top: 14px; }
+  .toolbar-card header {
+    display: flex; align-items: center; gap: 10px; padding: 11px 15px;
+    border-bottom: 1px solid var(--line-2); background: var(--paper-2);
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .toolbar-card header b { color: var(--ink); font-size: 13px; }
+  .toolbar-card header .tag { margin-left: auto; }
+  .strip { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 14px 15px; }
+  .tbtn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--paper-2); color: var(--ink-2); font-size: 11.5px; white-space: nowrap;
+  }
+  .tbtn.engram { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); background: var(--accent-soft); color: var(--accent); }
+  .tbtn.ghost { border-style: dashed; color: var(--ink-3); }
+  .tsep { width: 1px; height: 18px; margin: 0 4px; background: var(--line); }
+  .tbtn .k { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .strip-note { padding: 0 15px 14px; color: var(--ink-3); font-size: 12px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .b-p0 { background: var(--red-soft); color: var(--red); }
+  .b-p1 { background: var(--amber-soft); color: var(--amber); }
+  .b-p2 { background: var(--blue-soft); color: var(--blue); }
+  .b-ok { background: var(--green-soft); color: var(--green); }
+  .b-neutral { background: #f0ece4; color: var(--ink-2); }
+  .b-s { background: var(--green-soft); color: var(--green); }
+  .b-m { background: var(--amber-soft); color: var(--amber); }
+  .b-l { background: var(--red-soft); color: var(--red); }
+
+  /* ---------- finding cards ---------- */
+  .findings { display: grid; gap: 10px; }
+  .finding {
+    display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 14px;
+    padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--card); box-shadow: 0 1px 0 rgba(43,39,34,.02);
+  }
+  .finding .fid { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); padding-top: 3px; }
+  .finding h3 { margin: 0 0 4px; font-size: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .finding p { margin: 0; color: var(--ink-2); font-size: 13.2px; }
+  .finding .why { margin-top: 7px; color: var(--ink-3); font-size: 12.5px; }
+  .finding .fix { margin-top: 7px; padding-left: 10px; border-left: 2px solid var(--accent-soft); color: var(--ink-2); font-size: 12.8px; }
+  .finding .fix b { color: var(--accent); font-weight: 650; }
+  .group-title { display: flex; align-items: center; gap: 9px; margin: 24px 0 10px; font-size: 13px; color: var(--ink-2); font-weight: 650; }
+  .group-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  /* ---------- extension grid ---------- */
+  .ext-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 860px) { .ext-grid { grid-template-columns: 1fr; } }
+  .ext {
+    padding: 15px 16px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--card); box-shadow: 0 1px 0 rgba(43,39,34,.02);
+  }
+  .ext h3 { margin: 0 0 5px; font-size: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ext .desc { margin: 0; color: var(--ink-2); font-size: 13px; }
+  .ext .facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .ext .where { margin: 9px 0 0; padding-top: 9px; border-top: 1px dashed var(--line); color: var(--ink-3); font-size: 12.2px; }
+  .ext .where b { color: var(--ink-2); font-weight: 600; }
+
+  /* ---------- roadmap ---------- */
+  .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 860px) { .roadmap { grid-template-columns: 1fr; } }
+  .phase { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .phase h3 { margin: 0 0 4px; font-size: 15px; }
+  .phase .when { color: var(--ink-3); font-size: 12px; }
+  .phase ul { margin: 10px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+  .phase li + li { margin-top: 4px; }
+
+  /* ---------- table ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 9px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-2); }
+  th { background: var(--paper-2); color: var(--ink-2); font-size: 11.5px; font-weight: 650; letter-spacing: .04em; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td code, p code, li code { font-family: var(--mono); font-size: 11.5px; padding: 1px 5px; border-radius: 5px; background: #f1ece3; color: var(--ink-2); }
+
+  footer { margin-top: 54px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  @media print {
+    body { background: #fff; }
+    .toc { position: static; }
+    .finding, .ext, .phase, .toolbar-card, .stat { box-shadow: none; break-inside: avoid; }
+    section { break-inside: avoid-page; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="kicker"><i></i> Engram 编辑器评审 · 只列问题，不改代码</span>
+    <h1>Markdown 工具栏：现状、问题与可扩展功能</h1>
+    <p class="lede">
+      这份评审把编辑页现有工具栏（桌面 / 手机 / 选中浮条 / 表格浮条 / 插入面板）逐项过了一遍，
+      按「会不会卡住真实写作」分成 P0 / P1 / P2，并把值得加的扩展能力按「渲染器是否已随包、工作量、建议入口」列成清单。
+      本轮只交付这份 HTML；工具栏本身没有改动。
+    </p>
+    <div class="meta">
+      <span><b>范围</b> main/web 编辑器与 Vditor 工具栏</span>
+      <span><b>日期</b> 2026-11-18</span>
+      <span><b>对照</b> Vditor 3.10.8 · 仓库 vite 产物</span>
+      <span><b>本轮已落地</b> 右键 AI 插入 / 改写 / 接写 / 全文格式美化</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>20</b><span>桌面工具栏按钮（含 5 条分隔）</span></div>
+      <div class="stat"><b>12</b><span>手机工具栏按钮（单行横滚）</span></div>
+      <div class="stat"><b>28</b><span>梳理出的可用性问题</span></div>
+      <div class="stat"><b>26</b><span>候选扩展能力</span></div>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="目录">
+    <a href="#map">① 当前全貌</a>
+    <a href="#issues">② 不好用的地方</a>
+    <a href="#issues-p0">P0 功能缺口</a>
+    <a href="#issues-p1">P1 高频但绕</a>
+    <a href="#issues-p2">P2 体验细节</a>
+    <a href="#extensions">③ 扩展清单</a>
+    <a href="#roadmap">④ 建议路线</a>
+    <a href="#appendix">⑤ 附录</a>
+  </nav>
+
+  <section id="map">
+    <div class="sec-head"><span class="no">01</span><h2>当前全貌</h2></div>
+    <p class="sec-sub">
+      先按真实顺序把入口摆出来。标注「Engram」的是自研项；其余是 Vditor 内置项（图标与行为沿用 Vditor）。
+      手机端不是桌面端的等比缩小：桌面 20 个按钮，手机只保留 12 个，表格 / 代码 / 引用 / 待办 / 分割线收进「插入」底部面板。
+    </p>
+
+    <div class="toolbar-card">
+      <header><b>桌面工具栏</b><span class="badge b-neutral">20 个按钮 · 5 组分隔</span><span class="tag badge b-ok">完整功能面</span></header>
+      <div class="strip">
+        <span class="tbtn">标题 <span class="k">H1–H6</span></span>
+        <span class="tbtn">加粗</span><span class="tbtn">斜体</span><span class="tbtn">删除线</span>
+        <span class="tsep"></span>
+        <span class="tbtn">引用</span><span class="tbtn">无序列表</span><span class="tbtn">有序列表</span><span class="tbtn">待办</span>
+        <span class="tsep"></span>
+        <span class="tbtn">行内代码</span><span class="tbtn">代码块</span><span class="tbtn">表格 <span class="k">2×2</span></span><span class="tbtn">链接</span>
+        <span class="tbtn engram">双链 <span class="k">[[ ]]</span></span>
+        <span class="tsep"></span>
+        <span class="tbtn engram">AI</span>
+        <span class="tsep"></span>
+        <span class="tbtn">撤销</span><span class="tbtn">重做</span>
+        <span class="tsep"></span>
+        <span class="tbtn">编辑模式</span><span class="tbtn engram">全屏</span><span class="tbtn">大纲</span><span class="tbtn engram">沉浸阅读</span>
+      </div>
+      <p class="strip-note">
+        没有：插图、插入文件、分割线、高亮、公式、流程图、画板、目录块、脚注、提示块、查找替换、清除格式。
+      </p>
+    </div>
+
+    <div class="toolbar-card">
+      <header><b>手机工具栏</b><span class="badge b-neutral">12 个按钮 · 单行横向滚动</span><span class="tag badge b-p1">末端入口容易被忽略</span></header>
+      <div class="strip">
+        <span class="tbtn">标题</span><span class="tbtn">加粗</span><span class="tbtn">斜体</span>
+        <span class="tbtn">无序列表</span><span class="tbtn">有序列表</span>
+        <span class="tbtn engram">双链</span><span class="tbtn">链接</span>
+        <span class="tbtn">撤销</span><span class="tbtn">编辑模式</span><span class="tbtn engram">沉浸阅读</span>
+        <span class="tbtn engram">AI</span><span class="tbtn engram">插入 ＋</span>
+      </div>
+      <p class="strip-note">
+        横向滚动条被隐藏，只在右侧做渐隐；「AI / 插入」正好在最末端。没有重做，没有全屏，没有大纲。
+      </p>
+    </div>
+
+    <div class="toolbar-card">
+      <header><b>选中文字浮条（手机）</b><span class="badge b-neutral">6 个按钮 + 更多面板</span></header>
+      <div class="strip">
+        <span class="tbtn">B 加粗</span><span class="tbtn">I 斜体</span><span class="tbtn">高亮 <span class="k">==</span></span>
+        <span class="tsep"></span>
+        <span class="tbtn">链接</span><span class="tbtn">复制</span>
+        <span class="tsep"></span>
+        <span class="tbtn">更多</span>
+      </div>
+      <p class="strip-note">
+        「更多」里只有：删除线 / 行内代码 / 引用 / 复制 / 全选。没有标题、列表、待办、公式——要把整段改成标题或列表，得先取消选择再用顶部工具栏。
+      </p>
+    </div>
+
+    <div class="toolbar-card">
+      <header><b>悬浮表格条 + 手机插入面板</b><span class="badge b-neutral">光标进表格才出现</span></header>
+      <div class="strip">
+        <span class="tbtn">行：上方插入 / 下方插入 / 删除</span>
+        <span class="tsep"></span>
+        <span class="tbtn">列：左侧插入 / 右侧插入 / 删除</span>
+        <span class="tsep"></span>
+        <span class="tbtn ghost">更多（仅手机）→ 删除整表</span>
+      </div>
+      <p class="strip-note">
+        手机「插入」面板分组：素材（图片 / 文件）、块（表格 / 代码块 / 引用 / 待办 / 分割线）、关联（双链 / 链接）。
+      </p>
+    </div>
+
+    <div class="note">
+      <span>ⓘ</span>
+      <div>
+        <b>本轮已经补上的 AI 入口：</b>右键任意位置 →「AI 在此处插入…」；选中文字 →「AI 改写选中文字 / 在选中内容后接写」；
+        右键或工具栏 AI →「全文格式美化」（生成后先预览再应用）。它不替代下面的工具栏问题，只是给「缺格式」提供了一条兜底路径。
+      </div>
+    </div>
+  </section>
+
+  <section id="issues">
+    <div class="sec-head"><span class="no">02</span><h2>不好用的地方（先不改，等你拍板）</h2></div>
+    <p class="sec-sub">
+      判定标准只有一条：<b>正在写作的人会不会被卡住或绕路</b>。P0 是「做不到 / 只能靠手打语法」，P1 是「做得到但绕、或两端不一致」，P2 是「能用，但不够顺手」。
+    </p>
+  </section>
+
+  <section id="issues-p0" style="margin-top: 10px;">
+    <div class="group-title"><span class="badge b-p0">P0</span> 功能缺口：没有入口，只能手打或绕路</div>
+    <div class="findings">
+
+      <article class="finding">
+        <div class="fid">F01</div>
+        <div>
+          <h3>桌面端没有「插入图片」入口 <span class="badge b-p0">P0</span></h3>
+          <p>桌面工具栏没有上传项，只能靠粘贴、拖拽或先复制图片文件再粘贴；想从磁盘挑一张图插进正文，没有可点的入口。</p>
+          <p class="why">手机端反而有「插入 → 图片」，两端能力倒挂。</p>
+          <p class="fix"><b>建议：</b>桌面工具栏补一个插入组（图片 / 文件 / 表格），复用手机插入面板的上传接口；或把手机「插入」面板提升为两端共用的插入菜单。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F02</div>
+        <div>
+          <h3>桌面端不能删除整张表格 <span class="badge b-p0">P0</span></h3>
+          <p>表格浮条的「更多」在桌面被 <code>display:none</code> 隐藏，<code>openTableMore()</code> 又只在手机档响应；桌面上唯一的删表方式是逐列删除，直到最后一列把整表带走。</p>
+          <p class="why">这是一个「知道的人不敢点、不知道的人找不到」的破坏性操作。</p>
+          <p class="fix"><b>建议：</b>桌面也提供「删除整张表格」，放进表格浮条或右键菜单（带确认/撤销提示）。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F03</div>
+        <div>
+          <h3>插入表格固定 2×2，没有列数 / 对齐 / 表头选项 <span class="badge b-p0">P0</span></h3>
+          <p>工具栏「表格」直接插入 <code>| 列 1 | 列 2 |</code> 的 2×2 空表；不能选行列数，不能设对齐，不能切换表头行，也不能把首行改成普通行。</p>
+          <p class="why">真实资料经常是 3×5、4×6；用户插入后第一件事就是反复点「插入列 / 插入行」。</p>
+          <p class="fix"><b>建议：</b>插入时给一个 8×8 网格选择器；表格浮条补对齐（左/中/右）与表头开关；「更多」补转置、CSV 粘贴。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F04</div>
+        <div>
+          <h3>代码块没有语言选择 <span class="badge b-p0">P0</span></h3>
+          <p>工具栏「代码块」插入的是空围栏 <code>```</code>，没有语言下拉；手机插入面板同样只插空围栏。用户必须自己记得写 <code>```ts</code> 或 <code>```python</code>，否则高亮和后续 AI 判断都缺依据。</p>
+          <p class="why">Vditor 的语言提示只会在输入围栏后出现，入口本身没有引导。</p>
+          <p class="fix"><b>建议：</b>插入时先弹出常用语言（TS / JS / Python / SQL / JSON / Bash / Mermaid…），或插入后自动聚焦语言位并给候选。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F05</div>
+        <div>
+          <h3>桌面端没有「高亮」入口 <span class="badge b-p0">P0</span></h3>
+          <p>高亮只出现在手机选中浮条（<code>==</code>），桌面工具栏和右键菜单都没有。桌面用户高亮一句话，只能手动在两侧敲 <code>==</code>。</p>
+          <p class="why">知识库做摘录/重点标记时，高亮是高频动作，比删除线更常用。</p>
+          <p class="fix"><b>建议：</b>桌面工具栏补高亮按钮；或在右键菜单补一组「格式」子菜单（高亮 / 行内代码 / 清除格式）。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F06</div>
+        <div>
+          <h3>公式没有入口（KaTeX / MathJax 已随包） <span class="badge b-p0">P0</span></h3>
+          <p>仓库把 Vditor 整份 dist 随包拷贝，<code>js/katex</code> 与 <code>js/mathjax</code> 本来就能渲染公式；但工具栏没有行内公式 / 块级公式按钮，也没有符号面板，用户只能记住 <code>$...$</code> 与 <code>$$...$$</code>。</p>
+          <p class="why">这是「渲染能力已经在，入口没接」的典型浪费。</p>
+          <p class="fix"><b>建议：</b>补「行内公式 / 块级公式」两个入口，插入后用 KaTeX 预览；再给一个常用符号面板（希腊字母、上下标、矩阵、求和）。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F07</div>
+        <div>
+          <h3>流程图 / 图表没有入口（Mermaid 等已随包） <span class="badge b-p0">P0</span></h3>
+          <p>Vditor 的 <code>js/mermaid</code>、<code>js/flowchart.js</code>、<code>js/echarts</code>、<code>js/graphviz</code> 都随包拷贝（<code>web/vite.config.ts</code> 的注释明确列出），但工具栏没有「流程图 / 图表」入口，也没有模板。</p>
+          <p class="why">用户要画流程，只能凭空写出 <code>```mermaid</code> 加整段语法；写错一个缩进就整块不渲染。</p>
+          <p class="fix"><b>建议：</b>插入面板加「图表」组：流程图（Mermaid）、简单流程（flowchart.js）、数据图（ECharts）、关系图（Graphviz），每个给一段可改的模板，并提示渲染器已内置。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F08</div>
+        <div>
+          <h3>画板 / 白板完全没有 <span class="badge b-p0">P0</span></h3>
+          <p>没有 Excalidraw / tldraw / draw.io 之类的画布，也没有「把画板存成页面资产再插回正文」的链路。想画草图只能外部截图再上传。</p>
+          <p class="why">这是你明确点名的扩展方向，也是知识库里「流程图之外的草图/架构图」最自然的位置。</p>
+          <p class="fix"><b>建议：</b>先做「画板 → 导出 SVG/PNG + 源文件 → 存页面资产 → 插入图片并保留可再编辑的源文件链接」；不要一上来做整页白板。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F09</div>
+        <div>
+          <h3>没有目录块（TOC）入口 <span class="badge b-p0">P0</span></h3>
+          <p>桌面上有「大纲」按钮（Vditor 的侧栏目录），但正文里不能插入一个随标题更新的 <code>[toc]</code> 目录块；手机端的目录藏在「格式」二级面板里，还要先打开开关。</p>
+          <p class="why">长文分享/阅读时，正文目录比侧栏大纲更直观。</p>
+          <p class="fix"><b>建议：</b>插入面板 / 工具栏加「目录块」，写入 <code>[toc]</code>；手机「格式」面板保留现有大纲开关，两者共用同一份标题解析。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F10</div>
+        <div>
+          <h3>没有脚注入口 <span class="badge b-p0">P0</span></h3>
+          <p>GFM 脚注（<code>[^1]</code>）在预览里能渲染，但工具栏没有「插入脚注」，也没有脚注列表的管理视图；用户必须自己编号、自己写文末定义。</p>
+          <p class="why">知识库引用来源时，脚注比正文括号更干净。</p>
+          <p class="fix"><b>建议：</b>插入时自动取下一个可用编号，在文末补定义；点击脚注标记可跳到定义（Vditor 预览已支持锚点）。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F11</div>
+        <div>
+          <h3>没有提示块 / Callout <span class="badge b-p0">P0</span></h3>
+          <p>没有 <code>&gt; [!note]</code> 这类提示块语法，也没有对应的渲染样式。重要提醒只能写成普通引用，和正文引用混在一起。</p>
+          <p class="why">知识库里的「注意 / 警告 / 结论」需要视觉分层，这对阅读效率的提升非常直接。</p>
+          <p class="fix"><b>建议：</b>先支持 GitHub Alerts 语法（note / tip / important / warning / caution），补一套与暖纸主题一致的样式；入口放在插入面板。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F12</div>
+        <div>
+          <h3>图片没有尺寸 / 对齐 / 图注控制 <span class="badge b-p0">P0</span></h3>
+          <p>插图后只有 <code>![alt](url)</code>，不能拖拽改宽、不能居中对齐、不能写图注，也不能把一组图排成画廊。</p>
+          <p class="why">知识库里的截图、架构图、对比图经常需要控制宽度；现在只能外部先裁好再上传。</p>
+          <p class="fix"><b>建议：</b>选中图片时浮出一个小工具条（宽度 25/50/75/100%、对齐、图注）；底层用 HTML 属性或自定义 Markdown 扩展，渲染时统一处理。</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section id="issues-p1" style="margin-top: 10px;">
+    <div class="group-title"><span class="badge b-p1">P1</span> 高频但绕：做得成，路径不顺</div>
+    <div class="findings">
+
+      <article class="finding">
+        <div class="fid">F13</div>
+        <div>
+          <h3>手机工具栏 12 个按钮单行横滚，末端入口靠猜 <span class="badge b-p1">P1</span></h3>
+          <p>390–412px 视口放不下 12 个 44px 按钮，工具栏只能横滚；滚动条隐藏，只靠右侧渐隐提示「还能滑」。AI 和「插入」正好在末端。</p>
+          <p class="why">用户第一次用时不知道右边还有按钮；最需要的「插入」反而最难发现。</p>
+          <p class="fix"><b>建议：</b>工具栏固定保留「插入 / AI」在首屏，低频项收进「更多」托盘；或用分组标签（格式 / 块 / 插入）替代一条长龙。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F14</div>
+        <div>
+          <h3>手机端没有「重做」 <span class="badge b-p1">P1</span></h3>
+          <p>手机工具栏只有撤销，没有重做；桌面有重做。误撤销后，手机上只能再手动写一遍。</p>
+          <p class="why">触屏误触概率更高，重做的价值比桌面更大。</p>
+          <p class="fix"><b>建议：</b>手机工具栏补重做（可与撤销合成一个分段按钮），或放进「更多」。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F15</div>
+        <div>
+          <h3>选中浮条不能把整段改成标题 / 列表 / 待办 <span class="badge b-p1">P1</span></h3>
+          <p>选中一段文字后，浮条只有加粗/斜体/高亮/链接/复制/更多；「更多」里是删除线/行内代码/引用/复制/全选。想把这段变成 H2、无序列表或待办，必须先取消选择，再把光标放进去用顶部工具栏。</p>
+          <p class="why">「选中 → 改成标题」是移动端最自然的操作，现在被拆成两步且丢选区。</p>
+          <p class="fix"><b>建议：</b>浮条「更多」补标题（H1–H3）、无序/有序/待办；或者把「更多」升级成完整的格式面板。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F16</div>
+        <div>
+          <h3>标题菜单只有 H1–H6，没有「正文」 <span class="badge b-p1">P1</span></h3>
+          <p>Vditor 的标题下拉是 H1–H6，没有「正文 / 清除标题」；取消一个标题只能手动删掉行首的 <code>#</code>。</p>
+          <p class="why">手机上定位到行首删 <code>#</code> 很别扭；而且用户不一定知道标题在源码里就是 <code>#</code>。</p>
+          <p class="fix"><b>建议：</b>下拉末尾加「正文」，执行清除标题；同时显示当前标题级别。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F17</div>
+        <div>
+          <h3>手机「插入」面板与桌面工具栏动作重复但形态不同 <span class="badge b-p1">P1</span></h3>
+          <p>手机把表格/代码/引用/待办/分割线收进「插入」面板；桌面把这些直接摆在工具栏，且没有「插入」总入口。两端对同一个动作的路径不一致。</p>
+          <p class="why">用户换端后要重新记一遍入口；功能演进也容易只改一端。</p>
+          <p class="fix"><b>建议：</b>把「插入」做成两端共用的统一面板（图片 / 文件 / 表格 / 代码 / 引用 / 待办 / 分割线 / 图表 / 公式），桌面工具栏只留高频项。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F18</div>
+        <div>
+          <h3>「链接」和「双链」相邻、同一种图标语言 <span class="badge b-p1">P1</span></h3>
+          <p>手机工具栏里 <code>link</code> 和 <code>wikilink</code> 紧挨着，都是链形图标；触屏没有 hover tooltip，用户分不清哪个是外部链接、哪个是 <code>[[双链]]</code>。</p>
+          <p class="why">双链是 Engram 的核心能力，混在普通链接旁边反而被稀释。</p>
+          <p class="fix"><b>建议：</b>双链换成更有辨识度的图标（如双方括号/节点连线），并和普通链接拉开分组；首次使用时给一句说明。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F19</div>
+        <div>
+          <h3>手机目录藏在二级面板，源码模式还跳不了 <span class="badge b-p1">P1</span></h3>
+          <p>目录入口在页头「格式」面板里，要先打开面板、再打开目录开关；切到源码模式后，点目录项会提示「暂不支持按目录跳转」。</p>
+          <p class="why">目录是长文导航，入口层级太深；源码模式下的能力断点没有替代方案。</p>
+          <p class="fix"><b>建议：</b>源码模式按 Markdown 行号定位标题，或至少把目录入口提到页头一级；不要让「切到源码」等于「失去大纲」。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F20</div>
+        <div>
+          <h3>表格浮条在窄屏可能压住表头，桌面没有「更多」 <span class="badge b-p1">P1</span></h3>
+          <p>浮条贴在表格上方，表格上半部分滚出视野时改贴光标行；窄屏上浮条本身可横滚，仍可能盖住第一行。桌面端没有「更多」，整表操作缺失（见 F02）。</p>
+          <p class="why">表格操作本身高频，浮条一挡就看不清正在改哪一行。</p>
+          <p class="fix"><b>建议：</b>浮条改为贴表格右上角/下方，或压缩成「行 / 列 / 更多」三个入口；桌面与手机共用同一套整表操作。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F21</div>
+        <div>
+          <h3>没有查找 / 替换 <span class="badge b-p1">P1</span></h3>
+          <p>长页面里找一个词只能靠浏览器查找（会跳出编辑器语义），替换更是完全手工。</p>
+          <p class="why">整理长文、统一术语时，替换是刚需。</p>
+          <p class="fix"><b>建议：</b>加 Ctrl+F 的页内查找条（高亮匹配、上下跳转），替换做成可折叠的第二步；只作用于当前正文，不跨页。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F22</div>
+        <div>
+          <h3>没有「清除格式 / 转为正文」 <span class="badge b-p1">P1</span></h3>
+          <p>从网页/Word 粘贴进来的加粗、链接、标题层级经常是脏的；工具栏没有一键清除，只能逐项反向操作。</p>
+          <p class="why">「粘贴后先清格式再重排」是知识库录入的常见路径。</p>
+          <p class="fix"><b>建议：</b>右键菜单或选中浮条加「清除格式」：去掉行内样式与标题/列表标记，保留纯文本与双链。</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section id="issues-p2" style="margin-top: 10px;">
+    <div class="group-title"><span class="badge b-p2">P2</span> 体验细节：能用，但不够顺手</div>
+    <div class="findings">
+
+      <article class="finding">
+        <div class="fid">F23</div>
+        <div>
+          <h3>工具栏不显示当前块状态 <span class="badge b-p2">P2</span></h3>
+          <p>光标在 H2、列表、引用里时，工具栏没有明确的级别/类型指示；用户点「标题」前不知道当前是哪一级。</p>
+          <p class="fix"><b>建议：</b>标题下拉显示当前级别（如「H2 ▾」）；列表/引用按钮用 active 态标出，和 Vditor 的 <code>vditor-menu--current</code> 对齐。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F24</div>
+        <div>
+          <h3>没有快捷键速查 <span class="badge b-p2">P2</span></h3>
+          <p>只有 placeholder 提到 <code>[[</code> 和 <code>Ctrl+S</code>；加粗、标题、列表、双链候选、保存等快捷键没有入口可查。</p>
+          <p class="fix"><b>建议：</b>加一个「?」按钮/菜单项，弹出快捷键表；以后新增 AI / 图表快捷键也往这里收。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F25</div>
+        <div>
+          <h3>没有「粘贴为纯文本 / 粘贴链接到选中文字」 <span class="badge b-p2">P2</span></h3>
+          <p>粘贴带格式内容时只能事后清理；选中文字再粘贴 URL 也不会自动变成链接。</p>
+          <p class="fix"><b>建议：</b>右键菜单补「粘贴为纯文本」；选中文字时粘贴 URL 自动包成 <code>[选中文字](url)</code>。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F26</div>
+        <div>
+          <h3>没有分栏预览 <span class="badge b-p2">P2</span></h3>
+          <p>只有「即时渲染 / 源码」两态和只读的沉浸阅读；想一边写源码一边看渲染结果，没有分栏。</p>
+          <p class="fix"><b>建议：</b>在源码模式加一个可选的右侧预览（复用 Vditor 的预览渲染），窄屏自动收起。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F27</div>
+        <div>
+          <h3>「即时渲染 / 源码」没有解释 <span class="badge b-p2">P2</span></h3>
+          <p>编辑模式下拉隐藏了 wysiwyg，只留两项，但没有一句话说明两者差异；新用户不知道什么时候该切源码。</p>
+          <p class="fix"><b>建议：</b>下拉项加副标题（「即时渲染：所见即所得」「源码：直接改 Markdown」），或在首次切换时给一次提示。</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="fid">F28</div>
+        <div>
+          <h3>按钮反馈不统一 <span class="badge b-p2">P2</span></h3>
+          <p>有的按钮有 active 态（部分 Vditor 项），有的没有；点完「表格」「代码块」后没有插入位置的轻提示或光标定位说明。</p>
+          <p class="fix"><b>建议：</b>统一 active 态与插入后光标落点（表格落到第一个单元格、代码块落到围栏内、公式落到 <code>$</code> 之间）。</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section id="extensions">
+    <div class="sec-head"><span class="no">03</span><h2>值得加的扩展（含你点名的流程图 / 画板）</h2></div>
+    <p class="sec-sub">
+      「渲染器已随包」不是猜的：<code>web/vite.config.ts</code> 明确把 Vditor 整份 dist 拷进产物，注释列出的按需渲染器包括
+      mermaid、katex/mathjax、echarts、graphviz、flowchart.js、abcjs 等。也就是说，图表类功能缺的是<b>入口与模板</b>，不是渲染能力。
+      工作量按 S（1–2 天）/ M（3–5 天）/ L（1–2 周+）估。
+    </p>
+
+    <div class="ext-grid">
+      <article class="ext">
+        <h3>Mermaid 流程图 / 时序图 / 状态图 / ER / 甘特 <span class="badge b-s">S</span></h3>
+        <p class="desc">最值得先做的一项。Mermaid 覆盖你点名的「画流程图」，同一套语法还能画时序图、状态图、ER 图、甘特图和饼图。</p>
+        <div class="facts"><span class="badge b-ok">渲染器已随包</span><span class="badge b-neutral">插入模板 + 语言选择</span></div>
+        <p class="where"><b>入口：</b>插入 → 图表 → 流程图；选「流程 / 时序 / 状态 / ER / 甘特」后插入对应模板，光标落在第一行，旁边给「渲染预览」提示。</p>
+      </article>
+
+      <article class="ext">
+        <h3>flowchart.js 简单流程 <span class="badge b-s">S</span></h3>
+        <p class="desc">比 Mermaid 更轻的节点连线语法，适合「开始 → 判断 → 结束」这类小流程图。</p>
+        <div class="facts"><span class="badge b-ok">渲染器已随包</span><span class="badge b-neutral">模板即可</span></div>
+        <p class="where"><b>入口：</b>与 Mermaid 放在同一个「图表」组，作为第二种流程语法。</p>
+      </article>
+
+      <article class="ext">
+        <h3>KaTeX / MathJax 公式 <span class="badge b-s">S</span></h3>
+        <p class="desc">行内公式、块级公式、常用符号面板；仓库已经带 KaTeX 样式与渲染器，只差入口。</p>
+        <div class="facts"><span class="badge b-ok">渲染器已随包</span><span class="badge b-neutral">符号面板可选</span></div>
+        <p class="where"><b>入口：</b>工具栏「Σ」→ 行内 / 块级；选中文字后点行内公式可直接包起来。</p>
+      </article>
+
+      <article class="ext">
+        <h3>ECharts 数据图 <span class="badge b-m">M</span></h3>
+        <p class="desc">柱状图、折线图、饼图等；给一段 JSON option 模板，适合把一段数据变成图。</p>
+        <div class="facts"><span class="badge b-ok">渲染器已随包</span><span class="badge b-neutral">JSON 模板 / 表单</span></div>
+        <p class="where"><b>入口：</b>插入 → 图表 → 数据图；先给最简单的柱状图模板，避免一上来要求用户写完整 option。</p>
+      </article>
+
+      <article class="ext">
+        <h3>Graphviz DOT 关系图 <span class="badge b-m">M</span></h3>
+        <p class="desc">复杂依赖、组织关系、调用链；DOT 语法比 Mermaid 更适合大图。</p>
+        <div class="facts"><span class="badge b-ok">渲染器已随包</span><span class="badge b-neutral">模板 + 语法提示</span></div>
+        <p class="where"><b>入口：</b>插入 → 图表 → 关系图（Graphviz）。</p>
+      </article>
+
+      <article class="ext">
+        <h3>Excalidraw 画板 <span class="badge b-l">L</span></h3>
+        <p class="desc">你点名的「画板」。建议做成「页面内的画板资产」：画完导出 SVG/PNG 插入正文，同时把可编辑源文件存进页面资产。</p>
+        <div class="facts"><span class="badge b-neutral">需自研集成</span><span class="badge b-neutral">资产存储复用现有上传</span></div>
+        <p class="where"><b>入口：</b>插入 → 画板；画板以弹窗/全屏打开，保存后插入图片，并保留「再次编辑」链接。不要先做整页白板。</p>
+      </article>
+
+      <article class="ext">
+        <h3>draw.io / diagrams.net <span class="badge b-l">L</span></h3>
+        <p class="desc">比 Excalidraw 更偏「正式架构图/UML」，可嵌入官方编辑器；同样建议走「导出 + 源文件资产」。</p>
+        <div class="facts"><span class="badge b-neutral">需 iframe / 外部服务</span><span class="badge b-neutral">离线端要降级</span></div>
+        <p class="where"><b>入口：</b>与画板同组，作为第二种画布；离线不可用时只保留「上传图片」。</p>
+      </article>
+
+      <article class="ext">
+        <h3>Markmap / 思维导图 <span class="badge b-m">M</span></h3>
+        <p class="desc">把标题层级直接渲染成思维导图，适合知识树和方案拆解；是否随包需要确认 <code>js/markmap</code> 是否存在。</p>
+        <div class="facts"><span class="badge b-neutral">需确认随包</span><span class="badge b-neutral">模板 + 预览</span></div>
+        <p class="where"><b>入口：</b>插入 → 图表 → 思维导图；也可以做「由当前标题生成导图」的一键动作。</p>
+      </article>
+
+      <article class="ext">
+        <h3>PlantUML <span class="badge b-m">M</span></h3>
+        <p class="desc">UML 时序/类图的老牌语法；Vditor 支持 plantuml 渲染，但通常需要外部渲染服务（Kroki 或 PlantUML Server）。</p>
+        <div class="facts"><span class="badge b-neutral">需外部渲染 / 服务端</span><span class="badge b-neutral">离线端降级</span></div>
+        <p class="where"><b>入口：</b>插入 → 图表 → PlantUML；没有服务时提示改用 Mermaid。</p>
+      </article>
+
+      <article class="ext">
+        <h3>ABC 乐谱 <span class="badge b-s">S</span></h3>
+        <p class="desc">用 ABC 记谱写旋律；随包渲染器已有，属于低频但「知识库里有就用得上」的扩展。</p>
+        <div class="facts"><span class="badge b-ok">渲染器已随包</span><span class="badge b-neutral">模板即可</span></div>
+        <p class="where"><b>入口：</b>插入 → 图表 → 乐谱；只在用户明确需要时出现，不占主工具栏。</p>
+      </article>
+
+      <article class="ext">
+        <h3>表格增强 <span class="badge b-m">M</span></h3>
+        <p class="desc">8×8 行列选择器、表头开关、列对齐、转置、从 CSV/Excel 粘贴生成表格、表格内换行。</p>
+        <div class="facts"><span class="badge b-neutral">自研</span><span class="badge b-neutral">与现有表格浮条合并</span></div>
+        <p class="where"><b>入口：</b>插入 → 表格（网格选择器）；表格浮条 → 对齐 / 表头 / 更多（转置、CSV、删除整表）。</p>
+      </article>
+
+      <article class="ext">
+        <h3>代码块增强 <span class="badge b-m">M</span></h3>
+        <p class="desc">语言选择、文件名标题、行号、复制按钮、diff 高亮；Mermaid 等图表语言可从同一入口进。</p>
+        <div class="facts"><span class="badge b-neutral">Vditor 配置 + 自研</span><span class="badge b-neutral">与插入面板合并</span></div>
+        <p class="where"><b>入口：</b>插入 → 代码块（先选语言）；代码块右上角复制/换语言。</p>
+      </article>
+
+      <article class="ext">
+        <h3>Callout / Admonition 提示块 <span class="badge b-s">S</span></h3>
+        <p class="desc">注意 / 提示 / 重要 / 警告 / 危险五种，支持 GitHub Alerts 语法；和暖纸主题统一配色。</p>
+        <div class="facts"><span class="badge b-neutral">自研语法 + CSS</span><span class="badge b-neutral">渲染与阅读共用</span></div>
+        <p class="where"><b>入口：</b>插入 → 提示块；选中引用块后可一键转成 Callout。</p>
+      </article>
+
+      <article class="ext">
+        <h3>目录块 <code>[toc]</code> <span class="badge b-s">S</span></h3>
+        <p class="desc">在正文里插入随标题更新的目录，和侧栏大纲共用一份解析结果。</p>
+        <div class="facts"><span class="badge b-neutral">Vditor 支持 / 自研入口</span><span class="badge b-neutral">移动端也受益</span></div>
+        <p class="where"><b>入口：</b>插入 → 目录；手机上也可从「格式」面板直接插入。</p>
+      </article>
+
+      <article class="ext">
+        <h3>脚注 <span class="badge b-s">S</span></h3>
+        <p class="desc">自动编号、文末定义、点击跳转；适合引用来源和补充说明。</p>
+        <div class="facts"><span class="badge b-ok">GFM 渲染可用</span><span class="badge b-neutral">入口 + 自动编号</span></div>
+        <p class="where"><b>入口：</b>插入 → 脚注；选中文字时可直接把选中内容变成脚注。</p>
+      </article>
+
+      <article class="ext">
+        <h3>图片增强 <span class="badge b-m">M</span></h3>
+        <p class="desc">宽度 25/50/75/100%、对齐、图注、画廊、点击灯箱（现有 ImageViewer 可复用）。</p>
+        <div class="facts"><span class="badge b-neutral">自研渲染扩展</span><span class="badge b-neutral">阅读态同步</span></div>
+        <p class="where"><b>入口：</b>选中图片 → 图片工具条；插入图片时默认给 100% 宽 + 可选图注。</p>
+      </article>
+
+      <article class="ext">
+        <h3>附件卡片 <span class="badge b-s">S</span></h3>
+        <p class="desc">文件链接渲染成带图标、大小、下载按钮的卡片，而不是一行裸链接；复用现有文件上传。</p>
+        <div class="facts"><span class="badge b-neutral">自研渲染</span><span class="badge b-neutral">与插入文件合并</span></div>
+        <p class="where"><b>入口：</b>插入 → 文件（已有）；重点是阅读态的卡片样式。</p>
+      </article>
+
+      <article class="ext">
+        <h3>视频 / 音频嵌入 <span class="badge b-m">M</span></h3>
+        <p class="desc">本地视频/音频、或外部链接的播放器块；手机上要考虑流量与自动播放策略。</p>
+        <div class="facts"><span class="badge b-neutral">自研</span><span class="badge b-neutral">媒体资产已有基础</span></div>
+        <p class="where"><b>入口：</b>插入 → 媒体；先做本地文件，外部链接按需。</p>
+      </article>
+
+      <article class="ext">
+        <h3>查找 / 替换 <span class="badge b-m">M</span></h3>
+        <p class="desc">页内查找、大小写/正则可选项、全部替换；只作用于当前正文。</p>
+        <div class="facts"><span class="badge b-neutral">自研</span><span class="badge b-neutral">桌面/手机共用</span></div>
+        <p class="where"><b>入口：</b>Ctrl+F / 手机「更多」；与 AI 改写分开，不做语义替换。</p>
+      </article>
+
+      <article class="ext">
+        <h3>分栏预览 <span class="badge b-m">M</span></h3>
+        <p class="desc">左侧源码、右侧渲染；窄屏自动收起，阅读态仍走沉浸阅读。</p>
+        <div class="facts"><span class="badge b-neutral">Vditor 预览能力</span><span class="badge b-neutral">布局工作量为主</span></div>
+        <p class="where"><b>入口：</b>编辑模式下拉增加「分栏」；可作为桌面专属，手机不做。</p>
+      </article>
+
+      <article class="ext">
+        <h3>斜杠命令面板 <code>/</code> <span class="badge b-l">L</span></h3>
+        <p class="desc">输入 <code>/</code> 弹出「标题 / 表格 / 图表 / 公式 / 画板 / AI」搜索面板，能从根上缓解工具栏膨胀。</p>
+        <div class="facts"><span class="badge b-neutral">自研</span><span class="badge b-neutral">与插入面板共用动作</span></div>
+        <p class="where"><b>入口：</b>正文行首输入 <code>/</code>；键盘 ↑↓ + Enter，手机点选。</p>
+      </article>
+
+      <article class="ext">
+        <h3>块拖拽手柄 <span class="badge b-l">L</span></h3>
+        <p class="desc">悬停段落/图片/表格出现手柄：上移、下移、复制、删除、转成其他块。</p>
+        <div class="facts"><span class="badge b-neutral">自研</span><span class="badge b-neutral">与 Vditor DOM 深度耦合</span></div>
+        <p class="where"><b>入口：</b>块左侧 hover；手机长按块。</p>
+      </article>
+
+      <article class="ext">
+        <h3>打字机 / 专注模式 <span class="badge b-s">S</span></h3>
+        <p class="desc">当前行居中、其余淡出；写长文时减少视觉噪音。</p>
+        <div class="facts"><span class="badge b-neutral">自研</span><span class="badge b-neutral">纯 CSS/滚动</span></div>
+        <p class="where"><b>入口：</b>全屏编辑里的显示选项；手机不做或放进「格式」。</p>
+      </article>
+
+      <article class="ext">
+        <h3>导出 PDF / HTML / 图片 <span class="badge b-m">M</span></h3>
+        <p class="desc">把当前页导出成可分享的文件；需要处理图片、双链、图表渲染的离线资源。</p>
+        <div class="facts"><span class="badge b-neutral">自研 / 服务端渲染</span><span class="badge b-neutral">图表要等渲染完成</span></div>
+        <p class="where"><b>入口：</b>页头「⋯」或状态栏；先做 HTML，PDF 次之。</p>
+      </article>
+
+      <article class="ext">
+        <h3>表格转图表 <span class="badge b-m">M</span></h3>
+        <p class="desc">选中一张 Markdown 表格，按列生成 ECharts 柱状/折线图；数据与图保持弱关联。</p>
+        <div class="facts"><span class="badge b-ok">ECharts 已随包</span><span class="badge b-neutral">解析 + 表单</span></div>
+        <p class="where"><b>入口：</b>表格浮条「更多」→ 生成图表；生成后是独立代码块，不自动同步。</p>
+      </article>
+
+      <article class="ext">
+        <h3>白板页面类型 <span class="badge b-l">L</span></h3>
+        <p class="desc">整页就是一块无限画布，适合头脑风暴；和「页面内画板」是两种产品形态，建议后做。</p>
+        <div class="facts"><span class="badge b-neutral">需自研页面类型</span><span class="badge b-neutral">导航/搜索/同步都要接</span></div>
+        <p class="where"><b>入口：</b>新建页面时选「白板」；先不要和 Markdown 编辑器混在一起。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="roadmap">
+    <div class="sec-head"><span class="no">04</span><h2>建议路线（不在本轮实施）</h2></div>
+    <p class="sec-sub">按「投入小、立刻减少绕路」排，不按功能热度排。画板放在第三阶段，是因为它需要资产协议和离线降级，不适合和工具栏改造一起上。</p>
+    <div class="roadmap">
+      <article class="phase">
+        <h3>第一阶段 · 补缺口</h3>
+        <p class="when">S 为主 · 先把「做不到」变成「做得到」</p>
+        <ul>
+          <li>桌面插入图片 / 文件；桌面删除整表</li>
+          <li>表格行列选择器 + 对齐 + 表头</li>
+          <li>代码块语言选择</li>
+          <li>桌面高亮；标题「正文」档</li>
+          <li>Mermaid / flowchart 模板入口</li>
+          <li>公式行内 / 块级入口</li>
+          <li>选中浮条补标题 / 列表 / 待办</li>
+        </ul>
+      </article>
+      <article class="phase">
+        <h3>第二阶段 · 补结构</h3>
+        <p class="when">S–M · 让长文可读、可维护</p>
+        <ul>
+          <li>Callout、TOC、脚注</li>
+          <li>图片尺寸 / 对齐 / 图注</li>
+          <li>ECharts / Graphviz、表格转图表</li>
+          <li>查找 / 替换、分栏预览</li>
+          <li>斜杠命令面板（替代工具栏膨胀）</li>
+        </ul>
+      </article>
+      <article class="phase">
+        <h3>第三阶段 · 扩展形态</h3>
+        <p class="when">M–L · 拉开产品差异</p>
+        <ul>
+          <li>Excalidraw 画板（导出 + 源文件资产）</li>
+          <li>draw.io 嵌入（可离线降级）</li>
+          <li>块拖拽手柄、白板页面</li>
+          <li>导出 PDF / HTML、打字机模式</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section id="appendix">
+    <div class="sec-head"><span class="no">05</span><h2>附录：能力边界与证据</h2></div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>能力</th><th>现状</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Mermaid / flowchart.js / ECharts / Graphviz / ABC</td>
+            <td><span class="badge b-ok">渲染器随包</span></td>
+            <td><code>web/vite.config.ts</code> 整份拷贝 Vditor dist，注释明确列出 <code>js/mermaid</code>、<code>js/graphviz</code>、<code>js/flowchart.js</code>、<code>js/abcjs</code> 等。</td>
+          </tr>
+          <tr>
+            <td>KaTeX / MathJax</td>
+            <td><span class="badge b-ok">渲染器随包</span></td>
+            <td>同上；<code>web/src/components/ReadingPreview.vue</code> 已有 <code>.katex-display</code> 样式。</td>
+          </tr>
+          <tr>
+            <td>表格行列增删</td>
+            <td><span class="badge b-ok">已实现</span></td>
+            <td><code>EditorTableBar.vue</code> + <code>MarkdownEditor.vue</code> 的 ir/sv 两套表格编辑；缺整表删除（桌面）与对齐/表头。</td>
+          </tr>
+          <tr>
+            <td>双链</td>
+            <td><span class="badge b-ok">已实现</span></td>
+            <td>工具栏 <code>wikilink</code>、<code>[[</code> 候选弹窗、IR/阅读态虚线下划线。</td>
+          </tr>
+          <tr>
+            <td>图片上传 / 文件上传</td>
+            <td><span class="badge b-ok">已实现（手机）</span></td>
+            <td>手机插入面板走 <code>/api/assets/upload</code> 与 <code>/api/files/upload</code>；桌面没有对应入口。</td>
+          </tr>
+          <tr>
+            <td>脚注 / TOC / Callout</td>
+            <td><span class="badge b-p1">无入口</span></td>
+            <td>需要确认 Vditor 3.10.8 的实际渲染表现；入口与样式都还没有。</td>
+          </tr>
+          <tr>
+            <td>画板</td>
+            <td><span class="badge b-p0">未实现</span></td>
+            <td>无 Excalidraw / tldraw / draw.io 依赖；资产链路可复用现有上传。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note" style="margin-top: 18px;">
+      <span>ⓘ</span>
+      <div>
+        <b>方法说明：</b>本评审逐项对照了 <code>MarkdownEditor.vue</code> 的 <code>desktopToolbar</code> / <code>mobileToolbar</code> / <code>INSERT_GROUPS</code> / 选中浮条与更多面板、
+        <code>EditorTableBar.vue</code> 的行列操作，以及 <code>web/vite.config.ts</code> 的 Vditor 资源拷贝策略。
+        没有修改任何工具栏代码；本轮只新增了 AI 入口（见页面顶部说明）。
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Engram · 编辑器评审</span>
+    <span>2026-11-18</span>
+    <span>只读评审稿 · 工具栏改动待确认</span>
+  </footer>
+</div>
+</body>
+</html>
