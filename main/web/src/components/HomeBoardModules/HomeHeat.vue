@@ -51,8 +51,8 @@ const weekStarts=computed(()=>shown.value.filter((_,i)=>i%7===0));
 const dayList=computed(()=>past.value.slice(-Math.max(1,Math.min(14,Math.floor((size.value.h-(size.value.h>160?48:0)-4)/31)))));
 const selectedCount=computed(()=>cells.value.find(c=>c.date===selected.value)?.count||0);
 function shortDate(date?:string){return date?`${Number(date.slice(5,7))}/${Number(date.slice(8))}`:'';}
-/** 周日期只标首 / 中 / 末三段：8 段全标在窄卡里会挤成 9px 的糊字，中间的空白同样能读出节奏 */
-function weekLabel(index:number){const last=weekStarts.value.length-1;if(index===0||index===last||index===Math.floor(last/2))return shortDate(weekStarts.value[index]?.date)||'\u00a0';return '\u00a0';}
+/** 周日期只标首 / 中两段：末段贴着卡右边容易被裁成「11/」，日期范围已在脚注里 */
+function weekLabel(index:number){const last=weekStarts.value.length-1;if(index===0||index===Math.floor(last/2))return shortDate(weekStarts.value[index]?.date)||' ';return ' ';}
 let stopBack:(()=>void)|undefined,observer:ResizeObserver|undefined;
 function selectDate(date?:string){if(!date)return;selected.value=date;dateDialog.value?.showModal();stopBack?.();stopBack=registerBackHandler(()=>{dateDialog.value?.close();return true;});}
 function onBackdrop(e:MouseEvent){if(e.target===dateDialog.value)dateDialog.value?.close();}
@@ -70,7 +70,6 @@ onUnmounted(()=>{observer?.disconnect();stopBack?.();});
 /* 月份标签可能略宽于格宽：允许溢出到相邻空格/卡片留白，不裁成「10/1」 */
 .heat-week-dates time {white-space:nowrap;min-width:0;overflow:visible}
 /* 最后一个月份贴着卡片右边时会把「11/15」截成「11/」：改为右对齐，向格内收 */
-.heat-week-dates time:last-child {text-align:right}
 .heat-weekdays {min-height:0;display:grid;grid-template-rows:repeat(7,20px);gap:3px;align-content:center;align-items:center;color:var(--text-muted, var(--text-faint));font-size:11px;line-height:1.1}
 /* 格子保持近正方：边长由 cellPx 按卡宽/卡高算，居中排布；不会再出现固定 20px 留下两侧大片空白。 */
 .heat-grid {display:grid;grid-template-rows:repeat(7,20px);gap:3px;align-content:center;min-width:0;min-height:0;flex:1}
