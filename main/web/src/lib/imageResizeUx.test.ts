@@ -27,6 +27,7 @@ test('编辑页挂上了图片选中框，并只认 IR 里的本库图片节点'
   assert.match(editor, /\.vditor-ir__node\[data-type="img"\]/, '没有按 IR 图片节点定位，可能把代码块/预览里的图片也当成可调对象');
   assert.match(editor, /isLocalMediaImageSrc/, '没有限制只调本库 /media 图片');
   assert.match(editor, /vditor\?\.getCurrentMode\(\) !== 'ir'/, '源码模式也在挂选中框');
+  assert.match(editor, /if \(cur === 'sv'\) hideImageResizer\(\)/, '切到源码模式时没有收起图片选中框');
 });
 
 test('拖动只预览，松手才写回 Markdown（只改当前图片，不整篇 setValue）', () => {

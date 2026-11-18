@@ -573,6 +573,8 @@ function observeEditMode() {
     if (cur !== last && (cur === 'ir' || cur === 'sv')) {
       last = cur;
       hideTableBar();
+      // 源码模式下图片只是一段 Markdown 文本，选中框留着会浮在不存在的图片位置上
+      if (cur === 'sv') hideImageResizer();
       emit('mode-change', cur);
     }
   });
