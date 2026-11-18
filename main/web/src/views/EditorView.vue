@@ -149,6 +149,7 @@
       <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
            不再用悬浮纸面卡片；evidence-drawer 为绝对定位浮层，不参与文档流） -->
       <div v-show="!app.readingMode && !pageLoading && !pageError" class="editor-body">
+      <div class="editor-main">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <DocumentTitle v-if="isRawPage" :title="title" :page-id="String(page.id)" :disabled="pageLoading" @save="saveDocumentTitle" />
         <textarea
@@ -241,12 +242,51 @@
           :mode="app.editorMode"
           :page-id="page?.id"
           :fullscreen="fullscreen"
+          :outline-open="outlineOpen"
           @save="save(true)"
           @open-wikilink="openWikilink"
           @mode-change="(m: 'ir' | 'sv') => app.setEditorMode(m)"
           @enter-reading="enterReading"
           @toggle-fullscreen="toggleFullscreen"
+          @toggle-outline="toggleOutline"
+          @outline-change="onOutlineChange"
           @context-menu="(request) => showContextMenu(request, 'editor')"
+        />
+      </div>
+      </div><!-- /editor-main -->
+
+      <!-- 本页目录（宽窗口）：右侧 234px 纸卡，不压正文。窄窗口自动改走工具栏浮层。 -->
+      <aside
+        v-if="outlineWide"
+        class="editor-outline-rail"
+        :class="{ 'is-closed': !outlineOpen }"
+        aria-label="本页目录"
+      >
+        <div class="editor-outline-card">
+          <PageOutline
+            :items="editorOutline"
+            :active-index="activeOutlineIndex"
+            @select="jumpToOutlineIndex"
+            @top="scrollEditorTop"
+          />
+        </div>
+      </aside>
+
+      <!-- 本页目录（窄窗口）：工具栏「目录」下方浮层；点空白、点条目或 Esc 收起。
+           手机档不渲染浮层——目录走「格式」面板里的独立底部 sheet。 -->
+      <div
+        v-if="outlineOpen && !outlineWide && !narrowEditor && !fullscreen"
+        ref="outlinePopEl"
+        class="editor-outline-pop"
+        :style="outlinePopStyle"
+        role="dialog"
+        aria-label="本页目录"
+      >
+        <PageOutline
+          :items="editorOutline"
+          :active-index="activeOutlineIndex"
+          @select="jumpToOutlineIndex"
+          @top="scrollEditorTop"
         />
       </div>
 
@@ -384,8 +424,8 @@
         </RelatedMenu>
       </div>
 
-      <!-- 手机档「格式」面板：字号 A−/A+、正文宽度三档、目录开关（开着时列出小标题可跳转）。
-           入口只在手机摘要行出现，桌面端不会渲染这个面板。 -->
+      <!-- 手机档「格式」面板：字号 A−/A+、正文宽度三档、目录入口。
+           目录不再是一长串标题挤在格式面板里，点入口打开独立的「本页目录」底部面板。 -->
       <Teleport to="body">
         <template v-if="formatOpen && narrowEditor">
           <div class="fmt-mask" @click="closeFormatSheet()" />
@@ -448,33 +488,56 @@
                 </div>
               </div>
 
-              <div class="fmt-row">
+              <button
+                type="button"
+                class="fmt-row fmt-outline-entry"
+                aria-haspopup="dialog"
+                @click="openOutlineSheet"
+              >
                 <div class="fmt-copy">
                   <strong>目录</strong>
-                  <span>打开后在这里列出本页小标题，点一条滚到对应位置</span>
+                  <span>列出本页小标题，点一条跳到对应位置</span>
                 </div>
-                <label class="switch-control">
-                  <input type="checkbox" :checked="preferences.outline" @change="toggleEditorOutline" />
-                  <span aria-hidden="true"></span>
-                  <em>{{ preferences.outline ? '已开启' : '已关闭' }}</em>
-                </label>
-              </div>
-
-              <div v-if="preferences.outline" class="fmt-outline">
-                <p v-if="!editorOutline.length" class="fmt-empty">本页还没有小标题；加几个「##」标题后这里会出现目录。</p>
-                <button
-                  v-for="(item, index) in editorOutline"
-                  :key="'outline-' + index"
-                  type="button"
-                  class="fmt-outline-row"
-                  :data-level="item.level"
-                  @click="jumpToEditorHeading(item.text)"
-                >
-                  <span class="fmt-outline-lv">H{{ item.level }}</span>
-                  <span class="fmt-outline-text">{{ item.text }}</span>
-                </button>
-              </div>
+                <span class="fmt-outline-count">{{ editorOutline.length }} 节</span>
+                <Icon name="chevron-right" :size="14" class="fmt-outline-chev" />
+              </button>
             </div>
+          </section>
+        </template>
+      </Teleport>
+
+      <!-- 手机档「本页目录」面板：与格式面板同一套底部 sheet 语言，列表由 PageOutline 统一渲染 -->
+      <Teleport to="body">
+        <template v-if="outlineSheetOpen && narrowEditor">
+          <div class="fmt-mask" @click="closeOutlineSheet()" />
+          <section
+            ref="outlineSheetRef"
+            class="fmt-sheet outline-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="本页目录"
+            tabindex="-1"
+            @keydown="onOutlineSheetKeydown"
+          >
+            <span class="fmt-grab" aria-hidden="true" />
+            <PageOutline
+              mode="sheet"
+              :items="editorOutline"
+              :active-index="activeOutlineIndex"
+              @select="jumpToOutlineIndex"
+              @top="scrollEditorTop"
+            >
+              <template #head-extra>
+                <button
+                  type="button"
+                  class="fmt-x outline-sheet-x"
+                  aria-label="关闭目录"
+                  @click="closeOutlineSheet()"
+                >
+                  <Icon name="x" :size="16" />
+                </button>
+              </template>
+            </PageOutline>
           </section>
         </template>
       </Teleport>
@@ -531,6 +594,7 @@ import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
 import HomeBoard from '../components/HomeBoard.vue';
+import PageOutline from '../components/PageOutline.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import { confirmDialog } from '../lib/confirm';
@@ -545,6 +609,7 @@ import { useHomeBoardStore } from '../stores/homeBoard';
 import { ideaPagesOf, recentPagesOf } from '../lib/homeBoard.ts';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { isComposingKey } from '../lib/ime';
+import { extractMarkdownOutline } from '../lib/outline';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
   contentColumnWidth,
@@ -815,12 +880,13 @@ function toggleChrome() {
   chromeCollapsed.value = !chromeCollapsed.value;
 }
 
-/* ===== 手机档「格式」面板：字号 / 正文宽度 / 目录 =====
+/* ===== 手机档「格式」面板：字号 / 正文宽度 / 目录入口 =====
  * 桌面端没有这个入口（.head-summary 整行隐藏），面板只由手机摘要行的「格式」按钮打开。
  *  - 字号：接既有偏好 app.readingPreferences.fontSize（阅读视图共用），A−/A+ 每次 ±1px；
  *  - 正文宽度：手机档没有「可用区百分比」的语义（正文本来就铺满），改用三档左右留白
  *    （满宽 / 标准 / 窄），存 localStorage 并即时写进 --editor-mobile-pad；
- *  - 目录：接既有偏好 readingPreferences.outline，打开时在面板里列出小标题，点一条滚过去。 */
+ *  - 目录：面板里只留一行入口（标题条数），点开独立的「本页目录」底部面板。
+ *    目录列表不再和字号/宽度挤在同一个 sheet 里。 */
 const formatOpen = ref(false);
 const formatSheetRef = ref<HTMLElement>();
 let unregisterFormatBack: (() => void) | null = null;
@@ -840,24 +906,12 @@ const mobileTextPad = computed(() =>
   MOBILE_TEXT_WIDTHS.find((option) => option.key === mobileTextWidth.value)?.pad ?? 20
 );
 const preferences = computed(() => app.readingPreferences);
-/* 本页小标题（格式面板的目录）：跳过围栏代码块里的「#」，只认 1–4 级 */
-const editorOutline = computed(() => {
-  const items: Array<{ level: number; text: string }> = [];
-  let fenced = false;
-  for (const line of content.value.split('\n')) {
-    if (/^\s*(?:\u0060\u0060\u0060|~~~)/.test(line)) {
-      fenced = !fenced;
-      continue;
-    }
-    if (fenced) continue;
-    const match = /^(#{1,4})\s+(.+?)\s*#*\s*$/.exec(line);
-    if (match) items.push({ level: match[1].length, text: match[2].trim() });
-    if (items.length >= 40) break;
-  }
-  return items;
-});
+/** 正文可用区宽度：编辑视图根元素的宽度（已扣掉左侧图标栏与文件树）。
+ *  目录自适应（右栏 or 浮层）与正文列宽都要用，必须在下面的 watch(outlineWide) 之前初始化。 */
+const availableWidth = ref(0);
 function openFormatSheet() {
   if (!narrowEditor.value) return;
+  closeOutlineSheet();
   formatOpen.value = true;
   void nextTick(() => formatSheetRef.value?.focus({ preventScroll: true }));
 }
@@ -872,27 +926,139 @@ function pickMobileTextWidth(key: MobileTextWidth) {
   mobileTextWidth.value = key;
   localStorage.setItem(MOBILE_TEXT_WIDTH_STORAGE_KEY, key);
 }
-function toggleEditorOutline(event: Event) {
-  app.updateReadingPreferences({ outline: (event.target as HTMLInputElement).checked });
+/** 本页小标题：正文源文提取，随输入即时更新（桌面目录卡 / 窄窗浮层 / 手机面板共用） */
+const editorOutline = computed(() => extractMarkdownOutline(content.value));
+
+/* ===== 本页目录：宽窗口右侧纸卡 / 窄窗口工具栏浮层 / 手机底部面板 =====
+ * 三个入口共用 outlineOpen 与同一份 PageOutline。宽度不够时（正文列 + 234px 目录放不下）
+ * 自动从右侧列切成工具栏浮层；手机档由「格式」面板的目录入口打开独立底部面板。
+ * 滚动时 MarkdownEditor 把当前章节序号 emit 上来，目录只负责高亮。 */
+const OUTLINE_RAIL_MIN_WIDTH = 1020;
+const outlineOpen = ref(false);
+const outlinePopEl = ref<HTMLElement>();
+const outlinePopStyle = ref<Record<string, string>>({ visibility: 'hidden' });
+const activeOutlineIndex = ref(-1);
+/** 点目录跳转后的短暂锁：滚动跟随会把「顶部所在的上一节」报回来，别把刚点的条目顶掉 */
+let outlineJumpLockUntil = 0;
+const outlineSheetOpen = ref(false);
+const outlineSheetRef = ref<HTMLElement>();
+const outlineWide = computed(
+  () => !narrowEditor.value && availableWidth.value >= OUTLINE_RAIL_MIN_WIDTH
+);
+function onOutlineChange(index: number) {
+  if (Date.now() < outlineJumpLockUntil) return;
+  activeOutlineIndex.value = index;
 }
-function jumpToEditorHeading(text: string) {
-  if (editorRef.value?.scrollToHeading?.(text)) {
+/** 面板开/收会改变正文列宽，标题换行后位置会变：等过渡结束再校准一次当前章节 */
+let outlineRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleOutlineRefresh() {
+  if (outlineRefreshTimer) clearTimeout(outlineRefreshTimer);
+  outlineRefreshTimer = setTimeout(() => {
+    outlineRefreshTimer = null;
+    editorRef.value?.refreshOutlineActivity?.();
+    // 正文列变窄时工具栏可能换行，按钮位置变了：浮层要重新贴一次
+    if (!outlineWide.value) syncOutlinePopPosition();
+  }, 300);
+}
+function toggleOutline() {
+  if (fullscreen.value) return;
+  outlineOpen.value = !outlineOpen.value;
+  if (!outlineOpen.value) return;
+  closeFormatSheet();
+  closeOutlineSheet();
+  void nextTick(() => {
+    if (!outlineWide.value) {
+      outlinePopStyle.value = { visibility: 'hidden' };
+      syncOutlinePopPosition();
+    }
+    editorRef.value?.refreshOutlineActivity?.();
+  });
+  scheduleOutlineRefresh();
+}
+function jumpToOutlineIndex(index: number) {
+  const item = editorOutline.value[index];
+  if (!item) return;
+  if (editorRef.value?.scrollToHeading?.(item.text)) {
+    // 点击即选中：滚动跟随按「视口顶部所在章节」算，刚点的标题居中后仍可能被判成上一节
+    activeOutlineIndex.value = index;
+    outlineJumpLockUntil = Date.now() + 700;
     closeFormatSheet();
+    closeOutlineSheet();
+    // 浮层是临时层：跳完就收；右侧目录卡保持打开，方便继续点
+    if (!outlineWide.value) outlineOpen.value = false;
     return;
   }
   // 源码模式（sv）下小标题不是 DOM 标题元素，按目录定位不了：明确说一句，避免像“点了没反应”
   notify.info('源码模式下暂不支持按目录跳转，切回「即时渲染」再试');
 }
-/** 面板内的 Tab 循环 + Esc 关闭（Teleport 到 body 后不在页面 DOM 里） */
-function onFormatSheetKeydown(event: KeyboardEvent): void {
+function scrollEditorTop() {
+  editorRef.value?.scrollToTop?.();
+}
+/** 浮层贴到工具栏「目录」按钮下方，右缘与正文列右缘对齐 */
+function syncOutlinePopPosition() {
+  const button = editorRef.value?.outlineButtonRect?.();
+  const host = viewEl.value?.getBoundingClientRect();
+  if (!button || !host) return;
+  const width = 292;
+  // 按钮 rect 是视口坐标，浮层 left 相对 .editor-view：两边都要先扣掉 host 原点
+  const buttonRight = button.right - host.left;
+  const left = Math.min(
+    Math.max(12, buttonRight - width + 8),
+    Math.max(12, host.width - width - 12)
+  );
+  outlinePopStyle.value = {
+    top: `${Math.round(button.bottom - host.top + 8)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+function onOutlinePopPointerDown(event: MouseEvent) {
+  if (!outlineOpen.value || outlineWide.value) return;
+  const target = event.target as HTMLElement | null;
+  if (outlinePopEl.value?.contains(target as Node)) return;
+  if (target?.closest?.('[data-type="engram-outline"]')) return;
+  outlineOpen.value = false;
+}
+/** 窗口/侧栏开合改变可用宽度：从右侧列切到浮层时补一次定位 */
+watch(outlineWide, (wide) => {
+  if (wide) return;
+  outlinePopStyle.value = { visibility: 'hidden' };
+  void nextTick(() => {
+    if (outlineOpen.value) syncOutlinePopPosition();
+  });
+});
+/** 标题增删后序号会变：目录条目真正变化时补一次当前章节校准（不跟每次敲字跑） */
+watch(
+  () => editorOutline.value.map((item) => `${item.level}:${item.text}`).join('\n'),
+  () => {
+    if (outlineOpen.value) void nextTick(() => editorRef.value?.refreshOutlineActivity?.());
+  }
+);
+
+function openOutlineSheet() {
+  if (!narrowEditor.value) return;
+  formatOpen.value = false;
+  outlineSheetOpen.value = true;
+  void nextTick(() => {
+    outlineSheetRef.value?.focus({ preventScroll: true });
+    // 从阅读切回编辑后滚动容器可能刚可见：开面板时重绑一次并校准当前章节
+    editorRef.value?.refreshOutlineActivity?.();
+  });
+}
+function closeOutlineSheet() {
+  outlineSheetOpen.value = false;
+}
+/** 底部 sheet 内的 Tab 循环 + Esc 关闭（Teleport 到 body 后不在页面 DOM 里） */
+function trapSheetFocus(
+  event: KeyboardEvent,
+  root: HTMLElement | undefined,
+  close: () => void
+): void {
   if (event.key === 'Escape') {
     event.stopPropagation();
-    closeFormatSheet();
+    close();
     return;
   }
-  if (event.key !== 'Tab') return;
-  const root = formatSheetRef.value;
-  if (!root) return;
+  if (event.key !== 'Tab' || !root) return;
   const focusables = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), input'));
   if (!focusables.length) return;
   const first = focusables[0];
@@ -907,6 +1073,12 @@ function onFormatSheetKeydown(event: KeyboardEvent): void {
     event.preventDefault();
     first.focus();
   }
+}
+function onFormatSheetKeydown(event: KeyboardEvent): void {
+  trapSheetFocus(event, formatSheetRef.value, closeFormatSheet);
+}
+function onOutlineSheetKeydown(event: KeyboardEvent): void {
+  trapSheetFocus(event, outlineSheetRef.value, closeOutlineSheet);
 }
 const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
@@ -925,8 +1097,6 @@ const viewEl = ref<HTMLElement>();
 const widthPickerEl = ref<HTMLElement>();
 const widthMenuOpen = ref(false);
 const widthLabel = computed(() => formatContentWidthRatio(app.readingPreferences.widthRatio));
-/** 正文可用区宽度：编辑视图根元素的宽度（已扣掉左侧图标栏与文件树） */
-const availableWidth = ref(0);
 const contentColumnStyle = computed(() => {
   const style: Record<string, string> = {};
   if (availableWidth.value > 0) {
@@ -960,18 +1130,44 @@ function onWidthPickerPointerDown(event: MouseEvent) {
 
 /* ===== 全屏编辑：状态在父级，页头/状态栏一起让位（Vditor 内置全屏做不到这点） ===== */
 const fullscreen = ref(false);
+/** 进入全屏前目录是否开着：退出时原样恢复 */
+let outlineOpenBeforeFullscreen = false;
+/**
+ * 进入全屏时把侧栏 / Agent / 目录一起收起，退出时回到进入前的状态。
+ * 侧栏与 Agent 的开合快照存在 app store（Home 直接响应），目录是编辑页自己的状态。
+ */
+function setFullscreen(next: boolean) {
+  if (next === fullscreen.value) return;
+  fullscreen.value = next;
+  if (next) {
+    outlineOpenBeforeFullscreen = outlineOpen.value;
+    outlineOpen.value = false;
+    outlineSheetOpen.value = false;
+    formatOpen.value = false;
+    /* 状态栏让位后触发按钮也藏了：手机端的面板是 Teleport 到 body 的，得主动收掉 */
+    relatedMenuRef.value?.close();
+  } else {
+    outlineOpen.value = outlineOpenBeforeFullscreen;
+    if (outlineOpen.value) {
+      if (!outlineWide.value) {
+        void nextTick(() => syncOutlinePopPosition());
+      }
+      scheduleOutlineRefresh();
+    }
+  }
+  app.setEditorFullscreen(next);
+}
 function toggleFullscreen() {
-  fullscreen.value = !fullscreen.value;
-  /* 状态栏让位后触发按钮也藏了：手机端的面板是 Teleport 到 body 的，得主动收掉 */
-  if (fullscreen.value) relatedMenuRef.value?.close();
+  setFullscreen(!fullscreen.value);
 }
 /** 阅读模式、换页、文件预览都不该留在全屏里 */
 watch(
   () => [app.readingMode, route.params.id, route.params.file],
   () => {
-    fullscreen.value = false;
-    // 手机格式面板只属于编辑态：进阅读 / 换页立即收起
+    setFullscreen(false);
+    // 手机格式 / 目录面板只属于编辑态：进阅读 / 换页立即收起
     formatOpen.value = false;
+    outlineSheetOpen.value = false;
   }
 );
 
@@ -1648,7 +1844,13 @@ function beforeUnload(e: BeforeUnloadEvent) {
 function onGlobalKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && fullscreen.value && !e.defaultPrevented) {
     e.preventDefault();
-    fullscreen.value = false;
+    setFullscreen(false);
+    return;
+  }
+  // 窄窗口目录浮层不是模态层，Esc 直接收起（格式/目录 sheet 自己在面板内处理 Esc）
+  if (e.key === 'Escape' && !e.defaultPrevented && outlineOpen.value && !outlineWide.value) {
+    e.preventDefault();
+    outlineOpen.value = false;
     return;
   }
   if (!e.altKey || e.key !== 'ArrowLeft' || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -1663,13 +1865,26 @@ function measureAvailableWidth() {
   const el = viewEl.value;
   if (!el) return;
   availableWidth.value = Math.round(el.clientWidth);
+  // 侧栏开合 / 窗口缩放会改变可用宽度：浮层开着时重新贴到目录按钮下方
+  if (outlineOpen.value && !outlineWide.value) {
+    void nextTick(syncOutlinePopPosition);
+    scheduleOutlineRefresh();
+  }
 }
 
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   else loadWelcomeOnce();
-  /* 安卓返回键：手机格式面板开着时先关面板（只认领本组件这一层） */
+  /* 安卓返回键：全屏 / 手机目录面板 / 格式面板按层级逐层退出（只认领本组件这一层） */
   unregisterFormatBack = registerBackHandler(() => {
+    if (fullscreen.value) {
+      setFullscreen(false);
+      return true;
+    }
+    if (outlineSheetOpen.value) {
+      closeOutlineSheet();
+      return true;
+    }
     if (!formatOpen.value) return false;
     closeFormatSheet();
     return true;
@@ -1679,6 +1894,7 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKey);
   document.addEventListener('pointerdown', onWidthPickerPointerDown);
   document.addEventListener('click', onWidthPickerPointerDown);
+  document.addEventListener('pointerdown', onOutlinePopPointerDown);
   measureAvailableWidth();
   viewObserver = new ResizeObserver(measureAvailableWidth);
   if (viewEl.value) viewObserver.observe(viewEl.value);
@@ -1689,10 +1905,15 @@ onUnmounted(() => {
   chromeMobile.removeEventListener('change', onChromeMobileChange);
   document.removeEventListener('pointerdown', onWidthPickerPointerDown);
   document.removeEventListener('click', onWidthPickerPointerDown);
+  document.removeEventListener('pointerdown', onOutlinePopPointerDown);
   unregisterFormatBack?.();
   unregisterFormatBack = null;
   viewObserver?.disconnect();
   viewObserver = null;
+  if (outlineRefreshTimer) clearTimeout(outlineRefreshTimer);
+  outlineRefreshTimer = null;
+  // 离开编辑页时把全屏收起，别让首页保留「侧栏/Agent 已收起」的状态
+  app.setEditorFullscreen(false);
   if (saveTimer) clearTimeout(saveTimer);
   if (ideaDistillRetryTimer) clearTimeout(ideaDistillRetryTimer);
 });
@@ -1739,6 +1960,10 @@ onUnmounted(() => {
 .editor-fullscreen .editor-area {
   scroll-padding-bottom: 0;
   background: var(--bg);
+}
+/* 全屏里目录已自动收起：工具栏上的目录按钮没有可开的面板，直接让位（退出全屏再回来） */
+.editor-fullscreen :deep(.vditor-toolbar button[data-type="engram-outline"]) {
+  display: none;
 }
 
 /* ---------- 顶部条：面包屑 + 保存状态 + 手动保存按钮 + 自动保存开关 ----------
@@ -2030,10 +2255,72 @@ button.save-state.dirty:hover { color: var(--accent); }
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  justify-content: center;
   /* 悬浮顶栏 / 状态栏的让位：正文首行与末行不再被浮条压住 */
-  padding-top: var(--chrome-top);
-  padding-bottom: var(--chrome-bottom);
+  padding: var(--chrome-top) 0 var(--chrome-bottom);
+}
+/* 正文列：宽 = --doc-col（可用区 × 偏好百分比）。外面再并上目录卡时整组居中，
+   目录收起时宽度回到 --doc-col，排布与改动前完全一致。 */
+.editor-main {
+  flex: 0 1 var(--doc-col);
+  max-width: var(--doc-col);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 本页目录（宽窗口）：234px 纸卡，跟正文列一起居中；收起时宽度归零 */
+.editor-outline-rail {
+  flex: none;
+  width: 234px;
+  /* 正文列自带 40px 内边距；用负外边距把纸卡拉到离正文 26px 的位置（组仍整体居中） */
+  margin-left: -14px;
+  padding: 14px 0 16px;
+  display: flex;
+  align-items: flex-start;
+  min-height: 0;
+  overflow: hidden;
+  transition: width 240ms cubic-bezier(0.4, 0, 0.2, 1),
+    margin-left 240ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms ease;
+}
+.editor-outline-rail.is-closed {
+  width: 0;
+  margin-left: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.editor-outline-card {
+  flex: none;
+  width: 234px;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 11px 9px;
+  border: 1px solid var(--card-line);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+}
+/* 本页目录（窄窗口）：工具栏「目录」下方浮层，右缘与正文列对齐（坐标由 JS 按按钮位置写） */
+.editor-outline-pop {
+  position: absolute;
+  z-index: var(--z-menu);
+  width: 292px;
+  max-height: min(480px, calc(100vh - 180px));
+  display: flex;
+  flex-direction: column;
+  padding: 14px 11px 9px;
+  border: 1px solid var(--card-line);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: 0 18px 50px -20px rgba(30, 27, 22, 0.42), 0 2px 8px rgba(30, 27, 22, 0.07);
+}
+.editor-outline-card :deep(.page-outline),
+.editor-outline-pop :deep(.page-outline) {
+  min-height: 0;
 }
 .editor-area {
   flex: 1;
@@ -2599,49 +2886,36 @@ button.save-state.dirty:hover { color: var(--accent); }
     font-weight: 600;
     box-shadow: var(--shadow-raised);
   }
-  .fmt-outline {
-    padding: 8px 0 2px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .fmt-empty {
-    margin: 4px 4px 8px;
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--text-secondary);
-  }
-  .fmt-outline-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    padding: 8px 4px;
-    border: 0;
-    border-radius: 8px;
+  /* 目录入口：只占一行，标题条数放右侧；列表移到独立的「本页目录」sheet */
+  .fmt-outline-entry {
+    width: 100%;
+    border-top: 0;
+    border-left: 0;
+    border-right: 0;
     background: none;
     color: var(--text);
     font: inherit;
-    font-size: 14px;
     text-align: left;
+    cursor: pointer;
   }
-  .fmt-outline-row:active { background: var(--bg-hover); }
-  .fmt-outline-row[data-level="2"] { padding-left: 16px; }
-  .fmt-outline-row[data-level="3"] { padding-left: 32px; }
-  .fmt-outline-row[data-level="4"] { padding-left: 48px; }
-  .fmt-outline-lv {
+  .fmt-outline-entry:active { background: var(--bg-hover); }
+  .fmt-outline-count {
     flex: none;
-    width: 20px;
-    font-size: 10.5px;
     color: var(--text-faint);
-    text-align: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
-  .fmt-outline-text {
-    min-width: 0;
+  .fmt-outline-chev { flex: none; color: var(--text-faint); }
+  /* 本页目录 sheet：与格式面板同一套底面板语言；行高 / 层级由 PageOutline 的 sheet 档负责 */
+  .outline-sheet {
+    max-height: 72dvh;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
+  .outline-sheet :deep(.page-outline) {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+  .outline-sheet-x { margin: -6px -6px -6px auto; }
   .page-chrome { padding-top: 8px; }
   .page-head.chrome-collapsed .page-chrome { display: none; }
 

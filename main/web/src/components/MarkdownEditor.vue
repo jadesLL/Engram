@@ -229,6 +229,8 @@ const props = defineProps<{
   pageId?: string;
   /** 全屏编辑状态：由父级持有（要连同页头/状态栏一起让位），这里只负责图标与提示 */
   fullscreen?: boolean;
+  /** 本页目录是否打开：父级持有面板，这里只负责工具栏按钮的选中态 */
+  outlineOpen?: boolean;
 }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void;
@@ -238,6 +240,9 @@ const emit = defineEmits<{
   (e: 'mode-change', mode: 'ir' | 'sv'): void;
   (e: 'enter-reading'): void;
   (e: 'toggle-fullscreen'): void;
+  (e: 'toggle-outline'): void;
+  /** 当前可视区顶部所在的标题序号（0 起；-1 表示没有可跟踪的标题） */
+  (e: 'outline-change', index: number): void;
   (e: 'context-menu', request: SelectionContextMenuRequest): void;
 }>();
 
@@ -449,6 +454,8 @@ function observeEditMode() {
       last = cur;
       hideTableBar();
       emit('mode-change', cur);
+      // 模式切换后滚动容器从 .vditor-reset 变成 .vditor-sv（或反过来），重新挂监听
+      bindOutlineTracking();
     }
   });
   modeObserver.observe(vditorEl.value, {
@@ -525,6 +532,16 @@ function overrideToolbarIcons() {
     const svg = fullscreenButton.querySelector('svg');
     if (svg) svg.innerHTML = paths.map((d) => `<path d="${d}"/>`).join('');
   }
+  // 目录开关：选中态与全屏同一套写法（父级持有面板开合）
+  const outlineButtons = Array.from(
+    vditorEl.value.querySelectorAll<HTMLElement>('.vditor-toolbar button[data-type="engram-outline"]')
+  );
+  for (const outlineButton of outlineButtons) {
+    const active = Boolean(props.outlineOpen);
+    const tip = active ? '收起本页目录' : '本页目录';
+    outlineButton.setAttribute('aria-label', tip);
+    outlineButton.classList.toggle('vditor-menu--current', active);
+  }
 }
 
 const wikilinkToolbarItem = {
@@ -552,6 +569,16 @@ const fullscreenToolbarItem = {
   click: () => emit('toggle-fullscreen'),
 };
 /**
+ * 本页目录：不挂 Vditor 内置 outline——那个面板是编辑器里的 25% 侧栏，样式与 Engram 的卡片
+ * 语言完全脱节，也不参与全屏联动。这里只留一个工具栏开关，面板由 EditorView 渲染。
+ */
+const outlineToolbarItem = {
+  name: 'engram-outline',
+  tip: '本页目录',
+  icon: toolbarIconSvg(TOOLBAR_ICONS.outline),
+  click: () => emit('toggle-outline'),
+};
+/**
  * 手机档「插入」入口：Vditor 自定义工具栏项（与 readingToolbarItem / fullscreenToolbarItem 同一注册方式）。
  * 只挂在 mobileToolbar 上——桌面工具栏没有这一项，桌面上也就不会出现这个按钮和面板。
  */
@@ -576,7 +603,7 @@ const desktopToolbar = [
   'quote', 'list', 'ordered-list', 'check', '|',
   'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
   'undo', 'redo', '|',
-  'edit-mode', fullscreenToolbarItem, 'outline', readingToolbarItem,
+  'edit-mode', fullscreenToolbarItem, outlineToolbarItem, readingToolbarItem,
 ];
 
 /**
@@ -669,6 +696,7 @@ function init() {
       bindKeys();
       bindTableBarEvents();
       bindSelectionTools();
+      bindOutlineTracking();
       releaseModelSyncSoon();
       scheduleHideManagedPlaceholders();
     },
@@ -1512,9 +1540,15 @@ async function runActionsSheetAction(key: TableSheetAction | SelectionSheetActio
 
 /** 把编辑器滚到与 text 同名的小标题：编辑「格式」面板的目录项用（桌面端不调用） */
 function scrollToHeadingByText(text: string): boolean {
-  const root = vditorEl.value?.querySelector<HTMLElement>('.vditor-ir, .vditor-wysiwyg, .vditor-sv');
+  const root = visibleEditorRoot();
   if (!root) return false;
-  const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, '').trim();
+  // IR 模式标题的 textContent 带 `###` 语法标记（渲染成标题旁的 H2/H3 小标），比对前先剥掉；
+  // 目录条目本身只有纯文本，两边归一后再比。
+  const normalize = (value: string | null | undefined) =>
+    (value || '')
+      .replace(/^[\s\u200b]*#{1,6}[\s\u200b]*/, '')
+      .replace(/[\s\u200b]+/g, '')
+      .trim();
   const wanted = normalize(text);
   if (!wanted) return false;
   const heading = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
@@ -1522,6 +1556,99 @@ function scrollToHeadingByText(text: string): boolean {
   if (!heading) return false;
   heading.scrollIntoView({ block: 'center' });
   return true;
+}
+
+/* ---------- 目录跟随：滚动时把当前章节序号报给父级（目录高亮 / 手机面板共用） ----------
+ * Vditor 的滚动发生在内部 .vditor-reset（源码模式是 .vditor-sv 文本框），不在页面上，
+ * 所以只能监听具体滚动节点；节点在切模式 / 打开目录时可能变化，refreshOutlineActivity 会重绑。
+ * 只认 h1–h4，和 lib/outline.ts 的提取口径一致（h5/h6 不进目录）。
+ * 源文模式（sv）没有标题 DOM，返回 -1，目录保持不高亮。 */
+let outlineScrollEl: HTMLElement | null = null;
+let outlineScrollTimer: ReturnType<typeof setTimeout> | null = null;
+let lastOutlineIndex = -1;
+
+/** 可见的编辑模式容器：Vditor 会同时保留 ir / wysiwyg 两套容器，隐藏那套是 0 尺寸 */
+function visibleEditorRoot(): HTMLElement | null {
+  const candidates = Array.from(
+    vditorEl.value?.querySelectorAll<HTMLElement>('.vditor-ir, .vditor-wysiwyg, .vditor-sv') ?? []
+  );
+  return candidates.find((el) => el.clientHeight > 0) ?? candidates[0] ?? null;
+}
+
+/** 真正的滚动容器：IR / wysiwyg 是 .vditor-reset，源码模式是 .vditor-sv 文本框 */
+function outlineScrollTarget(): HTMLElement | null {
+  const candidates = Array.from(
+    vditorEl.value?.querySelectorAll<HTMLElement>(
+      '.vditor-ir .vditor-reset, .vditor-wysiwyg .vditor-reset, .vditor-sv'
+    ) ?? []
+  );
+  return candidates.find((el) => el.clientHeight > 0) ?? candidates[0] ?? null;
+}
+
+function visibleOutlineIndex(): number {
+  const root = visibleEditorRoot();
+  if (!root) return -1;
+  const headings = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4'));
+  if (!headings.length) return -1;
+  const scroller = outlineScrollTarget();
+  const line = (scroller?.getBoundingClientRect().top ?? root.getBoundingClientRect().top) + 96;
+  let index = 0;
+  headings.forEach((heading, i) => {
+    if (heading.getBoundingClientRect().top <= line) index = i;
+  });
+  return index;
+}
+
+function emitOutlineChange() {
+  const index = visibleOutlineIndex();
+  if (index === lastOutlineIndex) return;
+  lastOutlineIndex = index;
+  emit('outline-change', index);
+}
+
+function onOutlineScroll() {
+  // 用 setTimeout 做 40ms 合并而不是 rAF：后台标签页/内嵌浏览器窗格里 rAF 会被暂停，
+  // 目录高亮会停在打开时的那一节。
+  if (outlineScrollTimer) return;
+  outlineScrollTimer = setTimeout(() => {
+    outlineScrollTimer = null;
+    emitOutlineChange();
+  }, 40);
+}
+
+function bindOutlineTracking() {
+  const scroller = outlineScrollTarget();
+  if (outlineScrollEl === scroller) return;
+  outlineScrollEl?.removeEventListener('scroll', onOutlineScroll);
+  outlineScrollEl = scroller;
+  outlineScrollEl?.addEventListener('scroll', onOutlineScroll, { passive: true });
+  emitOutlineChange();
+}
+
+/** 父级正文变化 / 打开目录 / 从阅读切回编辑后手动校准一次（滚动容器与标题序号都可能变） */
+function refreshOutlineActivity() {
+  bindOutlineTracking();
+  emitOutlineChange();
+}
+
+/** 目录「回到顶部」：滚回编辑器顶部（正文首行，不是页面顶部）。
+ *  用直接赋值而不是 smooth：后台标签页会暂停动画帧，smooth 滚动会一直停在原地。 */
+function scrollToTop(): boolean {
+  const scroller = outlineScrollTarget();
+  if (!scroller) return false;
+  scroller.scrollTop = 0;
+  // 程序化滚动在部分内嵌 WebView / 后台标签页里不会派发 scroll 事件，直接校准一次
+  emitOutlineChange();
+  return true;
+}
+
+/** 「目录」工具栏按钮的视口坐标：窄窗口浮层要用它对齐到按钮下方 */
+function outlineButtonRect(): DOMRect | null {
+  const buttons = Array.from(
+    vditorEl.value?.querySelectorAll<HTMLElement>('.vditor-toolbar button[data-type="engram-outline"]') ?? []
+  );
+  const button = buttons.find((item) => item.getBoundingClientRect().width > 0) ?? buttons[0];
+  return button?.getBoundingClientRect() ?? null;
 }
 
 function captureEditorSelection() {
@@ -2237,6 +2364,14 @@ watch(
     overrideToolbarIcons();
   }
 );
+/* 目录开关由父级持有：变化时把工具栏按钮的选中态与提示同步过去 */
+watch(
+  () => props.outlineOpen,
+  () => {
+    if (!ready) return;
+    overrideToolbarIcons();
+  }
+);
 // 父组件传入模式变化（切换页面后恢复持久化模式）
 watch(
   () => props.mode,
@@ -2254,6 +2389,10 @@ onUnmounted(() => {
   if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
   if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);
+  if (outlineScrollTimer) clearTimeout(outlineScrollTimer);
+  outlineScrollTimer = null;
+  outlineScrollEl?.removeEventListener('scroll', onOutlineScroll);
+  outlineScrollEl = null;
   unbindTableBarEvents();
   unbindSelectionTools();
   wikiTagObserver?.disconnect();
@@ -2280,6 +2419,9 @@ defineExpose({
   redo: () => executeHistoryCommand('redo'),
   /** 编辑「格式」面板的目录项：把正文滚到同名标题（ir / wysiwyg 是标题元素，sv 模式下找不到就返回 false） */
   scrollToHeading: (text: string): boolean => scrollToHeadingByText(text),
+  scrollToTop,
+  refreshOutlineActivity,
+  outlineButtonRect,
   cutSelection,
   copySelection,
   pasteClipboard,
