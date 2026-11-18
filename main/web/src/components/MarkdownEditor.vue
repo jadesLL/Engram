@@ -13,6 +13,21 @@
       @more="openTableMore"
     />
 
+    <!-- 选中正文图片后的拖动改宽框：四角手柄只改宽度，提交时把 `#w=` 写回 Markdown -->
+    <EditorImageResizer
+      v-if="imageResizer"
+      :top="imageResizer.top"
+      :left="imageResizer.left"
+      :width="imageResizer.width"
+      :height="imageResizer.height"
+      :min-width="imageResizer.minWidth"
+      :max-width="imageResizer.maxWidth"
+      @preview="previewImageWidth"
+      @commit="commitImageWidth"
+      @reset="resetImageWidth"
+      @cancel="cancelImageResize"
+    />
+
     <!-- 手机档选中文字浮动格式条：fixed 视口坐标 + translate(-50%,-100%) 贴在选区上方，
          不放得下就翻到选区下方；点空白 / 滚动 / 选区消失都会收起（见 bindSelectionTools）。
          按钮一律 mousedown.prevent：保住选区再执行命令，点按钮不会把选中弄丢。 -->
@@ -256,10 +271,17 @@ import { api } from '../api';
 import { registerBackHandler } from '../lib/androidBack';
 import { BP_MOBILE } from '../lib/layoutBreakpoints';
 import { notify } from '../lib/notify';
+import EditorImageResizer from './EditorImageResizer.vue';
 import EditorTableBar from './EditorTableBar.vue';
 import EditorAiDialog from './EditorAiDialog.vue';
 import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
+import {
+  applyImageWidths,
+  imageWidthFromSrc,
+  isLocalMediaImageSrc,
+  withImageWidth,
+} from '../lib/imageWidth';
 import {
   editorAiErrorMessage,
   isEditorAiAbort,
@@ -551,6 +573,8 @@ function observeEditMode() {
     if (cur !== last && (cur === 'ir' || cur === 'sv')) {
       last = cur;
       hideTableBar();
+      // 源码模式下图片只是一段 Markdown 文本，选中框留着会浮在不存在的图片位置上
+      if (cur === 'sv') hideImageResizer();
       emit('mode-change', cur);
     }
   });
@@ -787,6 +811,8 @@ function init() {
       bindKeys();
       bindTableBarEvents();
       bindSelectionTools();
+      bindImageResize();
+      applyImageWidths(editorContentRoot());
       releaseModelSyncSoon();
       scheduleHideManagedPlaceholders();
     },
@@ -1284,6 +1310,320 @@ function emitAfterIrMutation() {
   if (!ir) return;
   userInputPending = true;
   ir.element.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/* ---------- 编辑页：图片拖动改宽 ----------
+ * 点正文图片出现四角手柄，拖动只改宽度（高度按原比例走）；松手时把 `#w=<px>` 写进图片 URL，
+ * 不整篇 setValue——只改当前图片节点的链接标记与 src，再派发 input，让 Vditor 自己归一化、
+ * 记撤销栈并回写正文。宽度渲染与读写规则见 lib/imageWidth.ts。 */
+interface ImageResizerState {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  minWidth: number;
+  maxWidth: number;
+}
+
+const imageResizer = ref<ImageResizerState | null>(null);
+let imageResizerTarget: HTMLImageElement | null = null;
+/** 选中的图片在正文图片里的序号：Vditor 重建节点后用它找回同一张图 */
+let imageResizerIndex = -1;
+let imageResizerSrc = '';
+let imageResizerRaf = 0;
+let imageRefreshRaf = 0;
+let imageResizeObserver: MutationObserver | null = null;
+let imageResizeBound = false;
+
+function editorContentRoot(): HTMLElement | null {
+  return vditorEl.value?.querySelector<HTMLElement>('.vditor-ir') ?? null;
+}
+
+function editorImages(): HTMLImageElement[] {
+  const root = editorContentRoot();
+  return root ? Array.from(root.querySelectorAll<HTMLImageElement>('.vditor-ir__node[data-type="img"] img')) : [];
+}
+
+function imageNodeFor(image: HTMLImageElement): HTMLElement | null {
+  const node = image.closest<HTMLElement>('.vditor-ir__node[data-type="img"]');
+  if (!node || !vditorEl.value?.contains(node)) return null;
+  return node;
+}
+
+function imageCanResize(image: HTMLImageElement | null): image is HTMLImageElement {
+  if (!image || !image.isConnected) return false;
+  if (vditor?.getCurrentMode() !== 'ir') return false;
+  if (!imageNodeFor(image)) return false;
+  return isLocalMediaImageSrc(image.getAttribute('src') || '');
+}
+
+/** 图片所在块的可用宽度（段落 / 列表项 / 表格单元格的内容宽） */
+function imageColumnWidth(image: HTMLImageElement): number {
+  const block = image.closest<HTMLElement>('p, li, blockquote, td, th') || editorContentRoot();
+  return Math.round(block?.clientWidth || 0);
+}
+
+/** 不写宽度时的展示宽度：原图与正文列宽取小（和 CSS max-width:100% 同一口径） */
+function imageAutoWidth(image: HTMLImageElement): number {
+  const column = imageColumnWidth(image);
+  const natural = image.naturalWidth || 0;
+  if (!column) return natural || Math.round(image.getBoundingClientRect().width) || 1;
+  return Math.min(natural || column, column);
+}
+
+function imageResizeBounds(image: HTMLImageElement) {
+  const column = imageColumnWidth(image);
+  const natural = image.naturalWidth || 0;
+  const maxWidth = Math.max(1, column || natural || Math.round(image.getBoundingClientRect().width) || 1);
+  return {
+    minWidth: Math.min(64, maxWidth),
+    maxWidth,
+    autoWidth: Math.min(natural || maxWidth, maxWidth),
+  };
+}
+
+function hideImageResizer() {
+  const image = imageResizerTarget;
+  if (image?.dataset.egImagePreview) {
+    delete image.dataset.egImagePreview;
+    applyImageWidths(editorContentRoot());
+  }
+  imageResizerTarget = null;
+  if (imageResizer.value) imageResizer.value = null;
+}
+
+function syncImageResizer() {
+  imageResizerRaf = 0;
+  const image = imageResizerTarget;
+  const wrap = wrapEl.value;
+  if (!image || !wrap || !imageCanResize(image)) {
+    hideImageResizer();
+    return;
+  }
+  const hostRect = vditorEl.value?.getBoundingClientRect();
+  const rect = image.getBoundingClientRect();
+  if (
+    !hostRect ||
+    rect.width < 1 ||
+    rect.height < 1 ||
+    rect.bottom <= hostRect.top ||
+    rect.top >= hostRect.bottom
+  ) {
+    // 图片滚出编辑视口：先收起浮框，但保留选中目标，滚回来时还能接着调
+    if (imageResizer.value) imageResizer.value = null;
+    return;
+  }
+  const wrapRect = wrap.getBoundingClientRect();
+  const bounds = imageResizeBounds(image);
+  const next: ImageResizerState = {
+    top: Math.round(rect.top - wrapRect.top),
+    left: Math.round(rect.left - wrapRect.left),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    minWidth: bounds.minWidth,
+    maxWidth: bounds.maxWidth,
+  };
+  const current = imageResizer.value;
+  if (
+    current &&
+    current.top === next.top &&
+    current.left === next.left &&
+    current.width === next.width &&
+    current.height === next.height &&
+    current.minWidth === next.minWidth &&
+    current.maxWidth === next.maxWidth
+  ) {
+    return;
+  }
+  imageResizer.value = next;
+}
+
+function scheduleImageResizerSync() {
+  if (imageResizerRaf) return;
+  imageResizerRaf = requestAnimationFrame(syncImageResizer);
+}
+
+function selectImageResizer(image: HTMLImageElement) {
+  imageResizerTarget = image;
+  imageResizerSrc = image.getAttribute('src') || '';
+  imageResizerIndex = editorImages().indexOf(image);
+  syncImageResizer();
+}
+
+/** 拖动中只改 DOM 样式做预览；松手才写 Markdown，避免每一步都进撤销栈 */
+function previewImageWidth(width: number) {
+  const image = imageResizerTarget;
+  if (!image) return;
+  image.dataset.egImagePreview = '1';
+  image.style.width = `${width}px`;
+  image.style.maxWidth = '100%';
+  image.style.height = 'auto';
+  scheduleImageResizerSync();
+}
+
+/** 把宽度写回当前图片的 Markdown 引用；null = 去掉 `#w=`，恢复自适应 */
+function persistImageWidth(width: number | null) {
+  const image = imageResizerTarget;
+  if (!image) return;
+  const node = imageNodeFor(image);
+  if (!node) {
+    hideImageResizer();
+    return;
+  }
+  const src = image.getAttribute('src') || '';
+  const nextSrc = withImageWidth(src, width);
+  if (nextSrc === src) {
+    applyImageWidths(editorContentRoot());
+    scheduleImageResizerSync();
+    return;
+  }
+  const marker = node.querySelector<HTMLElement>('.vditor-ir__marker--link');
+  if (!marker) {
+    hideImageResizer();
+    return;
+  }
+  const index = editorImages().indexOf(image);
+  marker.textContent = nextSrc;
+  image.setAttribute('src', nextSrc);
+  imageResizerSrc = nextSrc;
+  imageResizerIndex = index;
+  beginUserEditing();
+  emitAfterIrMutation();
+  // Vditor 归一化可能替换掉图片节点：下一帧按新 URL / 序号把选中目标找回来
+  requestAnimationFrame(() => {
+    if (!imageResizerTarget) return;
+    let next: HTMLImageElement | null = imageResizerTarget.isConnected &&
+      (imageResizerTarget.getAttribute('src') || '') === nextSrc
+      ? imageResizerTarget
+      : null;
+    if (!next) {
+      const images = editorImages();
+      next = images.find((candidate) => (candidate.getAttribute('src') || '') === nextSrc)
+        || images[index]
+        || null;
+    }
+    if (!next) {
+      hideImageResizer();
+      return;
+    }
+    imageResizerTarget = next;
+    imageResizerIndex = editorImages().indexOf(next);
+    imageResizerSrc = next.getAttribute('src') || nextSrc;
+    applyImageWidths(editorContentRoot());
+    syncImageResizer();
+  });
+}
+
+function commitImageWidth(width: number) {
+  const image = imageResizerTarget;
+  if (!image) return;
+  delete image.dataset.egImagePreview;
+  // 拖到原始展示宽度（原图宽与列宽取小）就等同于「没设宽度」：去掉参数，换窗口时继续自适应
+  const autoWidth = imageResizeBounds(image).autoWidth;
+  persistImageWidth(Math.abs(width - autoWidth) <= 1 ? null : width);
+}
+
+function resetImageWidth() {
+  const image = imageResizerTarget;
+  if (!image) return;
+  delete image.dataset.egImagePreview;
+  image.style.removeProperty('width');
+  image.style.removeProperty('max-width');
+  image.style.removeProperty('height');
+  delete image.dataset.egImageWidth;
+  persistImageWidth(null);
+}
+
+function cancelImageResize() {
+  const image = imageResizerTarget;
+  if (!image) return;
+  delete image.dataset.egImagePreview;
+  applyImageWidths(editorContentRoot());
+  scheduleImageResizerSync();
+}
+
+function onEditorImageClick(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const image = target.closest('img');
+  if (image instanceof HTMLImageElement && imageCanResize(image)) {
+    selectImageResizer(image);
+    // Vditor 的 click 会展开源码标记、把 URL 选中，图片位置随之变化：下一帧再量一次
+    requestAnimationFrame(syncImageResizer);
+    return;
+  }
+  if (imageResizerTarget && !target.closest('.img-resizer')) hideImageResizer();
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  if (!imageResizerTarget) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (vditorEl.value?.contains(target)) return;
+  if (target instanceof Element && target.closest('.img-resizer')) return;
+  hideImageResizer();
+}
+
+/** 正文重渲染后：把宽度重新贴到图片上；选中的图节点被换掉时按 URL / 序号找回来 */
+function refreshEditorImages() {
+  imageRefreshRaf = 0;
+  const root = editorContentRoot();
+  if (!root) return;
+  applyImageWidths(root);
+  if (imageResizerTarget && !imageResizerTarget.isConnected) {
+    const images = editorImages();
+    const next = images.find((candidate) => (candidate.getAttribute('src') || '') === imageResizerSrc)
+      || images[imageResizerIndex]
+      || null;
+    if (!next) {
+      hideImageResizer();
+      return;
+    }
+    imageResizerTarget = next;
+    imageResizerIndex = images.indexOf(next);
+    imageResizerSrc = next.getAttribute('src') || imageResizerSrc;
+  }
+  scheduleImageResizerSync();
+}
+
+function scheduleRefreshEditorImages() {
+  if (imageRefreshRaf) return;
+  imageRefreshRaf = requestAnimationFrame(refreshEditorImages);
+}
+
+function bindImageResize() {
+  const host = vditorEl.value;
+  if (!host || imageResizeBound) return;
+  imageResizeBound = true;
+  // 捕获阶段先认领：Vditor 自己的 click 处理可能停掉冒泡，但图片选中框必须照样弹出来
+  host.addEventListener('click', onEditorImageClick, true);
+  host.addEventListener('scroll', scheduleImageResizerSync, true);
+  window.addEventListener('resize', scheduleImageResizerSync);
+  document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  const root = editorContentRoot();
+  imageResizeObserver = new MutationObserver(scheduleRefreshEditorImages);
+  // 只盯 childList：applyImageWidths 写的是 inline style，不会自触发
+  imageResizeObserver.observe(root ?? host, { childList: true, subtree: true });
+}
+
+function unbindImageResize() {
+  const host = vditorEl.value;
+  host?.removeEventListener('click', onEditorImageClick, true);
+  host?.removeEventListener('scroll', scheduleImageResizerSync, true);
+  window.removeEventListener('resize', scheduleImageResizerSync);
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+  imageResizeObserver?.disconnect();
+  imageResizeObserver = null;
+  imageResizeBound = false;
+  if (imageResizerRaf) {
+    cancelAnimationFrame(imageResizerRaf);
+    imageResizerRaf = 0;
+  }
+  if (imageRefreshRaf) {
+    cancelAnimationFrame(imageRefreshRaf);
+    imageRefreshRaf = 0;
+  }
+  hideImageResizer();
 }
 
 /** 删掉整张表（最后一列被删）：光标退到上一块末尾或下一块开头，再让 Vditor 归一化 */
@@ -2691,6 +3031,9 @@ function applyEditorMarkdown(editorValue: string, pageChanged: boolean) {
   scheduleHideManagedPlaceholders();
   // 整块重渲染后表格 DOM 已经换掉，旧的浮条目标失效：先收起，等 selectionchange 按新 DOM 重算
   hideTableBar();
+  // 图片宽度是 URL fragment，重渲染后要重新贴到新的 <img> 上；选中框目标也已失效
+  hideImageResizer();
+  applyImageWidths(editorContentRoot());
 }
 
 /**
@@ -2802,6 +3145,7 @@ onUnmounted(() => {
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);
   unbindTableBarEvents();
   unbindSelectionTools();
+  unbindImageResize();
   wikiTagObserver?.disconnect();
   modeObserver?.disconnect();
   unbindVditorTooltips?.();
