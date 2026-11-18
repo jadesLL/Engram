@@ -4,16 +4,18 @@ import assert from 'node:assert/strict';
 import { buildTask, normalizeInboxFiles } from './prompts.js';
 
 /**
- * 消息附件（收集箱文件）在任务文本里的口径：
+ * 消息附件在任务文本里的口径：
+ * - 对话附件（粘贴/上传的临时输入）与收集箱文件分开说明，前者不进收集箱、不转存；
  * - 路径清单属于「界面上下文（不可信输入）」，只作定位；
- * - 「怎么处理」是可信说明，单独追加，且必须明确收集箱仍不属于知识库。
+ * - 「怎么处理」是可信说明，单独追加，且必须明确两类内容都不属于知识库。
  */
 
-test('normalizeInboxFiles：只留收集箱原件，规整路径/补名/去重/限条数', () => {
+test('normalizeInboxFiles：留收集箱原件与对话附件，规整路径/补名/去重/限条数', () => {
   const files = normalizeInboxFiles({
     inboxFiles: [
       { path: '收集箱\\合同.pdf', source: 'upload' },
       { path: '/收集箱/随手记.md', name: '  随手记  ', source: 'inbox' },
+      { path: '收集箱/.对话附件/20261118/粘贴图片-1.png', source: 'upload' },
       { path: '收集箱/合同.pdf' },
       { path: '原始资料/文档/a.md' },
       { path: '收集箱/转换结果/2026.10.18_合同.md' },
@@ -25,6 +27,7 @@ test('normalizeInboxFiles：只留收集箱原件，规整路径/补名/去重/�
   assert.deepEqual(files, [
     { path: '收集箱/合同.pdf', name: '合同.pdf', source: 'upload' },
     { path: '收集箱/随手记.md', name: '随手记', source: 'inbox' },
+    { path: '收集箱/.对话附件/20261118/粘贴图片-1.png', name: '粘贴图片-1.png', source: 'upload' },
     { path: '收集箱/照片.png', name: '照片.png' },
   ]);
 });
@@ -43,28 +46,36 @@ test('buildTask：附件路径进不可信上下文块，处理口径作为可�
       inboxFiles: [
         { path: '收集箱/客户拜访要点.txt', name: '客户拜访要点.txt', source: 'upload' },
         { path: '收集箱/报价单.xlsx', source: 'inbox' },
+        { path: '收集箱/.对话附件/20261118/粘贴图片-1.png', source: 'upload' },
       ],
     }
   );
   const contextBlock = task.match(/<界面上下文[^>]*>\n([\s\S]*?)\n<\/界面上下文>/);
   assert.ok(contextBlock, '应渲染界面上下文块');
+  assert.match(contextBlock[1], /对话附件（临时输入，不是收集箱、不是知识库）/);
+  assert.match(contextBlock[1], /收集箱\/\.对话附件\/20261118\/粘贴图片-1\.png/);
   assert.match(contextBlock[1], /收集箱\/客户拜访要点\.txt/);
   assert.match(contextBlock[1], /收集箱\/报价单\.xlsx/);
 
   // 可信说明在不可信块之后：模型能分清「路径是数据」「处理方式是约定」
   assert.ok(task.indexOf('本次消息附带的是收集箱文件') > task.indexOf('</界面上下文>'));
+  assert.ok(task.indexOf('本次消息附带的是对话附件') > task.indexOf('</界面上下文>'));
   assert.match(task, /engram inbox list/);
   assert.match(task, /engram inbox read <路径>/);
   assert.match(task, /engram inbox convert <路径>/);
+  // 对话附件不允许转存/写回收集箱，后面紧跟收集箱那一段的原有纪律
+  assert.match(task, /不要 `engram inbox convert`、不要 `engram inbox write`/);
   assert.match(task, /产物留在收集箱，不要入库/);
   assert.match(task, /不要拿收集箱内容当证据/);
   // 用户原文仍在最后
   assert.ok(task.trimEnd().endsWith('总结一下这几份文件'));
 });
 
-test('buildTask：没有附件时不出现收集箱附件说明；非法路径不渲染', () => {
+test('buildTask：没有附件时不出现收集箱/对话附件说明；非法路径不渲染', () => {
   assert.equal(buildTask('普通提问').includes('本次消息附带的是收集箱文件'), false);
+  assert.equal(buildTask('普通提问').includes('本次消息附带的是对话附件'), false);
   const task = buildTask('普通提问', { inboxFiles: [{ path: '原始资料/别人的.txt' }] });
   assert.equal(task.includes('本次消息附带的是收集箱文件'), false);
+  assert.equal(task.includes('本次消息附带的是对话附件'), false);
   assert.equal(task.includes('原始资料/别人的.txt'), false);
 });

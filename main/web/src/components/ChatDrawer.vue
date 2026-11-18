@@ -9,12 +9,12 @@
     @dragleave="onDrawerDragLeave"
     @drop="onDrawerDrop"
   >
-    <!-- 拖文件进抽屉：整只抽屉都是放置目标，松手即上传收集箱并附到这条消息 -->
+    <!-- 拖文件进抽屉：整只抽屉都是放置目标，松手即作为对话附件附到这条消息（不进收集箱） -->
     <div v-if="dropActive" class="drop-overlay" aria-hidden="true">
       <div class="drop-card">
         <Icon name="upload" :size="22" />
-        <b>松开，放进收集箱</b>
-        <span>并附到这条消息，交给{{ agentName }}处理</span>
+        <b>松开，作为对话附件</b>
+        <span>附到这条消息交给{{ agentName }}读，不会进收集箱</span>
       </div>
     </div>
     <!-- 左缘拖拽手柄：右侧悬浮形态下调整宽度（拖过窗口 70% 自动转满窗，双击还原默认，聚焦后方向键微调） -->
@@ -233,15 +233,15 @@
               >复制</button>
             </div>
             <div v-if="item.role === 'user'" class="entry-user">
-              <!-- 这条消息附带的收集箱文件：路径清单随消息落 metadata，刷新/多端同步后照样画得出来 -->
+              <!-- 这条消息附带的文件（对话附件 / 收集箱）：路径清单随消息落 metadata，刷新/多端同步后照样画得出来 -->
               <div v-if="messageInboxFiles(item.message).length" class="entry-attachments">
                 <span
                   v-for="file in messageInboxFiles(item.message)"
                   :key="file.path"
                   class="entry-attachment"
-                  v-tooltip="file.path"
+                  v-tooltip="attachmentTip(file)"
                 >
-                  <Icon :name="file.source === 'inbox' ? 'inbox' : 'file'" :size="11" />
+                  <Icon :name="attachmentIcon(file)" :size="11" />
                   {{ file.name || file.path }}
                 </span>
               </div>
@@ -567,16 +567,16 @@
       </section>
 
       <div class="composer-card">
-      <!-- 附件：刚上传落进收集箱的文件与从收集箱挑选的文件走同一条上下文通道 -->
+      <!-- 附件：刚粘贴/上传的对话附件与从收集箱挑选的文件走同一条上下文通道，但语义分开 -->
       <div v-if="attachments.length || inbox.uploading.length" class="composer-attachments">
         <span
           v-for="file in attachments"
           :key="file.path"
           class="attach-chip"
           :class="file.source || 'upload'"
-          v-tooltip="file.path"
+          v-tooltip="attachmentTip(file)"
         >
-          <Icon :name="file.source === 'inbox' ? 'inbox' : 'file'" :size="11" />
+          <Icon :name="attachmentIcon(file)" :size="11" />
           <span class="attach-name">{{ file.name || file.path }}</span>
           <span class="attach-source">{{ chatInboxSourceLabel(file) }}</span>
           <button
@@ -608,8 +608,8 @@
           <button
             class="btn icon"
             type="button"
-            v-tooltip="'添加文件：存进收集箱并附到这条消息'"
-            aria-label="添加文件"
+            v-tooltip="'添加附件：只给本轮 Agent 读，不进收集箱'"
+            aria-label="添加附件"
             :disabled="conversionActive"
             @click="openFilePicker"
           >
@@ -688,6 +688,7 @@ import {
   chatInboxFilesFromMetadata,
   chatInboxSourceLabel,
   composeChatInboxMessage,
+  isChatAttachmentPath,
   mergeChatInboxFiles,
   preparePastedFiles,
   removeChatInboxFile,
@@ -786,13 +787,27 @@ const showAgentSetup = computed(
 /** 触屏（手机）：输入框提示不再写「Enter 发送，Shift+Enter 换行」——手机上那是噪声 */
 const touchPointer = useTouchPointer();
 
-/* ===== 收集箱附件：上传/拖入/粘贴/从收集箱挑选，统一成附件 chip ===== */
+/* ===== 附件：对话附件（上传/拖入/粘贴）与收集箱挑选，统一成附件 chip ===== */
 /**
- * 已就绪、随下一条消息发出的收集箱文件。
- * 刚上传的（source=upload）与从收集箱挑选的（source=inbox）共用同一条上下文通道：
+ * 已就绪、随下一条消息发出的文件。
+ * 对话附件（source=upload，落隐藏目录、只给本轮 Agent 读）与从收集箱挑选的
+ * （source=inbox，用户待整理的暂存资产）共用同一条上下文通道：
  * 发送时作为 ChatContext.inboxFiles，服务端规整后落进用户消息 metadata 并写进任务文本。
  */
 const attachments = ref<ChatInboxFile[]>([]);
+
+/** chip 图标：对话附件用回形针，收集箱条目用箱形图标，旧版上传落进收集箱的用普通文件 */
+function attachmentIcon(file: ChatInboxFile): string {
+  if (isChatAttachmentPath(file.path)) return 'attach';
+  return file.source === 'inbox' ? 'inbox' : 'file';
+}
+
+/** chip 悬停提示：对话附件不必暴露隐藏目录路径，说清它是什么就行 */
+function attachmentTip(file: ChatInboxFile): string {
+  return isChatAttachmentPath(file.path)
+    ? '对话附件：只给本轮 Agent 读，不进收集箱'
+    : file.path;
+}
 /** 「从收集箱挑选」弹层 */
 const inboxPickerOpen = ref(false);
 /** 隐藏的 file input：点回形针时唤起系统文件选择（移动端即相册/文件选择器） */
@@ -1414,12 +1429,15 @@ async function removeSession(session: ChatSession) {
   await chat.deleteSession(session.id);
 }
 
-/* ===== 收集箱附件：上传、拖入、粘贴、从收集箱挑选、随消息发送 ===== */
+/* ===== 附件：对话附件（上传/拖入/粘贴）与收集箱挑选、随消息发送 ===== */
 
-/** 上传文件到收集箱（复用收集箱接口），成功的再把落盘路径变成附件 chip */
+/**
+ * 上传对话附件：只给本轮 Agent 读，落在收集箱下的隐藏目录，**不进收集箱列表**。
+ * 从收集箱挑选走 onInboxFilesPicked，两条通道不要混。
+ */
 async function addFiles(files: File[]) {
   if (!files.length) return;
-  const result = await inbox.upload(files);
+  const result = await inbox.uploadChatAttachments(files);
   const added = result.items
     .map((item) => chatInboxFileFromPath(item.path, 'upload', item.name))
     .filter((file): file is ChatInboxFile => Boolean(file));
@@ -1429,7 +1447,7 @@ async function addFiles(files: File[]) {
   }
   // 只报第一条原因：逐条细节在收集箱页面的上传列表里能看到，对话里不铺一屏错误
   if (result.skipped.length) {
-    notify.error(`有 ${result.skipped.length} 个文件没能加入收集箱：${result.skipped[0]}`);
+    notify.error(`有 ${result.skipped.length} 个文件没能上传为对话附件：${result.skipped[0]}`);
   }
 }
 
@@ -1447,7 +1465,7 @@ function onFileInputChange(event: Event) {
   void addFiles(files);
 }
 
-/** 从收集箱挑选弹层确认：挑选项与上传项都是普通附件，只差 chip 上的来源标签 */
+/** 从收集箱挑选弹层确认：这些是用户待整理的收集箱条目，与临时对话附件只差 chip 来源标签 */
 function onInboxFilesPicked(files: ChatInboxFile[]) {
   attachments.value = mergeChatInboxFiles(attachments.value, files);
   focusComposer();
@@ -1472,7 +1490,7 @@ function uploadProgress(upload: InboxUpload): string {
   return `上传中 ${Math.min(100, Math.round((upload.loaded / upload.total) * 100))}%`;
 }
 
-/** 某条用户消息当时附带的收集箱文件（服务端规整后落在 metadata 里） */
+/** 某条用户消息当时附带的文件（对话附件 / 收集箱；服务端规整后落在 metadata 里） */
 function messageInboxFiles(message: ChatMessage): ChatInboxFile[] {
   return chatInboxFilesFromMetadata(message.metadata);
 }
@@ -2569,7 +2587,7 @@ onUnmounted(() => {
   gap: 4px;
 }
 
-/* 用户消息附带的收集箱文件：只读 chip，悬停看完整路径（附件不是知识库内容，不参与引用） */
+/* 用户消息附带的文件：只读 chip，悬停看路径/说明（对话附件不是收集箱条目，也不参与引用） */
 .entry-attachments {
   display: flex;
   flex-wrap: wrap;

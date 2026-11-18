@@ -257,7 +257,7 @@ function enqueue(input: { sessionId: string; message: string; context?: Interfac
     message: input.message,
     context: input.context ?? {},
   });
-  // 附件随用户消息落 metadata：转录里能标出用户当时附了哪些收集箱文件
+  // 附件随用户消息落 metadata：转录里能标出用户当时附了哪些对话附件/收集箱文件
   // （对话重建、多端同步、排队转正之后都还在）。queued 标记保留，故用合并写。
   const metadata = inboxFilesMetadata(input.context);
   if (metadata) updateMessageMetadata(message.id, metadata);
@@ -266,7 +266,7 @@ function enqueue(input: { sessionId: string; message: string; context?: Interfac
 }
 
 /**
- * 收集箱附件落用户消息 metadata（只存规整后的原件路径）。
+ * 附件（对话附件 / 收集箱文件）落用户消息 metadata，只存规整后的路径。
  * 放这里而不是前端传：上下文本来就要送服务端，前端不必再多传一份可能不一致的字段。
  */
 function inboxFilesMetadata(context?: InterfaceContext): Record<string, unknown> | undefined {

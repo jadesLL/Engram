@@ -29,7 +29,9 @@ import {
   INBOX_DERIVED_DIR,
   isInboxPath,
   isInboxDerivedPath,
+  isChatAttachmentPath,
 } from '../lib/brainPaths.js';
+import { ensureChatAttachmentDir } from '../lib/chatAttachments.js';
 
 /**
  * 收集箱：拖进来的任意文件先落在这里，是「待整理 / 待转换」的暂存资产。
@@ -109,11 +111,18 @@ export async function inboxRoutes(app: FastifyInstance) {
   /**
    * 拖入上传：任意格式、任意数量，流式写盘（不进内存）。
    * 可选表单字段 `dir`（收集箱下的相对子目录）；同名自动加序号，不覆盖已有文件。
+   *
+   * `scope=chat` 是聊天输入区的对话附件：落到 收集箱/.对话附件/（隐藏目录），
+   * 不算收集箱条目（列表/计数/挑选都看不到），也不发同步事件。
+   * 客户端把 scope 放在文件 part 之前；即使顺序反了，循环结束后也会把已落盘的文件移过去。
    */
   app.post('/api/inbox/upload', async (req, reply) => {
     const saved: InboxItem[] = [];
     const skipped: { name: string; reason: string }[] = [];
     let subDir = INBOX_DIR;
+    /** 收集箱上传 / 对话附件上传：后者不进列表、不发同步事件 */
+    let scope: 'inbox' | 'chat' = 'inbox';
+    let chatDir = '';
     // 客户端（桌面端/手机端）用内置浏览器渲染后保存网页时带上来源地址：与直接抓取一样在文末记一条注释
     let sourceUrl = '';
     // 分类/转换能力（inboxItems → inboxConvert → pdfjs/xlsx/mammoth）按需加载，每个请求内缓存
@@ -125,7 +134,15 @@ export async function inboxRoutes(app: FastifyInstance) {
       limits: { fileSize: Infinity, files: INBOX_MAX_FILES },
     })) {
       if (part.type === 'field') {
-        if (part.fieldname === 'dir') {
+        if (part.fieldname === 'scope') {
+          if (String(part.value || '').trim() === 'chat') {
+            scope = 'chat';
+            chatDir = ensureChatAttachmentDir();
+            subDir = chatDir;
+          }
+        } else if (part.fieldname === 'dir') {
+          // 对话附件固定落在隐藏目录，不接受收集箱子目录覆盖
+          if (scope === 'chat') continue;
           const raw = String(part.value || '').trim();
           if (raw) subDir = path.posix.join(INBOX_DIR, sanitizeName(raw));
         } else if (part.fieldname === 'sourceUrl') {
@@ -156,9 +173,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       // 只对 HTML 追加注释：其它格式（含二进制）拼接文本会损坏原件。
       // 注意不能在这里追加：multipart 的字段可能排在文件之后（浏览器 FormData 就是 files→sourceUrl），
       // 统一等全部 part 收完再补（见循环之后）。
-      noteAppWrite(abs);
-      notifySyncChange('file', rel);
-      emit('file-changed', { path: rel });
+      // 通知也等落点确定后再发：scope=chat 的附件不进收集箱、也不参与同步。
       const stat = fs.statSync(abs);
       inbox ??= await import('../lib/inboxItems.js');
       inboxConvert ??= await import('../pipeline/inboxConvert.js');
@@ -180,6 +195,30 @@ export async function inboxRoutes(app: FastifyInstance) {
         jobId: null,
         assistantSessionId: null,
       } satisfies InboxItem);
+    }
+
+    // scope 字段可能排在文件 part 之后：把已经写进收集箱根的文件补挪到隐藏附件目录。
+    // 对话附件绝不能留在收集箱根，否则又会出现在收集箱列表里。
+    if (scope === 'chat') {
+      if (!chatDir) chatDir = ensureChatAttachmentDir();
+      for (let index = saved.length - 1; index >= 0; index -= 1) {
+        const item = saved[index];
+        if (isChatAttachmentPath(item.path)) continue;
+        const target = uniqueInboxPath(chatDir, path.posix.basename(item.path));
+        try {
+          fs.mkdirSync(path.dirname(safeJoin(target)), { recursive: true });
+          fs.renameSync(safeJoin(item.path), safeJoin(target));
+          const stat = fs.statSync(safeJoin(target));
+          item.path = target;
+          item.rel = target.slice(INBOX_DIR.length + 1);
+          item.size = stat.size;
+          item.mtime = stat.mtimeMs;
+        } catch (error: any) {
+          fs.rmSync(safeJoin(item.path), { force: true });
+          skipped.push({ name: item.name, reason: `附件保存失败：${error?.message || '移动失败'}` });
+          saved.splice(index, 1);
+        }
+      }
     }
 
     // 客户端渲染后保存的网页：文末补来源注释（与 /api/inbox/fetch-url 同一格式），
@@ -207,6 +246,16 @@ export async function inboxRoutes(app: FastifyInstance) {
         error: `「${renderedEmpty}」渲染后仍然没有正文（链接可能已失效、需要登录，或对方站点这次没有返回内容）：可稍后重试，或改用浏览器打开后另存为文件再拖入收集箱`,
         code: 'render-empty',
       });
+    }
+
+    for (const item of saved) {
+      const abs = safeJoin(item.path);
+      noteAppWrite(abs);
+      // 对话附件是隐藏目录里的临时输入：不进收集箱列表，也不参与多端同步
+      if (scope === 'inbox') {
+        notifySyncChange('file', item.path);
+        emit('file-changed', { path: item.path });
+      }
     }
 
     if (!saved.length && skipped.length) {

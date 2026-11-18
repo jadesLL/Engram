@@ -34,6 +34,7 @@ import type { InterfaceContext } from '../assistant/prompts.js';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { customerResearchRetryTask, bindCustomerResearchRetry, CustomerResearchError } from '../research/customerResearch.js';
 import { recordSessionDelete } from '../sync/index.js';
+import { collectSessionChatAttachments, deleteChatAttachments } from '../lib/chatAttachments.js';
 
 const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
 
@@ -250,8 +251,12 @@ export async function assistantRoutes(app: FastifyInstance) {
     const id = (req.params as any).id;
     const active = repo.activeRunForSession(id);
     if (active) await cancelRun(active.id);
+    // 先记下本会话引用过的对话附件：消息删掉后就再查不到了。
+    // 只删没有被其它会话再引用的文件；仍被引用的保留（用户可能回到旧会话再让 Agent 看）。
+    const attachments = collectSessionChatAttachments(id);
     // 走同步门面删除：删本地副本 + 记墓碑 + 广播（否则对端手里的旧副本会在对账时把它复活）
     recordSessionDelete(id);
+    deleteChatAttachments(attachments);
     return { ok: true };
   });
 

@@ -1,15 +1,21 @@
 import type { ChatInboxFile } from '../stores/chat';
 
 /**
- * 对话里的收集箱附件：路径规整、合并去重、默认话术与消息 metadata 解析。
+ * 对话里的附件：路径规整、合并去重、默认话术与消息 metadata 解析。
  *
+ * 两类附件走同一条上下文通道，但语义不同：
+ *  - 对话附件（刚粘贴/上传到输入区）落 `收集箱/.对话附件/` 隐藏目录，只给本轮 Agent 读；
+ *  - 收集箱文件（从收集箱挑选，或旧版上传直接落进收集箱）是用户待整理的暂存资产。
  * ChatDrawer 只负责渲染与发请求；这些纯逻辑抽出来，单测不用挂 Vue 就能把
  * 「拖入/粘贴/挑选/发送/重放快照」几条路径过一遍。服务端 assistant/prompts.ts 的
  * normalizeInboxFiles 是同一口径的第二道过滤（前端清单只影响展示）。
  */
 
-/** 一条消息最多带多少份收集箱文件（与服务端 normalizeInboxFiles 的上限一致） */
+/** 一条消息最多带多少份附件（与服务端 normalizeInboxFiles 的上限一致） */
 export const MAX_CHAT_INBOX_FILES = 20;
+
+/** 对话附件目录（与服务端 brainPaths.CHAT_ATTACHMENT_DIR 同口径） */
+export const CHAT_ATTACHMENT_DIR = '收集箱/.对话附件';
 
 /** 统一成正斜杠、去掉首尾斜杠的 vault 相对路径 */
 function normalizePath(path: unknown): string {
@@ -23,6 +29,12 @@ function normalizePath(path: unknown): string {
 export function isInboxOriginalPath(path: string): boolean {
   const rel = normalizePath(path);
   return rel.startsWith('收集箱/') && !rel.startsWith('收集箱/转换结果/');
+}
+
+/** 是否对话附件：收集箱下的隐藏目录，只是本轮输入，不是收集箱条目 */
+export function isChatAttachmentPath(path: string): boolean {
+  const rel = normalizePath(path);
+  return rel === CHAT_ATTACHMENT_DIR || rel.startsWith(`${CHAT_ATTACHMENT_DIR}/`);
 }
 
 /** 展示名：路径末段；没有文件名时退回整条路径 */
@@ -91,9 +103,13 @@ export function chatInboxFilesFromMetadata(metadata: unknown): ChatInboxFile[] {
   return files;
 }
 
-/** 附件 chip 上的来源小字：刚上传 / 从收集箱挑选 */
+/**
+ * 附件 chip 上的来源小字：对话附件 / 收集箱。
+ * 旧消息的 source='upload' 是当年直接落进收集箱的上传，按「收集箱」展示才符合它现在的位置。
+ */
 export function chatInboxSourceLabel(file: ChatInboxFile): string {
-  return file.source === 'inbox' ? '收集箱' : '新上传';
+  if (isChatAttachmentPath(file.path)) return '对话附件';
+  return '收集箱';
 }
 
 /**
@@ -106,7 +122,15 @@ export function composeChatInboxMessage(draft: string, files: ChatInboxFile[]): 
   const text = String(draft ?? '').trim();
   if (text) return text;
   if (!files.length) return '';
-  return `我从收集箱附上了 ${files.length} 份文件。请先读懂它们，给我 3–5 条要点总结；需要转成 Markdown 时按收集箱规范处理，产物留在收集箱，不要入库。`;
+  const chatCount = files.filter((file) => isChatAttachmentPath(file.path)).length;
+  const inboxCount = files.length - chatCount;
+  if (!inboxCount) {
+    return `我附上了 ${files.length} 份对话附件（只给这一轮参考，不是收集箱条目）。请先读懂它们，给我 3–5 条要点总结；不要入库。`;
+  }
+  if (!chatCount) {
+    return `我从收集箱附上了 ${files.length} 份文件。请先读懂它们，给我 3–5 条要点总结；需要转成 Markdown 时按收集箱规范处理，产物留在收集箱，不要入库。`;
+  }
+  return `我附上了 ${files.length} 份文件（${chatCount} 份是临时对话附件、${inboxCount} 份来自收集箱）。请先读懂它们，给我 3–5 条要点总结；收集箱文件的产物留在收集箱、不要入库，临时附件也只是本轮输入、不要入库。`;
 }
 
 const PASTE_EXT: Record<string, string> = {
