@@ -56,7 +56,7 @@ test('事件标签：已知事件给中文，未知事件原样透出', () => {
 test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽屉里只剩英文 id）', () => {
   const serverEvents = [
     'start', 'stopped', 'connected', 'reconnected', 'disconnected',
-    'push-ok', 'push-retry', 'push-received', 'push-rejected', 'push-merged', 'apply-failed', 'move-superseded',
+    'push-ok', 'push-retry', 'push-received', 'push-rejected', 'push-merged', 'push-stale', 'apply-failed', 'move-superseded',
     'local-broadcast',
     'file-pull-ok', 'file-pull-deferred', 'file-pull-retry-ok', 'file-pull-retry-failed', 'file-received', 'file-rejected',
     'replay', 'pull-applied', 'oplog-trimmed',
@@ -70,7 +70,7 @@ test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽�
   const androidEvents = [
     'sync-done', 'sync-paused', 'sync-failed', 'changes-too-large',
     'pull-page', 'pull-file', 'pull-delete', 'pull-move', 'pull-local-newer',
-    'push-page', 'push-file', 'push-delete', 'push-move',
+    'push-page', 'push-file', 'push-delete', 'push-move', 'push-stale',
     'ledger-marks', 'ledger-marks-failed', 'ledger-marks-unsupported',
   ];
   for (const event of [...serverEvents, ...androidEvents]) {

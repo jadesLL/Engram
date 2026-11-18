@@ -111,6 +111,17 @@ function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: Pu
   const target = String(push.target || '');
   const from = String(push.old_path || '');
   const op = result.op;
+  if (result.merge === 'stale') {
+    // 不是冲突、也没有任何内容变化：成员只是拿着旧版本回来补推。记一条 info 便于排查
+    // 「某台设备为什么一直推旧稿」，同时明确告诉用户没有生成冲突副本。
+    logSyncEvent('info', 'push-stale', {
+      detail: `${who}推送页面「${op?.title || target}」的旧版本（没有本地改动），已按中枢最新版处理，未生成冲突副本`,
+      scope: 'hub',
+      peer: peer?.name,
+      data: { peerId: peer?.id || 'owner', kind: push.kind, path: target, revision: result.revision, merge: 'stale' },
+    });
+    return;
+  }
   if (!isNoteworthyOp(op)) return;
   const describe = describeOpSummary(op);
   const data: Record<string, unknown> = {
