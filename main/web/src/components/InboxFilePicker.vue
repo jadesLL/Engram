@@ -18,7 +18,7 @@
       <p v-if="inbox.loading && !inbox.loaded" class="picker-state"><AppSpinner :size="13" /> 正在读取收集箱…</p>
       <p v-else-if="inbox.error" class="picker-state error">{{ inbox.error }}</p>
       <p v-else-if="!inbox.items.length" class="picker-state">
-        收集箱还是空的：可以把文件拖到收集箱页面，或直接在内置 Agent 输入区点附件上传。
+        收集箱还是空的：可以把文件拖到收集箱页面（或从收集箱页面导入）。聊天输入区的附件只是临时给 Agent 看，不会进收集箱。
       </p>
       <p v-else-if="!visible.length" class="picker-state">没有匹配「{{ query.trim() }}」的文件。</p>
 
@@ -69,7 +69,8 @@ import type { ChatInboxFile } from '../stores/chat';
  * 从收集箱挑选文件作为这条消息的上下文。
  *
  * 只读收集箱列表（`/api/inbox/items` 的目录实时扫描），不移动/转换/入库；
- * 选中项由 ChatDrawer 转成附件 chip，与刚上传的文件走同一条上下文通道。
+ * 选中项由 ChatDrawer 转成附件 chip，与临时对话附件共用同一条上下文通道，
+ * 但保留「收集箱」来源标记（用户待整理的暂存资产，不是聊天临时输入）。
  */
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: []; pick: [files: ChatInboxFile[]] }>();

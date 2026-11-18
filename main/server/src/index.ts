@@ -41,6 +41,7 @@ import { initializeDoxentSync } from './sync/doxentSync.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { registerAgentConsoleProxy } from './assistant/agentConsoleProxy.js';
+import { pruneChatAttachments } from './lib/chatAttachments.js';
 import { agentToolRoutes } from './routes/agentTools.js';
 import { assetRoutes } from './routes/assets.js';
 import { doxentRoutes } from './routes/doxent.js';
@@ -229,6 +230,12 @@ async function runBackgroundStartup(app: FastifyInstance): Promise<void> {
   await step('queue-derived', () => queueMissingDerivedPages());
   // 清理 30 天前的终态 jobs 行 + 恢复上次中断的任务（recoverStaleJobs 已改为集合式查询）
   await step('jobs-cleanup', () => pruneFinishedJobs());
+  // 对话附件：清理超期且没有任何消息再引用的孤儿文件（上传后没发送就关掉抽屉的那种）；
+  // 仍被会话消息引用的保留，用户回到旧会话还能让 Agent 重新看。
+  await step('chat-attachments-prune', () => {
+    const removed = pruneChatAttachments();
+    if (removed) console.log(`[agent] 已清理 ${removed} 份超期对话附件`);
+  });
   await step('jobs-recover', () => startJobRunner());
   // 带外文件系统监听：外置 Agent / 用户在服务端之外直接增删改 brain 目录时，立刻对账并推 SSE
   await step('vault-watch', () => { startVaultWatch(); });

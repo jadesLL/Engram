@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CHAT_ATTACHMENT_DIR,
   INBOX_DIR,
   INBOX_DERIVED_DIR,
   classifyBrainEntry,
   inboxDerivedPath,
   inboxAccessError,
+  isChatAttachmentPath,
   isInboxDerivedPath,
   isInboxPath,
   isNestedVaultPath,
@@ -47,6 +49,17 @@ test('isNestedVaultPath：vault 顶层又叫 brain 的路径一律视为整库�
 test('isInboxDerivedPath：转换产物单独成区', () => {
   assert.equal(isInboxDerivedPath(`${INBOX_DERIVED_DIR}/合同.md`), true);
   assert.equal(isInboxDerivedPath(`${INBOX_DIR}/合同.pdf`), false);
+});
+
+test('isChatAttachmentPath：只认隐藏的对话附件目录', () => {
+  assert.equal(isChatAttachmentPath(`${CHAT_ATTACHMENT_DIR}/20261118/粘贴图片.png`), true);
+  assert.equal(isChatAttachmentPath(CHAT_ATTACHMENT_DIR), true);
+  assert.equal(isChatAttachmentPath(`${INBOX_DIR}/合同.pdf`), false);
+  // 前缀相同但不是同一个目录
+  assert.equal(isChatAttachmentPath(`${CHAT_ATTACHMENT_DIR}备份/x.png`), false);
+  assert.equal(isChatAttachmentPath(''), false);
+  // 对话附件仍在收集箱口径内（读取链路复用），但按隐藏目录排除列表与同步
+  assert.equal(isInboxPath(`${CHAT_ATTACHMENT_DIR}/20261118/粘贴图片.png`), true);
 });
 
 test('classifyBrainEntry：收集箱里的 .md 也按文件同步，绝不能走页面分支', () => {

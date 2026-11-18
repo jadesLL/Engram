@@ -16,6 +16,18 @@ export const INBOX_DIR = '收集箱';
 /** 语义转换产物目录（与原件同区，因此同样不参与检索） */
 export const INBOX_DERIVED_DIR = `${INBOX_DIR}/转换结果`;
 
+/**
+ * 内置 Agent 对话附件目录（隐藏目录，落在收集箱内但**不是收集箱条目**）。
+ *
+ * 用户粘贴 / 拖入 / 上传到聊天输入区的图片与文件，只是「让 Agent 读一眼」的临时输入：
+ *  - 收集箱列表、计数、挑选弹层都按「跳过点开头的目录」把它排除在外；
+ *  - 同步扫描同样跳过隐藏项，因此不会作为收集箱内容同步到其它端；
+ *  - 仍位于 收集箱/ 下，是为了复用收集箱的读取链路（`engram inbox read` 能取原件、
+ *    图片落文件），但提示词按「对话附件」单独说明，不允许当作收集箱待整理条目处理。
+ * 生命周期由 lib/chatAttachments 管：删会话时清理，服务启动时清理超期孤儿。
+ */
+export const CHAT_ATTACHMENT_DIR = `${INBOX_DIR}/.对话附件`;
+
 /** 统一成正斜杠、去掉首尾斜杠的 vault 相对路径 */
 export function normalizeBrainRel(rel: string | null | undefined): string {
   return String(rel ?? '')
@@ -28,6 +40,12 @@ export function normalizeBrainRel(rel: string | null | undefined): string {
 export function isInboxPath(rel: string | null | undefined): boolean {
   const normalized = normalizeBrainRel(rel);
   return normalized === INBOX_DIR || normalized.startsWith(`${INBOX_DIR}/`);
+}
+
+/** 是否是内置 Agent 的对话附件（收集箱下的隐藏目录；不是收集箱条目） */
+export function isChatAttachmentPath(rel: string | null | undefined): boolean {
+  const normalized = normalizeBrainRel(rel);
+  return normalized === CHAT_ATTACHMENT_DIR || normalized.startsWith(`${CHAT_ATTACHMENT_DIR}/`);
 }
 
 /** vault 根目录（DATA_DIR/brain）自身的目录名。vault 顶层再出现同名目录只可能是整库被复制/错误恢复。 */

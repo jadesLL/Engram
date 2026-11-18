@@ -127,19 +127,22 @@ export const useInboxStore = defineStore('inbox', () => {
    */
   async function upload(
     files: File[] | FileList,
-    dir = ''
+    dir = '',
+    options: { scope?: 'inbox' | 'chat' } = {}
   ): Promise<{ saved: number; skipped: string[]; items: InboxItem[] }> {
     const list = Array.from(files);
     let saved = 0;
     const skipped: string[] = [];
-    // 失败/跳过的不进 items：调用方（例如在对话里附件）只拿到真正落进收集箱的文件。
+    // 失败/跳过的不进 items：调用方（例如在对话里附件）只拿到真正落盘的文件。
     const items: InboxItem[] = [];
     for (const file of list) {
       const progress: InboxUpload = { id: ++nextUploadId, name: file.name, loaded: 0, total: file.size };
       uploading.value = [...uploading.value, progress];
       const form = new FormData();
+      // scope 必须排在文件 part 之前：服务端边收边写，按当前 scope 决定落点
+      if (options.scope === 'chat') form.append('scope', 'chat');
       form.append('files', file);
-      if (dir) form.append('dir', dir);
+      if (dir && options.scope !== 'chat') form.append('dir', dir);
       try {
         const { data } = await api.post('/api/inbox/upload', form, {
           onUploadProgress: (event) => {
@@ -158,8 +161,19 @@ export const useInboxStore = defineStore('inbox', () => {
         uploading.value = uploading.value.filter((entry) => entry.id !== progress.id);
       }
     }
-    await load();
+    // 对话附件落在隐藏目录，不影响收集箱列表，不必多刷一次
+    if (options.scope !== 'chat') await load();
     return { saved, skipped, items };
+  }
+
+  /**
+   * 聊天输入区的对话附件：只给本轮 Agent 读，落隐藏目录，不进收集箱列表/计数。
+   * 与从收集箱挑选（source='inbox'）是两条通道，别混用。
+   */
+  function uploadChatAttachments(
+    files: File[] | FileList
+  ): Promise<{ saved: number; skipped: string[]; items: InboxItem[] }> {
+    return upload(files, '', { scope: 'chat' });
   }
 
   /**
@@ -261,6 +275,7 @@ export const useInboxStore = defineStore('inbox', () => {
     activeCount,
     load,
     upload,
+    uploadChatAttachments,
     fetchUrl,
     remove,
     convert,

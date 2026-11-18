@@ -112,6 +112,35 @@ test('同名不覆盖：第二份自动加序号', async () => {
   assert.equal(second, 'v2');
 });
 
+test('对话附件（scope=chat）：落隐藏目录，不出现在收集箱列表', async () => {
+  const req = form({ scope: 'chat' }, [
+    { filename: '粘贴图片.png', content: Buffer.from('fake png'), type: 'image/png' },
+  ]);
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/inbox/upload',
+    headers: { ...auth(), ...req.headers },
+    payload: req.payload,
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const saved = res.json().saved as any[];
+  assert.equal(saved.length, 1);
+  assert.match(saved[0].path, /^收集箱\/\.对话附件\/\d{8}\/粘贴图片\.png$/);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, saved[0].path)), true, '附件应落在隐藏目录');
+  assert.equal(
+    fs.existsSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '粘贴图片.png')),
+    false,
+    '不应留在收集箱根',
+  );
+
+  const list = await app.inject({ method: 'GET', url: '/api/inbox/items', headers: auth() });
+  assert.equal(
+    (list.json().items as any[]).some((item) => item.name === '粘贴图片.png'),
+    false,
+    '对话附件不能出现在收集箱列表',
+  );
+});
+
 test('网址抓取拒绝本地与非网页地址', async () => {
   for (const url of ['http://127.0.0.1/', 'file:///tmp/secret', 'http://[::1]/']) {
     const res = await app.inject({
