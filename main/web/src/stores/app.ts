@@ -55,6 +55,16 @@ export const useAppStore = defineStore('app', {
       editorMode: (localStorage.getItem('editorMode') as 'ir' | 'sv') || 'ir',
       /** 沉浸阅读状态：默认开启，会话内切换页面保持（不写本地偏好） */
       readingMode: true,
+      /**
+       * 编辑页全屏：进入时由 EditorView 置 true，Home 据此收起文件树侧栏与 Agent 抽屉；
+       * 退出时按 editorFullscreenSnapshot 原样恢复（不写本地偏好，离开编辑页即结束）。
+       */
+      editorFullscreen: false,
+      editorFullscreenSnapshot: null as null | {
+        sidebarOpen: boolean;
+        sidebarFull: boolean;
+        chatDrawerOpen: boolean;
+      },
       readingPreferences: parseReadingPreferences(localStorage.getItem('readingPreferences')),
       /** 双链/关联跳转的页面轨迹：压入来源页 id + 标题，「返回上一页」逐级回退或下拉直选 */
       pageTrail: [] as PageTrailEntry[],
@@ -142,6 +152,34 @@ export const useAppStore = defineStore('app', {
       this.editorMode = mode;
       localStorage.setItem('editorMode', mode);
       void api.put('/api/settings', { editor_mode: mode }).catch(() => {});
+    },
+    /**
+     * 编辑页全屏：进入时记住侧栏 / 满窗目录 / Agent 抽屉原本的开合，再把三处收起；
+     * 退出时原样恢复。用户要的是「全屏时只有正文，退出后回到原样」——
+     * 所以这里不在全屏里拦截用户操作，只保证退出那一刻回到进入前的状态。
+     */
+    setEditorFullscreen(on: boolean) {
+      if (on === this.editorFullscreen) return;
+      if (on) {
+        this.editorFullscreenSnapshot = {
+          sidebarOpen: this.sidebarOpen,
+          sidebarFull: this.sidebarFull,
+          chatDrawerOpen: this.chatDrawerOpen,
+        };
+        this.sidebarOpen = false;
+        this.sidebarFull = false;
+        this.chatDrawerOpen = false;
+        this.chatMinimizedAt = 0;
+      } else {
+        const snapshot = this.editorFullscreenSnapshot;
+        if (snapshot) {
+          this.sidebarOpen = snapshot.sidebarOpen;
+          this.sidebarFull = snapshot.sidebarFull;
+          this.chatDrawerOpen = snapshot.chatDrawerOpen;
+        }
+        this.editorFullscreenSnapshot = null;
+      }
+      this.editorFullscreen = on;
     },
     /** 读一次界面偏好（服务端设置 show_ai_workspace：'1' 才显示 AI 工作区） */
     async loadUiPreferences() {
