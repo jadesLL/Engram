@@ -5,6 +5,7 @@ import { BRAIN_DIR } from '../config.js';
 import { db } from './db.js';
 import {
   safeJoin, syncPageFile, markPageDeleted, readPage, writePage, notifySyncChange,
+  adoptPageAssetRefs,
 } from './vault.js';
 import { emit } from './events.js';
 import { redirectWikiLinks } from './renamePage.js';
@@ -253,12 +254,16 @@ export async function reconcileVaultPaths(
     if (/\.md$/i.test(rel)) {
       const id = frontmatterId(rel);
       if (id && adoptExternalRename(rel, id)) {
+        adoptPageAssetRefs(rel); // 被改名的若是一份复制稿，引用可能还挂在别的父项下
         result.moved++;
         continue;
       }
       const meta = syncPageFile(rel);
       if (meta) {
-        emit('page-changed', { path: rel, id: meta.id });
+        // 带外转写/复制正文进来的页面可能引用着别的父项图片：收编进本页资产目录
+        // （收编走 writePage，它自己已经推过 page-changed，这里不要再推一次）
+        const adopted = adoptPageAssetRefs(rel);
+        if (!adopted.length) emit('page-changed', { path: rel, id: meta.id });
         result.pages++;
       }
       continue;
