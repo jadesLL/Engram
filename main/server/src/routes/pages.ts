@@ -18,6 +18,7 @@ import { GUIDE_VERSION } from '../content/agentGuide.js';
 import { assetCountsByParent } from '../lib/pageAssets.js';
 import { isRawPath, isRawSectionDir, rawSectionOf } from '../lib/rawSections.js';
 import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
+import { merge3 } from '../sync/merge.js';
 
 function comparablePageContent(value: string): string {
   return value
@@ -160,7 +161,7 @@ export async function pageRoutes(app: FastifyInstance) {
 
   app.put('/api/pages/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { content, title, type, tags } = req.body as any;
+    const { content, title, type, tags, baseContent } = req.body as any;
     const page = db.prepare(`SELECT path,title,type,tags FROM pages WHERE id = ? AND deleted = 0`).get(id) as any;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
     const current = readPage(page.path);
@@ -168,13 +169,41 @@ export async function pageRoutes(app: FastifyInstance) {
     const nextTags = Array.isArray(tags) ? tags : currentTags;
     // content 未传时保留现有正文：本路由支持 title/type/tags 单独更新（如侧栏拖拽改类型只发 type），
     // 缺省成 '' 会把整页正文清空。
-    const nextContent = content === undefined ? (current?.content ?? '') : String(content);
+    let nextContent = content === undefined ? (current?.content ?? '') : String(content);
+    /**
+     * 保存前对账：编辑器带上「它加载时的正文」（baseContent）。如果磁盘上的正文在加载之后
+     * 被别的来源改过（内置 Agent 按位置引用写入、多端同步落地等），先做字符级三方合并，
+     * 把两侧改动都保留，再用合并结果落盘——避免编辑器拿旧正文整篇覆盖 Agent 刚写进去的内容。
+     * 不带 baseContent 的调用方（侧栏改类型、旧客户端）保持原有覆盖语义。
+     */
+    let mergeApplied = false;
+    let mergeConflicts = 0;
+    if (
+      typeof baseContent === 'string' &&
+      current &&
+      content !== undefined &&
+      baseContent !== current.content
+    ) {
+      const merged = merge3(baseContent, nextContent, current.content);
+      if (merged.content !== nextContent) {
+        nextContent = merged.content;
+        mergeApplied = true;
+        mergeConflicts = merged.conflicts.length;
+      }
+    }
     const unchanged = current &&
       comparablePageContent(nextContent) === comparablePageContent(current.content) &&
       (title === undefined || title === page.title) &&
       (type === undefined || type === page.type) &&
       JSON.stringify(nextTags) === JSON.stringify(currentTags);
-    if (unchanged) return { meta: current.meta, unchanged: true };
+    if (unchanged) {
+      return {
+        meta: current.meta,
+        unchanged: true,
+        merged: mergeApplied || undefined,
+        content: mergeApplied ? nextContent : undefined,
+      };
+    }
     // 改标题 = 改名：文件名跟随标题，否则侧栏「目录」里还是旧文件名（用户 2026-09 反馈：
     // 在编辑器里改了标题，面包屑/大标题是新的、目录里的文件名还是旧的）。
     // 先落正文（不带标题），再交给改名内核挪文件+改标题+重定向双链——正文 H1 不动：
@@ -205,7 +234,13 @@ export async function pageRoutes(app: FastifyInstance) {
     try { appendWikiLog('编辑页面', `[[${page.title}]]（${page.path}）`); }
     catch (error) { console.warn('[log] 操作日志写入失败（编辑页面）', error); }
     const fresh = db.prepare(`SELECT * FROM pages WHERE id = ?`).get(meta.id) as any;
-    return { meta: { ...fresh, tags: JSON.parse(fresh.tags) } };
+    return {
+      meta: { ...fresh, tags: JSON.parse(fresh.tags) },
+      // 合并过就回传合并后的正文，编辑器用它在不丢光标的前提下换成最终稿
+      merged: mergeApplied || undefined,
+      conflicts: mergeConflicts || undefined,
+      content: mergeApplied ? nextContent : undefined,
+    };
   });
 
   /** 归档：移入 Wiki/归档/ */
