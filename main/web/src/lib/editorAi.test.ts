@@ -54,7 +54,8 @@ test('右键落点用 caretRangeFromPoint，点在选区内时保住选区', () 
 test('改写先删选区再插结果，全文美化先预览再整篇替换', () => {
   assert.match(editorSource, /vditor\.deleteValue\(\)/, '改写没有先删除选区');
   assert.match(editorSource, /vditor\.insertValue\(block \? '\\n\\n' \+ text \+ '\\n\\n' : text\)/, '改写结果没有插回原位置');
-  assert.match(editorSource, /aiPreview\.value = result\.text/, '美化结果没有进预览');
+  // 全文美化已改为全局任务：结果由 store 持有，对话框 syncBeautifyDialog 再映射进预览
+  assert.match(editorSource, /aiPreview\.value = task\.result|aiPreview\.value = result\.text/, '美化结果没有进预览');
   assert.match(editorSource, /applyEditorMarkdown\(stripIngestComments\(wikiLinksToMarkdown\(next\)\), false\)/, '美化应用没有走整篇替换');
   assert.match(editorSource, /已应用 AI 格式美化/, '应用后没有反馈');
 });
