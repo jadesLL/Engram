@@ -58,6 +58,7 @@ const bullets = computed(() => {
   flex: 1;
   min-height: 34px;
   padding: 7px 0;
+  border-radius: 0;
   border-top: 1px solid var(--ai-line);
   font-size: 11px;
   line-height: 1.45;

@@ -46,10 +46,12 @@ const shown = computed(() => (props.cards || []).slice(0, Math.min(Math.max(1, p
   min-height: 49px;
   padding: 7px 0;
   text-align: left;
+  /* 分隔线用 border-top 画：圆角必须归零，否则会继承全局 button 的 999px 胶囊圆角，两端弯成弧线 */
+  border-radius: 0;
   border-top: 1px solid var(--card-line-soft);
 }
 .mini-task:first-child { border-top: 0; }
-.mini-task:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); border-radius: 6px; }
+.mini-task:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .mini-check {
   width: 15px;
   height: 15px;

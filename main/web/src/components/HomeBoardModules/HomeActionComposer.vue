@@ -106,7 +106,7 @@ function onKey(event: KeyboardEvent) {
 .column-actions { display:flex;flex-direction:column;gap:6px; }
 .quick-action { display:flex;align-items:center;justify-content:center;gap:4px;min-height:32px;flex:none;border-radius:8px;color:var(--text-secondary);background:var(--bg-secondary);font-size:11.5px!important;white-space:nowrap; }
 .quick-action.main-action { color:var(--accent);background:var(--accent-soft); }
-.recent-action { display:flex;flex-direction:column;align-items:center;gap:5px;flex:1;justify-content:center;border-top:1px solid var(--border)!important;color:var(--text-secondary);background:transparent;font-size:11.5px!important;overflow:hidden;min-height:44px; }
+.recent-action { display:flex;flex-direction:column;align-items:center;gap:5px;flex:1;justify-content:center;border-radius:0;border-top:1px solid var(--border)!important;color:var(--text-secondary);background:transparent;font-size:11.5px!important;overflow:hidden;min-height:44px; }
 .recent-action small { width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--text-faint); }
 .column-draft { position:absolute;top:0;right:0;width:5px;height:5px;overflow:hidden;font-size:0;background:var(--accent);border-radius:50%; }
 .bar { flex-direction:row;align-items:center; }

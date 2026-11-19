@@ -88,6 +88,7 @@ function bar(value: number) {
   padding: 0;
   font-size: 12.5px;
   text-align: left;
+  border-radius: 0;
   border-top: 1px solid var(--card-line-soft);
 }
 .stat-row:first-child { border-top: 0; }

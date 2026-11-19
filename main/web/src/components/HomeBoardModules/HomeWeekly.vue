@@ -68,6 +68,7 @@ const totals = computed(() =>
   min-height: 33px;
   padding: 0;
   text-align: left;
+  border-radius: 0;
   border-top: 1px solid var(--card-line-soft);
 }
 .week-row:first-of-type { border-top: 0; }

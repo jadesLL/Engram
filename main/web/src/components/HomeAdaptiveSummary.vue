@@ -210,7 +210,7 @@ onUnmounted(()=>observer?.disconnect());
 
 /* 列表按内容排布，只显示预算内的完整行；底部入口独立固定。 */
 .summary-rows {display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;margin-top:8px;overflow:hidden}
-.summary-row {position:relative;display:flex;align-items:center;gap:10px;flex:none;min-height:var(--summary-row-height,34px);height:var(--summary-row-height,34px);min-width:0;text-align:left;border-top:1px solid var(--border);font-size:13px;line-height:1.4;color:var(--text)}
+.summary-row {position:relative;display:flex;align-items:center;gap:10px;flex:none;min-height:var(--summary-row-height,34px);height:var(--summary-row-height,34px);min-width:0;text-align:left;border-radius:0;border-top:1px solid var(--border);font-size:13px;line-height:1.4;color:var(--text)}
 .summary-row:first-child {border-top:0}
 .summary-row:hover {color:var(--accent)}
 .row-copy {flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
