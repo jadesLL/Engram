@@ -59,7 +59,12 @@
       </ReadingPreview>
 
       <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
-      <div v-show="!app.readingMode && !pageLoading && !pageError" class="editor-topbar chrome-float" data-tip-chrome>
+      <div
+        v-show="!app.readingMode && !pageLoading && !pageError"
+        class="editor-topbar chrome-float"
+        :class="[`topbar-${topbarDensity}`, { 'topbar-tight': topbarDensity !== 'full' }]"
+        data-tip-chrome
+      >
         <nav class="crumb">
           <template v-for="(d, i) in crumbDirs" :key="i">
             <span v-if="i" class="crumb-sep">/</span>
@@ -75,6 +80,7 @@
               type="button"
               aria-haspopup="menu"
               :aria-expanded="open"
+              v-tooltip="'返回上一页'"
               @click="goBackToSource"
             >
               <Icon name="chevron-left" :size="14" />
@@ -94,10 +100,12 @@
           <Icon name="crosshair" :size="14" />
           <span>引用位置</span>
         </button>
-        <!-- 导出当前页：编辑态也能直接出 PDF / 长图，不必先切阅读视图 -->
+        <!-- 导出当前页：编辑态也能直接出 PDF / 长图，不必先切阅读视图；
+             顶栏窄到 mini 档时只留图标 + 下拉箭头（文案进 tooltip） -->
         <PageExportMenu
           trigger-class="btn small topbar-export"
           :icon-size="14"
+          :show-label="topbarDensity === 'full' || topbarDensity === 'compact'"
           :meta="exportMeta"
         />
         <!-- 正文宽度：按可用区百分比（默认 70%），阅读视图与编辑视图共用同一份偏好 -->
@@ -148,7 +156,7 @@
           @click="save(true)"
         >
           <Icon name="check" :size="13" />
-          保存
+          <span class="save-btn-text">保存</span>
         </button>
         <label class="switch-control autosave-toggle" v-tooltip="'按文件记忆；关闭后仅手动保存'">
           <input
@@ -644,6 +652,7 @@ import {
 } from '../lib/readingPreview';
 import { registerBackHandler } from '../lib/androidBack';
 import { registerPositionRefProvider, type PositionRefPayload } from '../lib/positionRef';
+import { topbarDensityFor, topbarWidthFor } from '../lib/topbarFit';
 
 /* 三块重组件（Vditor 编辑器 / 阅读预览 / 富文件预览）都是按需渲染的：静态 import
    会让首页/看板落地页也下载整套编辑器包，改成异步组件按需拉取。模板 ref 全部走
@@ -945,6 +954,14 @@ const preferences = computed(() => app.readingPreferences);
 /** 正文可用区宽度：编辑视图根元素的宽度（已扣掉左侧图标栏与文件树）。
  *  目录自适应（右栏 or 浮层）与正文列宽都要用，必须在下面的 watch(outlineWide) 之前初始化。 */
 const availableWidth = ref(0);
+/* 顶栏密度：内置 Agent 抽屉 / 文件树开合都会改正文宽度，按顶栏自身宽度收文案
+   （窗口媒体查询管不到 dock 后的窄正文，见 lib/topbarFit.ts 的起因说明） */
+const topbarDensity = computed(() =>
+  topbarDensityFor(topbarWidthFor(availableWidth.value, narrowEditor.value), {
+    hasBack: canGoBack.value,
+    manualSave: !autosave.value,
+  })
+);
 function openFormatSheet() {
   if (!narrowEditor.value) return;
   closeOutlineSheet();
@@ -2176,6 +2193,35 @@ onUnmounted(() => {
   background: var(--ai-soft);
 }
 .save-state { white-space: nowrap; flex: none; }
+
+/* ---------- 顶栏密度：按顶栏自身宽度逐档收文案（分档见 lib/topbarFit.ts） ----------
+ * 内置 Agent 抽屉 dock 后正文可以窄到 400px 上下，窗口媒体查询看不到这件事。
+ * 非全量档只收文案，图标 / 开关 / 下拉箭头都保留，并且都带 tooltip。 */
+.topbar-tight .topbar-back span,
+.topbar-tight .topbar-ref span,
+.topbar-tight .autosave-toggle em,
+.topbar-tight .save-btn-text { display: none; }
+/* 引用位置收成图标：热区补到 ~44px（与手机档同一手法） */
+.topbar-tight .topbar-ref {
+  position: relative;
+  min-width: 28px;
+  padding: 0 7px;
+}
+.topbar-tight .topbar-ref::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 8px;
+}
+/* 极窄档：正文宽度整颗收起（手机从「格式」面板调，桌面从阅读视图调） */
+.topbar-micro .width-picker { display: none; }
+/* nano：文件树与抽屉同时占位、正文只剩一窄条时，除了保存态都让出去（不然会溢出胶囊） */
+.topbar-nano .topbar-ref,
+.topbar-nano .topbar-back,
+.topbar-nano .export-menu-wrap,
+.topbar-nano .width-picker,
+.topbar-nano .autosave-toggle,
+.topbar-nano .save-btn { display: none; }
 
 .topbar-width {
   display: inline-flex;
