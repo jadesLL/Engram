@@ -4,7 +4,7 @@ import { wikiLinksToMarkdown } from './wikiLinks';
 import { stripTrailingEmptyTableRows } from './markdownTableCleanup';
 import { readingMetrics } from './readingPreview';
 import { notify, dismissToast } from './notify';
-import { paintExportCanvas } from './pageExportCanvas';
+import { paintExportCanvas, prepareExportCanvasAssets, disposeExportCanvasAssets } from './pageExportCanvas';
 import {
   buildExportArticle,
   EXPORT_MAX_OUTPUT_HEIGHT,
@@ -244,14 +244,19 @@ async function capturePng(sheet: PreparedSheet): Promise<Blob> {
   context.scale(scale, scale);
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  // 直接按浏览器的排版结果重绘（见 pageExportCanvas.ts 头注释：foreignObject 在
-  // Chromium 157 上会污染画布，toBlob 直接失败）
-  if (!paintExportCanvas(context, sheet.article, '#f3efe6')) {
-    throw new Error('导出稿没有可绘制的尺寸');
+  // 内联 SVG（Mermaid）先拆成「图形 + foreignObject 标签」两份素材：整段 SVG 当图片画
+  // 会被 Chromium 判定为污染画布（见 pageExportCanvas 头注释）
+  const assets = await prepareExportCanvasAssets(sheet.article);
+  try {
+    if (!paintExportCanvas(context, sheet.article, '#f3efe6', assets)) {
+      throw new Error('导出稿没有可绘制的尺寸');
+    }
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('浏览器未能生成 PNG');
+    return blob;
+  } finally {
+    disposeExportCanvasAssets(assets);
   }
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-  if (!blob) throw new Error('浏览器未能生成 PNG');
-  return blob;
 }
 
 async function savePng(blob: Blob, filename: string): Promise<void> {

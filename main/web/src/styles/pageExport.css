@@ -383,6 +383,12 @@
 
   html,
   body {
+    /* 应用壳是 height:100% + overflow:hidden 的 SPA；不在这里解除限制，打印只会出一页
+       并在约一个视口处把导出稿裁掉（2026-11-19 用户真实笔记复现：5787px 稿只出 1 页）。 */
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
     background: #fff !important;
   }
 
