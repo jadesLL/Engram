@@ -8,6 +8,7 @@ import {
   type SelectionLocation,
 } from '../lib/askAgent';
 import { buildAnswer, parseQuestion, pendingQuestions as pickPendingQuestions, type ChatQuestion } from '../lib/chatQuestions';
+import type { PositionRefPayload } from '../lib/positionRef';
 import { loadRuntimeCapabilities } from '../lib/capabilities';
 import { notify } from '../lib/notify';
 
@@ -41,6 +42,11 @@ export interface ChatContext {
   currentPage?: { id?: string; title?: string; path?: string };
   currentFile?: { path?: string; name?: string };
   selection?: string;
+  /**
+   * 用户在编辑页引用的正文位置（「让 Agent 写在这里」）。
+   * 服务端会校验并换成一次性位置令牌，Agent 用 engram pages insert 精确写入。
+   */
+  positionRef?: PositionRefPayload;
   /** 随消息附带的收集箱文件（服务端规整后落进用户消息 metadata） */
   inboxFiles?: ChatInboxFile[];
 }
@@ -197,6 +203,8 @@ export const useChatStore = defineStore('chat', {
     activeSessionId: localStorage.getItem('chatSessionId') || '',
     snapshot: null as ChatSnapshot | null,
     currentContext: {} as ChatContext,
+    /** 输入区上方的「插入位置」chip：引用后下一轮随消息发送，发完清掉 */
+    positionRef: null as PositionRefPayload | null,
     /** 输入框上方逐条展示的选中片段（右击「在 Agent 中提问」累积） */
     selections: [] as SelectionExcerpt[],
     statusText: '',
@@ -369,6 +377,16 @@ export const useChatStore = defineStore('chat', {
       this.currentContext = context;
     },
     /**
+     * 引用正文位置：只挂一枚 chip，不发消息、不打开别的界面。
+     * 下一轮发送时随 context.positionRef 一起走；发成功后清掉（服务端令牌一次有效）。
+     */
+    setPositionRef(ref: PositionRefPayload) {
+      this.positionRef = ref;
+    },
+    clearPositionRef() {
+      this.positionRef = null;
+    },
+    /**
      * 选中文字提问：把片段追加进列表（同一段不重复加），刷新所在位置上下文，
      * 并把全部片段拼成 wire 上的 `selection`。片段本身留给抽屉在输入框上方逐条展示。
      */
@@ -409,6 +427,7 @@ export const useChatStore = defineStore('chat', {
     clearContext() {
       this.currentContext = {};
       this.selections = [];
+      this.positionRef = null;
     },
     /**
      * 发一条消息。会话正在回复时也照发：服务端把它落库成「排队中」的轮次，
@@ -419,10 +438,22 @@ export const useChatStore = defineStore('chat', {
       const text = message.trim();
       if (!text || !this.activeSessionId) return false;
       const sessionId = this.activeSessionId;
-      const wireContext = context || this.currentContext;
+      // 位置引用总是随消息走（附件 context 由抽屉传入时也不能丢）
+      const wireContext: ChatContext = { ...(context || this.currentContext) };
+      if (this.positionRef) wireContext.positionRef = this.positionRef;
       // 服务端会把同一份附件落进用户消息 metadata；乐观插入的本地消息先照着画，
       // 等快照回来再以服务端规整后的版本为准（不重复显示）。
       const inboxFiles = Array.isArray(wireContext.inboxFiles) ? wireContext.inboxFiles : [];
+      // 乐观消息也带一份位置摘要，转录里立刻能看出「这条消息写到了哪里」
+      const localMetadata: Record<string, unknown> = {};
+      if (inboxFiles.length) localMetadata.inboxFiles = inboxFiles;
+      if (wireContext.positionRef) {
+        localMetadata.position = {
+          pageTitle: wireContext.positionRef.pageTitle,
+          headingPath: wireContext.positionRef.headingPath,
+          preview: wireContext.positionRef.preview,
+        };
+      }
       this.error = '';
       this.statusText = '';
       let accepted = false;
@@ -443,13 +474,15 @@ export const useChatStore = defineStore('chat', {
             runId: data.run.id,
             role: 'user',
             content: text,
-            metadata: inboxFiles.length ? { inboxFiles } : {},
+            metadata: localMetadata,
             createdAt: new Date().toISOString(),
           });
           this.connect(data.run.id, sessionId);
         } else {
           this.connect(data.run.id, sessionId);
         }
+        // 服务端已受理位置引用：chip 与正文落点标记一起收掉；发送失败则保留，方便重试
+        this.positionRef = null;
         await this.loadSessions();
       } catch (error) {
         this.error = errorText(error);

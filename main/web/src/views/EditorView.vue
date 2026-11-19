@@ -84,6 +84,16 @@
           </template>
         </BackTrailMenu>
         <div class="spacer"></div>
+        <!-- 引用位置：把光标所在块挂进内置 Agent 的输入区（不弹对话框、不直接生成） -->
+        <button
+          class="btn small topbar-ref"
+          type="button"
+          v-tooltip="'把光标所在位置引用给内置 Agent，让它直接写到这里'"
+          @click="referencePosition"
+        >
+          <Icon name="crosshair" :size="14" />
+          <span>引用位置</span>
+        </button>
         <!-- 导出当前页：编辑态也能直接出 PDF / 长图，不必先切阅读视图 -->
         <PageExportMenu
           trigger-class="btn small topbar-export"
@@ -633,6 +643,7 @@ import {
   READING_FONT_SIZE_MIN,
 } from '../lib/readingPreview';
 import { registerBackHandler } from '../lib/androidBack';
+import { registerPositionRefProvider, type PositionRefPayload } from '../lib/positionRef';
 
 /* 三块重组件（Vditor 编辑器 / 阅读预览 / 富文件预览）都是按需渲染的：静态 import
    会让首页/看板落地页也下载整套编辑器包，改成异步组件按需拉取。模板 ref 全部走
@@ -913,6 +924,8 @@ function toggleChrome() {
 const formatOpen = ref(false);
 const formatSheetRef = ref<HTMLElement>();
 let unregisterFormatBack: (() => void) | null = null;
+/** 聊天抽屉「引用位置」取编辑页光标的注册句柄（卸载时注销） */
+let unregisterPositionRef: (() => void) | null = null;
 type MobileTextWidth = 'wide' | 'standard' | 'narrow';
 const MOBILE_TEXT_WIDTHS: Array<{ key: MobileTextWidth; label: string; pad: number }> = [
   { key: 'wide', label: '满宽', pad: 20 },
@@ -1584,6 +1597,46 @@ function askAgentAboutSelection(selection: string) {
   app.focusChatComposer();
 }
 
+/**
+ * 从编辑器取位置引用。未保存的改动先落盘：服务端要在「已保存的 Markdown」里按锚点原文
+ * 重新定位，草稿里的段落它看不到。
+ */
+async function capturePositionRefFromEditor(): Promise<PositionRefPayload | null> {
+  if (!page.value || pageLoading.value || app.readingMode) return null;
+  if (dirty) {
+    const saved = await save(true);
+    if (!saved) return null;
+  }
+  const anchor = editorRef.value?.capturePositionAnchor?.();
+  if (!anchor) return null;
+  return {
+    ...anchor,
+    pageId: String(page.value.id),
+    pagePath: page.value.path,
+    pageTitle: title.value || page.value.title,
+  };
+}
+
+/** 顶部「引用位置」：只把位置挂进聊天输入区，不弹对话框、不直接生成 */
+async function referencePosition() {
+  const ref = await capturePositionRefFromEditor();
+  if (!ref) {
+    notify.info('先把光标放进正文，再引用位置');
+    return;
+  }
+  chat.setPositionRef(ref);
+  app.toggleChat(true);
+  app.focusChatComposer();
+}
+
+/* 位置 chip 被移除 / 发送成功（store 自动清空）后，正文里的落点标记一起收掉 */
+watch(
+  () => chat.positionRef,
+  (ref) => {
+    if (!ref) editorRef.value?.clearPositionMark?.();
+  },
+);
+
 function selectionBusinessItems(selection: string): ContextMenuItem[] {
   return [
     {
@@ -1954,6 +2007,8 @@ function measureAvailableWidth() {
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   else loadWelcomeOnce();
+  // 聊天抽屉的「引用位置」按钮要取编辑页光标：把取法注册到全局（离开编辑页即注销）
+  unregisterPositionRef = registerPositionRefProvider(capturePositionRefFromEditor);
   /* 安卓返回键：全屏 / 手机目录面板 / 格式面板按层级逐层退出（只认领本组件这一层） */
   unregisterFormatBack = registerBackHandler(() => {
     if (fullscreen.value) {
@@ -1987,6 +2042,8 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', onOutlinePopPointerDown);
   unregisterFormatBack?.();
   unregisterFormatBack = null;
+  unregisterPositionRef?.();
+  unregisterPositionRef = null;
   viewObserver?.disconnect();
   viewObserver = null;
   if (outlineRefreshTimer) clearTimeout(outlineRefreshTimer);
@@ -2084,8 +2141,14 @@ onUnmounted(() => {
 }
 .crumb-root,
 .crumb-item { color: var(--text-faint); }
+/* 目录段与分隔符不许被压成 0 宽（否则只剩「Wiki / /」）；让当前标题承担省略 */
+.crumb-root,
+.crumb-item,
+.crumb-sep { flex: none; }
 .crumb-item { overflow: hidden; text-overflow: ellipsis; }
 .crumb-current {
+  min-width: 0;
+  flex: 0 1 auto;
   color: var(--text-secondary);
   font-weight: 600;
   overflow: hidden;
@@ -2100,6 +2163,20 @@ onUnmounted(() => {
   display: inline-flex;
   flex: none;
 }
+/* 「引用位置」：暖色描边，与聊天输入区的位置 chip、正文落点标记同一套色 */
+.topbar-ref {
+  flex: none;
+  color: var(--ai);
+  border-color: var(--ai-line);
+  background: var(--ai-soft);
+}
+.topbar-ref:hover {
+  color: var(--ai);
+  border-color: var(--ai);
+  background: var(--ai-soft);
+}
+.save-state { white-space: nowrap; flex: none; }
+
 .topbar-width {
   display: inline-flex;
   align-items: center;
@@ -2776,6 +2853,15 @@ button.save-state.dirty:hover { color: var(--accent); }
 
 @media (max-width: 768px) {
   .editor-topbar { height: 40px; padding: 0 6px 0 10px; left: 10px; right: 10px; }
+  /* 手机顶栏只留图标：位置引用仍可用，文案让给标题与保存态；热区补到 ~44px */
+  .topbar-ref { position: relative; min-width: 28px; padding: 0 7px; }
+  .topbar-ref span { display: none; }
+  .topbar-ref::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 8px;
+  }
   /*
    * 手机顶栏空间只够三样东西：标题、宽度、保存态。面包屑的目录段（Wiki / 实体 / 项目…）
    * 在手机上全是省略号，既读不出来又挤掉标题——只留当前标题（2026-09-29 巡检）。

@@ -7,6 +7,7 @@
 
 import path from 'node:path';
 import { findPlaybook, findPlaybookById } from './playbooks.js';
+import type { PositionRefInput } from './positions.js';
 import {
   INBOX_DIR,
   isChatAttachmentPath,
@@ -88,6 +89,15 @@ export interface InterfaceContext {
   currentPage?: { id?: string; title?: string; path?: string };
   currentFile?: { path?: string; name?: string };
   selection?: string;
+  /**
+   * 用户在编辑页引用的正文位置（「让 Agent 写在这里」）。
+   * 起跑时由 runner 校验并换成一枚 pos_xxx 令牌，令牌才是指令；引用本身是不可信定位线索。
+   */
+  positionRef?: PositionRefInput;
+  /** 服务端生成的位置令牌（只进任务文本，不落 run context） */
+  positionToken?: string;
+  /** 位置在起跑前就失效时的原因：告知 Agent 不要写页面、请用户重新引用 */
+  positionError?: string;
   /** 随消息附上的对话附件 / 收集箱文件（规整口径见 normalizeInboxFiles；按路径区分两类） */
   inboxFiles?: ChatInboxFile[];
   /**
@@ -102,7 +112,7 @@ export interface InterfaceContext {
 
 const STANDING_RULES = [
   '【Engram 内置 Agent 约定】（Engram 是个人知识大脑，不内置 AI：读、写、提炼都由你完成）',
-  '1. 读写知识库只用 `engram` 命令（已在 PATH 里；连接信息由 ~/.engram/config.json 提供，`engram status` 可看连接与计数）：search / pages list|read|related|evidence|write|rename|move|delete|asset / files list|read|raw|add / inbox list|read|raw|add|write|convert / names check|propose|list|audit|answer / chat save / research begin|submit。不要用文件或 shell 工具直接改知识库目录，也不要把知识库内容拷到工作目录再改；加 `--json` 拿机器可读输出。',
+  '1. 读写知识库只用 `engram` 命令（已在 PATH 里；连接信息由 ~/.engram/config.json 提供，`engram status` 可看连接与计数）：search / pages list|read|related|evidence|write|insert|rename|move|delete|asset / files list|read|raw|add / inbox list|read|raw|add|write|convert / names check|propose|list|audit|answer / chat save / research begin|submit。不要用文件或 shell 工具直接改知识库目录，也不要把知识库内容拷到工作目录再改；加 `--json` 拿机器可读输出。',
   '2. 需要作业规范时先跑 `engram guide`（完整流程 Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit 与页面模板）；具体作业手法与纪律用 `engram skill list` 看清单，再 `engram skill show <name>` 取全文。',
   '3. 引用事实必须逐字来自命令返回的原文；写页面走 `engram pages write`（服务端会逐字校验证据并做两来源门禁：新建概念/实体页需 ≥2 个不同原始资料路径各 1 条引文，或单一来源 ≥2 条；已有页面增量更新不受限）。',
   '4. 用中文回答：先给结论，再给依据；不确定就说不确定。',
@@ -157,6 +167,22 @@ export function buildTask(
   if (context?.selection?.trim()) {
     lines.push(`用户选中文字：\n${context.selection.trim().slice(0, 4000)}`);
   }
+  if (context?.positionRef) {
+    const ref = context.positionRef;
+    const heading = (Array.isArray(ref.headingPath) ? ref.headingPath : [])
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean)
+      .join(' → ');
+    const positionLines = [`用户引用了正文位置：《${ref.pageTitle || '(未命名页面)'}》${heading ? ` · ${heading}` : ''}`];
+    if (ref.anchorText) positionLines.push(`锚点原文：\n${String(ref.anchorText).trim().slice(0, 1200)}`);
+    if (ref.before) positionLines.push(`上文摘录：${String(ref.before).trim().slice(-160)}`);
+    if (ref.after) positionLines.push(`下文摘录：${String(ref.after).trim().slice(0, 160)}`);
+    if (context.positionToken) positionLines.push(`位置标记：${context.positionToken}`);
+    lines.push(positionLines.join('\n'));
+  }
+  if (context?.positionError) {
+    lines.push(`用户引用的正文位置已失效：${context.positionError}`);
+  }
   // 附件路径只当定位线索放进不可信块；「该怎么处理」作为可信说明单独追加在后面。
   // 对话附件与收集箱文件分开说：前者只是本轮输入，后者是用户待整理的暂存资产。
   const attachments = normalizeInboxFiles(context);
@@ -177,6 +203,21 @@ export function buildTask(
   }
   if (chatAttachments.length) parts.push(CHAT_ATTACHMENT_NOTE);
   if (inboxFiles.length) parts.push(INBOX_FILES_NOTE);
+  if (context?.positionToken) {
+    parts.push([
+      '【本轮位置写入】用户把光标停在正文的某个块之后，并把位置引用随这条消息发了过来。',
+      `需要往正文写内容时，用 \`engram pages insert ${context.positionToken} --file -\` 提交 Markdown（正文走 stdin 或 --file）；`,
+      '它只把内容插到引用的块之后，不会整页重写。不要用 `engram pages write` 覆盖整页，也不要猜位置或按字符偏移硬写。',
+      '写入前先用 `engram pages read <页面引用>` 看一眼上下文；写完在回答里说清楚插到了哪一节。',
+      '位置标记一次有效；工具返回「锚点失效 / 前文后文已变化」说明页面已被改动，不要硬写，先用 `engram ask` 请用户重新引用位置。',
+    ].join(''));
+  }
+  if (context?.positionError) {
+    parts.push([
+      '【本轮位置写入】用户引用了正文位置，但起跑时校验失败（位置已失效）。',
+      '本轮不要写页面，也不要猜位置；先在回答里说明位置失效，请用户重新引用。',
+    ].join(''));
+  }
   if (history.length) {
     // 助手正文按步分段落库，同一轮的连续段落并回一条再进 transcript
     const merged: Array<{ role: 'user' | 'assistant'; content: string }> = [];

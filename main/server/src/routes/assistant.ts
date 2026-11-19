@@ -6,6 +6,7 @@ import { subscribeRun } from '../assistant/events.js';
 import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submitMessage } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
+import { PositionRefError } from '../assistant/positions.js';
 import {
   agentModelConfigured,
   agentPermissionMode,
@@ -281,7 +282,11 @@ export async function assistantRoutes(app: FastifyInstance) {
       const { run, queued } = submitMessage({ sessionId, message, context: body.context });
       return reply.code(202).send({ run, queued });
     } catch (error) {
-      if (error instanceof RunConflictError || error instanceof AgentNotConfiguredError) {
+      if (
+        error instanceof RunConflictError
+        || error instanceof AgentNotConfiguredError
+        || error instanceof PositionRefError
+      ) {
         return reply.code(error.status).send({ error: error.message });
       }
       const status = (error as any)?.status === 404 ? 404 : 500;

@@ -306,6 +306,7 @@ import {
   type TableEditAction,
 } from '../lib/markdownTable';
 import { createEditorModelSync } from '../lib/editorModelSync';
+import { anchorAtOffset, type PositionAnchor } from '../lib/positionAnchor';
 import { decideModelSync, stableEditorMarkdown } from '../lib/editorComposition';
 import {
   copyText,
@@ -2739,6 +2740,69 @@ function pointInsideSelection(selection: Selection, x: number, y: number): boole
   );
 }
 
+/* ===== 位置引用：把光标所在块交给内置 Agent =====
+ * 不弹对话框，也不生成内容；只把「块锚点」交出去（聊天输入区的 chip）。
+ * 取块的办法：在光标处临时插一个纯文本标记 → getValue() 读出 Markdown → 立刻删掉标记，
+ * 得到光标在 Markdown 里的真实偏移，再按与 server 同款的空行分块规则取锚点。
+ * 为什么不直接读 DOM 文本：服务端要在 Markdown 源里重新定位，块原文必须与保存内容一致。 */
+let posRefBlock: HTMLElement | null = null;
+
+/** 选区所在的顶层正文块（编辑器表面的直接子元素） */
+function topBlockElement(node: HTMLElement | null): HTMLElement | null {
+  const surface = editorSurface();
+  if (!surface || !node) return null;
+  let element: HTMLElement | null = node;
+  while (element.parentElement && element.parentElement !== surface) element = element.parentElement;
+  return element !== surface && surface.contains(element) ? element : null;
+}
+
+/** 给正文里被引用的块加一圈标记；只加 class，不改 DOM 内容（不会进 Markdown） */
+function markPositionBlock(range: Range | null) {
+  clearPositionMark();
+  const block = topBlockElement(range ? selectionElement(range) : null);
+  if (!block) return;
+  posRefBlock = block;
+  block.classList.add('pos-ref-block');
+}
+
+function clearPositionMark(): void {
+  posRefBlock?.classList.remove('pos-ref-block');
+  posRefBlock = null;
+}
+
+/** 光标位置 → 块锚点；拿不到选区或缺 Markdown 时返回 null（调用方给提示） */
+function capturePositionAnchor(): PositionAnchor | null {
+  if (!vditor) return null;
+  const range = selectionRangeInEditor();
+  if (!range) return null;
+  const saved = range.cloneRange();
+  const caret = range.cloneRange();
+  caret.collapse(true);
+  const marker = `ENGRAM_POS_${Math.random().toString(36).slice(2)}${Date.now()}`;
+  const node = document.createTextNode(marker);
+  let markdown = '';
+  try {
+    caret.insertNode(node);
+    markdown = vditor.getValue();
+  } catch {
+    return null;
+  } finally {
+    try { node.remove(); } catch { /* Vditor 已重建 DOM */ }
+    try {
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(saved);
+    } catch { /* 选区已失效，保持现状 */ }
+  }
+  const at = markdown.indexOf(marker);
+  if (at < 0) return null;
+  const clean = markdown.slice(0, at) + markdown.slice(at + marker.length);
+  const anchor = anchorAtOffset(clean, at);
+  if (!anchor) return null;
+  markPositionBlock(saved);
+  return anchor;
+}
+
 /** 光标前后的纯文本上下文（DOM 文本，不含 Markdown 记号，给模型当语境足够） */
 function contextAroundRange(range: Range | null): { before: string; after: string } {
   const surface = editorSurface();
@@ -3324,6 +3388,9 @@ defineExpose({
   openAiRewrite,
   openAiContinue,
   openAiBeautify,
+  /** 位置引用：取光标所在块的锚点，并在正文里标出落点 */
+  capturePositionAnchor,
+  clearPositionMark,
 });
 onMounted(() => {
   init();
@@ -3448,6 +3515,15 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   stroke-linecap: round !important;
   stroke-linejoin: round !important;
 }
+/* 位置引用落点：引用发给 Agent 后，正文里对应的块保持一圈暖色标记，
+   提醒「写在这里」；只加 class，不影响 Markdown 内容与撤销栈。 */
+:deep(.pos-ref-block) {
+  border-radius: 6px;
+  background: var(--ai-soft);
+  box-shadow: -3px 0 0 var(--ai), 0 0 0 6px var(--ai-soft);
+  transition: background .2s ease, box-shadow .2s ease;
+}
+
 :deep(.vditor-toolbar) {
   /* 白卡片 + 细描边 + 单层轻投影，左缘对齐正文列，浮在纸面上 */
   display: flex;
