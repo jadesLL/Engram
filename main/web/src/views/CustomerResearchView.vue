@@ -1097,7 +1097,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .report-markdown :deep(.md-table) { border-collapse:collapse; font-size:12.5px; }
 .report-markdown :deep(.md-table th),.report-markdown :deep(.md-table td) { border:1px solid var(--border); padding:6px 9px; text-align:left; }
 .report-markdown :deep(.md-table th) { background:var(--bg-tertiary); font-weight:600; }
-.report-markdown :deep(.md-quote) { margin:0 0 12px; padding:6px 12px; border-left:3px solid var(--border); color:var(--text-secondary); }
+.report-markdown :deep(.md-quote) { margin:0 0 12px; padding:8px 12px; border:0; border-radius:8px; background:color-mix(in srgb, var(--text) 4%, transparent); color:var(--text-secondary); }
 /* 引用角标：可点（回到「来源与结论对照」那一条），所以给指针与键盘焦点都留可见反馈。
    10px 字号在触屏上只有约 10px 的热区，靠 padding 撑开、负 margin 抵消布局外扩 */
 .report-markdown :deep(.cite) { color:var(--accent); font-size:10px; font-weight:600; padding:3px 4px; margin:-3px -3px; border-radius:3px; cursor:pointer; }

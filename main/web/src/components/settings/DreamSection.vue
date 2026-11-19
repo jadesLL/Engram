@@ -764,8 +764,10 @@ onUnmounted(() => {
 .dream-md :deep(pre code) { padding: 0; background: none; }
 .dream-md :deep(blockquote) {
   margin: 6px 0;
-  padding: 2px 0 2px 10px;
-  border-left: 2px solid var(--border-strong);
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-secondary);
 }
 .dream-md :deep(a) { color: var(--accent); }

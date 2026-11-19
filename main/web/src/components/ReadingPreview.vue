@@ -416,6 +416,7 @@ import { headingFoldRanges } from '../lib/readingFold';
 import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
 import { registerBackHandler } from '../lib/androidBack';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import { promoteSourceCitations } from '../lib/sourceCitationDom';
 import type { PageExportMeta } from '../lib/pageExport';
 import { exportPageImage, exportPagePdf } from '../lib/pageExportCapture';
 import PageExportMenu from './PageExportMenu.vue';
@@ -1113,6 +1114,8 @@ async function renderMarkdown() {
     addImageCaptions(next);
     prepareHeadings(next);
     prepareLinks(next);
+    /* 纪要文首的「来源/会议时间/链接/整理说明」引用块折成一行，点开再看详情 */
+    promoteSourceCitations(next);
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
     // 小页也进缓存（主题切换会重跑整页渲染，见 renderCache 注释）
@@ -2019,11 +2022,85 @@ onBeforeUnmount(() => {
 }
 .reading-content :deep(blockquote) {
   margin: 1.3em 0;
-  padding: 0.85em 1.1em;
-  border-left: 4px solid var(--accent);
-  border-radius: var(--radius-control);
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 10px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
+}
+/* 出处块：默认只占一行；发丝线上下夹住，点开露出字段表（无底色色条） */
+.reading-content :deep(.cite-fold) {
+  margin: 1.15em 0 1.6em;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.reading-content :deep(.cite-summary) {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 8px 2px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.reading-content :deep(.cite-summary::-webkit-details-marker) { display: none; }
+.reading-content :deep(.cite-summary:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.reading-content :deep(.cite-tag) {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  color: var(--text-faint);
+}
+.reading-content :deep(.cite-title) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.reading-content :deep(.cite-meta) {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.reading-content :deep(.cite-chevron) {
+  flex: none;
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--text-faint);
+  transition: transform 0.18s ease;
+}
+.reading-content :deep(.cite-fold[open] .cite-chevron) { transform: rotate(180deg); }
+.reading-content :deep(.cite-body) { padding: 1px 2px 13px; }
+.reading-content :deep(.cite-dl) {
+  display: grid;
+  margin: 0;
+  row-gap: 7px;
+}
+.reading-content :deep(.cite-row) {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  column-gap: 16px;
+  align-items: baseline;
+}
+.reading-content :deep(.cite-row dt) {
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--text-faint);
+}
+.reading-content :deep(.cite-row dd) {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 .reading-content :deep(ul),
 .reading-content :deep(ol) {
@@ -2561,6 +2638,8 @@ onBeforeUnmount(() => {
   .display-tool-label { display: inline; }
   /* 底部留白同时给「编辑」FAB 让位（与 ≤768 档同一口径，后面这条会覆盖上面的值） */
   .reading-grid { padding: 20px 16px 104px; }
+  /* 窄屏折叠行只留「出处 + 标题」：日期/时长在展开后的会议时间里，不挤标题 */
+  .reading-content :deep(.cite-meta) { display: none; }
 }
 
 /* 触屏（无 hover、指针粗）：本组件原有热区只有 22–34px，手机上点不准。

@@ -2825,10 +2825,10 @@ onUnmounted(() => {
 
 .md-body :deep(blockquote.md-quote) {
   margin: 8px 0;
-  padding: 3px 0 3px 10px;
-  border-left: 3px solid color-mix(in srgb, var(--accent, #4d8aff) 42%, transparent);
-  border-radius: 0 6px 6px 0;
-  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-secondary);
 }
 

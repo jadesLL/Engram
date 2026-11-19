@@ -2618,10 +2618,10 @@ button.save-state.dirty:hover { color: var(--accent); }
 .editor-area :deep(.vditor-wysiwyg blockquote),
 .editor-area :deep(.vditor-sv blockquote) {
   margin: 0.9em 0;
-  padding: 0.4em 1em;
-  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  border: 0;
   background: var(--bg-secondary);
-  border-radius: 0 6px 6px 0;
+  border-radius: 10px;
   color: var(--text-secondary);
 }
 .editor-area :deep(.vditor-ir blockquote p),
@@ -2813,7 +2813,9 @@ button.save-state.dirty:hover { color: var(--accent); }
 .claim-fact blockquote {
   margin: 6px 0;
   padding: 6px 9px;
-  border-left: 2px solid var(--border);
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-faint);
   font-size: 12px;
   line-height: 1.55;
