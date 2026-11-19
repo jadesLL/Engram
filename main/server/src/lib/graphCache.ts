@@ -6,7 +6,13 @@ const cache = new Map<string, { data: any; ts: number }>();
 const TTL = 60_000;
 const MAX = 8;
 
-/** 页面关联数据：图谱邻居（出边+入边）与实体关联；REST /related 与 CLI `engram pages related` 共用 */
+/**
+ * 页面关联数据：图谱邻居（出边+入边）与实体关联；REST /related 与 CLI `engram pages related` 共用。
+ *
+ * AIWorks 系统页（Engram 索引 / 关系库 / 操作日志）由服务端自动生成，其中索引与关系库
+ * 为全库每个页面各写一条 [[链接]]，如果当成邻居返回，每一页的「本页关联」都会多出
+ * 「Engram 索引」「关系库」两条引用——这是生成物，不是用户建立的关联，因此整体排除。
+ */
 export function relatedPageData(pageId: string): {
   neighbors: Array<{ id: string; title: string; path: string; type: string; direction: 'in' | 'out'; rel: string }>;
   similar: unknown[];
@@ -17,7 +23,8 @@ export function relatedPageData(pageId: string): {
       `SELECT DISTINCT p.id, p.title, p.path, p.type,
               CASE WHEN e.src_page = ? THEN 'out' ELSE 'in' END AS direction, e.rel
        FROM edges e JOIN pages p ON p.id = (CASE WHEN e.src_page = ? THEN e.dst_page ELSE e.src_page END)
-       WHERE (e.src_page = ? OR e.dst_page = ?) AND p.deleted = 0 AND e.dst_page IS NOT NULL`
+       WHERE (e.src_page = ? OR e.dst_page = ?) AND p.deleted = 0 AND e.dst_page IS NOT NULL
+         AND p.path NOT LIKE 'AIWorks/%'`
     )
     .all(pageId, pageId, pageId, pageId) as any[];
   const entities = db

@@ -3,12 +3,13 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import { db } from '../lib/db.js';
 import { readPage, writePage, safeJoin } from '../lib/vault.js';
+import { RAW_SECTIONS, rawSectionOf } from '../lib/rawSections.js';
 import { RELATION_WORDS } from './extractor.js';
 
 /**
  * AIWorks 系统区自维护文件（服务端生成，Agent 只读；检索权重 0，不挤占知识证据）：
  * - AIWorks/log/log.md：操作流水
- * - AIWorks/index/index.md：全库索引（概念 / 实体按类型细分）
+ * - AIWorks/index/index.md：全库索引（概念 / 实体按类型细分、原始资料按二级分类）
  * - AIWorks/scheme/relationships.md：关系结构（词表关系 + 双链关联 + 待建页面）
  * 每次操作日志追加后同步重建索引与关系结构，系统区始终与知识库一致。
  */
@@ -32,16 +33,21 @@ const ENTITY_TYPE_GROUPS: Array<{ type: string; label: string }> = [
 const zhCompare = (a: string, b: string) => a.localeCompare(b, 'zh-CN');
 
 /**
- * 索引/关系库共用的页面归类：概念独立成组，实体按 frontmatter 类型细分。
+ * 索引/关系库共用的页面归类：概念独立成组，实体按 frontmatter 类型细分，
+ * 原始资料按目录单独成组（不进概念/实体，避免和 Wiki 知识页混在一起）。
  * 历史类型（place/work/doc/note 等）按目录兜底归组，保证任何页面都不漏出索引。
  */
-function classifyPage(type: unknown, relPath: string): { group: '概念' | '实体' | '未分类'; label?: string } {
+function classifyPage(
+  type: unknown,
+  relPath: string
+): { group: '概念' | '实体' | '原始资料' | '未分类'; label?: string } {
   const t = String(type || '').toLowerCase();
   if (t === 'concept') return { group: '概念' };
   const entity = ENTITY_TYPE_GROUPS.find((g) => g.type === t);
   if (entity) return { group: '实体', label: entity.label };
   if (relPath.startsWith('Wiki/概念/')) return { group: '概念' };
   if (relPath.startsWith('Wiki/实体/')) return { group: '实体', label: '其他' };
+  if (relPath.startsWith('原始资料/')) return { group: '原始资料' };
   return { group: '未分类' };
 }
 
@@ -55,6 +61,19 @@ function wikiIndexPages(): Array<{ title: string; type: string; path: string }> 
          AND path NOT LIKE 'Wiki/关系/%'`
     )
     .all() as any[];
+}
+
+/** 索引收录的原始资料页：只含 Markdown 页面（PDF/docx 等附件只有 files 行，没有页面可链接） */
+function rawIndexPages(): Array<{ title: string; type: string; path: string }> {
+  return db
+    .prepare(`SELECT title, type, path FROM pages WHERE deleted = 0 AND path LIKE '原始资料/%'`)
+    .all() as any[];
+}
+
+/** 原始资料二级分类标签（根目录历史文件按「文档」归组） */
+function rawSectionLabel(relPath: string): string {
+  const key = rawSectionOf(relPath) || 'doc';
+  return RAW_SECTIONS.find((s) => s.key === key)?.label || '文档';
 }
 
 /**
@@ -75,6 +94,7 @@ function writeIfChanged(
 /** 重新生成 AIWorks/index/index.md（全量重写，幂等；按分类建组） */
 export function regenerateIndex() {
   const pages = wikiIndexPages();
+  const rawPages = rawIndexPages();
 
   const concepts: string[] = [];
   const entities = new Map<string, string[]>(ENTITY_TYPE_GROUPS.map((g) => [g.label, []]));
@@ -86,13 +106,27 @@ export function regenerateIndex() {
     else if (group === '实体') entities.get(label!)!.push(title);
     else uncategorized.push(title);
   }
+  // 原始资料按二级分类（文档 / 对话 / 灵感碎片）分组，顺序与侧栏一致
+  const rawGroups = new Map<string, string[]>(RAW_SECTIONS.map((s) => [s.label, []]));
+  for (const p of rawPages) {
+    const label = rawSectionLabel(String(p.path));
+    if (!rawGroups.has(label)) rawGroups.set(label, []);
+    rawGroups.get(label)!.push(String(p.title));
+  }
   concepts.sort(zhCompare);
   for (const list of entities.values()) list.sort(zhCompare);
   uncategorized.sort(zhCompare);
+  for (const list of rawGroups.values()) list.sort(zhCompare);
 
   const entityTotal = [...entities.values()].reduce((n, list) => n + list.length, 0);
-  const total = concepts.length + entityTotal + uncategorized.length;
-  const counts = `概念 ${concepts.length} · 实体 ${entityTotal}${uncategorized.length ? ` · 未分类 ${uncategorized.length}` : ''}`;
+  const rawTotal = rawPages.length;
+  const total = concepts.length + entityTotal + uncategorized.length + rawTotal;
+  const counts = [
+    `概念 ${concepts.length}`,
+    `实体 ${entityTotal}`,
+    ...(uncategorized.length ? [`未分类 ${uncategorized.length}`] : []),
+    ...(rawTotal ? [`原始资料 ${rawTotal}`] : []),
+  ].join(' · ');
 
   const lines = ['# Engram 索引', ''];
   if (!total) {
@@ -109,6 +143,13 @@ export function regenerateIndex() {
     }
     if (uncategorized.length) {
       lines.push(`## 未分类（${uncategorized.length}）`, '', ...uncategorized.map((t) => `- [[${t}]]`), '');
+    }
+    if (rawTotal) {
+      lines.push(`## 原始资料（${rawTotal}）`, '');
+      for (const [label, list] of rawGroups) {
+        if (!list.length) continue;
+        lines.push(`### ${label}（${list.length}）`, '', ...list.map((t) => `- [[${t}]]`), '');
+      }
     }
   }
   writeIfChanged(INDEX_PAGE, lines.join('\n'), {
@@ -176,9 +217,9 @@ export function appendWikiLog(action: string, detail: string) {
 /**
  * 重建关系库 AIWorks/scheme/relationships.md：
  * - 词表关系：正文显式声明的 [[A]]::关系词::[[B]]
- * - 双链关联：Wiki 页之间的 [[双链]] 结构（按分类 + 源页面聚合，死链标注「待建」）
+ * - 双链关联：Wiki 页与原始资料页之间的 [[双链]] 结构（按分类 + 源页面聚合，死链标注「待建」）
  * - 待建页面：被双链指向但尚未建页的目标（反向索引到来源页）
- * 只读 Wiki 页之间的真实边；系统页自身不参与建边，不会自我污染。
+ * 只读知识页（Wiki/ + 原始资料/）之间的真实边；AIWorks 系统页自身不参与建边，不会自我污染。
  */
 export function regenerateRelationships() {
   const ph = RELATION_WORDS.map(() => '?').join(',');
@@ -208,7 +249,8 @@ export function regenerateRelationships() {
        FROM edges e
        JOIN pages p ON p.id = e.src_page AND p.deleted = 0
        LEFT JOIN pages p2 ON p2.id = e.dst_page
-       WHERE e.rel = 'link' AND p.path LIKE 'Wiki/%'
+       WHERE e.rel = 'link'
+         AND (p.path LIKE 'Wiki/%' OR p.path LIKE '原始资料/%')
          AND p.path NOT LIKE 'Wiki/归档/%' AND p.path NOT LIKE 'Wiki/查询/%'
          AND p.path NOT LIKE 'Wiki/关系/%'`
     )
@@ -241,6 +283,7 @@ export function regenerateRelationships() {
   }
 
   const pageRows = wikiIndexPages();
+  const rawTotal = rawIndexPages().length;
   const entityTotal = pageRows.filter((p) => classifyPage(p.type, p.path).group === '实体').length;
   const conceptTotal = pageRows.filter((p) => classifyPage(p.type, p.path).group === '概念').length;
   const uncategorizedTotal = pageRows.length - entityTotal - conceptTotal;
@@ -250,7 +293,7 @@ export function regenerateRelationships() {
   const lines = ['# 关系库', '', `> 词表：${RELATION_WORDS.join(' / ')}（每次写入后自动生成）`, ''];
   lines.push('## 概览', '');
   lines.push(
-    `- 页面 ${pageRows.length} 个（概念 ${conceptTotal} · 实体 ${entityTotal}${uncategorizedTotal ? ` · 未分类 ${uncategorizedTotal}` : ''}）`
+    `- 页面 ${pageRows.length + rawTotal} 个（概念 ${conceptTotal} · 实体 ${entityTotal}${uncategorizedTotal ? ` · 未分类 ${uncategorizedTotal}` : ''}${rawTotal ? ` · 原始资料 ${rawTotal}` : ''}）`
   );
   lines.push(
     `- 词表关系 ${typed.length} 条 · 双链关联 ${linkTotal} 条（已解析 ${linkTotal - deadEdges} / 待建 ${deadRefs.size} 个目标）`
@@ -271,6 +314,7 @@ export function regenerateRelationships() {
     const groups: Array<{ key: string; title: string }> = [
       { key: '概念', title: '概念' },
       { key: '实体', title: '实体' },
+      { key: '原始资料', title: '原始资料' },
       { key: '未分类', title: '未分类' },
     ];
     for (const g of groups) {

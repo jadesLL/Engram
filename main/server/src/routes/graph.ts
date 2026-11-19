@@ -48,13 +48,20 @@ export async function graphRoutes(app: FastifyInstance) {
       const maxDepth = Math.min(Number(depth) || 2, 3);
       for (let d = 0; d < maxDepth; d++) {
         if (frontier.length === 0) break;
-        // 批量取整层邻居，消除 N+1（原来逐页一条 SQL）
+        // 批量取整层邻居，消除 N+1（原来逐页一条 SQL）。
+        // AIWorks 系统页（Engram 索引 / 关系库）为全库每页写 [[链接]]，放进 BFS 会把
+        // 任意页面的局部图谱扩成全库毛线团，所以不把系统页当扩展节点；
+        // 从系统页本身出发时仍可看到它链接的知识页（只过滤邻居侧）。
         const ph2 = frontier.map(() => '?').join(',');
         const rows = db
           .prepare(
-            `SELECT dst_page AS p FROM edges WHERE src_page IN (${ph2}) AND dst_page IS NOT NULL AND rel='link'
+            `SELECT e.dst_page AS p FROM edges e JOIN pages p2 ON p2.id = e.dst_page
+             WHERE e.src_page IN (${ph2}) AND e.dst_page IS NOT NULL AND e.rel='link'
+               AND p2.deleted = 0 AND p2.path NOT LIKE 'AIWorks/%'
              UNION
-             SELECT src_page AS p FROM edges WHERE dst_page IN (${ph2}) AND rel='link'`
+             SELECT e.src_page AS p FROM edges e JOIN pages p1 ON p1.id = e.src_page
+             WHERE e.dst_page IN (${ph2}) AND e.rel='link'
+               AND p1.deleted = 0 AND p1.path NOT LIKE 'AIWorks/%'`
           )
           .all(...frontier, ...frontier) as any[];
         const next: string[] = [];
@@ -68,14 +75,15 @@ export async function graphRoutes(app: FastifyInstance) {
         if (pageIds.size > 200) break;
       }
     } else {
-      // 全局：按度数（参与的 link 边数）排序取核心 150 个节点，避免随节点增长沦为毛线团
+      // 全局：按度数（参与的 link 边数）排序取核心 150 个节点，避免随节点增长沦为毛线团。
+      // 系统页同样不参与排名：它们的高连接度来自全库索引，会把真实知识网络挤出视野。
       pageIds = new Set(
         (db
           .prepare(
             `SELECT id FROM (
                SELECT p.id AS id,
                  (SELECT COUNT(*) FROM edges e WHERE e.rel='link' AND (e.src_page=p.id OR e.dst_page=p.id)) AS deg
-               FROM pages p WHERE p.deleted=0
+               FROM pages p WHERE p.deleted=0 AND p.path NOT LIKE 'AIWorks/%'
              ) t ORDER BY deg DESC, id LIMIT 150`
           )
           .all() as any[]).map((r) => r.id)
