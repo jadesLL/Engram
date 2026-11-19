@@ -123,6 +123,23 @@ test('索引页按分类建组：概念独立、实体按 frontmatter 类型细�
   assert.doesNotMatch(body, /^## 其他$/m, '不再有笼统的「其他」分组');
 });
 
+/** 回归：原始资料整体被索引排除，用户找不到原始资料在索引里的位置（「原始资料索引去哪了」）。 */
+test('索引页把原始资料按二级分类单列', () => {
+  writePage('原始资料/文档/索引测试资料.md', '# 索引测试资料\n', { title: '索引测试资料', type: 'note' });
+  writePage('原始资料/灵感碎片/索引测试灵感.md', '# 索引测试灵感\n', { title: '索引测试灵感', type: 'note' });
+
+  regenerateIndex();
+  const body = readPage('AIWorks/index/index.md').content;
+  const rawSection = body.split('## 原始资料')[1] || '';
+
+  assert.match(body, /^## 原始资料（\d+）$/m, '原始资料独立成组，不混进概念/实体');
+  assert.match(rawSection, /^### 文档（\d+）$/m, '文档二级分类成组');
+  assert.match(rawSection, /^### 灵感碎片（\d+）$/m, '灵感碎片二级分类成组');
+  assert.match(rawSection, /\[\[索引测试资料\]\]/, '文档页进索引');
+  assert.match(rawSection, /\[\[索引测试灵感\]\]/, '灵感页进索引');
+  assert.doesNotMatch(body.split('## 原始资料')[0], /\[\[索引测试资料\]\]/, '原始资料不混进 Wiki 分组');
+});
+
 /** 回归：关系库只列 4 条词表关系，双链结构完全没进页面，看着像「内容非常少」。 */
 test('关系库收录词表关系、双链关联与待建页面', async () => {
   const src = writePage(
@@ -142,14 +159,22 @@ test('关系库收录词表关系、双链关联与待建页面', async () => {
     { title: '关系测试乙', type: 'person' }
   );
   const third = writePage('Wiki/概念/关系测试丙.md', '# 关系测试丙\n', { title: '关系测试丙', type: 'concept' });
+  // 原始资料里的 [[双链]] 同样要进关系库：调研报告/纪要里写的人名、客户不能只在页内可见
+  const raw = writePage(
+    '原始资料/文档/关系测试资料.md',
+    '# 关系测试资料\n\n- 记录了 [[关系测试乙]] 的情况\n',
+    { title: '关系测试资料', type: 'note' }
+  );
   await indexPage(src.id);
   await indexPage(dst.id);
   await indexPage(third.id);
+  await indexPage(raw.id);
 
   regenerateRelationships();
   const body = readPage('AIWorks/scheme/relationships.md').content;
 
   assert.match(body, /^## 概览$/m, '有关系库概览');
+  assert.match(body, /原始资料 \d+/, '概览统计原始资料页数');
   assert.match(body, /^## 词表关系（\d+）$/m);
   assert.match(body, /^- \[\[关系测试甲\]\]::参与::\[\[关系测试乙\]\]$/m, '词表关系逐条列出');
   assert.match(body, /^## 双链关联（\d+）$/m);
@@ -161,6 +186,8 @@ test('关系库收录词表关系、双链关联与待建页面', async () => {
     '双链关联按源页面聚合，死链标注待建'
   );
   assert.match(body, /^- \[\[关系测试乙\]\] → \[\[关系测试丙\]\]$/m, '实体页的出链同样列出');
+  assert.match(body, /^### 原始资料（\d+）$/m, '原始资料出链独立成组');
+  assert.match(body, /^- \[\[关系测试资料\]\] → \[\[关系测试乙\]\]$/m, '原始资料页的出链进关系库');
   assert.doesNotMatch(body, /\[\[关系测试甲\]\] → \[\[关系测试甲\]\]/, '自环不进关系库');
   assert.match(body, /^## 待建页面（\d+）$/m);
   assert.match(body, /^- \[\[关系测试未建页\]\] ← \[\[关系测试甲\]\]$/m, '待建页面反向索引到来源页');
