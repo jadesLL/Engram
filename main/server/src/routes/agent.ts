@@ -8,10 +8,11 @@ import { enqueuePagePipeline } from '../jobQueue.js';
 import { insertAtPosition, PositionRefError } from '../assistant/positions.js';
 
 /**
- * 外部 Agent 的 REST 写入口（CLI `engram pages write|insert|delete|rename|move` 使用）。
+ * Agent 的 REST 写入口（CLI `engram pages write|insert|delete|rename|move` 使用）。
  * 与 CLI `engram pages write|delete|rename|move` 同一内核：
- * 证据逐字校验 + 新建概念/实体页两来源门禁 + 自动操作日志；只允许操作 Wiki/ 下的页面，
- * 删除只做软删除入回收站。
+ * 证据逐字校验 + 新建概念/实体页两来源门禁 + 自动操作日志；整页写入只允许 Wiki/ 页面，
+ * 删除只做软删除入回收站。`pages insert` 只接受内置 Agent 的位置令牌（pos_xxx），
+ * 原始资料 Markdown 也只能在这一条令牌流程里被局部追加，整页写入仍拒绝。
  */
 export async function agentRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);

@@ -464,7 +464,7 @@ const HELP = `Engram CLI —— Agent 操作知识库的唯一命令入口（RES
   pages evidence <ref>                  读证据账本
   pages write <path> --title T [--type concept] [--tags a,b] [--evidence "路径::引文"]...
                                         写页面（正文来自 stdin 或 --file；只能写 Wiki/）
-  pages insert <token>                  按用户引用的正文位置插入（正文来自 stdin 或 --file）
+  pages insert <token>                  按用户引用的正文位置插入（仅内置 Agent 的位置令牌流程使用；正文来自 stdin 或 --file）
   pages rename <ref> --title T          重命名（文件+标题+双链重定向，保持页面 ID）
   pages move <ref> [--dir Wiki/实体] [--title T]
                                         移动页面（保持页面 ID）

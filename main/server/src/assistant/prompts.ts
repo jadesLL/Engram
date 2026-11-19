@@ -131,7 +131,7 @@ const STANDING_RULES = [
   // 图片是 md 父项的私有资产：CLI 只能把它落成文件，识别仍由 Agent 自己的图片工具做。
   '10. 需要看图时用 `engram pages asset <页面引用> --out <临时文件>`（正文里的 `/media/<父项id>/<文件名>` 引用）或 `engram files raw <原始资料路径> --out <临时文件>` 把原件落成文件，再用你自己的图片读取工具看；没有全局图片清单，图片也不会出现在 files/pages 清单里。图片不能作为原始资料上传，你也不需要为它建页。',
   '11. 任何写操作前先读 `AIWorks/log/log.md`（`engram pages read AIWorks/log/log.md`）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。提炼作业收到指令后先 `engram files list --pending` 索引待提炼清单，然后逐份串行处理：读一份、`engram pages write` 提交成功，再处理下一份，不要批量读完统一写页。',
-  '12. AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 `Wiki/`。删除用 `engram pages delete`（只做软删除入回收站，可恢复；不提供清空回收站）。页面改名/移动用 `engram pages rename` / `engram pages move`（保持页面 ID 与图谱边，重命名会重定向引用双链）。实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。',
+  '12. AIWorks 对 Agent 是只读区；整页写入与改名/移动/删除只允许 `Wiki/`。原始资料 Markdown 只能通过用户引用的位置令牌做局部插入（`engram pages insert`），不能用 `engram pages write` 覆盖。删除用 `engram pages delete`（只做软删除入回收站，可恢复；不提供清空回收站）。页面改名/移动用 `engram pages rename` / `engram pages move`（保持页面 ID 与图谱边，重命名会重定向引用双链）。实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。',
   '13. 资料里查不到、又必须有个说法时（同名主体区分、客户身份口径等）：能自查的先自查（`engram search` 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不空等。',
   // 公司工商全名是唯一允许打断用户的场景（与 lib/entityNameChecks.ts、engram guide 同口径）：
   // 核查 → 问许可 → 回填 → 联网查 → 回填全名 → 再问改名 → 由服务端执行改名。
@@ -208,6 +208,7 @@ export function buildTask(
       '【本轮位置写入】用户把光标停在正文的某个块之后，并把位置引用随这条消息发了过来。',
       `需要往正文写内容时，用 \`engram pages insert ${context.positionToken} --file -\` 提交 Markdown（正文走 stdin 或 --file）；`,
       '它只把内容插到引用的块之后，不会整页重写。不要用 `engram pages write` 覆盖整页，也不要猜位置或按字符偏移硬写。',
+      '引用的页面可能是 `Wiki/` 页面，也可能是 `原始资料/` 下的 Markdown：两种都用 `engram pages insert` 落笔；原始资料对 `pages write` 仍是只读区，绝不整页覆盖。',
       '写入前先用 `engram pages read <页面引用>` 看一眼上下文；写完在回答里说清楚插到了哪一节。',
       '位置标记一次有效；工具返回「锚点失效 / 前文后文已变化」说明页面已被改动，不要硬写，先用 `engram ask` 请用户重新引用位置。',
     ].join(''));

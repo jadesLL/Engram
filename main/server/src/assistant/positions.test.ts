@@ -64,6 +64,78 @@ const REF = {
   after: '三、风险与预案',
 };
 
+/** 原始资料：内置 Agent 凭用户引用的位置令牌可以局部插入，但仍不能整页改写 */
+const RAW_PATH = '原始资料/文档/未命名.md';
+const RAW_BODY = [
+  '# 会议纪要',
+  '',
+  '## 讨论',
+  '',
+  '先确认了交付范围。',
+  '',
+  '## 待办',
+  '',
+  '整理接口清单。',
+].join('\n');
+const RAW_REF = {
+  pagePath: RAW_PATH,
+  pageTitle: '会议纪要',
+  anchorText: '先确认了交付范围。',
+  occurrence: 1,
+  headingPath: ['会议纪要', '讨论'],
+  before: '## 讨论',
+  after: '## 待办',
+};
+
+/** AIWorks 等系统目录：位置引用仍应拒绝（不是 Wiki / 原始资料） */
+const SYSTEM_PATH = 'AIWorks/日志/测试.md';
+const SYSTEM_BODY = ['# 测试', '', '这段正文不允许被引用。'].join('\n');
+
+test('原始资料：位置引用可通过，内置 Agent 令牌插到锚点块之后', () => {
+  writePage(RAW_PATH, RAW_BODY, { title: '会议纪要' });
+  const validated = validatePositionRef(RAW_REF);
+  assert.equal(validated.page.path, RAW_PATH);
+
+  const prepared = preparePositionRef(RAW_REF, { sessionId: 'raw-s1', runId: 'raw-r1' });
+  assert.match(prepared.token || '', /^pos_[a-f0-9]{10}$/);
+  const inserted = insertAtPosition(prepared.token!, '范围之外的部分下周再确认。');
+  assert.equal(inserted.alreadyUsed, false);
+  const saved = readPage(RAW_PATH)!.content;
+  assert.match(
+    saved,
+    /先确认了交付范围。\n\n范围之外的部分下周再确认。\n\n## 待办/,
+  );
+  // 同一令牌第二次调用只回第一次的结果，不重复插入
+  const again = insertAtPosition(prepared.token!, '不应重复写入');
+  assert.equal(again.alreadyUsed, true);
+  assert.equal((readPage(RAW_PATH)!.content.match(/范围之外的部分下周再确认/g) || []).length, 1);
+  assert.doesNotMatch(readPage(RAW_PATH)!.content, /不应重复写入/);
+});
+
+test('AIWorks 系统目录仍拒绝位置引用（403，只读区）', () => {
+  writePage(SYSTEM_PATH, SYSTEM_BODY, { title: '测试' });
+  assert.throws(
+    () => validatePositionRef({
+      pagePath: SYSTEM_PATH,
+      pageTitle: '测试',
+      anchorText: '这段正文不允许被引用。',
+      occurrence: 1,
+    }),
+    (error: any) => error.status === 403 && /只读区/.test(error.message),
+  );
+  const prepared = preparePositionRef(
+    {
+      pagePath: SYSTEM_PATH,
+      pageTitle: '测试',
+      anchorText: '这段正文不允许被引用。',
+      occurrence: 1,
+    },
+    { sessionId: 'sys-s1', runId: 'sys-r1' },
+  );
+  assert.equal(prepared.token, undefined);
+  assert.match(prepared.error || '', /只读区/);
+});
+
 test('校验：锚点按块命中，返回标题路径与前后块', () => {
   const validated = validatePositionRef(REF);
   assert.equal(validated.page.path, PAGE_PATH);

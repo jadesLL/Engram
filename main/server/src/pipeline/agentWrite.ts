@@ -5,6 +5,7 @@ import { appendWikiLog } from './indexFile.js';
 import { beginSourceVersion } from './sourceLedger.js';
 import { GUIDE_VERSION } from '../content/agentGuide.js';
 import { isInboxPath } from '../lib/brainPaths.js';
+import { isRawPath } from '../lib/rawSections.js';
 
 /**
  * 外部 Agent 写入知识页的确定性门禁与证据账本：
@@ -234,4 +235,27 @@ export function agentWritePage(input: AgentWriteInput): AgentWriteResult {
     );
   } catch { /* 日志失败不阻塞写入 */ }
   return { meta, created: isNew, evidenceRecorded, guideVersion: GUIDE_VERSION };
+}
+
+/**
+ * 内置 Agent 的位置插入写入口（只供 `assistant/positions.ts` 的 pos_xxx 令牌流程调用）。
+ *
+ * 原始资料对**外部 Agent** 仍是只读区：`agentWritePage` / `engram pages write` 继续拒绝；
+ * 这里允许的只是「用户已在编辑器里明确引用过的原始资料 Markdown」的局部插入——内容由服务端
+ * 按锚点块拼接，不是整页覆盖，也不进证据账本。宁可在别处收紧，也不要扩大 `WRITABLE_PREFIX`。
+ */
+export function agentInsertRawPage(input: {
+  path: string;
+  title: string;
+  content: string;
+}): PageMeta {
+  const rel = String(input.path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!isRawPath(rel) || !/\.(?:md|markdown)$/i.test(rel)) {
+    throw new WriteGateError(`位置插入只支持原始资料中的 Markdown 文档：${rel}`, 403);
+  }
+  const meta = writePage(rel, String(input.content ?? ''), { title: input.title });
+  try {
+    appendWikiLog('内置 Agent 位置插入', `[[${meta.title}]]（${rel}）`);
+  } catch { /* 日志失败不阻塞写入 */ }
+  return meta;
 }

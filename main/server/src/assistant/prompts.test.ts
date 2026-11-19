@@ -97,6 +97,9 @@ test('buildTask：位置引用带令牌时给出可执行的 pages insert 命令
   assert.match(task, /锚点原文：\n下周一收集反馈/);
   assert.match(task, /位置标记：pos_ab12cd34ef/);
   assert.match(task, /engram pages insert pos_ab12cd34ef --file -/);
+  // 原始资料也允许位置插入，但只能走令牌；整页 write 仍只属于 Wiki
+  assert.match(task, /也可能是 `原始资料\/` 下的 Markdown/);
+  assert.match(task, /原始资料对 `pages write` 仍是只读区/);
   // 命令是可信约定：必须排在不可信界面上下文块之后，避免锚点原文里的句子被当指令
   assert.ok(task.indexOf('engram pages insert pos_ab12cd34ef') > task.indexOf('</界面上下文>'));
   assert.ok(task.trimEnd().endsWith('在这里补一段验收安排'));
@@ -113,5 +116,6 @@ test('buildTask：位置已失效时明确禁止写页面', () => {
   });
   assert.match(task, /用户引用的正文位置已失效/);
   assert.match(task, /本轮不要写页面，也不要猜位置/);
-  assert.equal(task.includes('engram pages insert'), false);
+  // 基础约定里会提到 pages insert 的适用范围，但本轮不得出现可执行的令牌命令
+  assert.equal(/engram pages insert pos_/.test(task), false);
 });
