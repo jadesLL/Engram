@@ -40,7 +40,7 @@
       <PageExportMenu
         v-if="!compactToolbar"
         class="export-tool"
-        trigger-class="reading-tool"
+        trigger-class="reading-tool export-control"
         :icon-size="16"
         :meta="exportMeta"
       />
@@ -1466,14 +1466,85 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
   color: var(--accent);
 }
-/* 本页目录一级开关：图标+「目录」，展开态交给既有的 [aria-pressed="true"] 强调样式 */
+/* 本页目录一级开关：图标+「目录」。开启态不再用灰底（全站唯一一处），
+   改成和「导出」展开态同一套 accent-soft —— 两者都是「开 / 关」语义 */
 .outline-tool {
   padding: 0 11px;
   font-weight: 600;
 }
+.outline-tool[aria-pressed="true"]:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.outline-tool[aria-pressed="true"]:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .outline-tool-label {
   font-size: 12.5px;
   letter-spacing: 0.02em;
+}
+/* 导出一级入口：和 A−/16px/100% 同一套白底控件（发丝描边 + 底缘加深），
+   字号/字重对齐「目录」；展开时强调色、caret 翻转。 */
+.export-tool :deep(.export-control) {
+  /* 触发钮在子组件内部，拿不到本组件的 scoped .reading-tool 规则，底座要在这里补全 */
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--control-border);
+  border-bottom-color: var(--control-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+.export-tool :deep(.export-control > svg:first-child) {
+  color: var(--text-secondary);
+}
+.export-tool :deep(.export-control > svg:last-child) {
+  margin-left: 1px;
+  color: var(--text-faint);
+  transition: transform 0.16s ease, color 0.14s ease;
+}
+.export-tool :deep(.export-control:hover) {
+  border-color: var(--control-border-strong);
+  background: var(--control-bg-hover);
+  color: var(--text);
+}
+.export-tool :deep(.export-control:hover > svg:first-child) {
+  color: var(--text);
+}
+.export-tool :deep(.export-control:active) {
+  background: var(--control-bg-pressed);
+}
+.export-tool :deep(.export-control[aria-expanded="true"]) {
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.export-tool :deep(.export-control[aria-expanded="true"] > svg) {
+  color: var(--accent);
+}
+.export-tool :deep(.export-control[aria-expanded="true"] > svg:last-child) {
+  transform: rotate(180deg);
+}
+.export-tool :deep(.export-control:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+.export-tool :deep(.export-control:disabled:hover) {
+  border-color: var(--control-border);
+  border-bottom-color: var(--control-border-strong);
+  background: var(--control-bg);
+  color: var(--text);
 }
 /* 「显示」触发钮在桌面是图标+tooltip；手机档它落在设置面板里、触屏又没有 tooltip，
    所以窄屏/触屏下补一行可见文案（见文末的触屏块） */
