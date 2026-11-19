@@ -2,6 +2,7 @@ import { vditorPreviewOptions } from './vditorPreview';
 import { applyImageWidths } from './imageWidth';
 import { wikiLinksToMarkdown } from './wikiLinks';
 import { stripTrailingEmptyTableRows } from './markdownTableCleanup';
+import { promoteSourceCitations } from './sourceCitationDom';
 import { readingMetrics } from './readingPreview';
 import { notify, dismissToast } from './notify';
 import { paintExportCanvas, prepareExportCanvasAssets, disposeExportCanvasAssets } from './pageExportCanvas';
@@ -182,6 +183,8 @@ async function prepareSheet(meta: PageExportMeta): Promise<PreparedSheet> {
     await Vditor.preview(host, source, vditorPreviewOptions(false));
     applyImageWidths(host);
     cleanRenderedHtml(host);
+    /* 导出稿是静态纸面：出处块直接展开成字段表，不出现折叠控件 */
+    promoteSourceCitations(host, 'export');
     await inlineImages(host);
     await waitForImages(host);
   }

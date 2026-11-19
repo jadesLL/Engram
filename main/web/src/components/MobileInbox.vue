@@ -3921,8 +3921,10 @@ onBeforeUnmount(() => {
 
 .mi-review-md :deep(blockquote) {
   margin: 0 0 10px;
-  padding: 4px 12px;
-  border-left: 3px solid var(--border-strong);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-secondary);
 }
 
