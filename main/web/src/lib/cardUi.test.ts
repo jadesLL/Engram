@@ -13,7 +13,8 @@ import { fileURLToPath } from 'node:url';
  *   ① 标准卡渲染真实模块内容，摘要只给磁贴 / 横条 / 竖条；
  *   ② 手机单列按内容撑高；container-type:size 的 size containment 必须退回 inline-size；
  *   ③ 暖纸底 + 暖白卡 + 衬线数字的令牌；
- *   ④ 列表卡按正文实际高度限制行数，卡内不再出现滚动条。
+ *   ④ 列表卡按正文实际高度限制行数，卡内不再出现滚动条；
+ *   ⑤ 横条左栏的标签、数值、说明共用同一条左轴线（不许再挂到左边）。
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -107,5 +108,26 @@ test('卡片 v2：知识热力按卡宽铺满，高卡用最近活跃补高度',
     shell,
     /\.shell\.auto-height :deep\(\.heat-calendar\)/,
     '手机 auto-height 下热力日历又用 flex:1，网格会被压成 0',
+  );
+});
+
+test('卡片 v2：横条左栏共用一条左对齐轴线', () => {
+  const summary = read('components/HomeAdaptiveSummary.vue');
+  assert.match(
+    summary,
+    /\.tier-bar \.sync-state,\s*\.tier-bar \.sync-description,\s*\.bar-main \.v \{padding-left:15px\}/,
+    '横条的数值 / 说明没有缩进到与标签同一条轴线（「0」会挂到「收集」左边）',
+  );
+  assert.match(
+    summary,
+    /\.tier-bar \.sync-state \.sdot,\s*\.bar-main \.v\.stat \.sdot \{position:absolute/,
+    '状态圆点仍在文字行里推挤文字，第二行无法与第一行对齐',
+  );
+  const composer = read('components/HomeBoardModules/HomeActionComposer.vue');
+  assert.match(composer, /\.bar-lead \{[^}]*width:15px/, '横条输入卡的图标栏没有收进左轴线');
+  assert.match(
+    composer,
+    /\.bar \.action-writing textarea \{[^}]*padding-left:2px/,
+    '横条输入卡的文字没有对齐左轴线',
   );
 });

@@ -49,7 +49,7 @@
 
     <!-- 竖条 / 标准：按内容组织数值、图表、自然行高列表与底部操作 -->
     <template v-else>
-      <button v-if="showMetric" type="button" class="summary-metric" :aria-label="`打开${title}完整内容`" :title="`${summary.value} · ${summary.label}`" @click="$emit('open')">
+      <button v-if="showMetric" type="button" class="summary-metric" :class="{ 'has-status': !!summary.status }" :aria-label="`打开${title}完整内容`" :title="`${summary.value} · ${summary.label}`" @click="$emit('open')">
         <span v-if="summary.status" class="summary-stat"><i class="sdot" :class="summary.status.tone" />{{ summary.status.text }}</span>
         <strong v-else-if="summary.action" class="summary-act">{{ summary.value }}</strong>
         <strong v-else class="summary-value" :style="{ fontSize: `${metricFontSize}px` }">{{ displayValue }}</strong>
@@ -159,6 +159,22 @@ onUnmounted(()=>observer?.disconnect());
 .narrow .sync-state {font-size:12px;gap:5px}
 .narrow .sync-arrow {display:none}
 .narrow .sync-description {font-size:10px}
+
+/*
+ * 横条左栏共用一条文字轴线（2026-11-19）：图标 / 圆点只占开头 15px 小栏，
+ * 标签、数值、说明都从同一条线起排。此前数值与说明从 0 起排——
+ * 「0」挂在「收集」左边、「最近同步」挂在圆点下方，同一张卡的左边参差。
+ * 圆点改为绝对定位后不再推挤文字，第二行才能回到轴线上。
+ */
+.tier-bar .sync-state,
+.tier-bar .sync-description,
+.bar-main .v {padding-left:15px}
+.tier-bar .sync-state,
+.bar-main .v.stat {position:relative}
+.tier-bar .sync-state .sdot,
+.bar-main .v.stat .sdot {position:absolute;left:2px;top:50%;transform:translateY(-50%)}
+/* max-width:100% 不把内边距算进宽度，说明行会多出 15px 顶到右缘 */
+.tier-bar .sync-description {box-sizing:border-box}
 
 /* ===== 角标（数值后的小胶囊）===== */
 .badge {font-style:normal;flex:none;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;line-height:1.5}
@@ -284,6 +300,8 @@ onUnmounted(()=>observer?.disconnect());
 
 /* 窄卡（竖条档）：数值小一号、行只留标题 */
 .narrow .summary-metric {flex-direction:column;align-items:flex-start;gap:1px}
+/* 竖条档的状态/标签也排成两行：标签缩进 14px（圆点 7 + 间距 7），跟状态文字同一轴线 */
+.narrow .has-status .summary-label {padding-left:14px}
 .narrow .summary-value {font-size:22px;line-height:1.15}
 .narrow .summary-stat {font-size:16px}
 .narrow .summary-act {font-size:16px}

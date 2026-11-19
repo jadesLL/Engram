@@ -19,6 +19,8 @@ v2 把规则反过来：**标准卡渲染模块自己的正文**，摘要只服�
 
 实现位置：`web/src/components/HomeModuleShell.vue` 的 `compact` computed。标准卡只有在实际像素小于 `150×130` 时才退回摘要，避免用户把卡拖得过小后正文挤成一团。
 
+横条左栏只留一条文字轴线：图标 / 状态圆点占开头 15px 小栏，标签、数值、说明都从同一条线起排（`HomeAdaptiveSummary` 的 `.tier-bar` 规则；输入卡 `HomeActionComposer` 的 `.bar-lead` 同宽）。不要再让数值或第二行从卡片内边距起排——那会让「0」挂在「收集」左边。
+
 ## 3. 手机单列：高度跟内容走
 
 - `HomeBoard` 在 `mobileCanvas`（≤768 或手机编辑态）时给 `.board-grid` 加 `mobile-list`：`display:flex; flex-direction:column`，不再沿用桌面 12 列格高。

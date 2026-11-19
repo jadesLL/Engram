@@ -115,9 +115,16 @@ function onKey(event: KeyboardEvent) {
 .action-writing textarea::placeholder { color:var(--text-muted, var(--text-faint)); }
 /* Keep text clear of rounded corners and the focus border inside compact cards. */
 .action-writing textarea:focus { border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-soft); }
-.bar .action-writing textarea { height:32px;white-space:pre;overflow:auto;scrollbar-width:none; }
+.bar .action-writing textarea { height:32px;white-space:pre;overflow:auto;scrollbar-width:none;padding-left:2px; }
 /* 一格高的记想法条：左侧落一个灵感图标，右侧给快捷键提示与带文字的提交按钮，整条读起来像一个输入框 */
-.bar-lead { display:flex;align-items:center;justify-content:center;width:24px;height:32px;flex:none;color:var(--accent); }
+.bar-lead { display:flex;align-items:center;justify-content:center;width:15px;height:32px;flex:none;color:var(--accent); }
+/*
+ * 横条左栏一条文字轴线（2026-11-19）：图标收进 15px 小栏，正文从 30px 起排，
+ * 跟同排摘要卡的标签对齐。此前是 24px 图标栏 + 6px 间距 + 8px 内边距（50px），
+ * 同一行里比「同步已完成」明显靠右；右侧提示与提交按钮保留原来的 6px 间隔。
+ */
+.bar .action-writing { gap:0; }
+.bar .bar-hint,.bar .bar-error,.bar .action-send { margin-left:6px; }
 .bar-hint { flex:none;font-size:11px;color:var(--text-faint);white-space:nowrap; }
 .action-send { display:flex;align-items:center;justify-content:center;gap:6px;height:32px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent);transition:background var(--motion-fast) var(--ease-standard),color var(--motion-fast) var(--ease-standard),box-shadow var(--motion-fast) var(--ease-standard); }
 /* 上面那条 `.home-action button` 重置比单类名权重高，会把内边距与最小宽度吃掉，
