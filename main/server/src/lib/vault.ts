@@ -8,6 +8,7 @@ import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
 import { emit } from './events.js';
 import { noteAppWrite } from './appWrites.js';
+import { adoptForeignAssetRefs, assetRelPath, MEDIA_PREFIX, type AdoptedAssetFile } from './pageAssets.js';
 
 export interface PageMeta {
   id: string;
@@ -457,7 +458,21 @@ export function writePage(
   }
 
   atomicWrite(abs, matter.stringify(content, data));
-  const meta = syncPageFile(relPath)!;
+  let meta = syncPageFile(relPath)!;
+  // 图片归属收编：正文里引用的若是别的父项（复制正文 / 另存 / Agent 转写留下的
+  // /media/<旧id>/…），把文件复制进本页资产目录并改写引用，让侧栏「查看引用图片」
+  // 与正文重新一致（见 pageAssets.adoptForeignAssetRefs 的说明）。
+  // 必须放在 syncPageFile 之后：frontmatter id 撞上别的路径时它会换新 id，收编要用最终 id。
+  const adoption = adoptForeignAssetRefs(meta.id, content);
+  if (adoption.adopted) {
+    // frontmatter 用磁盘上的最新一份（syncPageFile 可能补了标题/日期），别把它的修正盖掉
+    const fm = (matter(fs.readFileSync(abs, 'utf8')).data as Record<string, any>) || {};
+    atomicWrite(abs, matter.stringify(adoption.content, fm));
+    meta = syncPageFile(relPath)!;
+    if (origin === 'local') {
+      for (const file of adoption.files) notifySyncChange('file', assetRelPath(file.parentId, file.name));
+    }
+  }
   emit('page-changed', { path: relPath, id: meta.id });
   if (origin === 'local') notifySyncChange('page', relPath);
   return meta;
@@ -631,6 +646,40 @@ export async function scanVaultPages(): Promise<ScanVaultPagesResult> {
 }
 
 /**
+ * 对一份已落盘的 md 做图片归属收编（供不走 writePage 的入口调用：启动扫描、带外写入）。
+ * writePage 内部已自带收编；这里会多读一遍文件，命中跨父项引用才真正写回。
+ */
+export function adoptPageAssetRefs(relPath: string): AdoptedAssetFile[] {
+  const page = readPage(relPath);
+  if (!page) return [];
+  const result = adoptForeignAssetRefs(page.meta.id, page.content);
+  if (!result.adopted) return [];
+  writePage(relPath, result.content, {});
+  return result.files;
+}
+
+/** 全库图片归属自愈：只读带 /media/ 的页面，命中跨父项引用才写回（含同步通知）。 */
+function adoptVaultAssetRefs(): { pages: number; files: number } {
+  const rows = db.prepare(`SELECT path FROM pages WHERE deleted = 0`).all() as { path: string }[];
+  let pages = 0;
+  let files = 0;
+  for (const row of rows) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(safeJoin(String(row.path)), 'utf8');
+    } catch {
+      continue;
+    }
+    if (!raw.includes(MEDIA_PREFIX)) continue;
+    const adopted = adoptPageAssetRefs(String(row.path));
+    if (!adopted.length) continue;
+    pages++;
+    files += adopted.length;
+  }
+  return { pages, files };
+}
+
+/**
  * 启动扫描第二阶段（listen 后后台调用）：原始资料提取入队、图片资产 legacy 迁移/无归属收容。
  * 这些工作不影响首屏（侧栏、编辑、检索此时已可用），放到 listen 之后再跑。
  *
@@ -695,6 +744,17 @@ export async function scanVaultDeferred(): Promise<void> {
   } catch (error: any) {
     // 不写标记 → 下次启动重试；迁移失败绝不能阻塞启动
     console.warn(`[assets] 图片资产迁移失败，下次启动重试：${error?.message || error}`);
+  }
+
+  // 图片归属自愈（每次启动）：正文里还引用着别的父项图片的页面（复制正文 / Agent 转写
+  // 留下的 /media/<旧id>/…），把图收编进自己的资产目录并改写引用。幂等，命中才写回。
+  try {
+    const adopted = adoptVaultAssetRefs();
+    if (adopted.pages) {
+      console.log(`[assets] 图片归属自愈：${adopted.pages} 个页面收编 ${adopted.files} 张图`);
+    }
+  } catch (error: any) {
+    console.warn(`[assets] 图片归属自愈失败，下次启动重试：${error?.message || error}`);
   }
 }
 

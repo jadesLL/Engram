@@ -14,6 +14,8 @@ let ASSETS_DIR: string;
 let createPage: (dir: string, title: string) => any;
 let readPage: (relPath: string) => any;
 let writePage: (relPath: string, content: string, extra?: any) => any;
+let adoptPageAssetRefs: (relPath: string) => any[];
+let syncPageFile: (relPath: string) => any;
 
 let parseMediaUrl: (url: string) => any;
 let parseAssetRefs: (md: string) => any[];
@@ -27,6 +29,7 @@ let sweepLooseAssetsOnly: () => number;
 let assetCountsByParent: () => Map<string, number>;
 let invalidateAssetCountCache: () => void;
 let UNASSIGNED_PARENT: string;
+let adoptForeignAssetRefs: (pageId: string, markdown: string) => any;
 let countRemoteImages: (content: string) => number;
 
 /** 1×1 PNG：内容稳定，用来验证内容寻址命名与去重 */
@@ -42,7 +45,7 @@ const PNG2 = Buffer.from(
 before(async () => {
   ({ db, migrate } = await import('./db.js'));
   ({ ensureDirs, ASSETS_DIR } = await import('../config.js'));
-  ({ createPage, readPage, writePage } = await import('./vault.js'));
+  ({ createPage, readPage, writePage, adoptPageAssetRefs, syncPageFile } = await import('./vault.js'));
   ({
     parseMediaUrl,
     parseAssetRefs,
@@ -56,6 +59,7 @@ before(async () => {
     assetCountsByParent,
     invalidateAssetCountCache,
     UNASSIGNED_PARENT,
+    adoptForeignAssetRefs,
   } = await import('./pageAssets.js'));
   ({ countRemoteImages } = await import('./remoteImages.js'));
   migrate();
@@ -200,6 +204,114 @@ test('collectAssetOrphans：未归属池与未被引用分开列', () => {
     [...orphans.unassigned, ...orphans.unreferenced].reduce((sum: number, x: any) => sum + x.size, 0)
   );
   assert.equal(orphans.totalBytes, PNG.length + PNG2.length);
+});
+
+/* ---------------- 跨父项引用收编 ---------------- */
+
+test('adoptForeignAssetRefs：复制到本页目录并改写引用，保留 #w= 宽度与 title', () => {
+  const owner = createPage('Wiki/概念', '图片来源页');
+  const asset = savePageAsset(owner.id, 'image.png', PNG);
+  const target = createPage('Wiki/概念', '收编目标页');
+  const md = [
+    `![image.png](${asset.url}#w=628)`,
+    `![带出处](${asset.url} "原图 https://example.com/x.png")`,
+    `<img src="${asset.url}">`,
+  ].join('\n\n');
+
+  const result = adoptForeignAssetRefs(target.id, md);
+  const ownUrl = mediaUrl(target.id, asset.name);
+  assert.equal(result.adopted, 3);
+  assert.deepEqual(result.files.map((f: any) => f.name), [asset.name]);
+  assert.ok(result.content.includes(`![image.png](${ownUrl}#w=628)`));
+  assert.ok(result.content.includes(`![带出处](${ownUrl} "原图 https://example.com/x.png")`));
+  assert.ok(result.content.includes(`<img src="${ownUrl}">`));
+  // 只复制、不搬移：两边都在（旧父项可能只是进了回收站，恢复后还要能用）
+  assert.equal(fs.existsSync(path.join(ASSETS_DIR, target.id, asset.name)), true);
+  assert.equal(fs.existsSync(path.join(ASSETS_DIR, owner.id, asset.name)), true);
+  // 收编后的正文写回本页：抽屉能看到，且标记为「正文引用」
+  writePage(target.path, result.content);
+  const own = listParentAssets(target.id);
+  assert.equal(own.length, 1);
+  assert.equal(own[0].referenced, true);
+  // 幂等：收编过的正文再跑一遍不再改
+  const again = adoptForeignAssetRefs(target.id, result.content);
+  assert.equal(again.adopted, 0);
+  assert.equal(again.content, result.content);
+});
+
+test('adoptForeignAssetRefs：源文件不在（同步未到）时保持原引用，不报错', () => {
+  const target = createPage('Wiki/概念', '缺图目标页');
+  const md = '![缺失](/media/ghost-parent/none.png)';
+  const result = adoptForeignAssetRefs(target.id, md);
+  assert.equal(result.adopted, 0);
+  assert.equal(result.content, md);
+  assert.equal(fs.existsSync(path.join(ASSETS_DIR, target.id)), false);
+});
+
+test('writePage：正文从别的页面复制过来，图片自动收编到本页', () => {
+  const owner = createPage('Wiki/概念', '旧页面');
+  const asset = savePageAsset(owner.id, 'copy.png', PNG);
+  const target = createPage('Wiki/概念', '新页面');
+  writePage(target.path, `正文\n\n![图](${asset.url}#w=320)\n`);
+
+  const content = readPage(target.path)!.content;
+  const ownUrl = mediaUrl(target.id, asset.name);
+  assert.ok(content.includes(`${ownUrl}#w=320`));
+  assert.equal(content.includes(`/media/${owner.id}/`), false);
+  assert.equal(listParentAssets(target.id).length, 1);
+  // 原页面的图不受影响
+  assert.equal(listParentAssets(owner.id).length, 1);
+  assert.equal(assetCountsByParent().get(target.id), 1);
+});
+
+test('writePage：frontmatter id 撞上已有页面时，收编用换出的新 id', () => {
+  const owner = createPage('Wiki/概念', '被复制页');
+  const asset = savePageAsset(owner.id, 'clash.png', PNG);
+  const rel = 'Wiki/概念/复制出来的页面.md';
+  // 模拟「把原页面文件复制成新文件」：frontmatter 里还带着原页面 id
+  fs.writeFileSync(
+    path.join(temp, 'brain', ...rel.split('/')),
+    `---\nid: ${owner.id}\n标题: 复制出来的页面\n类型: concept\n---\n\n![图](${asset.url})\n`,
+    'utf8'
+  );
+  const meta = writePage(rel, `![图](${asset.url})\n`);
+  assert.notEqual(meta.id, owner.id);
+  const content = readPage(rel)!.content;
+  assert.ok(content.includes(`/media/${meta.id}/`));
+  assert.equal(listParentAssets(meta.id).length, 1);
+  assert.equal(listParentAssets(owner.id).length, 1);
+});
+
+test('adoptPageAssetRefs：带外转写（不经 writePage）的存量页面也能自愈', () => {
+  const owner = createPage('Wiki/概念', '存量来源页');
+  const asset = savePageAsset(owner.id, 'legacy.png', PNG);
+  const target = createPage('Wiki/概念', '存量目标页');
+  // 直接落盘 + 登记，模拟启动扫描看到的「正文里引用别的父项」的存量状态
+  fs.writeFileSync(
+    path.join(temp, 'brain', ...target.path.split('/')),
+    `---\nid: ${target.id}\n标题: 存量目标页\n类型: concept\n---\n\n![图](${asset.url})\n`,
+    'utf8'
+  );
+  syncPageFile(target.path);
+  const adopted = adoptPageAssetRefs(target.path);
+  assert.equal(adopted.length, 1);
+  assert.ok(readPage(target.path)!.content.includes(`/media/${target.id}/`));
+  assert.equal(listParentAssets(target.id)[0].referenced, true);
+});
+
+test('collectAssetOrphans：被别的页面正文引用的图不算可删孤儿', () => {
+  const owner = createPage('Wiki/概念', '资产归属页');
+  const asset = savePageAsset(owner.id, 'shared.png', PNG);
+  const target = createPage('Wiki/概念', '跨页引用页');
+  // 绕过收编直接落盘，造出「跨父项引用」的存量状态
+  fs.writeFileSync(
+    path.join(temp, 'brain', ...target.path.split('/')),
+    `---\nid: ${target.id}\n标题: 跨页引用页\n类型: concept\n---\n\n![图](${asset.url})\n`,
+    'utf8'
+  );
+  syncPageFile(target.path);
+  const orphans = collectAssetOrphans();
+  assert.equal(orphans.unreferenced.some((x: any) => x.name === asset.name), false);
 });
 
 /* ---------------- 存量迁移 ---------------- */

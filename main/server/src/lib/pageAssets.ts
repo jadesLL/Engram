@@ -154,6 +154,109 @@ export interface PageAsset {
   sourceUrl?: string;
 }
 
+export interface AdoptedAssetFile {
+  /** 收编后的归属父项（= 目标页面 id） */
+  parentId: string;
+  name: string;
+  /** brain 相对路径：assets/<parentId>/<name> */
+  relPath: string;
+}
+
+export interface AssetAdoptionResult {
+  /** 改写后的正文（没有可收编的引用时与入参相同） */
+  content: string;
+  /** 改写了几处引用 */
+  adopted: number;
+  /** 新拷进本页资产目录的文件（调用方据此发同步通知） */
+  files: AdoptedAssetFile[];
+}
+
+/**
+ * 把正文里「归属于别的父项」的图片收编到本页。
+ *
+ * 为什么需要：图片 URL 里写死了 `/media/<父项id>/<文件>`。把正文复制到另一个页面
+ * （用户复制粘贴、Agent read_page → write_page、带外转写）后，引用还指着旧父项：
+ * 编辑器和阅读页照常能显示（/media 按目录取文件，不查页面表），但侧栏右键
+ * 「查看引用图片」是按当前页 id 列 `assets/<id>/` 的——0 张，看起来像「图没插进去」。
+ * 收编 = 把文件复制到 `assets/<本页id>/`（内容寻址名不变）+ 改写引用，让归属与正文重新一致。
+ *
+ * 只复制、不移动：旧父项可能只是进了回收站，恢复后它自己的引用还得能用。
+ * 源文件不存在（同步还没拉到）时保留原引用，下次写入或启动扫描再试。
+ * `#w=` 这类 fragment 原样保留（宽度是用户在编辑器里调过的）。
+ */
+export function adoptForeignAssetRefs(pageId: string, markdown: string): AssetAdoptionResult {
+  const untouched: AssetAdoptionResult = { content: markdown, adopted: 0, files: [] };
+  if (!isParentId(pageId) || pageId === UNASSIGNED_PARENT) return untouched;
+  if (!markdown.includes(MEDIA_PREFIX)) return untouched;
+  const foreign = parseAssetRefs(markdown).filter((ref) => ref.parentId !== pageId);
+  if (!foreign.length) return untouched;
+
+  // `<源父项>/<源文件名>` → 本页文件名。已带内容哈希的原样沿用；手工命名的按内容补哈希，
+  // 避免不同图同名互相顶替（与 savePageAsset 同一套命名规则）。
+  const adoptedNames = new Map<string, string>();
+  const files = new Map<string, AdoptedAssetFile>();
+  let dirReady = false;
+  for (const ref of foreign) {
+    if (!isAssetFile(ref.name)) continue;
+    const sourceAbs = safeAssetJoin(`${ref.parentId}/${ref.name}`);
+    let buffer: Buffer;
+    try {
+      if (!fs.statSync(sourceAbs).isFile()) continue;
+      buffer = fs.readFileSync(sourceAbs);
+    } catch {
+      continue; // 源文件还没同步下来：保留原引用，下次再试
+    }
+    let name: string;
+    try {
+      name = contentAddressedName(buffer, ref.name);
+      if (!dirReady) {
+        fs.mkdirSync(safeAssetJoin(pageId), { recursive: true });
+        dirReady = true;
+      }
+      const target = path.join(safeAssetJoin(pageId), name);
+      if (!fs.existsSync(target)) atomicWrite(target, buffer);
+    } catch {
+      continue; // 单个文件拷不动不阻塞整批
+    }
+    adoptedNames.set(`${ref.parentId}/${ref.name}`, name);
+    files.set(`${pageId}/${name}`, { parentId: pageId, name, relPath: assetRelPath(pageId, name) });
+  }
+  if (!adoptedNames.size) return untouched;
+
+  let adopted = 0;
+  /** 把一处 URL 指向本页（保留 ?query / #fragment 后缀） */
+  const rewriteUrl = (rawUrl: string): string => {
+    const parsed = parseMediaUrl(rawUrl);
+    if (!parsed || parsed.parentId === pageId) return rawUrl;
+    const name = adoptedNames.get(`${parsed.parentId}/${parsed.name}`);
+    if (!name) return rawUrl;
+    adopted++;
+    const cut = rawUrl.search(/[?#]/);
+    const suffix = cut >= 0 ? rawUrl.slice(cut) : '';
+    return `${mediaUrl(pageId, name)}${suffix}`;
+  };
+
+  let content = markdown.replace(
+    MD_IMAGE_RE,
+    (match: string, alt: string, rawUrl: string, title?: string) => {
+      const next = rewriteUrl(rawUrl);
+      if (next === rawUrl) return match;
+      return `![${alt}](${next}${title === undefined ? '' : ` "${title}"`})`;
+    }
+  );
+  content = content.replace(
+    HTML_IMAGE_RE,
+    (match: string) => match.replace(
+      /(\bsrc\s*=\s*["'])([^"']+)(["'])/i,
+      (_m: string, pre: string, rawUrl: string, post: string) => `${pre}${rewriteUrl(rawUrl)}${post}`
+    )
+  );
+  if (!adopted || content === markdown) return untouched;
+
+  invalidateAssetCountCache();
+  return { content, adopted, files: [...files.values()] };
+}
+
 function toAsset(parentId: string, name: string, referenced: boolean, sourceUrl?: string): PageAsset | null {
   const abs = safeAssetJoin(`${parentId}/${name}`);
   let stat: fs.Stats;
@@ -370,9 +473,32 @@ export interface AssetOrphans {
   totalBytes: number;
 }
 
-/** 未归属 + 未引用（父项正文已删掉引用的孤儿），供设置页清理 */
+/**
+ * 全库活页面正文里出现的图片引用键（`<父项id>/<文件名>`）。
+ * 孤儿判定必须以「还有没有任何页面引用它」为准，而不是只看资产自己父项的正文：
+ * 复制正文留下的跨父项引用（收编之前的存量状态）不能被当成可删孤儿。
+ * 只在设置 → 存储空间的清理入口调用，手动操作为主，读一遍有图的页面可以接受。
+ */
+function allReferencedAssetKeys(): Set<string> {
+  const out = new Set<string>();
+  const rows = db.prepare(`SELECT path FROM pages WHERE deleted = 0`).all() as { path: string }[];
+  for (const row of rows) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(safeBrainJoin(String(row.path)), 'utf8');
+    } catch {
+      continue;
+    }
+    if (!raw.includes(MEDIA_PREFIX)) continue;
+    for (const ref of parseAssetRefs(raw)) out.add(`${ref.parentId}/${ref.name}`);
+  }
+  return out;
+}
+
+/** 未归属 + 未引用（任何活页面正文都不再引用的孤儿），供设置页清理 */
 export function collectAssetOrphans(): AssetOrphans {
   const unassigned = listUnassignedAssets();
+  const referenced = allReferencedAssetKeys();
   const unreferenced: PageAsset[] = [];
   let entries: fs.Dirent[] = [];
   try {
@@ -383,7 +509,7 @@ export function collectAssetOrphans(): AssetOrphans {
   for (const entry of entries) {
     if (!entry.isDirectory() || !isParentId(entry.name) || entry.name === UNASSIGNED_PARENT) continue;
     for (const asset of listParentAssets(entry.name)) {
-      if (!asset.referenced) unreferenced.push(asset);
+      if (!referenced.has(`${asset.parentId}/${asset.name}`)) unreferenced.push({ ...asset, referenced: false });
     }
   }
   const all = [...unassigned, ...unreferenced];
