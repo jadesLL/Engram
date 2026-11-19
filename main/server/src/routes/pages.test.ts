@@ -255,3 +255,78 @@ test('related 缓存有上限：访问大量页面后不会无限增长', async 
     `缓存条目 ${relatedCacheSize()} 超过上限 ${RELATED_CACHE_MAX}`
   );
 });
+
+/**
+ * 保存前对账（2026-11-19 用户报障：内置 Agent 按位置引用写入后，编辑器看不到，
+ * 下次自动保存还会用旧正文把它覆盖）：PUT 带 baseContent 时，若页面在加载后被
+ * 别的来源改过，服务端先做字符级三方合并再落盘，两侧改动都要保留。
+ */
+test('PUT 带 baseContent：页面被外部改过时三方合并，Agent 插入不被旧正文覆盖', async () => {
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '保存对账合并测试', type: 'concept' },
+  });
+  assert.equal(created.statusCode, 200);
+  const id = created.json().meta.id;
+
+  const base = '# 保存对账合并测试\n\n第一段。\n\n第二段。';
+  const saved = await app.inject({
+    method: 'PUT',
+    url: `/api/pages/${id}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { content: base },
+  });
+  assert.equal(saved.statusCode, 200);
+
+  const row = db.prepare(`SELECT path FROM pages WHERE id = ?`).get(id) as { path: string };
+  // 模拟内置 Agent 在编辑器加载之后按位置引用插入
+  const { writePage } = await import('../lib/vault.js');
+  writePage(row.path, `${base}\n\n123456`);
+
+  // 编辑器仍以加载时的 base 为基准提交自己的追加：服务端必须合并而不是覆盖
+  const merged = await app.inject({
+    method: 'PUT',
+    url: `/api/pages/${id}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { content: `${base}\n\n我的追加`, baseContent: base },
+  });
+  assert.equal(merged.statusCode, 200);
+  const body = merged.json();
+  assert.equal(body.merged, true, '外部改动应触发合并');
+  assert.equal(typeof body.content, 'string', '合并后要回传最终正文给编辑器对齐');
+  assert.match(body.content, /123456/);
+  assert.match(body.content, /我的追加/);
+
+  const onDisk = fs.readFileSync(path.join(temp, 'brain', row.path), 'utf8');
+  assert.match(onDisk, /123456/, 'Agent 写入的内容不能丢');
+  assert.match(onDisk, /我的追加/, '编辑器自己的改动也要保留');
+});
+
+test('PUT 带 baseContent 但页面没被外部改过：普通保存，不触发合并', async () => {
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '保存对账无冲突测试', type: 'concept' },
+  });
+  const id = created.json().meta.id;
+  const base = '# 保存对账无冲突测试\n\n原文。';
+  await app.inject({
+    method: 'PUT',
+    url: `/api/pages/${id}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { content: base },
+  });
+
+  const res = await app.inject({
+    method: 'PUT',
+    url: `/api/pages/${id}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { content: `${base}\n\n新改动`, baseContent: base },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().merged, undefined);
+  assert.equal(res.json().content, undefined);
+});

@@ -1292,6 +1292,14 @@ let dirty = false;
 let loading = false; // 加载页面时抑制 content watch
 let justSavedAt = 0; // 本地刚保存时间戳，抑制 SSE 回声导致的重复重载
 let loadedContentKey = '';
+/** 服务端最近一次读/写成功的正文原文：保存时作为 baseContent 交给服务端做三方合并 */
+let loadedServerContent = '';
+/**
+ * 收到过「别的来源改了当前页」但当时正在编辑/输入法组字/刚保存，没敢整篇换稿。
+ * 记下来等安全时机补重载，绝不直接丢弃——否则编辑器会一直停在旧正文，
+ * 下一次自动保存还会把 Agent / 多端写进来的内容覆盖掉。
+ */
+let externalUpdatePending = false;
 
 /**
  * 提炼完成就地换稿：SSE（桌面端 page-changed）已经会触发重载，
@@ -1326,7 +1334,7 @@ function visibleContentKey(value: string) {
 
 let loadSeq = 0;
 
-async function loadPage(id: string) {
+async function loadPage(id: string, opts: { external?: boolean } = {}) {
   const seq = ++loadSeq;
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   pageLoading.value = true;
@@ -1336,9 +1344,17 @@ async function loadPage(id: string) {
     const { data } = await api.get(`/api/pages/${id}`);
     // 过期响应丢弃：SSE 触发的当前页重载与用户切页并发时，慢的旧响应不得覆盖新页
     if (seq !== loadSeq) return;
+    // 外部更新触发的重载：请求飞行期间用户又开始输入了——不能拿服务端正文盖掉新输入，
+    // 保留 pending，等保存完成 / 聚焦时再补。
+    if (opts.external && (dirty || editorRef.value?.isComposing())) {
+      externalUpdatePending = true;
+      return;
+    }
     page.value = data.meta;
     content.value = data.content;
     loadedContentKey = visibleContentKey(data.content);
+    loadedServerContent = data.content;
+    externalUpdatePending = false;
     // 标题为空时回退到文件名（去掉 .md 后缀）
     title.value = data.meta.title || data.meta.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
     pageType.value = data.meta.type;
@@ -1373,6 +1389,49 @@ async function loadPage(id: string) {
 function retryLoad() {
   const id = route.params.id as string;
   if (id) loadPage(id);
+}
+
+/**
+ * 对一次服务端内容：和编辑器里的正文不一致才整篇换稿，一致（多为自己的保存回声）
+ * 只更新合并基准。返回 false 表示这次没读成，调用方保留 pending 等下次机会。
+ */
+async function reloadIfServerChanged(): Promise<boolean> {
+  const current = page.value;
+  if (!current) return true;
+  const id = current.id;
+  if (pageLoading.value || String(route.params.id || '') !== String(id)) return true;
+  try {
+    const { data } = await api.get(`/api/pages/${id}`);
+    // 读回包期间切页/删页：丢弃，别把旧页内容写回来
+    if (page.value?.id !== id || String(route.params.id || '') !== String(id)) return true;
+    if (visibleContentKey(data.content) === visibleContentKey(content.value)) {
+      loadedServerContent = data.content;
+      page.value = data.meta;
+      return true;
+    }
+    await loadPage(id, { external: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 补做编辑期间错过的外部更新。
+ * 只在不会打断输入的时机换稿：不脏（没有未保存改动）、输入法不在组字。
+ * 正在编辑时保持 pending，保存完成 / 窗口重新聚焦 / 页面重新可见时再补。
+ */
+async function flushExternalUpdate() {
+  if (!externalUpdatePending) return;
+  if (!page.value || pageLoading.value || dirty) return;
+  if (editorRef.value?.isComposing()) return;
+  const ok = await reloadIfServerChanged();
+  if (ok) externalUpdatePending = false;
+}
+
+function onExternalUpdateOpportunity() {
+  if (document.visibilityState !== 'visible') return;
+  void flushExternalUpdate();
 }
 
 async function loadRelated() {
@@ -1480,17 +1539,35 @@ async function saveCurrentPage(manual: boolean): Promise<boolean> {
   const id = page.value.id;
   const modelAtStart = content.value;
   const contentToSave = editorRef.value?.getValue() ?? content.value;
-  const snapshot = { content: contentToSave, title: title.value, type: pageType.value, tags: [...tags.value] };
+  // baseContent = 本编辑器加载时的正文：服务端据此判断页面是否被别的来源改过，
+  // 改过就做字符级三方合并再落盘，避免旧正文整篇覆盖 Agent / 多端刚写进来的内容。
+  const snapshot = {
+    content: contentToSave,
+    title: title.value,
+    type: pageType.value,
+    tags: [...tags.value],
+    baseContent: loadedServerContent,
+  };
   try {
     const { data } = await api.put(`/api/pages/${id}`, snapshot);
     app.bumpSidebar();
     // 旧页保存回包不能覆盖已经切换的新页。
     if (page.value?.id !== id || String(route.params.id || '') !== String(id)) return true;
     page.value = data.meta;
-    loadedContentKey = visibleContentKey(contentToSave);
     const changedDuringSave = visibleContentKey(content.value) !== visibleContentKey(modelAtStart);
-    // Vditor 会规范化列表等 Markdown；没有新输入时把模型对齐已保存文本，避免反复标脏。
-    if (!changedDuringSave) content.value = contentToSave;
+    const mergedContent: string | null = data.merged && typeof data.content === 'string' ? data.content : null;
+    if (mergedContent !== null) {
+      // 服务端把外部改动合并进来了：以合并结果作为新的基准；没有新输入就整篇换成合并稿。
+      loadedContentKey = visibleContentKey(mergedContent);
+      loadedServerContent = mergedContent.trim();
+      if (!changedDuringSave) content.value = mergedContent;
+      if (data.conflicts) notify.info('保存时合并了页面上的其他改动，冲突处保留了你这一侧的版本');
+    } else {
+      // 与服务端 readPage 的口径一致（正文会 trim），否则下次对账会把空白差异当成外部改动
+      loadedServerContent = contentToSave.trim();
+      // Vditor 会规范化列表等 Markdown；没有新输入时把模型对齐已保存文本，避免反复标脏。
+      if (!changedDuringSave) content.value = contentToSave;
+    }
     dirty = changedDuringSave || title.value !== snapshot.title || pageType.value !== snapshot.type || JSON.stringify(tags.value) !== JSON.stringify(snapshot.tags);
     dirtyUi.value = dirty;
     justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
@@ -1498,6 +1575,8 @@ async function saveCurrentPage(manual: boolean): Promise<boolean> {
     setTimeout(() => { if (page.value?.id === id && !dirty && !pageLoading.value) saveState.value = SAVED_IDLE; }, 2000);
     loadRelated();
     loadEvidence();
+    // 编辑期间收到过的外部更新：现在已经是干净状态，补一次重载（内容相同则不换稿）
+    if (!dirty) void flushExternalUpdate();
     return true;
   } catch (error: any) {
     // dirty 保持 true：beforeunload 会继续提醒，下次编辑/手动保存可重试
@@ -1533,6 +1612,8 @@ watch(content, () => {
     dirty = false;
     dirtyUi.value = false;
     saveState.value = SAVED_IDLE;
+    // 用户把改动撤回到已保存状态：此时可以安全补做错过的外部更新
+    void flushExternalUpdate();
     return;
   }
   dirty = true;
@@ -1955,15 +2036,17 @@ watch(
           return;
         }
         // 只在当前页内容变化或被移动时重载
-        const matchChanged = ev.type === 'page-changed' && ev.path === myPath;
+    const matchChanged = ev.type === 'page-changed' && ev.path === myPath;
     const matchMoved = ev.type === 'page-moved' && (ev.oldPath === myPath || ev.newPath === myPath);
     if (!matchChanged && !matchMoved) return;
-    if (dirty) return; // 用户正在编辑，不覆盖未保存内容
-    // 输入法组字中：整页重载会 vditor.setValue 重建编辑器 DOM，把还没上屏的拼音打断
-    // （跳字/鼠标位置乱跑）。先保住用户当前输入，下一次事件或切页时再同步。
-    if (editorRef.value?.isComposing()) return;
-    if (Date.now() - justSavedAt < 1500) return; // 自己刚保存的回声，忽略
-    loadPage(page.value.id);
+    // 用户正在编辑 / 输入法组字中 / 刚保存（很可能是自己的回声）：
+    // 不立刻整篇换稿，但必须记下这次外部更新，等干净时补重载——
+    // 直接丢弃会让编辑器停在旧正文，下一次自动保存就会把别人的改动覆盖掉。
+    if (dirty || editorRef.value?.isComposing() || Date.now() - justSavedAt < 1500) {
+      externalUpdatePending = true;
+      return;
+    }
+    loadPage(page.value.id, { external: true });
   }
 );
 
@@ -2026,6 +2109,9 @@ onMounted(() => {
   loadRawSectionOptions();
   window.addEventListener('beforeunload', beforeUnload);
   window.addEventListener('keydown', onGlobalKey);
+  // 编辑期间错过的外部更新：窗口重新聚焦 / 页面重新可见时补做（干净状态下才换稿）
+  window.addEventListener('focus', onExternalUpdateOpportunity);
+  document.addEventListener('visibilitychange', onExternalUpdateOpportunity);
   document.addEventListener('pointerdown', onWidthPickerPointerDown);
   document.addEventListener('click', onWidthPickerPointerDown);
   document.addEventListener('pointerdown', onOutlinePopPointerDown);
@@ -2036,6 +2122,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   window.removeEventListener('keydown', onGlobalKey);
+  window.removeEventListener('focus', onExternalUpdateOpportunity);
+  document.removeEventListener('visibilitychange', onExternalUpdateOpportunity);
   chromeMobile.removeEventListener('change', onChromeMobileChange);
   document.removeEventListener('pointerdown', onWidthPickerPointerDown);
   document.removeEventListener('click', onWidthPickerPointerDown);
