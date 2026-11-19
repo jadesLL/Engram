@@ -592,6 +592,11 @@ html .vditor-reset {
   color: var(--text);
 }
 html .vditor-reset blockquote {
+  margin: 1em 0;
+  padding: 11px 15px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg-secondary);
   color: var(--text-secondary);
 }
 html .vditor-reset table tr {
@@ -629,10 +634,10 @@ html .vditor-reset table tbody tr:nth-child(2n) {
 .vditor-ir a:hover, .vditor-wysiwyg a:hover, .vditor-sv a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .vditor-ir blockquote, .vditor-wysiwyg blockquote, .vditor-sv blockquote {
   margin: 0.9em 0;
-  padding: 0.4em 1em;
-  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  border: 0;
   background: var(--bg-secondary);
-  border-radius: 0 6px 6px 0;
+  border-radius: 10px;
   color: var(--text-secondary);
 }
 .vditor-ir blockquote p, .vditor-wysiwyg blockquote p, .vditor-sv blockquote p { margin: 0.3em 0; }
