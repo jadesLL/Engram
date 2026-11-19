@@ -75,13 +75,23 @@ const cells = computed(() => [
 
 <style scoped>
 .system-card { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; }
-.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; flex: 1; min-height: 0; }
+/* 行高吃满剩余空间（minmax(0,1fr)），空间不够时在格子内省略，绝不溢出压到下面一行 */
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 7px;
+  flex: 1;
+  min-height: 0;
+}
 .status-cell {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   padding: 8px 9px;
   border-radius: 8px;
   background: var(--bg-secondary);
@@ -105,6 +115,7 @@ const cells = computed(() => [
   display: flex;
   align-items: center;
   gap: 5px;
+  flex: none;
   margin: 9px 0 0;
   font-size: 9.5px;
   line-height: 1.5;
@@ -115,8 +126,27 @@ const cells = computed(() => [
 }
 .status-dot { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--success); }
 .status-dot.warn { background: var(--danger); }
+/*
+ * 两行高的卡片只够放四个状态格：收起底部说明行，并把内边距收紧，
+ * 让 2×2 的值和标签都完整落在格子里（不再和说明行重叠）。
+ */
+@container (max-height: 170px) {
+  .status-grid { gap: 6px; }
+  /* 矮卡把每格改成单行「标签 + 数值」：一行放得下，不再上下挤到裁字 */
+  .status-cell {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 6px 8px;
+  }
+  .status-cell .k { flex: none; }
+  .status-cell .v { flex: 1; min-width: 0; text-align: right; }
+  .status-line { display: none; }
+}
 @container (max-width: 240px) {
   .status-grid { grid-template-columns: 1fr; }
+  .status-cell .k { display: none; }
+  .status-cell .v { font-size: 10.5px; }
   .status-line { display: none; }
 }
 </style>

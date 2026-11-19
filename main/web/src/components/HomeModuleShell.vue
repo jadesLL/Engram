@@ -256,8 +256,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .module-content {
   display:flex;
   flex-direction:column;
-  overflow:auto;
-  scrollbar-width:thin;
+  /* 卡面不出现内部滚动条：模块按拿到的宽高自行收敛内容，溢出的由模块自己省略 */
+  overflow:hidden;
 }
 .content-hidden {
   display:none;
