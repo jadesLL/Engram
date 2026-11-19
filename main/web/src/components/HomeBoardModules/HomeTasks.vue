@@ -6,6 +6,7 @@
       :key="index"
       class="mini-task"
       type="button"
+      :title="card.text"
       @click="$emit('go', '/tasks')"
     >
       <span class="mini-check" aria-hidden="true" />
@@ -62,16 +63,17 @@ const shown = computed(() => (props.cards || []).slice(0, Math.min(Math.max(1, p
 }
 .mini-task:hover .mini-check { border-color: var(--accent); }
 .mini-main { flex: 1; min-width: 0; }
+/* 单行标题：卡内行高预算 49px 只够「一行标题 + 来源」，放两行会让来源溢出到
+   行边界外、被下一行的 1px 分隔线压住；完整标题在悬停 tooltip 与任务看板里。 */
 .mini-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 12.5px;
   font-weight: 500;
   line-height: 1.42;
   color: var(--text);
-  text-wrap: balance;
 }
 .mini-meta {
   display: block;
