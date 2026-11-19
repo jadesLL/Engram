@@ -5,9 +5,10 @@ import {
   deletePageAsAgent, renamePageAsAgent, movePageAsAgent, AgentPageError,
 } from '../pipeline/agentDelete.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
+import { insertAtPosition, PositionRefError } from '../assistant/positions.js';
 
 /**
- * 外部 Agent 的 REST 写入口（CLI `engram pages write|delete|rename|move` 使用）。
+ * 外部 Agent 的 REST 写入口（CLI `engram pages write|insert|delete|rename|move` 使用）。
  * 与 CLI `engram pages write|delete|rename|move` 同一内核：
  * 证据逐字校验 + 新建概念/实体页两来源门禁 + 自动操作日志；只允许操作 Wiki/ 下的页面，
  * 删除只做软删除入回收站。
@@ -46,6 +47,23 @@ export async function agentRoutes(app: FastifyInstance) {
       };
     } catch (error) {
       if (error instanceof WriteGateError) {
+        return reply.code(error.status).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * 按位置令牌插入正文（CLI `engram pages insert <token>` 使用）。
+   * 令牌来自用户在编辑器里引用的光标位置；这里按锚点原文重新定位块，页面被改动就拒绝。
+   */
+  app.post('/api/agent/page/insert', async (req, reply) => {
+    const body = (req.body || {}) as { token?: string; content?: string };
+    try {
+      const result = insertAtPosition(String(body.token || ''), String(body.content || ''));
+      return { ok: true, ...result };
+    } catch (error) {
+      if (error instanceof PositionRefError || error instanceof WriteGateError) {
         return reply.code(error.status).send({ error: error.message });
       }
       throw error;

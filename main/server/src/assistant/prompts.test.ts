@@ -79,3 +79,39 @@ test('buildTask：没有附件时不出现收集箱/对话附件说明；非法�
   assert.equal(task.includes('本次消息附带的是对话附件'), false);
   assert.equal(task.includes('原始资料/别人的.txt'), false);
 });
+
+test('buildTask：位置引用带令牌时给出可执行的 pages insert 命令，令牌段在不可信块之后', () => {
+  const task = buildTask('在这里补一段验收安排', {
+    positionRef: {
+      pagePath: 'Wiki/项目/项目规划.md',
+      pageTitle: '项目规划',
+      headingPath: ['项目规划', '二、里程碑'],
+      anchorText: '下周一收集反馈，确认是否进入第二阶段。',
+      occurrence: 1,
+      before: '第一版在周五前发出。',
+      after: '三、风险与预案',
+    },
+    positionToken: 'pos_ab12cd34ef',
+  });
+  assert.match(task, /用户引用了正文位置：《项目规划》 · 项目规划 → 二、里程碑/);
+  assert.match(task, /锚点原文：\n下周一收集反馈/);
+  assert.match(task, /位置标记：pos_ab12cd34ef/);
+  assert.match(task, /engram pages insert pos_ab12cd34ef --file -/);
+  // 命令是可信约定：必须排在不可信界面上下文块之后，避免锚点原文里的句子被当指令
+  assert.ok(task.indexOf('engram pages insert pos_ab12cd34ef') > task.indexOf('</界面上下文>'));
+  assert.ok(task.trimEnd().endsWith('在这里补一段验收安排'));
+});
+
+test('buildTask：位置已失效时明确禁止写页面', () => {
+  const task = buildTask('写一段', {
+    positionRef: {
+      pagePath: 'Wiki/项目/项目规划.md',
+      pageTitle: '项目规划',
+      anchorText: '不存在的段落。',
+    },
+    positionError: '引用的正文位置已不存在（页面可能被改动），请重新引用位置',
+  });
+  assert.match(task, /用户引用的正文位置已失效/);
+  assert.match(task, /本轮不要写页面，也不要猜位置/);
+  assert.equal(task.includes('engram pages insert'), false);
+});

@@ -2,6 +2,7 @@ import { startAgentTurn, type AgentTurn } from './dshRuntime.js';
 import { agentModelConfigured } from './config.js';
 import { publishRun, clearRun, hasRunSubscribers } from './events.js';
 import { buildTask, normalizeInboxFiles, type InterfaceContext } from './prompts.js';
+import { assertPositionRef, preparePositionRef } from './positions.js';
 import { planReasoningReplay, type ReasoningPart } from './mapping.js';
 import { closeQuestionsForRun } from './questions.js';
 import { generateSessionTitle, heuristicTitle } from './title.js';
@@ -238,6 +239,9 @@ export function submitMessage(input: {
   context?: InterfaceContext;
 }): { run: RunDto; queued: boolean } {
   requireSession(input.sessionId);
+  // 位置引用在受理前校验：失效就拒绝发送，前端保留草稿与位置 chip，用户重新引用即可。
+  // 排队期间页面再被改动由 beginRun 的令牌预检兜底（Agent 会被告知位置失效，不写页面）。
+  if (input.context?.positionRef) assertPositionRef(input.context.positionRef);
   if (runningRunForSession(input.sessionId)) return enqueue(input);
   try {
     return { run: startRun(input), queued: false };
@@ -257,9 +261,9 @@ function enqueue(input: { sessionId: string; message: string; context?: Interfac
     message: input.message,
     context: input.context ?? {},
   });
-  // 附件随用户消息落 metadata：转录里能标出用户当时附了哪些对话附件/收集箱文件
-  // （对话重建、多端同步、排队转正之后都还在）。queued 标记保留，故用合并写。
-  const metadata = inboxFilesMetadata(input.context);
+  // 附件与位置引用随用户消息落 metadata：转录里能标出用户当时附了哪些文件、
+  // 引用了正文哪个位置（对话重建、多端同步、排队转正之后都还在）。queued 标记保留，故用合并写。
+  const metadata = userMessageMetadata(input.context);
   if (metadata) updateMessageMetadata(message.id, metadata);
   touchSession(input.sessionId);
   return { run, queued: true };
@@ -272,6 +276,30 @@ function enqueue(input: { sessionId: string; message: string; context?: Interfac
 function inboxFilesMetadata(context?: InterfaceContext): Record<string, unknown> | undefined {
   const inboxFiles = normalizeInboxFiles(context);
   return inboxFiles.length ? { inboxFiles } : undefined;
+}
+
+/**
+ * 位置引用也只落一份给界面看的摘要（页面、标题路径、一行预览），不落锚点原文：
+ * 锚点原文在 assistant_positions 里已经有一份，转录气泡只需要说明「写到了哪个位置」。
+ */
+function positionMetadata(context?: InterfaceContext): Record<string, unknown> | undefined {
+  const ref = context?.positionRef;
+  if (!ref) return undefined;
+  return {
+    position: {
+      pageTitle: String(ref.pageTitle || '').slice(0, 200),
+      headingPath: (Array.isArray(ref.headingPath) ? ref.headingPath : [])
+        .map((item) => String(item ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 8),
+      preview: String(ref.preview || '').slice(0, 120),
+    },
+  };
+}
+
+function userMessageMetadata(context?: InterfaceContext): Record<string, unknown> | undefined {
+  const metadata = { ...(inboxFilesMetadata(context) || {}), ...(positionMetadata(context) || {}) };
+  return Object.keys(metadata).length ? metadata : undefined;
 }
 
 /** 起一轮：写用户消息 → 建 run → 起 dsh → 事件流式落库 */
@@ -294,7 +322,7 @@ export function startRun(input: {
     sessionId: input.sessionId,
     role: 'user',
     content: input.message.trim(),
-    metadata: inboxFilesMetadata(input.context),
+    metadata: userMessageMetadata(input.context),
   });
   const run = createRun({ sessionId: input.sessionId, userMessageId: userMessage.id, context: input.context ?? {} });
   touchSession(input.sessionId);
@@ -320,7 +348,21 @@ function beginRun(input: {
     .filter((m) => m.id !== input.userMessageId && m.content.trim() && !isReasoning(m))
     .map((m) => ({ role: m.role, content: m.content }));
 
-  const task = buildTask(input.message, input.context, history);
+  // 位置引用换成一次性令牌：任务文本里给 Agent 的是一条可执行的插入命令，
+  // 不是一段「大概写在这里」的提示。令牌不落 run context（重试时重新签发）。
+  let taskContext = input.context;
+  if (input.context?.positionRef) {
+    const prepared = preparePositionRef(input.context.positionRef, {
+      sessionId: input.sessionId,
+      runId: run.id,
+    });
+    taskContext = {
+      ...input.context,
+      positionToken: prepared.token,
+      positionError: prepared.error,
+    };
+  }
+  const task = buildTask(input.message, taskContext, history);
   // dsh 的 callId → 工具卡行 id：结果事件按 callId 回填，缺失时退到“最近一条运行中”
   const toolCallRows = new Map<string, string>();
   // 本轮的委派工具调用（按发生顺序）：子代理开工时认领最近一条还没主的，卡片才知道自己是谁派的

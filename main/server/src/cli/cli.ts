@@ -464,6 +464,7 @@ const HELP = `Engram CLI —— Agent 操作知识库的唯一命令入口（RES
   pages evidence <ref>                  读证据账本
   pages write <path> --title T [--type concept] [--tags a,b] [--evidence "路径::引文"]...
                                         写页面（正文来自 stdin 或 --file；只能写 Wiki/）
+  pages insert <token>                  按用户引用的正文位置插入（正文来自 stdin 或 --file）
   pages rename <ref> --title T          重命名（文件+标题+双链重定向，保持页面 ID）
   pages move <ref> [--dir Wiki/实体] [--title T]
                                         移动页面（保持页面 ID）
@@ -899,6 +900,29 @@ async function main(): Promise<number> {
             + (result.evidenceRecorded ? '，证据 ' + result.evidenceRecorded + ' 条入账' : '') + '）',
             false,
           );
+        }
+        return 0;
+      }
+      if (sub === 'insert') {
+        const token = positional[1];
+        if (!token) {
+          process.stderr.write('用法: pages insert <pos_xxx>（正文来自 stdin 或 --file）\n');
+          return 2;
+        }
+        const content = readTextInput(args.file);
+        if (!content.trim()) {
+          process.stderr.write('正文为空（stdin 或 --file 提供 markdown）\n');
+          return 2;
+        }
+        const result = await api(ctx, 'POST', '/api/agent/page/insert', {
+          json: { token, content },
+        });
+        if (asJson) {
+          output(result, true);
+        } else if (result.alreadyUsed) {
+          output('这个位置已经写入过了：' + result.path + '（未重复插入）', false);
+        } else {
+          output('已插入: ' + result.path + '（' + result.chars + ' 字，插在用户引用的位置之后）', false);
         }
         return 0;
       }

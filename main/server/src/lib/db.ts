@@ -576,6 +576,31 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_assistant_questions_run
     ON assistant_questions(run_id, status);
 
+  -- 正文位置引用令牌（「让 Agent 写在光标这里」）：用户引用一个块后，Agent 用
+  -- engram pages insert pos_xxx 把正文插到该块之后。锚点原文 + occurrence 用于重新定位，
+  -- used_at 保证一次有效（重复调用返回第一次的结果，不重复插入）。
+  CREATE TABLE IF NOT EXISTS assistant_positions (
+    token TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL DEFAULT '',
+    run_id TEXT NOT NULL DEFAULT '',
+    page_id TEXT,
+    page_path TEXT NOT NULL,
+    page_title TEXT,
+    anchor_text TEXT NOT NULL,
+    occurrence INTEGER NOT NULL DEFAULT 1,
+    heading_path TEXT NOT NULL DEFAULT '[]',
+    before_text TEXT NOT NULL DEFAULT '',
+    after_text TEXT NOT NULL DEFAULT '',
+    placement TEXT NOT NULL DEFAULT 'after',
+    created_at TEXT NOT NULL,
+    used_at TEXT,
+    result_path TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_positions_run
+    ON assistant_positions(run_id);
+  CREATE INDEX IF NOT EXISTS idx_assistant_positions_created
+    ON assistant_positions(created_at);
+
   -- 任务看板的跨端副本：全端唯一一份（id 恒为 default），按答案生成时刻「最新者胜」整体替换。
   -- 为什么不像页面那样做字符级合并：看板是模型一次提炼的整份产物，逐字融合会产生没有人写过的第 N 版。
   CREATE TABLE IF NOT EXISTS task_board_sync(

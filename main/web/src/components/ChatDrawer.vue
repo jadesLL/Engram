@@ -233,6 +233,15 @@
               >复制</button>
             </div>
             <div v-if="item.role === 'user'" class="entry-user">
+              <!-- 这条消息引用的正文位置：只画摘要，锚点原文留在服务端令牌里 -->
+              <span
+                v-if="messagePosition(item.message)"
+                class="entry-position"
+                v-tooltip="positionMessageTitle(item.message)"
+              >
+                <Icon name="crosshair" :size="11" />
+                <span>{{ positionMessageText(item.message) }}</span>
+              </span>
               <!-- 这条消息附带的文件（对话附件 / 收集箱）：路径清单随消息落 metadata，刷新/多端同步后照样画得出来 -->
               <div v-if="messageInboxFiles(item.message).length" class="entry-attachments">
                 <span
@@ -567,6 +576,24 @@
       </section>
 
       <div class="composer-card">
+      <!-- 正文位置引用：可移除的 chip，不是对话框；发送后服务端把它换成一次性位置令牌 -->
+      <div v-if="chat.positionRef" class="composer-position">
+        <span class="position-chip" v-tooltip="positionChipTitle">
+          <Icon name="crosshair" :size="12" />
+          <span class="position-copy">
+            <b>插入位置</b>
+            <small>{{ positionChipText }}</small>
+          </span>
+          <button
+            class="position-remove"
+            type="button"
+            aria-label="移除位置引用"
+            @click="chat.clearPositionRef()"
+          >
+            <Icon name="x" :size="11" />
+          </button>
+        </span>
+      </div>
       <!-- 附件：刚粘贴/上传的对话附件与从收集箱挑选的文件走同一条上下文通道，但语义分开 -->
       <div v-if="attachments.length || inbox.uploading.length" class="composer-attachments">
         <span
@@ -605,6 +632,16 @@
       />
       <div class="composer-actions">
         <div class="composer-tools">
+          <button
+            class="btn icon"
+            type="button"
+            v-tooltip="'引用当前正文位置：Agent 会直接写到那里'"
+            aria-label="引用正文位置"
+            :disabled="conversionActive"
+            @click="referenceCurrentPosition"
+          >
+            <Icon name="crosshair" :size="14" />
+          </button>
           <button
             class="btn icon"
             type="button"
@@ -730,6 +767,7 @@ import { confirmDialog } from '../lib/confirm';
 import { createMarkdownMemo } from '../lib/markdown';
 import { isComposingKey } from '../lib/ime';
 import { notify } from '../lib/notify';
+import { capturePositionRef } from '../lib/positionRef';
 import { openPageStream } from '../lib/events';
 import { sessionSourceBadge, type SessionSourceBadge } from '../lib/sessionSource';
 import { useSyncStore } from '../stores/sync';
@@ -1105,6 +1143,31 @@ const contextChips = computed(() => {
   // 选中原文不再只报字数：输入框上方有独立的片段面板，可逐条展开看全文
   return chips;
 });
+
+/** 位置引用 chip 的一行摘要：页面 · 最近一级标题 · 之后 */
+const positionChipText = computed(() => {
+  const ref = chat.positionRef;
+  if (!ref) return '';
+  const heading = (ref.headingPath || []).filter(Boolean).slice(-1)[0] || '';
+  return [ref.pageTitle, heading].filter(Boolean).join(' · ') + ' · 之后';
+});
+const positionChipTitle = computed(() => {
+  const ref = chat.positionRef;
+  if (!ref) return '';
+  return `${ref.pagePath}\n${ref.preview || ref.anchorText.slice(0, 80)}`;
+});
+
+/** 输入区「引用」按钮：从编辑页取当前光标位置；没有编辑页时给出可读提示 */
+async function referenceCurrentPosition() {
+  const ref = await capturePositionRef();
+  if (!ref) {
+    notify.info('先把光标放进编辑正文，再引用位置');
+    return;
+  }
+  chat.setPositionRef(ref);
+  notify.success('已引用当前位置，发送后 Agent 会写到那里');
+  focusComposer();
+}
 
 /* ===== 选中片段：默认展开看全文，点标题收起为一行摘要；新加入的片段自动展开 ===== */
 const selectionOpen = ref<Record<string, boolean>>({});
@@ -1493,6 +1556,29 @@ function uploadProgress(upload: InboxUpload): string {
 /** 某条用户消息当时附带的文件（对话附件 / 收集箱；服务端规整后落在 metadata 里） */
 function messageInboxFiles(message: ChatMessage): ChatInboxFile[] {
   return chatInboxFilesFromMetadata(message.metadata);
+}
+
+/** 用户消息 metadata 里的位置摘要（服务端只落 pageTitle/headingPath/preview，不落锚点原文） */
+interface MessagePositionMeta {
+  pageTitle?: string;
+  headingPath?: string[];
+  preview?: string;
+}
+
+function messagePosition(message: ChatMessage): MessagePositionMeta | null {
+  const position = message.metadata?.position;
+  return position && typeof position === 'object' ? (position as MessagePositionMeta) : null;
+}
+
+function positionMessageText(message: ChatMessage): string {
+  const position = messagePosition(message);
+  if (!position) return '';
+  const heading = (position.headingPath || []).filter(Boolean).slice(-1)[0] || '';
+  return [position.pageTitle, heading].filter(Boolean).join(' · ') + ' · 之后';
+}
+
+function positionMessageTitle(message: ChatMessage): string {
+  return messagePosition(message)?.preview || '';
 }
 
 /* ===== 拖文件进抽屉：整只抽屉都是放置目标 ===== */
@@ -2585,6 +2671,28 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
+}
+
+/* 用户消息引用的正文位置：暖色 chip，只显示「页面 · 标题 · 之后」，悬停看块预览 */
+.entry-position {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 88%;
+  padding: 1px 8px;
+  border: 1px solid var(--ai-line);
+  border-radius: 999px;
+  background: var(--ai-soft);
+  color: var(--ai);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.entry-position span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 用户消息附带的文件：只读 chip，悬停看路径/说明（对话附件不是收集箱条目，也不参与引用） */
@@ -3831,6 +3939,66 @@ onUnmounted(() => {
 .chat-composer textarea:focus {
   background: none;
   box-shadow: none;
+}
+
+/* ===== 位置引用 chip：暖色（与编辑器正文落点标记同一套色），一行摘要 + 移除 ===== */
+.composer-position {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 9px 11px 0;
+}
+
+.position-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 5px 4px 9px;
+  border: 1px solid var(--ai-line);
+  border-radius: 9px;
+  background: var(--ai-soft);
+  color: var(--ai);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.position-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.position-copy b {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.position-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+
+.position-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.position-remove:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ai) 10%, transparent);
 }
 
 /* ===== 附件 chip：贴在 textarea 上方，输入卡内滚动，不把输入框顶出视野 ===== */
