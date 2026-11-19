@@ -148,8 +148,9 @@ export function doxentCliInstallPath(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  // 显式按目标平台拼路径：测试可在任意宿主上断言 Windows 安装目录
-  const join = platform === 'win32' ? path.win32.join : path.join;
+  // 显式按目标平台拼路径：测试可在任意宿主上断言 Windows/ POSIX 安装目录，
+  // 不能沿用宿主平台的 path.join（Windows 宿主上模拟 linux 会拼出反斜杠）
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
   const override = normalizeCliDir(env.DOXENT_CLI_INSTALL_DIR || '');
   if (override) return join(override, doxentCliFileName(platform));
   if (platform === 'win32') {
