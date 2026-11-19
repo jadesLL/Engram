@@ -113,13 +113,22 @@ test('长图上限：桌面比安卓宽，且都低于 canvas 常见上限', () 
 test('长图用 Canvas 2D 重绘，不再走会被 Chromium 判定污染的 SVG foreignObject', () => {
   const capture = readMain('web/src/lib/pageExportCapture.ts');
   assert.match(capture, /paintExportCanvas/, '长图没有走 canvas 绘制器');
+  assert.match(capture, /prepareExportCanvasAssets/, '长图没有预处理内联 SVG');
   assert.ok(!capture.includes('XMLSerializer'), '长图仍在使用 SVG 序列化（Chromium 157 会污染画布）');
   const painter = readMain('web/src/lib/pageExportCanvas.ts');
   assert.match(painter, /fillText\(/, '绘制器没有画文字');
   assert.match(painter, /drawImage\(/, '绘制器没有画图片');
   assert.match(painter, /paintListMarkers/, '绘制器没有补列表符号');
   assert.match(painter, /paintCheckbox/, '绘制器没有补任务复选框');
-  assert.ok(!painter.includes('toDataURL'), '绘制器不应再做二次图片导出');
+  assert.match(painter, /querySelectorAll\('foreignObject'\)/, 'Mermaid 标签没有从 SVG 栅格里拆出来');
+  assert.match(painter, /getClientRects\(\)/, '行内元素背景没有按行片段绘制');
+  assert.match(painter, /viewBox/, 'foreignObject 标签没有按 viewBox 缩放字号');
+});
+
+test('打印时解除应用壳的高度 / overflow 限制，否则只会出一页', () => {
+  const css = readMain('web/src/styles/pageExport.css');
+  assert.match(css, /height: auto !important;/, '打印没有解除 html/body 的 height:100%');
+  assert.match(css, /overflow: visible !important;/, '打印没有解除 html/body 的 overflow:hidden');
 });
 
 test('三端导出契约：网页调用的桥在桌面与 Android 都有实现', () => {

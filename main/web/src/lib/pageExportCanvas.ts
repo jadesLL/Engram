@@ -17,6 +17,78 @@
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
 
+/**
+ * 内联 SVG（Mermaid / 手写 SVG）的预渲染结果。
+ * Mermaid 的标签是 foreignObject，整段 SVG 直接当图片画会污染画布；所以把 foreignObject
+ * 从克隆里摘掉、只光栅化图形，标签文字再用 DOM 绘制器补回去。
+ */
+export interface ExportCanvasAssets {
+  svgImages: WeakMap<SVGSVGElement, HTMLImageElement>;
+  svgLabels: WeakMap<SVGSVGElement, Element[]>;
+  objectUrls: string[];
+}
+
+export function emptyExportCanvasAssets(): ExportCanvasAssets {
+  return { svgImages: new WeakMap(), svgLabels: new WeakMap(), objectUrls: [] };
+}
+
+export function disposeExportCanvasAssets(assets: ExportCanvasAssets | null): void {
+  if (!assets) return;
+  for (const url of assets.objectUrls) URL.revokeObjectURL(url);
+  assets.objectUrls.length = 0;
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = 'sync';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('SVG 图片加载失败'));
+    image.src = url;
+  });
+}
+
+/**
+ * 预渲染导出稿里的内联 SVG：图形与标签分开处理。
+ * - 图形：克隆后移除 foreignObject，序列化成 SVG blob → Image（不含 foreignObject 的 SVG
+ *   不会污染画布，实测 Chromium 157 可正常 toBlob）；
+ * - 标签：保留 live DOM 里的 foreignObject 子元素，绘制时按版面位置补画文字。
+ */
+export async function prepareExportCanvasAssets(root: HTMLElement): Promise<ExportCanvasAssets> {
+  const assets = emptyExportCanvasAssets();
+  const svgs = Array.from(root.querySelectorAll('svg')) as SVGSVGElement[];
+  await Promise.all(svgs.map(async (svg) => {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    const labels = Array.from(svg.querySelectorAll('foreignObject'))
+      .map((foreign) => foreign.firstElementChild)
+      .filter((element): element is Element => Boolean(element));
+    if (labels.length) assets.svgLabels.set(svg, labels);
+
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    for (const foreign of Array.from(clone.querySelectorAll('foreignObject'))) foreign.remove();
+    clone.setAttribute('width', String(rect.width));
+    clone.setAttribute('height', String(rect.height));
+    const url = URL.createObjectURL(
+      new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml;charset=utf-8' })
+    );
+    assets.objectUrls.push(url);
+    try {
+      const image = await loadImage(url);
+      // 外链图片会把整张长图变成污染画布：先在小画布上试一次，失败就只画标签
+      const probe = document.createElement('canvas');
+      probe.width = 8;
+      probe.height = 8;
+      probe.getContext('2d')?.drawImage(image, 0, 0, 8, 8);
+      probe.toDataURL();
+      assets.svgImages.set(svg, image);
+    } catch {
+      // 图形画不出来时保留标签，至少不吞掉图里的文字
+    }
+  }));
+  return assets;
+}
+
 function px(value: string | null | undefined): number {
   const parsed = Number.parseFloat(String(value ?? ''));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -76,8 +148,9 @@ function borderRadius(style: CSSStyleDeclaration): number {
   );
 }
 
-function fontOf(style: CSSStyleDeclaration): string {
-  return `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${style.fontSize || '16px'} ${style.fontFamily || 'sans-serif'}`;
+function fontOf(style: CSSStyleDeclaration, scale = 1): string {
+  const size = px(style.fontSize) * scale || 16 * scale;
+  return `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${size}px ${style.fontFamily || 'sans-serif'}`;
 }
 
 function paintBorderSide(
@@ -103,18 +176,19 @@ function paintBox(
   ctx: CanvasRenderingContext2D,
   rect: DOMRect,
   style: CSSStyleDeclaration,
-  origin: DOMRect
+  origin: DOMRect,
+  scale = 1
 ): void {
   const x = rect.left - origin.left;
   const y = rect.top - origin.top;
   if (visibleColor(style.backgroundColor)) {
     ctx.fillStyle = style.backgroundColor;
-    fillRoundRect(ctx, x, y, rect.width, rect.height, borderRadius(style));
+    fillRoundRect(ctx, x, y, rect.width, rect.height, borderRadius(style) * scale);
   }
-  paintBorderSide(ctx, px(style.borderTopWidth), style.borderTopStyle, style.borderTopColor, x, y, rect.width, rect.height, 'top');
-  paintBorderSide(ctx, px(style.borderRightWidth), style.borderRightStyle, style.borderRightColor, x, y, rect.width, rect.height, 'right');
-  paintBorderSide(ctx, px(style.borderBottomWidth), style.borderBottomStyle, style.borderBottomColor, x, y, rect.width, rect.height, 'bottom');
-  paintBorderSide(ctx, px(style.borderLeftWidth), style.borderLeftStyle, style.borderLeftColor, x, y, rect.width, rect.height, 'left');
+  paintBorderSide(ctx, px(style.borderTopWidth) * scale, style.borderTopStyle, style.borderTopColor, x, y, rect.width, rect.height, 'top');
+  paintBorderSide(ctx, px(style.borderRightWidth) * scale, style.borderRightStyle, style.borderRightColor, x, y, rect.width, rect.height, 'right');
+  paintBorderSide(ctx, px(style.borderBottomWidth) * scale, style.borderBottomStyle, style.borderBottomColor, x, y, rect.width, rect.height, 'bottom');
+  paintBorderSide(ctx, px(style.borderLeftWidth) * scale, style.borderLeftStyle, style.borderLeftColor, x, y, rect.width, rect.height, 'left');
 }
 
 function paintImage(ctx: CanvasRenderingContext2D, image: HTMLImageElement, origin: DOMRect): void {
@@ -216,7 +290,8 @@ function paintText(
   ctx: CanvasRenderingContext2D,
   node: Text,
   style: CSSStyleDeclaration,
-  origin: DOMRect
+  origin: DOMRect,
+  scale = 1
 ): void {
   const value = node.nodeValue || '';
   if (!value || !value.trim()) return;
@@ -245,7 +320,7 @@ function paintText(
     else runs[runs.length - 1].end = offset;
   }
 
-  ctx.font = fontOf(style);
+  ctx.font = fontOf(style, scale);
   ctx.fillStyle = style.color || '#26231f';
   ctx.textBaseline = 'middle';
   for (const run of runs) {
@@ -264,24 +339,63 @@ function paintText(
   }
 }
 
-function paintElement(ctx: CanvasRenderingContext2D, element: Element, origin: DOMRect): void {
+function paintInlineSvg(
+  ctx: CanvasRenderingContext2D,
+  svg: SVGSVGElement,
+  origin: DOMRect,
+  assets: ExportCanvasAssets | null
+): void {
+  const rect = svg.getBoundingClientRect();
+  if (rect.width < 0.5 || rect.height < 0.5) return;
+  const image = assets?.svgImages.get(svg);
+  if (image) {
+    ctx.drawImage(image, rect.left - origin.left, rect.top - origin.top, rect.width, rect.height);
+  }
+  // Mermaid 的节点 / 连线文字在 foreignObject 里：图形已经画好，这里按版面位置补文字。
+  // foreignObject 里的 fontSize 是 SVG 用户单位，浏览器会按 viewBox 缩放后再渲染；
+  // 画布必须补乘同一个缩放比，否则标签文字会比节点框大一圈、互相压住。
+  const viewBox = svg.viewBox?.baseVal;
+  const labelScale = viewBox && viewBox.width > 0 && viewBox.height > 0
+    ? Math.min(rect.width / viewBox.width, rect.height / viewBox.height)
+    : 1;
+  for (const label of assets?.svgLabels.get(svg) || []) {
+    paintElement(ctx, label, origin, assets, labelScale);
+  }
+}
+
+function paintElement(
+  ctx: CanvasRenderingContext2D,
+  element: Element,
+  origin: DOMRect,
+  assets: ExportCanvasAssets | null,
+  scale = 1
+): void {
   const style = getComputedStyle(element);
   if (style.display === 'none' || style.visibility === 'hidden') return;
-  const rect = element.getBoundingClientRect();
-  if (rect.width < 0.5 || rect.height < 0.5) return;
   const tag = element.tagName;
   if (tag === 'IMG' || tag === 'INPUT') return; // 由父级按类型单独处理
-  paintBox(ctx, rect, style, origin);
+  if (tag === 'svg') {
+    paintInlineSvg(ctx, element as unknown as SVGSVGElement, origin, assets);
+    return;
+  }
+  /* 行内元素（code / a / span）折行时 getBoundingClientRect 是整段并集，直接拿去画背景
+     会把上一行前缀一起盖住；getClientRects 才是逐行片段。块级元素仍用整块。 */
+  const rects = style.display === 'inline'
+    ? Array.from(element.getClientRects())
+    : [element.getBoundingClientRect()];
+  const visible = rects.filter((rect) => rect.width >= 0.5 && rect.height >= 0.5);
+  if (!visible.length) return;
+  for (const rect of visible) paintBox(ctx, rect, style, origin, scale);
   if (tag === 'UL' || tag === 'OL') paintListMarkers(ctx, element as HTMLElement, origin);
 
   for (const child of Array.from(element.childNodes)) {
     if (child.nodeType === TEXT_NODE) {
-      paintText(ctx, child as Text, style, origin);
+      paintText(ctx, child as Text, style, origin, scale);
     } else if (child.nodeType === ELEMENT_NODE) {
       const node = child as HTMLElement;
       if (node.tagName === 'IMG') paintImage(ctx, node as HTMLImageElement, origin);
       else if (node.tagName === 'INPUT') paintCheckbox(ctx, node as HTMLInputElement, origin);
-      else paintElement(ctx, node, origin);
+      else paintElement(ctx, node, origin, assets, scale);
     }
   }
 }
@@ -293,12 +407,13 @@ function paintElement(ctx: CanvasRenderingContext2D, element: Element, origin: D
 export function paintExportCanvas(
   ctx: CanvasRenderingContext2D,
   article: HTMLElement,
-  background: string
+  background: string,
+  assets: ExportCanvasAssets | null = null
 ): boolean {
   const origin = article.getBoundingClientRect();
   if (origin.width < 1 || origin.height < 1) return false;
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, origin.width, origin.height);
-  paintElement(ctx, article, origin);
+  paintElement(ctx, article, origin, assets);
   return true;
 }
