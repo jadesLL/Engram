@@ -58,11 +58,12 @@
         </template>
       </ReadingPreview>
 
-      <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
+      <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态。
+           窄正文（抽屉 dock / 文件树展开）时低频项收进右侧 ⋯ 菜单，顶栏尺寸与文案不变 -->
       <div
         v-show="!app.readingMode && !pageLoading && !pageError"
         class="editor-topbar chrome-float"
-        :class="[`topbar-${topbarDensity}`, { 'topbar-tight': topbarDensity !== 'full' }]"
+        :class="`topbar-${topbarMenuMode}`"
         data-tip-chrome
       >
         <nav class="crumb">
@@ -73,14 +74,17 @@
           <span class="crumb-sep">/</span>
           <b class="crumb-current">{{ displayTitle }}</b>
         </nav>
-        <BackTrailMenu v-if="canGoBack" :trail="app.pageTrail" @select="goBackToTrail">
+        <BackTrailMenu
+          v-if="canGoBack && topbarMenuMode !== 'mini' && topbarMenuMode !== 'nano'"
+          :trail="app.pageTrail"
+          @select="goBackToTrail"
+        >
           <template #default="{ open }">
             <button
               class="btn small topbar-back"
               type="button"
               aria-haspopup="menu"
               :aria-expanded="open"
-              v-tooltip="'返回上一页'"
               @click="goBackToSource"
             >
               <Icon name="chevron-left" :size="14" />
@@ -92,6 +96,7 @@
         <div class="spacer"></div>
         <!-- 引用位置：把光标所在块挂进内置 Agent 的输入区（不弹对话框、不直接生成） -->
         <button
+          v-if="topbarMenuMode === 'inline' || topbarMenuMode === 'compact'"
           class="btn small topbar-ref"
           type="button"
           v-tooltip="'把光标所在位置引用给内置 Agent，让它直接写到这里'"
@@ -101,15 +106,22 @@
           <span>引用位置</span>
         </button>
         <!-- 导出当前页：编辑态也能直接出 PDF / 长图，不必先切阅读视图；
-             顶栏窄到 mini 档时只留图标 + 下拉箭头（文案进 tooltip） -->
+             mini 档顶栏放不下，收进右侧 ⋯ 菜单（与「返回上一页」同一档） -->
         <PageExportMenu
+          v-if="topbarMenuMode === 'inline' || topbarMenuMode === 'compact'"
           trigger-class="btn small topbar-export"
           :icon-size="14"
-          :show-label="topbarDensity === 'full' || topbarDensity === 'compact'"
+          :show-label="showExportLabel"
           :meta="exportMeta"
         />
-        <!-- 正文宽度：按可用区百分比（默认 70%），阅读视图与编辑视图共用同一份偏好 -->
-        <div ref="widthPickerEl" class="width-picker" @keydown.esc="widthMenuOpen = false">
+        <!-- 正文宽度：按可用区百分比（默认 70%），阅读视图与编辑视图共用同一份偏好；
+             收进 ⋯ 菜单后由菜单里的同一组选项接管 -->
+        <div
+          v-if="topbarMenuMode === 'inline'"
+          ref="widthPickerEl"
+          class="width-picker"
+          @keydown.esc="widthMenuOpen = false"
+        >
           <button
             class="topbar-width"
             type="button"
@@ -146,9 +158,9 @@
           <span class="dot"></span>{{ saveState }}
         </button>
         <!-- 手动保存按钮：关掉「自动保存」才出现，自动保存时完全隐藏（v-if，不留占位）；
-             未改动时置灰，改动后点亮，点击/Ctrl+S 落盘 -->
+             未改动时置灰，改动后点亮，点击/Ctrl+S 落盘；窄正文时收进 ⋯ 菜单 -->
         <button
-          v-if="!autosave"
+          v-if="!autosave && topbarMenuMode === 'inline'"
           class="save-btn"
           type="button"
           :disabled="!dirtyUi"
@@ -156,9 +168,13 @@
           @click="save(true)"
         >
           <Icon name="check" :size="13" />
-          <span class="save-btn-text">保存</span>
+          保存
         </button>
-        <label class="switch-control autosave-toggle" v-tooltip="'按文件记忆；关闭后仅手动保存'">
+        <label
+          v-if="topbarMenuMode === 'inline'"
+          class="switch-control autosave-toggle"
+          v-tooltip="'按文件记忆；关闭后仅手动保存'"
+        >
           <input
             type="checkbox"
             :checked="autosave"
@@ -168,6 +184,86 @@
           <span></span>
           <em>自动保存</em>
         </label>
+        <!-- 「更多」：窄正文时接管正文宽度 / 自动保存（以及更窄时的引用位置、导出、返回上一页），
+             顶栏本身不缩字、不换图标、不改高度 -->
+        <div v-if="topbarMenuMode === 'compact' || topbarMenuMode === 'mini'" ref="moreMenuEl" class="topbar-more">
+          <button
+            class="btn small topbar-more-btn"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="moreMenuOpen"
+            aria-label="更多编辑选项"
+            v-tooltip="'更多编辑选项'"
+            @click="moreMenuOpen = !moreMenuOpen"
+          >
+            <Icon name="more" :size="16" />
+          </button>
+          <div
+            v-if="moreMenuOpen"
+            class="topbar-more-menu"
+            role="menu"
+            aria-label="更多编辑选项"
+            @keydown.esc="moreMenuOpen = false"
+          >
+            <!-- mini 档：顶栏放不下的主操作也在这里 -->
+            <template v-if="topbarMenuMode === 'mini'">
+              <button class="more-item" type="button" role="menuitem" @click="referenceFromMore">
+                <Icon name="crosshair" :size="14" />
+                <span>引用位置</span>
+              </button>
+              <button class="more-item" type="button" role="menuitem" @click="exportFromMore('pdf')">
+                <Icon name="pdf" :size="14" />
+                <span>导出为 PDF</span>
+              </button>
+              <button class="more-item" type="button" role="menuitem" @click="exportFromMore('image')">
+                <Icon name="image" :size="14" />
+                <span>导出为长图</span>
+              </button>
+              <button v-if="canGoBack" class="more-item" type="button" role="menuitem" @click="goBackFromMore">
+                <Icon name="undo" :size="14" />
+                <span>返回上一页</span>
+              </button>
+              <div class="more-sep"></div>
+            </template>
+            <div class="more-group" role="group" aria-label="正文宽度">
+              <span class="more-label">正文宽度</span>
+              <div class="more-ratios">
+                <button
+                  v-for="ratio in CONTENT_WIDTH_RATIO_STEPS"
+                  :key="ratio"
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="app.readingPreferences.widthRatio === ratio"
+                  :class="{ active: app.readingPreferences.widthRatio === ratio }"
+                  @click="pickWidthRatio(ratio)"
+                >{{ formatContentWidthRatio(ratio) }}</button>
+              </div>
+            </div>
+            <div class="more-group more-row">
+              <span class="more-label">自动保存</span>
+              <label class="switch-control" v-tooltip="'按文件记忆；关闭后仅手动保存'">
+                <input
+                  type="checkbox"
+                  :checked="autosave"
+                  aria-label="自动保存"
+                  @change="setAutosave(($event.target as HTMLInputElement).checked)"
+                />
+                <span></span>
+              </label>
+            </div>
+            <button
+              v-if="!autosave"
+              class="more-item"
+              type="button"
+              role="menuitem"
+              :disabled="!dirtyUi"
+              @click="saveFromMore"
+            >
+              <Icon name="check" :size="14" />
+              <span>保存（Ctrl+S）</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
@@ -652,7 +748,7 @@ import {
 } from '../lib/readingPreview';
 import { registerBackHandler } from '../lib/androidBack';
 import { registerPositionRefProvider, type PositionRefPayload } from '../lib/positionRef';
-import { topbarDensityFor, topbarWidthFor } from '../lib/topbarFit';
+import { topbarMenuModeFor, topbarWidthFor } from '../lib/topbarFit';
 
 /* 三块重组件（Vditor 编辑器 / 阅读预览 / 富文件预览）都是按需渲染的：静态 import
    会让首页/看板落地页也下载整套编辑器包，改成异步组件按需拉取。模板 ref 全部走
@@ -954,14 +1050,53 @@ const preferences = computed(() => app.readingPreferences);
 /** 正文可用区宽度：编辑视图根元素的宽度（已扣掉左侧图标栏与文件树）。
  *  目录自适应（右栏 or 浮层）与正文列宽都要用，必须在下面的 watch(outlineWide) 之前初始化。 */
 const availableWidth = ref(0);
-/* 顶栏密度：内置 Agent 抽屉 / 文件树开合都会改正文宽度，按顶栏自身宽度收文案
-   （窗口媒体查询管不到 dock 后的窄正文，见 lib/topbarFit.ts 的起因说明） */
-const topbarDensity = computed(() =>
-  topbarDensityFor(topbarWidthFor(availableWidth.value, narrowEditor.value), {
+/* 顶栏展示档：内置 Agent 抽屉 / 文件树开合都会改正文宽度，按顶栏自身宽度决定
+   要不要把低频项收进 ⋯ 菜单（窗口媒体查询管不到 dock 后的窄正文，见 lib/topbarFit.ts）。
+   顶栏尺寸、文案、图标都不随宽度变化，只有「在哪一层出现」会变。 */
+const topbarMenuMode = computed(() =>
+  topbarMenuModeFor(topbarWidthFor(availableWidth.value, narrowEditor.value), {
+    narrow: narrowEditor.value,
     hasBack: canGoBack.value,
     manualSave: !autosave.value,
   })
 );
+/* ⋯ 档的「导出」在手机上只留图标（与阅读视图 ≤640 收进「更多」同一套手机口径）；
+   桌面档无论平铺还是收进 ⋯，按钮上的文案都照常显示 */
+const showExportLabel = computed(() => topbarMenuMode.value === 'inline' || !narrowEditor.value);
+const moreMenuEl = ref<HTMLElement>();
+const moreMenuOpen = ref(false);
+function closeMoreMenu() {
+  moreMenuOpen.value = false;
+}
+function onMoreMenuPointerDown(event: MouseEvent) {
+  if (!moreMenuOpen.value) return;
+  if (moreMenuEl.value?.contains(event.target as Node)) return;
+  moreMenuOpen.value = false;
+}
+/** 档位变化（拖抽屉 / 开合文件树）时收起 ⋯，避免菜单停留在旧位置 */
+function onTopbarModeChange() {
+  moreMenuOpen.value = false;
+  widthMenuOpen.value = false;
+}
+/** ⋯ 菜单里的主操作：跑完同一个动作后收起菜单 */
+function referenceFromMore() {
+  closeMoreMenu();
+  referencePosition();
+}
+function exportFromMore(kind: 'pdf' | 'image') {
+  closeMoreMenu();
+  const meta = exportMeta.value;
+  if (kind === 'pdf') void exportPagePdf(meta);
+  else void exportPageImage(meta);
+}
+function goBackFromMore() {
+  closeMoreMenu();
+  goBackToSource();
+}
+function saveFromMore() {
+  closeMoreMenu();
+  save(true);
+}
 function openFormatSheet() {
   if (!narrowEditor.value) return;
   closeOutlineSheet();
@@ -1175,6 +1310,8 @@ function pickWidthRatio(ratio: ContentWidthRatio) {
   app.updateReadingPreferences({ widthRatio: ratio });
   widthMenuOpen.value = false;
 }
+/* 展示档变化（拖抽屉 / 开合文件树）时收起两套浮层：⋯ 菜单与正文宽度菜单都可能悬在旧位置 */
+watch(topbarMenuMode, onTopbarModeChange);
 function onWidthPickerPointerDown(event: MouseEvent) {
   if (!widthMenuOpen.value) return;
   if (widthPickerEl.value?.contains(event.target as Node)) return;
@@ -2131,6 +2268,8 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onExternalUpdateOpportunity);
   document.addEventListener('pointerdown', onWidthPickerPointerDown);
   document.addEventListener('click', onWidthPickerPointerDown);
+  document.addEventListener('pointerdown', onMoreMenuPointerDown);
+  document.addEventListener('click', onMoreMenuPointerDown);
   document.addEventListener('pointerdown', onOutlinePopPointerDown);
   measureAvailableWidth();
   viewObserver = new ResizeObserver(measureAvailableWidth);
@@ -2144,6 +2283,8 @@ onUnmounted(() => {
   chromeMobile.removeEventListener('change', onChromeMobileChange);
   document.removeEventListener('pointerdown', onWidthPickerPointerDown);
   document.removeEventListener('click', onWidthPickerPointerDown);
+  document.removeEventListener('pointerdown', onMoreMenuPointerDown);
+  document.removeEventListener('click', onMoreMenuPointerDown);
   document.removeEventListener('pointerdown', onOutlinePopPointerDown);
   unregisterFormatBack?.();
   unregisterFormatBack = null;
@@ -2282,34 +2423,105 @@ onUnmounted(() => {
 }
 .save-state { white-space: nowrap; flex: none; }
 
-/* ---------- 顶栏密度：按顶栏自身宽度逐档收文案（分档见 lib/topbarFit.ts） ----------
- * 内置 Agent 抽屉 dock 后正文可以窄到 400px 上下，窗口媒体查询看不到这件事。
- * 非全量档只收文案，图标 / 开关 / 下拉箭头都保留，并且都带 tooltip。 */
-.topbar-tight .topbar-back span,
-.topbar-tight .topbar-ref span,
-.topbar-tight .autosave-toggle em,
-.topbar-tight .save-btn-text { display: none; }
-/* 引用位置收成图标：热区补到 ~44px（与手机档同一手法） */
-.topbar-tight .topbar-ref {
-  position: relative;
-  min-width: 28px;
-  padding: 0 7px;
+/* ---------- 顶栏「更多 ⋯」：窄正文时低频项收进菜单（分档见 lib/topbarFit.ts） ----------
+ * 顶栏尺寸、文案、图标都不变，只是「在哪一层出现」随可用宽度切换；
+ * 菜单沿用全站浮层语言：白卡 + 发丝描边 + 12px 圆角。 */
+.topbar-more {
+  flex: none;
 }
-.topbar-tight .topbar-ref::after {
-  content: '';
+.topbar-more-btn {
+  padding: 4px 8px;
+  color: var(--text-secondary);
+}
+/* 菜单挂在顶栏（不是 ⋯ 外壳）上定位：右缘对齐 ⋯，宽度不超过顶栏本身——
+   mini 档正文只剩一百多像素时，224px 的菜单会伸到左侧文件树底下被盖住 */
+.topbar-more-menu {
   position: absolute;
-  inset: -8px;
-  border-radius: 8px;
+  top: calc(100% + 8px);
+  right: 8px;
+  z-index: var(--z-menu);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(224px, calc(100% - 16px));
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
 }
-/* 极窄档：正文宽度整颗收起（手机从「格式」面板调，桌面从阅读视图调） */
-.topbar-micro .width-picker { display: none; }
-/* nano：文件树与抽屉同时占位、正文只剩一窄条时，除了保存态都让出去（不然会溢出胶囊） */
-.topbar-nano .topbar-ref,
-.topbar-nano .topbar-back,
-.topbar-nano .export-menu-wrap,
-.topbar-nano .width-picker,
-.topbar-nano .autosave-toggle,
-.topbar-nano .save-btn { display: none; }
+.more-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+}
+.more-group.more-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.more-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.more-ratios {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.more-ratios button {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.more-ratios button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.more-ratios button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-align: left;
+}
+.more-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.more-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.more-item:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.more-sep {
+  height: 1px;
+  margin: 2px 4px;
+  background: var(--border);
+}
+/* nano：文件树 + 抽屉同时占住、正文只剩百来像素时，只留保存态；间距收一档免得再溢出 */
+.topbar-nano { gap: 4px; }
 
 .topbar-width {
   display: inline-flex;
