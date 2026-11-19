@@ -487,7 +487,8 @@ onBeforeUnmount(() => {
   min-height: 48px;
   margin-top: 6px;
   border-top: 1px solid var(--border);
-  border-radius: 10px;
+  /* 按钮继承全局 999px 胶囊圆角，顶边分隔线会在两端弯成弧 */
+  border-radius: 0;
   color: var(--text-secondary);
   font-size: 14px;
 }

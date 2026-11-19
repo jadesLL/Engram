@@ -1000,6 +1000,8 @@
     min-height: 56px;
     padding: 10px 14px;
     text-align: left;
+    /* 行分隔线用 border-top + 外层圆角卡片裁切；行自身继承的 999px 胶囊圆角会让分隔线两端弯起来 */
+    border-radius: 0;
   }
   .settings-mobile-row + .settings-mobile-row {
     border-top: 1px solid var(--border);

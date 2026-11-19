@@ -804,6 +804,8 @@ defineExpose({ downloadFile, openExternal });
   align-items: center;
   gap: 6px;
   padding: 0 12px;
+  /* 下划线由 border-bottom 画：圆角归零，避免两端上翘成弧 */
+  border-radius: 0;
   border-bottom: 2px solid transparent;
   color: var(--text-secondary);
   font-size: 13px;

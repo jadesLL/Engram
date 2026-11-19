@@ -53,7 +53,8 @@ function iconOf(key: string): string {
   flex: 1;
   min-height: 36px;
   text-align: left;
-  border-radius: 8px;
+  /* 行本身没有底色，圆角只会把 border-top 分隔线两端弯起来 */
+  border-radius: 0;
 }
 .section-row + .section-row { border-top: 1px solid var(--card-line-soft); }
 .section-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }

@@ -49,6 +49,7 @@ function bar(count: number) {
   min-height: 33px;
   flex: 1;
   padding: 0;
+  border-radius: 0;
   border-top: 1px solid var(--card-line-soft);
   font-size: 10.5px;
   text-align: left;
