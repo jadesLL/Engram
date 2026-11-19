@@ -157,10 +157,14 @@
       :error="aiError"
       :preview="aiPreview"
       :stats="aiStats"
+      :minimizable="aiMode === 'beautify'"
+      :busy-since="aiMode === 'beautify' ? editorAi.task?.startedAt : undefined"
       @close="closeAiDialog"
+      @minimize="minimizeAiDialog"
+      @cancel="cancelAiRun"
       @submit="runAi"
       @apply="applyAiPreview"
-      @discard="closeAiDialog"
+      @discard="discardAiPreview"
       @regenerate="runAi(aiLastInstruction)"
     />
 
@@ -307,6 +311,8 @@ import {
 } from '../lib/markdownTable';
 import { createEditorModelSync } from '../lib/editorModelSync';
 import { anchorAtOffset, type PositionAnchor } from '../lib/positionAnchor';
+import { sameBeautifySource } from '../lib/beautifyTask';
+import { useEditorAiStore } from '../stores/editorAi';
 import { decideModelSync, stableEditorMarkdown } from '../lib/editorComposition';
 import {
   copyText,
@@ -405,6 +411,7 @@ let savedSelectionText = '';
  * 落点是打开对话框那一刻记下的 DOM Range（面板抢焦点、滚动、点菜单都不会丢）；
  * 生成期间正文可能被外部改动——应用前会校验 Range 仍连在编辑器 DOM 上，不行就退到文末。
  * 一次只跑一个请求：取消/关闭会 abort，避免结果回来时覆盖用户已经改过的内容。 */
+const editorAi = useEditorAiStore();
 const aiOpen = ref(false);
 const aiMode = ref<EditorAiTask>('insert');
 const aiBusy = ref(false);
@@ -3002,9 +3009,44 @@ function openAiContinue() {
   openAiDialog('continue');
 }
 
-/** 右键 / 工具栏「全文格式美化」 */
+/** 把全局美化任务映射到对话框的显示状态（busy / 预览 / 错误 / 字数统计） */
+function syncBeautifyDialog(task = editorAi.task) {
+  const pageId = String(props.pageId || '');
+  if (!task || task.pageId !== pageId) return;
+  aiMode.value = 'beautify';
+  aiBusy.value = task.status === 'running';
+  aiPreview.value = task.result;
+  aiError.value = task.error;
+  aiStats.value = task.result
+    ? { before: task.source.trim().length, after: task.result.trim().length }
+    : null;
+  aiAnchorHint.value = task.status === 'done'
+    ? '整理结果已就绪，确认后应用到正文'
+    : task.status === 'failed'
+      ? '整理失败，可以重试'
+      : '整理整篇正文，应用前可预览';
+}
+
+/** 右键 / 工具栏「全文格式美化」：已有同一页的任务就直接展示，不重复发起 */
 function openAiBeautify() {
   if (!vditor) return;
+  const pageId = String(props.pageId || '');
+  if (!pageId) {
+    notify.info('页面还没准备好，稍后再试');
+    return;
+  }
+  if (editorAi.task && editorAi.task.pageId !== pageId) {
+    notify.info('另一个页面还有美化任务，先在右下角胶囊里处理它');
+    return;
+  }
+  const existing = editorAi.task?.pageId === pageId ? editorAi.task : null;
+  if (existing) {
+    aiRange = null;
+    aiSelectionText.value = '';
+    aiOpen.value = true;
+    syncBeautifyDialog(existing);
+    return;
+  }
   const document = markdownLinksToWiki(stableEditorValue());
   if (!document.trim()) {
     notify.info('页面还没有内容，先写一点再用格式美化');
@@ -3016,7 +3058,44 @@ function openAiBeautify() {
   openAiDialog('beautify');
 }
 
+/** 最小化：对话框收起，任务留在全局 store（胶囊接管，导航也不中断） */
+function minimizeAiDialog() {
+  const task = editorAi.task;
+  if (!task || task.pageId !== String(props.pageId || '')) return;
+  editorAi.minimize();
+  aiOpen.value = false;
+  aiBusy.value = false;
+}
+
+/** 对话框「停止」：abort 当前请求并清掉任务 */
+function cancelAiRun() {
+  const task = editorAi.task;
+  if (task && task.pageId === String(props.pageId || '') && aiMode.value === 'beautify') {
+    editorAi.cancel();
+    closeAiDialog();
+    return;
+  }
+  closeAiDialog();
+}
+
+/** 「放弃」预览：清掉结果；不是最小化 */
+function discardAiPreview() {
+  const task = editorAi.task;
+  if (task && task.pageId === String(props.pageId || '') && aiMode.value === 'beautify') {
+    editorAi.clear();
+  }
+  closeAiDialog();
+}
+
 function closeAiDialog() {
+  // 美化有关联任务时，关闭 = 收起（不丢结果、不中断请求）；「放弃」才清掉
+  const task = editorAi.task;
+  if (aiMode.value === 'beautify' && task && task.pageId === String(props.pageId || '')) {
+    editorAi.minimize();
+    aiOpen.value = false;
+    aiBusy.value = false;
+    return;
+  }
   aiRequestSeq += 1;
   if (aiAbort) {
     aiAbort.abort();
@@ -3036,6 +3115,22 @@ function closeAiDialog() {
 async function runAi(instruction: string) {
   if (!vditor || aiBusy.value || !aiOpen.value) return;
   const mode = aiMode.value;
+  // 全文美化走全局 store：对话框收起 / 切页后请求继续，胶囊接管状态
+  if (mode === 'beautify') {
+    const pageId = String(props.pageId || '');
+    const source = markdownLinksToWiki(stableEditorValue());
+    if (!pageId || !source.trim()) {
+      aiError.value = pageId ? '页面还没有内容，先写一点再用格式美化' : '页面还没准备好，稍后再试';
+      return;
+    }
+    aiError.value = '';
+    aiPreview.value = '';
+    aiStats.value = null;
+    aiLastInstruction = instruction;
+    aiBusy.value = true;
+    editorAi.start({ pageId, pageTitle: props.title || '', source });
+    return;
+  }
   const seq = ++aiRequestSeq;
   aiBusy.value = true;
   aiError.value = '';
@@ -3045,19 +3140,6 @@ async function runAi(instruction: string) {
   const controller = new AbortController();
   aiAbort = controller;
   try {
-    if (mode === 'beautify') {
-      const document = markdownLinksToWiki(stableEditorValue());
-      const result = await requestEditorAi({
-        task: 'beautify',
-        title: props.title || '',
-        document,
-      }, controller.signal);
-      if (seq !== aiRequestSeq) return;
-      aiPreview.value = result.text;
-      aiStats.value = { before: document.trim().length, after: result.text.trim().length };
-      return;
-    }
-
     const range = aiRange;
     const context = contextAroundRange(range);
     const result = await requestEditorAi({
@@ -3128,7 +3210,28 @@ function applyAiResult(mode: EditorAiTask, raw: string, range: Range | null): bo
 
 /** 全文美化「应用到正文」：整篇替换，保留 AI 管理注释与双链形态 */
 function applyAiPreview() {
-  if (!vditor || !aiPreview.value.trim()) return;
+  if (!vditor) return;
+  const task = editorAi.task;
+  const pageId = String(props.pageId || '');
+  if (aiMode.value === 'beautify' && task && task.pageId === pageId) {
+    const result = String(task.result || '').trim();
+    if (!result) return;
+    const current = markdownLinksToWiki(stableEditorValue());
+    if (!sameBeautifySource(current, task.source)) {
+      aiError.value = '页面在整理期间被改过，结果可能对不上；请重新整理';
+      notify.error('页面在整理期间被改过，请重新整理后再应用');
+      return;
+    }
+    const next = restoreIngestComments(task.result);
+    beginUserEditing();
+    applyEditorMarkdown(stripIngestComments(wikiLinksToMarkdown(next)), false);
+    emitEditorValue();
+    editorAi.clear();
+    notify.success('已应用 AI 格式美化');
+    closeAiDialog();
+    return;
+  }
+  if (!aiPreview.value.trim()) return;
   const next = restoreIngestComments(aiPreview.value);
   beginUserEditing();
   applyEditorMarkdown(stripIngestComments(wikiLinksToMarkdown(next)), false);
@@ -3136,6 +3239,32 @@ function applyAiPreview() {
   notify.success('已应用 AI 格式美化');
   closeAiDialog();
 }
+
+/* 全局美化任务 → 当前对话框：胶囊「查看」回来的 pendingOpen、完成/失败都同步过来 */
+watch(
+  () => [
+    editorAi.task?.id,
+    editorAi.task?.pageId,
+    editorAi.task?.status,
+    editorAi.task?.result,
+    editorAi.task?.error,
+    editorAi.task?.pendingOpen,
+    editorAi.task?.minimized,
+  ],
+  () => {
+    const task = editorAi.task;
+    const pageId = String(props.pageId || '');
+    if (!task || task.pageId !== pageId) return;
+    if (task.pendingOpen) {
+      editorAi.consumePendingOpen(pageId);
+      aiOpen.value = true;
+      syncBeautifyDialog(task);
+      return;
+    }
+    if (aiOpen.value && aiMode.value === 'beautify') syncBeautifyDialog(task);
+  },
+  { immediate: true },
+);
 
 // ---------- 对外接口 ----------
 
@@ -3339,6 +3468,8 @@ watch(
   }
 );
 onUnmounted(() => {
+  // 离开编辑页（切页/收起）不中断美化：任务留在全局 store，胶囊接管
+  if (editorAi.task?.pageId === String(props.pageId || '')) editorAi.minimize();
   if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
   if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);

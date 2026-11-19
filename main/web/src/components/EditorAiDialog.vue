@@ -17,6 +17,16 @@
             <h2>{{ title }}</h2>
             <p v-if="anchorHint">{{ anchorHint }}</p>
           </div>
+          <button
+            v-if="minimizable && (busy || preview)"
+            type="button"
+            class="ai-x ai-min"
+            aria-label="最小化"
+            title="最小化后继续处理别的事（任务不会中断）"
+            @click="emit('minimize')"
+          >
+            <Icon name="minus" :size="16" />
+          </button>
           <button type="button" class="ai-x" aria-label="关闭" @click="requestClose">
             <Icon name="x" :size="16" />
           </button>
@@ -68,7 +78,10 @@
           <AppSpinner :size="18" />
           <div>
             <b>{{ mode === 'beautify' ? '正在整理全文…' : '正在生成…' }}</b>
-            <small>已经等了 {{ elapsed }} 秒；内容较长时会更久一点，可以取消。</small>
+            <small>
+            已经等了 {{ elapsed }} 秒；内容较长时会更久一点。
+            {{ minimizable ? '可以最小化后继续处理别的事，任务不会中断。' : '可以取消。' }}
+          </small>
           </div>
         </section>
 
@@ -94,7 +107,10 @@
             <button type="button" class="ai-btn primary" @click="emit('apply')">应用到正文</button>
           </template>
           <template v-else-if="busy">
-            <button type="button" class="ai-btn ghost" @click="requestClose">取消生成</button>
+            <button v-if="minimizable" type="button" class="ai-btn ghost" @click="emit('minimize')">最小化</button>
+            <button type="button" class="ai-btn ghost" @click="emit('cancel')">
+              {{ mode === 'beautify' ? '停止' : '取消生成' }}
+            </button>
           </template>
           <template v-else>
             <button type="button" class="ai-btn ghost" @click="requestClose">取消</button>
@@ -125,10 +141,16 @@ const props = defineProps<{
   error: string;
   preview?: string;
   stats?: { before: number; after: number } | null;
+  /** 全文美化：允许最小化，任务由全局 store 持有（收起后胶囊接管） */
+  minimizable?: boolean;
+  /** 这一轮真正开始的时间：从胶囊重新展开时秒表不从头算 */
+  busySince?: number;
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
+  (e: 'minimize'): void;
+  (e: 'cancel'): void;
   (e: 'submit', instruction: string): void;
   (e: 'apply'): void;
   (e: 'discard'): void;
@@ -209,13 +231,20 @@ function clearTimer() {
   }
 }
 
+/** 秒表从真实开始时间算：最小化再展开不会把「已经等了 N 秒」重置成 0 */
+function startBusyTimer() {
+  clearTimer();
+  const startedAt = Number(props.busySince) || Date.now();
+  const tick = () => { elapsed.value = Math.max(0, Math.floor((Date.now() - startedAt) / 1000)); };
+  tick();
+  timer = setInterval(tick, 1000);
+}
+
 watch(
-  () => props.busy,
-  (busy) => {
-    clearTimer();
-    if (!busy) return;
-    elapsed.value = 0;
-    timer = setInterval(() => { elapsed.value += 1; }, 1000);
+  [() => props.busy, () => props.busySince],
+  ([busy]) => {
+    if (busy) startBusyTimer();
+    else clearTimer();
   },
   { immediate: true },
 );
@@ -230,7 +259,7 @@ watch(
       return;
     }
     instruction.value = '';
-    elapsed.value = 0;
+    if (props.busy) startBusyTimer();
     stopBack?.();
     stopBack = registerBackHandler(() => {
       emit('close');

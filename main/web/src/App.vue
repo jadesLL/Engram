@@ -16,6 +16,8 @@
   <!-- 记灵感撰写框：正文进、标题由 Engram 拟（左下角「+」/Ctrl+N/欢迎页卡片共用） -->
   <IdeaComposer />
   <UpdateOverlay />
+  <!-- 全文美化最小化后的全局胶囊：切页/收起编辑页时任务继续跑 -->
+  <BeautifyTaskPill />
   <AppTooltip />
 </template>
 
@@ -27,6 +29,7 @@ import ConfirmHost from './components/ui/ConfirmHost.vue';
 import IdeaComposer from './components/ui/IdeaComposer.vue';
 import AppTooltip from './components/ui/AppTooltip.vue';
 import UpdateOverlay from './components/UpdateOverlay.vue';
+import BeautifyTaskPill from './components/BeautifyTaskPill.vue';
 import AssetDrawer from './components/AssetDrawer.vue';
 import SyncLogDrawer from './components/SyncLogDrawer.vue';
 import BrandMark from './components/BrandMark.vue';
