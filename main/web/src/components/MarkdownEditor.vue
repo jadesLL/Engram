@@ -745,6 +745,17 @@ const mobileToolbar = [
   'link', 'undo', 'edit-mode', readingToolbarItem,
   aiToolbarItem, insertToolbarItem,
 ];
+/**
+ * 「更多 ⋯」：桌面工具栏放不下时，低频按钮会搬进这个 Vditor 原生子面板（见 setupToolbarMore），
+ * 空间够时再搬回原位。搬进去的是真实按钮元素，点击、选中态同步与下拉定位都照旧。
+ */
+const moreToolbarItem = {
+  name: 'more',
+  tip: '更多',
+  className: 'eg-toolbar-more',
+  icon: toolbarIconSvg(['M5 12h.01', 'M12 12h.01', 'M19 12h.01']),
+  toolbar: [],
+};
 // UI 2.0 mockup 4.3：按「格式 / 段落 / 插入 / 历史」四段分组；
 // 双链、源码切换、全屏、大纲、沉浸阅读是 Engram 专有入口，收在末尾同一段里
 const desktopToolbar = [
@@ -754,6 +765,7 @@ const desktopToolbar = [
   aiToolbarItem, '|',
   'undo', 'redo', '|',
   'edit-mode', fullscreenToolbarItem, outlineToolbarItem, readingToolbarItem,
+  moreToolbarItem,
 ];
 
 /**
@@ -842,6 +854,7 @@ function init() {
       overrideToolbarIcons();
       adoptVditorTooltips();
       bindToolbarHintOverlay();
+      setupToolbarMore();
       observeWikiLinks();
       bindKeys();
       bindTableBarEvents();
@@ -959,12 +972,131 @@ function updateToolbarOverflow() {
   toolbarOverflowRaf = 0;
   const toolbar = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar');
   if (!toolbar) return;
+  /* 桌面档不放横滚：放不下的按钮搬进「⋯ 更多」面板（syncToolbarMore） */
+  if (!mobileViewport.matches) {
+    syncToolbarMore();
+    return;
+  }
   const overflow = toolbar.scrollWidth > toolbar.clientWidth + 2;
   const atEnd = toolbar.scrollLeft + toolbar.clientWidth >= toolbar.scrollWidth - 2;
   toolbar.classList.toggle('eg-toolbar-overflow', overflow && !atEnd);
 }
 function scheduleToolbarOverflow() {
   if (!toolbarOverflowRaf) toolbarOverflowRaf = requestAnimationFrame(updateToolbarOverflow);
+}
+
+/* ===== 桌面工具栏「⋯ 更多」：放不下时把低频按钮搬进 Vditor 原生的 more 面板 =====
+ * 搬的是真实按钮元素（不是复制品），点击、vditor-menu--current 状态同步、下拉定位都照旧；
+ * 空间回来时按原位搬回去。收纳顺序 = 低频优先（见 TOOLBAR_COLLAPSE_ORDER），
+ * 手机档（≤768）保持单行横滚，不走这套。 */
+const TOOLBAR_COLLAPSE_ORDER = [
+  'strike', 'check', 'ordered-list', 'table', 'code', 'inline-code',
+  'undo', 'redo', 'engram-outline', 'reading', 'engram-fullscreen',
+  'edit-mode', 'wikilink', 'engram-ai',
+];
+let toolbarCollapseMore: HTMLElement | null = null;
+let toolbarCollapsePanel: HTMLElement | null = null;
+let toolbarCollapsible: Array<{ el: HTMLElement; type: string; originalIndex: number }> = [];
+const toolbarOriginalIndex = new Map<HTMLElement, number>();
+
+function setupToolbarMore() {
+  const toolbar = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar');
+  if (!toolbar) return;
+  toolbarCollapseMore = toolbar.querySelector<HTMLElement>('.eg-toolbar-more') ?? null;
+  toolbarCollapsePanel = toolbarCollapseMore?.querySelector<HTMLElement>('.vditor-hint') ?? null;
+  toolbarOriginalIndex.clear();
+  toolbarCollapsible = [];
+  Array.from(toolbar.children).forEach((child, index) => {
+    toolbarOriginalIndex.set(child as HTMLElement, index);
+    const type = child.querySelector<HTMLElement>(':scope > button[data-type]')?.dataset.type;
+    if (type && TOOLBAR_COLLAPSE_ORDER.includes(type) && child.parentElement === toolbar) {
+      toolbarCollapsible.push({ el: child as HTMLElement, type, originalIndex: index });
+    }
+  });
+  syncToolbarMore();
+}
+
+function toolbarAvailableWidth(toolbar: HTMLElement): number {
+  /* fit-content 工具条缩起来之后，自身盒宽不再是可用宽度；
+     上限在 max-width 的 calc() 里（getComputedStyle 不给解析值）：
+     塞一个临时探针到同一个包含块里，让浏览器把这条 calc 解出来 */
+  const limit = getComputedStyle(toolbar).maxWidth;
+  const parent = toolbar.parentElement;
+  if (!parent || !limit || limit === 'none') return toolbar.clientWidth;
+  const probe = document.createElement('div');
+  probe.style.width = limit;
+  probe.style.height = '0';
+  probe.style.visibility = 'hidden';
+  probe.style.pointerEvents = 'none';
+  parent.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return Number.isFinite(width) && width > 0 ? width : toolbar.clientWidth;
+}
+
+/** 分隔线两头只要有一侧没有可见按钮就悬空：搬动按钮后重算一遍 */
+function syncToolbarDividers(toolbar: HTMLElement) {
+  const children = Array.from(toolbar.children) as HTMLElement[];
+  const visible = children.filter((el) => el.style.display !== 'none');
+  const isDivider = (el: HTMLElement) => el.classList.contains('vditor-toolbar__divider');
+  let seenBefore = false;
+  const hasItemBefore = visible.map((el) => {
+    const value = seenBefore;
+    if (!isDivider(el)) seenBefore = true;
+    return value;
+  });
+  let seenAfter = false;
+  for (let i = visible.length - 1; i >= 0; i--) {
+    const el = visible[i];
+    if (isDivider(el)) {
+      el.style.display = hasItemBefore[i] && seenAfter ? '' : 'none';
+    } else {
+      seenAfter = true;
+    }
+  }
+}
+
+/** 原位插回：插到「原始序号在它之后、且还在工具条里」的第一个节点前 */
+function toolbarInsertionPoint(toolbar: HTMLElement, originalIndex: number): HTMLElement | null {
+  return (
+    (Array.from(toolbar.children) as HTMLElement[]).find(
+      (c) => (toolbarOriginalIndex.get(c) ?? Number.POSITIVE_INFINITY) > originalIndex,
+    ) ?? null
+  );
+}
+
+function syncToolbarMore() {
+  const toolbar = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar');
+  if (!toolbar || !toolbarCollapseMore || !toolbarCollapsePanel) return;
+  const available = toolbarAvailableWidth(toolbar);
+  const inPanel = () => toolbarCollapsible.filter((it) => it.el.parentElement === toolbarCollapsePanel);
+  const overflowNow = () => toolbar.scrollWidth > available + 1;
+  const retoggle = () => toolbar.classList.toggle('eg-toolbar-collapsed', inPanel().length > 0);
+  /* ⋯ 按钮自身的显隐也会占宽：先按当前状态摆正，再量有没有溢出 */
+  retoggle();
+  /* 还有溢出：按低频优先逐个搬进面板 */
+  let guard = toolbarCollapsible.length + 4;
+  while (overflowNow() && guard-- > 0) {
+    const next = toolbarCollapsible.find((it) => it.el.parentElement === toolbar);
+    if (!next) break;
+    toolbarCollapsePanel.appendChild(next.el);
+    retoggle();
+  }
+  /* 没有溢出了：把「最后收进去的」逐颗试着搬回原位，塞不下就停。
+     这一步同时覆盖「空间变大」的情形——搬得回去就一颗颗还回去 */
+  for (;;) {
+    const collapsed = inPanel();
+    if (collapsed.length === 0 || overflowNow()) break;
+    const it = collapsed[collapsed.length - 1];
+    toolbar.insertBefore(it.el, toolbarInsertionPoint(toolbar, it.originalIndex));
+    retoggle();
+    if (overflowNow()) {
+      toolbarCollapsePanel.appendChild(it.el);
+      retoggle();
+      break;
+    }
+  }
+  syncToolbarDividers(toolbar);
 }
 
 /** 菜单显隐由 Vditor 自己的 hover / click / 延迟弹出处理：
@@ -980,8 +1112,10 @@ function bindToolbarHintOverlay() {
     attributes: true,
     attributeFilter: ['class', 'style'],
   });
-  const toolbarResizeObserver = toolbar ? new ResizeObserver(scheduleToolbarOverflow) : null;
-  toolbarResizeObserver?.observe(toolbar as HTMLElement);
+  /* 量的是编辑器根：抽屉 / 文件树 / 正文列宽变化都会改工具栏可用宽度，而工具条
+     本身是 fit-content，自己不变宽就观察不到 */
+  const toolbarResizeObserver = new ResizeObserver(scheduleToolbarOverflow);
+  toolbarResizeObserver.observe(vditorEl.value);
   window.addEventListener('scroll', scheduleFloatingHints, true);
   window.addEventListener('resize', scheduleFloatingHints);
   window.addEventListener('resize', scheduleToolbarOverflow);
@@ -990,7 +1124,7 @@ function bindToolbarHintOverlay() {
   scheduleToolbarOverflow();
   floatingHintCleanup = () => {
     observer.disconnect();
-    toolbarResizeObserver?.disconnect();
+    toolbarResizeObserver.disconnect();
     window.removeEventListener('scroll', scheduleFloatingHints, true);
     window.removeEventListener('resize', scheduleFloatingHints);
     window.removeEventListener('resize', scheduleToolbarOverflow);
@@ -2128,11 +2262,18 @@ function scrollToTop(): boolean {
 
 /** 「目录」工具栏按钮的视口坐标：窄窗口浮层要用它对齐到按钮下方 */
 function outlineButtonRect(): DOMRect | null {
+  return toolbarButtonRect('engram-outline');
+}
+
+/** 工具栏按钮的视口坐标；按钮被收进「⋯」面板且面板关着时，退回 ⋯ 按钮的位置 */
+function toolbarButtonRect(type: string): DOMRect | null {
   const buttons = Array.from(
-    vditorEl.value?.querySelectorAll<HTMLElement>('.vditor-toolbar button[data-type="engram-outline"]') ?? []
+    vditorEl.value?.querySelectorAll<HTMLElement>(`.vditor-toolbar button[data-type="${type}"]`) ?? []
   );
-  const button = buttons.find((item) => item.getBoundingClientRect().width > 0) ?? buttons[0];
-  return button?.getBoundingClientRect() ?? null;
+  const visible = buttons.find((item) => item.getBoundingClientRect().width > 0);
+  if (visible) return visible.getBoundingClientRect();
+  const more = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar .eg-toolbar-more button');
+  return more?.getBoundingClientRect() ?? null;
 }
 
 function captureEditorSelection() {
@@ -2850,9 +2991,8 @@ function restoreAiRange(range: Range | null): boolean {
 }
 
 function positionAiMenu() {
-  const button = vditorEl.value?.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-ai"]');
-  if (!button) return;
-  const rect = button.getBoundingClientRect();
+  const rect = toolbarButtonRect('engram-ai');
+  if (!rect) return;
   const width = 248;
   const height = 236;
   let left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
@@ -3656,10 +3796,12 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
 }
 
 :deep(.vditor-toolbar) {
-  /* 白卡片 + 细描边 + 单层轻投影，左缘对齐正文列，浮在纸面上 */
+  /* 白卡片 + 细描边 + 单层轻投影，左缘对齐正文列，浮在纸面上。
+     单行不换行：放不下的按钮由 syncToolbarMore 搬进「⋯ 更多」面板，
+     overflow 保持 visible——标题 / 编辑模式下拉是工具栏项里的绝对定位子节点，不能被裁 */
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   width: fit-content;
   max-width: calc(100% - var(--col-inset, 24px) - 24px);
   margin: 0 0 18px var(--col-inset, 24px);
@@ -3673,6 +3815,30 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   box-shadow: var(--shadow-raised);
   position: relative;
   z-index: 2;
+}
+/* 「⋯ 更多」：默认藏起来，有按钮被收进面板（eg-toolbar-collapsed）时才出现 */
+:deep(.vditor-toolbar .eg-toolbar-more) { display: none; }
+:deep(.vditor-toolbar.eg-toolbar-collapsed .eg-toolbar-more) { display: block; }
+/* 收进面板的还是原来的 28px 图标按钮：vditor 对面板里的按钮是「块级 + 100% 宽」的
+   文本行样式，这里改回横排图标，空间不够自动换行 */
+:deep(.vditor-toolbar .eg-toolbar-more .vditor-hint) {
+  width: 150px;
+  min-width: 0;
+  padding: 5px;
+  line-height: 0;
+}
+:deep(.vditor-toolbar .eg-toolbar-more .vditor-hint .vditor-toolbar__item) {
+  float: none;
+  display: inline-flex;
+  width: auto;
+  margin: 1px;
+  vertical-align: top;
+}
+:deep(.vditor-toolbar .eg-toolbar-more .vditor-hint .vditor-toolbar__item button) {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  padding: 0;
 }
 :deep(.vditor-toolbar .vditor-toolbar__item) { padding: 0; }
 :deep(.vditor-toolbar button) {
