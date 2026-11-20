@@ -310,6 +310,7 @@ import {
   type TableEditAction,
 } from '../lib/markdownTable';
 import { createEditorModelSync } from '../lib/editorModelSync';
+import { decorateCodeLangHint } from '../lib/codeBlockLangNotes';
 import { anchorAtOffset, type PositionAnchor } from '../lib/positionAnchor';
 import { sameBeautifySource } from '../lib/beautifyTask';
 import { useEditorAiStore } from '../stores/editorAi';
@@ -855,6 +856,7 @@ function init() {
       adoptVditorTooltips();
       bindToolbarHintOverlay();
       setupToolbarMore();
+      bindCodeLangNotes();
       observeWikiLinks();
       bindKeys();
       bindTableBarEvents();
@@ -960,6 +962,22 @@ function placeFloatingHints() {
 function scheduleFloatingHints() {
   if (floatingHintRaf) return;
   floatingHintRaf = requestAnimationFrame(placeFloatingHints);
+}
+
+/* ---------- 代码块语言下拉：英文语言名后面补一句中文 ----------
+ * 列表来自 Vditor（内置的绘图语言 + hljs 全部语言名，纯英文），中文用户看不出
+ * plantuml / flowchart / graphviz / mindmap 各自画什么。Vditor 没有「显示中文、写入英文」
+ * 的入口（preview.hljs.langs 的字符串同时就是围栏里的语言标记），所以只在提示面板重绘后
+ * 按 data-value 查表补注解（见 lib/codeBlockLangNotes.ts），选中写进正文的仍是原语言标记。 */
+let codeLangHintObserver: MutationObserver | null = null;
+
+function bindCodeLangNotes() {
+  const hint = vditor?.vditor?.hint?.element;
+  if (!hint || codeLangHintObserver) return;
+  decorateCodeLangHint(hint);
+  // 每次输入 Vditor 都会整体重绘 innerHTML，新按钮渲染出来后再补一次
+  codeLangHintObserver = new MutationObserver(() => decorateCodeLangHint(hint));
+  codeLangHintObserver.observe(hint, { childList: true });
 }
 
 /*
@@ -3622,6 +3640,8 @@ onUnmounted(() => {
   unbindImageResize();
   wikiTagObserver?.disconnect();
   modeObserver?.disconnect();
+  codeLangHintObserver?.disconnect();
+  codeLangHintObserver = null;
   unbindVditorTooltips?.();
   unbindVditorTooltips = null;
   floatingHintCleanup?.();
@@ -3935,6 +3955,17 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
   background: transparent;
   color: var(--text);
+}
+/* 代码块语言下拉的中文注解：跟在英文语言名后面，弱化成辅助说明（乐谱 / UML 图 / 思维导图…）。
+   选中态只改按钮文字色，注解保持次要色，一眼能分出「语言名」和「它是干什么的」 */
+:deep(.vditor-hint .eg-code-lang-note) {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+:deep(.vditor-hint .eg-code-lang-note)::before {
+  content: '·';
+  margin-right: 4px;
 }
 /* 双链：虚线下划线柔和样式（替代刺眼的实色块） */
 :deep(a[href^="#wiki/"]) {
