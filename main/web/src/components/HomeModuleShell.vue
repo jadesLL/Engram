@@ -2,7 +2,7 @@
   <section ref="root" class="shell" :class="[`tone-${meta.tone}`, `tier-${tier}`, { managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90, 'ai-card': kind === 'digest', 'auto-height': autoHeight }]"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
     <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
-    <header v-if="tier === 'standard' && !functional" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><span v-if="summary.header" class="shell-meta">{{ summary.header }}</span><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
+    <header v-if="tier === 'standard' && !functional" class="shell-head"><div class="shell-titles"><span class="shell-eyebrow">{{ eyebrow }}</span><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3></div><span v-if="summary.header" class="shell-meta">{{ summary.header }}</span><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
     <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" :tier="tier" :icon="meta.icon" @open="openDetail" @activate="$emit('activate', $event)" />
     <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
     <Teleport to="body" :disabled="!expanded">
@@ -50,6 +50,14 @@ const cellPx = computed(() => {
 /** 尺寸矩阵画几行高度：常用高度只到 6 行，再高就用下面的数字框 */
 const sizeMatrixRows = 6;
 const meta = computed(() => moduleMeta(props.kind));
+/** 卡头的小写眉毛标签（首页 Claude 风格）：模块识别靠它，不再靠彩色图标块 */
+const EYEBROWS: Record<ModuleKind, string> = {
+  ask: 'Ask', capture: 'Capture', shortcuts: 'Shortcuts', recent: 'Recent', notes: 'Ideas', fresh: 'Fresh',
+  tasks: 'Tasks', stats: 'Library', weekly: 'Weekly', tags: 'Tags', sections: 'Sections', roam: 'Roam',
+  system: 'Status', sync: 'Sync', ring: 'Ratio', heat: 'Heat', inbox: 'Inbox', queue: 'Queue', board: 'Board',
+  activity: 'Recent', digest: 'Summary',
+};
+const eyebrow = computed(() => EYEBROWS[props.kind] || '');
 /** 内容档位由栅格格数决定（用户在尺寸菜单看到的 w × h），与像素无关 */
 const tier = computed(() => cardTier(props.width, props.height));
 const shortTitles: Record<ModuleKind, string> = { ask: '问答', capture: '灵感', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
@@ -184,6 +192,21 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   align-items:center;
   margin-bottom:13px;
   flex:none;
+}
+.shell-titles {
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  flex:1;
+  min-width:0;
+}
+.shell-eyebrow {
+  font-size:9px;
+  font-weight:650;
+  letter-spacing:.2em;
+  line-height:1.4;
+  text-transform:uppercase;
+  color:var(--text-faint);
 }
 .shell-head h3 {
   display:flex;

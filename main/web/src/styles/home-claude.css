@@ -1,0 +1,468 @@
+/*
+ * 首页 Claude 气质主题层（2026-11-20）
+ *
+ * 只在浅色主题、只在首页看板生效（html:not(.dark) .board），暗色主题保持原样。
+ * 做法与 static 审查稿一致：
+ *   - 暖象牙纸底 + 近白纸面卡片，卡片不描边，只留弥散影
+ *   - 衬线做卡头标题和大数字，无衬线做正文
+ *   - 陶土色接管首页强调色；状态点/勾选态/热力格用同一套暖色
+ *   - 列表分隔线全部透明，靠留白、悬停态和状态符号分层
+ *   - 唯一保留的 1px 线留给「记个想法」输入条（Claude composer 的做法）
+ */
+
+html:not(.dark) .board {
+  --claude-canvas: #f1eee5;
+  --claude-card: #fcfbf6;
+  --claude-ink: #1f1e1b;
+  --claude-ink-2: #5e5a50;
+  --claude-ink-3: #8b8576;
+  --claude-clay: #c15f3c;
+  --claude-clay-deep: #9e4a2c;
+  --claude-clay-soft: #f5e7df;
+  --claude-olive: #6f7254;
+  --claude-slate: #59656f;
+  --claude-track: #e9e4d7;
+  --claude-rule: #e6e0d0;
+  --claude-shadow: 0 26px 52px -40px rgba(50, 42, 30, .4);
+  --claude-shadow-hover: 0 34px 64px -42px rgba(50, 42, 30, .48);
+
+  /* 把首页内的语义令牌整体换成 Claude 暖色 */
+  --text: var(--claude-ink);
+  --text-secondary: var(--claude-ink-2);
+  --text-faint: var(--claude-ink-3);
+  --text-muted: #6f6a5f;
+  --accent: var(--claude-clay);
+  --accent-soft: rgba(193, 95, 60, .1);
+  --on-accent: #fff;
+  --badge-idea: var(--claude-clay-deep);
+  --badge-idea-soft: var(--claude-clay-soft);
+  --badge-concept: var(--claude-clay-deep);
+  --badge-concept-soft: var(--claude-clay-soft);
+  --badge-entity: var(--claude-olive);
+  --badge-entity-soft: rgba(111, 114, 84, .14);
+  --badge-note: var(--claude-slate);
+  --badge-note-soft: rgba(89, 101, 111, .14);
+  --card-bg: var(--claude-card);
+  --card-line: transparent;
+  --card-line-soft: transparent;
+  --border: transparent;
+  --border-strong: rgba(193, 95, 60, .3);
+  --bg-secondary: #f6f1e7;
+  --bg-tertiary: #eae5d8;
+  --card-shadow: var(--claude-shadow);
+  --card-shadow-hover: var(--claude-shadow-hover);
+  --card-pad: 18px;
+  --card-radius: 16px;
+
+  background: var(--claude-canvas);
+}
+
+/* ---------- 页头 ---------- */
+html:not(.dark) .board-date {
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board-greeting {
+  font-family: var(--font-display);
+  font-size: 42px;
+  font-weight: 400;
+  letter-spacing: -.02em;
+  line-height: 1.1;
+}
+html:not(.dark) .board-sub {
+  font-size: 13.5px;
+  color: var(--claude-ink-2);
+}
+html:not(.dark) .layout-btn {
+  border: 0;
+  background: transparent;
+  color: var(--claude-clay-deep);
+  font-size: 11.5px;
+}
+html:not(.dark) .layout-btn:hover {
+  border-color: transparent;
+  color: var(--claude-clay-deep);
+  background: var(--claude-clay-soft);
+}
+html:not(.dark) .glance-item {
+  border-left: 0;
+  padding: 0;
+  gap: 4px;
+}
+html:not(.dark) .board-glance {
+  gap: 30px;
+  align-items: flex-start;
+}
+html:not(.dark) .glance-item em {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .glance-item strong {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 卡片：纸面，不是盒子 ---------- */
+html:not(.dark) .board .shell:not(.managing) {
+  background: var(--claude-card) !important;
+  border-color: transparent !important;
+  border-radius: 16px !important;
+  box-shadow: var(--claude-shadow) !important;
+}
+html:not(.dark) .board .shell.tier-standard {
+  padding: var(--card-pad) !important;
+}
+html:not(.dark) .board .shell:not(.managing):not(.dragging):hover {
+  box-shadow: var(--claude-shadow-hover) !important;
+  transform: translateY(-2px) !important;
+}
+html:not(.dark) .board .shell.ai-card {
+  background: #f7ebe3 !important;
+}
+
+/* 卡头：眉毛 + 衬线标题，去掉图标 */
+html:not(.dark) .board .shell-head {
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+html:not(.dark) .board .shell-head h3 {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: -.01em;
+  line-height: 1.3;
+}
+html:not(.dark) .board .shell-head h3 svg {
+  display: none;
+}
+html:not(.dark) .board .shell-eyebrow {
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .shell-meta,
+html:not(.dark) .board .shell-expand {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+html:not(.dark) .board .shell-meta {
+  font-size: 10.5px;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .shell.ai-card .shell-head h3::after {
+  content: none;
+}
+
+/* ---------- 行的状态：不再画线，悬停才出现浅暖底 ---------- */
+html:not(.dark) .board :is(.mini-task, .stat-row, .tag-row, .week-row, .section-row, .ring-row, .summary-row, .activity-item, .hb-row, .heat-recent-day) {
+  border-radius: 8px;
+}
+html:not(.dark) .board :is(.mini-task, .stat-row, .tag-row, .week-row, .section-row, .ring-row, .summary-row, .activity-item, .hb-row, .heat-recent-day):hover {
+  background: rgba(193, 95, 60, .045);
+}
+
+/* ---------- 近期待办：勾选态、逾期日期 ---------- */
+html:not(.dark) .board .mini-task {
+  padding: 9px 10px;
+}
+html:not(.dark) .board .mini-text {
+  font-size: 13px;
+}
+html:not(.dark) .board .mini-meta {
+  font-size: 11px;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .mini-date {
+  font-size: 10.5px;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .mini-date.over {
+  color: var(--claude-clay-deep);
+}
+html:not(.dark) .board .mini-check {
+  border: 0;
+  background: var(--claude-clay-soft);
+  position: relative;
+}
+html:not(.dark) .board .mini-check::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--claude-card);
+}
+
+/* ---------- 运行状态：四行状态点，不再用 2×2 色块 ---------- */
+html:not(.dark) .board .status-grid {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+html:not(.dark) .board .status-cell {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent !important;
+}
+html:not(.dark) .board .status-cell::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--claude-olive);
+}
+html:not(.dark) .board .status-cell.warn::before {
+  background: var(--claude-clay);
+}
+html:not(.dark) .board .status-cell .k {
+  flex: 1;
+  font-size: 13px;
+  color: var(--claude-ink-2);
+}
+html:not(.dark) .board .status-cell .v {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+}
+html:not(.dark) .board .status-cell:hover {
+  background: rgba(193, 95, 60, .045) !important;
+}
+html:not(.dark) .board .status-line {
+  margin-top: 10px;
+  color: var(--claude-ink-3);
+  font-size: 10.5px;
+}
+
+/* ---------- 知识库概览 ---------- */
+html:not(.dark) .board .stats-hero .big {
+  font-size: 54px;
+}
+html:not(.dark) .board .stats-hero .unit,
+html:not(.dark) .board .stats-words,
+html:not(.dark) .board .stats-legend,
+html:not(.dark) .board .stat-share,
+html:not(.dark) .board .stats-foot {
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .stats-meter,
+html:not(.dark) .board .stat-bar {
+  background: var(--claude-track);
+}
+html:not(.dark) .board .stat-lb,
+html:not(.dark) .board .stat-vl {
+  font-size: 13px;
+}
+html:not(.dark) .board .stats-foot {
+  font-size: 10.5px;
+}
+
+/* ---------- 知识热力 ---------- */
+html:not(.dark) .board .heat-recent,
+html:not(.dark) .board .heat-foot {
+  border-color: transparent;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .heat-recent-day {
+  background: transparent;
+  color: var(--claude-ink-2);
+}
+html:not(.dark) .board .heat-day {
+  font-size: 9px;
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .heat-foot {
+  font-size: 10px;
+}
+
+/* ---------- 最近更新 / 近期灵感 ---------- */
+html:not(.dark) .board .activity-item::before {
+  background: transparent;
+}
+html:not(.dark) .board .activity-title,
+html:not(.dark) .board .hb-row-title {
+  font-size: 13px;
+}
+html:not(.dark) .board .activity-dot {
+  border-color: var(--claude-card);
+}
+html:not(.dark) .board .notes-bulb,
+html:not(.dark) .board .hb-badge {
+  background: var(--claude-clay-soft);
+  color: var(--claude-clay-deep);
+}
+
+/* ---------- Agent 摘要 ---------- */
+html:not(.dark) .board .digest-quote {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: -.015em;
+}
+html:not(.dark) .board .digest-bullet {
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.5;
+  color: #4a413a;
+}
+html:not(.dark) .board .digest-foot {
+  color: #8a7a6e;
+}
+html:not(.dark) .board .digest-avatar {
+  background: rgba(193, 95, 60, .12);
+  color: var(--claude-clay-deep);
+}
+html:not(.dark) .board .digest-open {
+  color: var(--claude-clay-deep);
+}
+html:not(.dark) .board .digest-card .spark {
+  background: rgba(193, 95, 60, .1);
+  color: var(--claude-clay-deep);
+}
+
+/* ---------- 记个想法：全页唯一的 1px 线（Claude composer） ---------- */
+html:not(.dark) .board .shell.capture.tier-bar:not(.managing) {
+  background: #fff !important;
+  border: 1px solid var(--claude-rule) !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+  padding: 10px 12px !important;
+}
+html:not(.dark) .board .shell.capture.tier-bar:not(.managing):hover {
+  background: #fff !important;
+  box-shadow: 0 10px 24px -22px rgba(50, 42, 30, .45) !important;
+  transform: none !important;
+}
+html:not(.dark) .board .shell.capture.tier-bar .action-writing textarea {
+  font-size: 13.5px;
+}
+html:not(.dark) .board .shell.capture.tier-bar .bar-hint {
+  color: var(--claude-ink-3);
+}
+html:not(.dark) .board .shell.capture.tier-bar .action-send {
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  background: var(--claude-ink) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+html:not(.dark) .board .shell.capture.tier-bar .action-send .send-label {
+  display: none !important;
+}
+html:not(.dark) .board .shell.capture.tier-bar .action-send:disabled {
+  background: transparent !important;
+  color: rgba(31, 30, 27, .25) !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+html:not(.dark) .board .shell.capture.tier-bar .action-send:hover:not(:disabled) {
+  background: var(--claude-clay-deep) !important;
+}
+
+/* ---------- 同步状态 ---------- */
+html:not(.dark) .board .sync-pill {
+  background: transparent;
+}
+html:not(.dark) .board .sync-label {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+}
+html:not(.dark) .board .sync-detail {
+  color: var(--claude-ink-3);
+}
+
+/* ---------- 其它列表的通用悬停 ---------- */
+html:not(.dark) .board .summary-row:hover {
+  background: rgba(193, 95, 60, .045);
+}
+
+/* ---------- 手机：保留 Claude 字阶，但把问候收小 ---------- */
+@media (max-width: 768px) {
+  html:not(.dark) .board .board-greeting {
+    font-size: 34px;
+  }
+  html:not(.dark) .board .board-glance {
+    gap: 22px;
+  }
+  html:not(.dark) .board .glance-item strong {
+    font-size: 24px;
+  }
+  html:not(.dark) .board .shell-head h3 {
+    font-size: 16px;
+  }
+}
+
+/* ---------- 矮卡（h<3）：眉毛让位，状态格回到 2×2 ---------- */
+html:not(.dark) .board .shell.short .shell-eyebrow {
+  display: none;
+}
+html:not(.dark) .board .shell.short .shell-head {
+  margin-bottom: 8px;
+}
+html:not(.dark) .board .shell.short .status-grid {
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+html:not(.dark) .board .shell.short .status-cell {
+  padding: 6px 8px;
+  gap: 7px;
+}
+html:not(.dark) .board .shell.short .status-cell .k {
+  font-size: 11px;
+}
+html:not(.dark) .board .shell.short .status-cell .v {
+  font-size: 11.5px;
+}
+
+/* ---------- 矮卡（h<3）：收边距，状态四行，摘要缩字阶 ---------- */
+html:not(.dark) .board .shell.short:not(.managing) {
+  padding: 12px !important;
+}
+html:not(.dark) .board .shell.short .shell-head {
+  margin-bottom: 6px;
+}
+html:not(.dark) .board .shell.short .shell-head h3 {
+  font-size: 16px;
+}
+html:not(.dark) .board .shell.short .status-grid {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+html:not(.dark) .board .shell.short .status-cell {
+  padding: 4px 8px;
+  gap: 8px;
+}
+html:not(.dark) .board .shell.short .status-cell .k {
+  font-size: 11px;
+}
+html:not(.dark) .board .shell.short .status-cell .v {
+  font-size: 11.5px;
+}
+html:not(.dark) .board .shell.short .digest-quote {
+  font-size: 18px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+html:not(.dark) .board .shell.short .digest-bullet {
+  min-height: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+html:not(.dark) .board .shell.short .digest-foot {
+  padding-top: 8px;
+}
