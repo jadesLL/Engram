@@ -9,6 +9,8 @@
       'chat-dragging': app.chatDragging,
       'update-notice-visible': updateNoticeVisible && !desktopShell,
       'settings-open': isActive('/settings'),
+      /* 首页「Claude Code」主题：只作用在 /page，其他视图保持原样 */
+      'cc-home': isActive('/page'),
       /* 设备矩阵（2026-11）：windowSizeClass 三档由 JS 判定，类名承载布局切换 */
       'size-compact': sizeClass === 'compact',
       'size-medium': sizeClass === 'medium',
