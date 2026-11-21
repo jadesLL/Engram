@@ -96,4 +96,15 @@ const topLabel = computed(() => top.value?.label || '');
 .ring-num { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; }
 .ring-pct { width: 32px; text-align: right; color: var(--text-faint); font-size: 9.5px; font-variant-numeric: tabular-nums; }
 .ring-foot { margin-top: auto; padding-top: 9px; border-top: 1px solid var(--card-line-soft); font-size: 10px; color: var(--text-faint); }
+/* 2 格宽：84px 固定环会把右侧占比行压成逐字竖排，环与字号一起收一档 */
+@container (max-width: 260px) {
+  .ring-wrap { gap: 8px; }
+  .ring { width: 48px; height: 48px; }
+  .ring::before { width: 34px; height: 34px; }
+  .ring-value { font-size: 14px; }
+  .ring-row { gap: 4px; }
+  .ring-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 134px 内容宽里名称 + 数值 + 百分比放不下：百分比让位（计数仍保留） */
+  .ring-pct { display: none; }
+}
 </style>

@@ -115,6 +115,6 @@ function shortDate(date: string) {
 @media (max-width: 1024px) {
   .week-board { grid-template-columns: 1fr; }
   .day-col { min-height: 0; }
-  .day-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+  .day-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 8px; }
 }
 </style>

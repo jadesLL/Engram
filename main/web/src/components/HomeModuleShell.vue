@@ -2,7 +2,7 @@
   <section ref="root" class="shell" :class="[`tone-${meta.tone}`, `tier-${tier}`, { managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90, 'ai-card': kind === 'digest', 'auto-height': autoHeight }]"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
     <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
-    <header v-if="tier === 'standard' && !functional" class="shell-head"><div class="shell-titles"><span class="shell-eyebrow">{{ eyebrow }}</span><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3></div><span v-if="summary.header" class="shell-meta">{{ summary.header }}</span><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
+    <header v-if="tier === 'standard' && !functional" class="shell-head"><div class="shell-titles"><span class="shell-eyebrow">{{ eyebrow }}</span><h3><Icon :name="meta.icon" :size="15" /><span class="shell-title-text">{{ title }}</span></h3></div><span v-if="summary.header" class="shell-meta">{{ summary.header }}</span><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
     <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" :tier="tier" :icon="meta.icon" @open="openDetail" @activate="$emit('activate', $event)" />
     <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
     <Teleport to="body" :disabled="!expanded">
@@ -221,6 +221,13 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   font-weight:650;
   letter-spacing:0.005em;
   color:var(--text);
+}
+/* 标题文本必须单独成项：ellipsis 写在 flex 容器上对匿名文本项不生效 */
+.shell-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* 卡头只留 15px 线性图标，不再画彩色图标块 */
 .shell-head h3 :deep(svg) {

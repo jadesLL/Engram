@@ -688,6 +688,7 @@
   border-radius: 4px;
   background: var(--bg-tertiary);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .settings-native .empty-panel {
@@ -1266,7 +1267,7 @@
 .settings-search-path { display: block; margin-top: 1px; color: var(--text-secondary); font-size: 11.5px; line-height: 1.4; }
 .settings-search-enter { flex: none; color: var(--text-secondary); font-size: 11px; opacity: 0; }
 .settings-search-result.active .settings-search-enter { opacity: 1; }
-.settings-search-empty { margin: 0; padding: 32px 16px; color: var(--text-secondary); font-size: 13px; text-align: center; }
+.settings-search-empty { margin: 0; padding: 32px 16px; color: var(--text-secondary); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
 .settings-search-empty-hint { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; }
 .settings-search-foot {
   display: flex;
@@ -1422,6 +1423,7 @@
   font-size: 12px;
   line-height: 1.6;
   text-wrap: pretty;
+  overflow-wrap: anywhere;
 }
 /* 备注是卡片最后一项时，给卡片底边留一档呼吸（卡体 padding-bottom 只有 2px） */
 .settings-native .setting-note:last-child { margin-bottom: 12px; }

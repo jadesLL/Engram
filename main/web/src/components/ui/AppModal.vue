@@ -190,10 +190,12 @@ function onKeydown(event: KeyboardEvent) {
   gap: 16px;
   margin-bottom: 10px;
 }
+.app-modal-title { min-width: 0; }
 .app-modal-title h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 .app-modal-title p {
   margin: 5px 0 0;

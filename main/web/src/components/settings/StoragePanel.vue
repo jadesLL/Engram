@@ -574,6 +574,14 @@ onMounted(() => {
 .trash-meta span:not(:first-child) {
   flex-shrink: 0;
 }
+/* 图片资产行的「原父项 标题」是可变长内容：允许收缩并单行省略，大小/日期仍不收缩 */
+.asset-row .trash-meta span:last-child {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .trash-actions {
   display: flex;
   align-items: center;

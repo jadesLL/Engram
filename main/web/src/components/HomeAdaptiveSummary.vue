@@ -38,7 +38,7 @@
         <span class="k"><Icon :name="icon" :size="10" />{{ shortTitle }}</span>
         <span v-if="summary.status" class="v stat"><i class="sdot" :class="summary.status.tone" />{{ summary.status.text }}</span>
         <span v-else-if="summary.action" class="v act">{{ summary.value }}</span>
-        <span v-else class="v">{{ displayValue }}<em v-if="summary.badge" class="badge" :class="summary.badge.tone">{{ summary.badge.text }}</em></span>
+        <span v-else class="v"><span class="v-text">{{ displayValue }}</span><em v-if="summary.badge" class="badge" :class="summary.badge.tone">{{ summary.badge.text }}</em></span>
       </button>
       <div class="bar-div" aria-hidden="true" />
       <button v-if="firstRow" type="button" class="bar-body" @click="activate(firstRow)">
@@ -205,10 +205,12 @@ onUnmounted(()=>observer?.disconnect());
 
 /* ===== 横条（h=1, w≥2）===== */
 .tier-bar {flex-direction:row;align-items:stretch}
-.bar-main {flex:none;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 16px 0 2px;min-width:0;text-align:left;color:var(--text)}
+.bar-main {flex:0 1 auto;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 16px 0 2px;min-width:0;text-align:left;color:var(--text)}
 .bar-main .k {display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-muted, var(--text-faint));white-space:nowrap}
 .bar-main .k :deep(svg) {color:var(--accent)}
-.bar-main .v {font-size:22px;font-weight:650;letter-spacing:-.02em;white-space:nowrap;display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums}
+.bar-main .v {font-size:22px;font-weight:650;letter-spacing:-.02em;white-space:nowrap;display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums;min-width:0;overflow:hidden}
+.bar-main .v-text {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-main .v .badge {flex:none}
 .bar-main .v.stat {font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px;letter-spacing:0}
 .bar-main .v.act {font-size:15px;font-weight:600;color:var(--accent);letter-spacing:0}
 .bar-div {flex:none;width:1px;background:var(--border);margin:12px 12px 12px 0}

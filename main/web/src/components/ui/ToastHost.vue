@@ -134,6 +134,7 @@ function onCardClick(item: ToastItem) {
   font-size: var(--font-sm);
   font-weight: 600;
   line-height: 1.45;
+  word-break: break-word;
 }
 .toast-text {
   margin: 0;

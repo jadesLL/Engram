@@ -684,7 +684,7 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.6;
 }
-.dream-item-link { color: var(--accent); text-decoration: none; }
+.dream-item-link { color: var(--accent); text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
 .dream-item-link:hover { text-decoration: underline; }
 .dream-item-text { color: var(--text-secondary); word-break: break-all; }
 .dream-item-note {
@@ -700,7 +700,7 @@ onUnmounted(() => {
   color: var(--text-secondary);
   font-size: 11px;
 }
-.dream-item-fail { color: var(--danger); }
+.dream-item-fail { color: var(--danger); flex: none; }
 .dream-round-summary { margin-top: 12px; }
 .dream-summary-toggle { margin-top: 8px; }
 
