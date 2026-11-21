@@ -194,7 +194,7 @@ defineExpose({ open, close, toggle });
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 18px 44px -20px rgba(0, 0, 0, 0.42), 0 2px 8px -4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06);
   overflow: hidden;
 }
 .rel-head {
@@ -336,7 +336,7 @@ defineExpose({ open, close, toggle });
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 14px 14px 0 0;
-  box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.16);
   padding-bottom: var(--safe-bottom);
 }
 /* 抓手：提示这是一张可以点遮罩关掉的下侧弹窗 */

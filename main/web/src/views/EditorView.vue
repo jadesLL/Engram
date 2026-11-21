@@ -2360,7 +2360,7 @@ onUnmounted(() => {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 26px -14px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.08);
 }
 .editor-topbar {
   left: 18px;
@@ -2818,7 +2818,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border: 1px solid var(--card-line);
   border-radius: 14px;
   background: var(--card-bg);
-  box-shadow: 0 18px 50px -20px rgba(30, 27, 22, 0.42), 0 2px 8px rgba(30, 27, 22, 0.07);
+  box-shadow: 0 14px 36px rgba(30, 27, 22, 0.16), 0 2px 8px rgba(30, 27, 22, 0.05);
 }
 .editor-outline-card :deep(.page-outline),
 .editor-outline-pop :deep(.page-outline) {

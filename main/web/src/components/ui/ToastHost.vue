@@ -103,7 +103,7 @@ function onCardClick(item: ToastItem) {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--card-bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px -12px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 22px rgba(0, 0, 0, 0.1);
 }
 /* 带标题/动作的通知：图标与关闭按钮对齐第一行，不再垂直居中整块 */
 .app-toast.rich { align-items: flex-start; }
@@ -112,7 +112,7 @@ function onCardClick(item: ToastItem) {
 .app-toast.clickable { cursor: pointer; }
 .app-toast.clickable:hover { border-color: var(--border-strong); background: var(--bg-hover); }
 :global(html.dark) .app-toast {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -10px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 22px rgba(0, 0, 0, 0.42);
 }
 
 .toast-icon {
@@ -247,7 +247,7 @@ function onCardClick(item: ToastItem) {
     padding: 11px 12px;
     border-radius: 12px;
     /* 贴底后阴影改向上：底缘贴着导航栏，原来的向下投影会被压成一道深边 */
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05), 0 14px 30px -18px rgba(0, 0, 0, 0.24);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.04), 0 10px 26px rgba(0, 0, 0, 0.12);
   }
   .toast-enter-from {
     opacity: 0;
@@ -264,7 +264,7 @@ function onCardClick(item: ToastItem) {
     width: auto;
   }
   :global(html.dark) .app-toast {
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.4), 0 14px 30px -18px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.35), 0 10px 26px rgba(0, 0, 0, 0.35);
   }
   /*
    * 首页 / 知识库右下有「新建」FAB（Home.vue 的 .new-fab：距底 88px + 高 56px）时，

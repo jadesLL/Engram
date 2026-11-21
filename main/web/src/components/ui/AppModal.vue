@@ -168,12 +168,12 @@ function onKeydown(event: KeyboardEvent) {
   flex-direction: column;
   padding: 20px 24px;
   border-radius: 12px;
-  /* 极简线条：压扁拉长尾影，替代厚重 dialog 投影 */
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07), 0 24px 60px -20px rgba(0, 0, 0, 0.28);
+  /* 极简线条：短接触影 + 低透明度扩散影；不要大负 spread（会把 12px 圆角压成直角） */
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05), 0 14px 32px rgba(0, 0, 0, 0.12);
   outline: none;
 }
 :global(html.dark) .app-modal {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 24px 60px -20px rgba(0, 0, 0, 0.68);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 16px 36px rgba(0, 0, 0, 0.45);
 }
 .app-modal.right {
   height: 100%;

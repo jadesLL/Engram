@@ -2273,7 +2273,7 @@ onBeforeUnmount(() => {
   background: var(--glass-bg);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 26px -14px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.08);
   color: var(--text-faint);
   font-size: 11.5px;
 }
@@ -2341,7 +2341,7 @@ onBeforeUnmount(() => {
   /* 与编辑器「插入」面板同一套底部面板语言：22px 顶圆角 */
   border-radius: 22px 22px 0 0;
   background: var(--card-bg);
-  box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.16);
 }
 /* 抓手：提示这是一张可以点遮罩关掉的下侧弹窗 */
 .outline-sheet .reading-outline::before {
@@ -2423,7 +2423,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border);
   border-radius: 14px 14px 0 0;
   background: var(--card-bg);
-  box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.16);
 }
 .settings-sheet .reading-settings::before {
   content: '';
