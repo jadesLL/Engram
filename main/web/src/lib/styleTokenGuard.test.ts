@@ -146,9 +146,10 @@ test('组件 <style> 的字号/颜色字面值不超过还债基线', () => {
     }
   }
 
-  assert.deepEqual(offenders, [], [
+  const message = [
     'UI 令牌守卫发现硬编码回潮（2026-11 还债基线被突破）：',
     ...offenders,
     '处理：改用令牌（--fs-* / --cc-* / 语义令牌）；确需保留的把 styleTokenGuard 基线 +1 并登记 ALLOWED_NOTES。',
-  ]);
+  ].join('\n');
+  assert.deepEqual(offenders, [], message);
 });
