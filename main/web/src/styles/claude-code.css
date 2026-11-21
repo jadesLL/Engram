@@ -196,15 +196,6 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   letter-spacing: -.025em;
   line-height: 1.16;
 }
-.board-greeting::before {
-  content: "✻";
-  flex: none;
-  color: var(--cc-clay);
-  font-size: .62em;
-  font-weight: 400;
-  letter-spacing: 0;
-  transform: translateY(-2px);
-}
 .board-sub {
   font-size: 12px;
   color: var(--cc-ink-2);
