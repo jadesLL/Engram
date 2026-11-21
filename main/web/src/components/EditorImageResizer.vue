@@ -156,7 +156,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--text);
   color: var(--bg);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1;
   font-variant-numeric: tabular-nums;
   user-select: none;
@@ -171,7 +171,7 @@ onUnmounted(() => {
   padding: 0 10px;
   border: 0;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 650;
   cursor: pointer;
   pointer-events: auto;

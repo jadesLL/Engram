@@ -810,7 +810,7 @@ function handleMutationError(error: unknown): void {
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -844,7 +844,7 @@ function handleMutationError(error: unknown): void {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .panel-error p {
   display: flex;
@@ -879,13 +879,13 @@ function handleMutationError(error: unknown): void {
 }
 .card-head h4 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: var(--fs-h3);
   font-weight: 600;
 }
 .card-head p {
   margin: 4px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
 }
 .card-sub {
@@ -909,7 +909,7 @@ function handleMutationError(error: unknown): void {
   flex: none;
   padding: 2px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -932,7 +932,7 @@ function handleMutationError(error: unknown): void {
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 .fold-toggle:hover {
@@ -960,7 +960,7 @@ function handleMutationError(error: unknown): void {
 }
 .block-title {
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .model-rows {
   display: flex;
@@ -978,7 +978,7 @@ function handleMutationError(error: unknown): void {
 }
 .model-row input {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 /* 输入类型勾选（文本 / 图片）：胶囊式 checkbox，窄屏可换行 */
@@ -1003,7 +1003,7 @@ function handleMutationError(error: unknown): void {
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
-  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .modality-chip:hover:not(.is-disabled) {
   border-color: var(--accent);
@@ -1047,7 +1047,7 @@ function handleMutationError(error: unknown): void {
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .card-actions {
@@ -1062,7 +1062,7 @@ function handleMutationError(error: unknown): void {
 .action-hint {
   color: var(--text-faint);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .provider-row {
   display: flex;
@@ -1085,7 +1085,7 @@ function handleMutationError(error: unknown): void {
   flex-wrap: wrap;
 }
 .provider-title strong {
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .provider-id {
   color: var(--text-faint);
@@ -1126,7 +1126,7 @@ function handleMutationError(error: unknown): void {
   margin: 6px 0 0;
   color: var(--text-faint);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .faint {
   color: var(--text-faint);

@@ -936,7 +936,7 @@ onUnmounted(() => {
 .board-glance { flex: none; display: flex; align-items: stretch; }
 .glance-item { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 0 16px; border-left: 1px solid var(--border); }
 .glance-item:first-child { border-left: 0; }
-.glance-item em { font-style: normal; font-size: 11px; line-height: 1.2; color: var(--text-faint); white-space: nowrap; }
+.glance-item em { font-style: normal; font-size: var(--fs-caption); line-height: 1.2; color: var(--text-faint); white-space: nowrap; }
 .glance-item strong { font-size: 17px; line-height: 1.15; font-weight: 650; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
 .glance-item.warn strong { color: var(--danger); }
 
@@ -950,7 +950,7 @@ onUnmounted(() => {
   border-radius: var(--radius-control);
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 .layout-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -969,7 +969,7 @@ onUnmounted(() => {
   border-radius: var(--radius);
   background: var(--bg-secondary);
 }
-.manage-hint { font-size: 12px; color: var(--text-faint); }
+.manage-hint { font-size: var(--fs-small); color: var(--text-faint); }
 .manage-spacer { flex: 1; }
 
 /* 整页列数：2–5，当前档高亮（与底栏的宽度档同一套观感） */
@@ -982,14 +982,14 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg);
 }
-.cols-label { margin-right: 6px; font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.cols-label { margin-right: 6px; font-size: var(--fs-caption); color: var(--text-faint); white-space: nowrap; }
 .cols-btn {
   min-width: 24px;
   height: 22px;
   padding: 0 6px;
   border-radius: 999px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   transition: background 150ms ease, color 150ms ease;
 }
@@ -1005,7 +1005,7 @@ onUnmounted(() => {
   border-radius: var(--radius-control);
   background: var(--bg);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   transition: border-color 150ms ease, color 150ms ease;
 }
 .manage-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -1052,10 +1052,10 @@ onUnmounted(() => {
   color: var(--accent);
 }
 .add-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.add-text strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.add-text strong { font-size: var(--font-sm); font-weight: 600; color: var(--text); }
 .add-text em {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1161,7 +1161,7 @@ onUnmounted(() => {
 
 .board-empty { padding: 28px 24px; text-align: center; }
 .board-empty-title { font-size: 15px; font-weight: 600; }
-.board-empty-sub { margin-top: 6px; font-size: 12.5px; }
+.board-empty-sub { margin-top: 6px; font-size: var(--font-sm); }
 .board-empty-actions { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
 
 .board-tip {
@@ -1169,7 +1169,7 @@ onUnmounted(() => {
   padding-top: 16px;
   border-top: 1px solid var(--border);
   font-size: 11.5px;
-  line-height: 1.7;
+  line-height: var(--lh-body);
 }
 
 @media (max-width: 1024px) {

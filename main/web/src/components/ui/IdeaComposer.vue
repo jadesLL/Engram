@@ -129,7 +129,7 @@ watch(
   color: var(--text);
   font-family: inherit;
   font-size: var(--font-sm);
-  line-height: 1.7;
+  line-height: var(--lh-body);
   resize: vertical;
   /* 窄屏（手机 430px）下正文比框高：框内自己滚，别把按钮挤出视野 */
   overflow-y: auto;

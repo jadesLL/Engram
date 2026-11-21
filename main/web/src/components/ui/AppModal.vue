@@ -151,10 +151,10 @@ function onKeydown(event: KeyboardEvent) {
      头部那排按钮（含右上角 ✕）点不动（桌面/网页端 --safe-* 为 0，观感不变） */
   padding: calc(20px + var(--safe-top)) calc(20px + var(--safe-right))
     calc(20px + var(--safe-bottom)) calc(20px + var(--safe-left));
-  background: rgba(15, 15, 15, 0.38);
-}
-:global(html.dark) .app-modal-mask {
-  background: rgba(0, 0, 0, 0.52);
+  /* 遮罩走 --mask 令牌（暖棕黑半透明，深浅色各自翻档）+ 2px 轻模糊：盖住下面的字但保留层次 */
+  background: var(--mask);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
 .app-modal-mask.right {
   justify-content: flex-end;
@@ -168,8 +168,8 @@ function onKeydown(event: KeyboardEvent) {
   flex-direction: column;
   padding: 20px 24px;
   border-radius: 12px;
-  /* 极简线条：短接触影 + 低透明度扩散影；不要大负 spread（会把 12px 圆角压成直角） */
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05), 0 14px 32px rgba(0, 0, 0, 0.12);
+  /* 极简线条：短接触影 + 低透明度扩散影（暖棕黑）；不要大负 spread（会把 12px 圆角压成直角） */
+  box-shadow: 0 4px 14px rgba(31, 29, 25, 0.06), 0 14px 32px rgba(31, 29, 25, 0.13);
   outline: none;
 }
 :global(html.dark) .app-modal {
@@ -214,17 +214,22 @@ function onKeydown(event: KeyboardEvent) {
   margin-top: 14px;
 }
 
+/* 动效档位走令牌：入场 240ms 带 ease-enter 的进入曲线，离场 120ms 快速收回 */
 .app-modal-enter-active,
+.app-modal-side-enter-active {
+  transition: opacity var(--motion-slow) var(--ease-enter);
+}
 .app-modal-leave-active,
-.app-modal-side-enter-active,
 .app-modal-side-leave-active {
-  transition: opacity 200ms ease;
+  transition: opacity var(--motion-fast) var(--ease-standard);
 }
 .app-modal-enter-active .app-modal,
+.app-modal-side-enter-active .app-modal {
+  transition: transform var(--motion-slow) var(--ease-enter), opacity var(--motion-slow) var(--ease-enter);
+}
 .app-modal-leave-active .app-modal,
-.app-modal-side-enter-active .app-modal,
 .app-modal-side-leave-active .app-modal {
-  transition: transform 200ms ease, opacity 200ms ease;
+  transition: transform var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard);
 }
 .app-modal-enter-from,
 .app-modal-leave-to,

@@ -1971,6 +1971,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 2026-11 令牌还债：字面色/字号/阴影迁移到全局令牌（ui-polish-round1） */
 .chat-drawer {
   position: relative;
   display: flex;
@@ -1994,7 +1995,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px dashed color-mix(in srgb, var(--accent, #4d8aff) 55%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--accent-soft) 82%, transparent);
   pointer-events: none;
@@ -2006,7 +2007,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   padding: 16px 22px;
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--card-bg);
   box-shadow: var(--shadow-raised);
   color: var(--text-secondary);
@@ -2015,12 +2016,12 @@ onUnmounted(() => {
 
 .drop-card b {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 
 .drop-card span {
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
 }
 
 /*
@@ -2109,7 +2110,7 @@ onUnmounted(() => {
 .drawer-resizer:focus-visible::before,
 .drawer-resizer.dragging::before {
   width: 2px;
-  background: var(--accent, #4d8aff);
+  background: var(--accent);
 }
 
 .drawer-resizer:focus-visible {
@@ -2130,7 +2131,7 @@ onUnmounted(() => {
   left: 60px;
   right: 0;
   width: auto;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  box-shadow: -8px 0 24px rgba(31, 29, 25, 0.12);
   z-index: var(--z-sidebar);
 }
 
@@ -2227,7 +2228,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #fff;
+  color: var(--on-accent);
   background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 52%, #8fc6ff));
   box-shadow:
     0 1px 5px color-mix(in srgb, var(--accent) 32%, transparent),
@@ -2240,7 +2241,7 @@ onUnmounted(() => {
   gap: 6px;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2249,10 +2250,10 @@ onUnmounted(() => {
 .agent-origin {
   flex: 0 0 auto;
   padding: 1px 5px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 38%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   border-radius: 999px;
-  color: var(--accent, #4d8aff);
-  font-size: 9px;
+  color: var(--accent);
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: .04em;
 }
@@ -2268,8 +2269,8 @@ onUnmounted(() => {
 }
 
 .session-toggle.on {
-  border-color: var(--accent, #4d8aff);
-  color: var(--accent, #4d8aff);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* 有会话在跑时按钮上挂一个数字：面板关着也知道后台在干活 */
@@ -2281,11 +2282,12 @@ onUnmounted(() => {
   height: 14px;
   padding: 0 3px;
   border-radius: 7px;
-  background: var(--accent, #4d8aff);
-  color: #fff;
-  font-size: 9px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-caption);
   line-height: 14px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ===== 会话列表面板：替换转录区显示，标题/时间/状态一眼看全 ===== */
@@ -2315,7 +2317,7 @@ onUnmounted(() => {
   border: none;
   background: none;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-small);
   outline: none;
 }
 
@@ -2341,7 +2343,7 @@ onUnmounted(() => {
 }
 
 .session-row.active {
-  border-color: color-mix(in srgb, var(--accent, #4d8aff) 24%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
   background: var(--accent-soft);
 }
 
@@ -2365,7 +2367,7 @@ onUnmounted(() => {
 .session-title {
   overflow: hidden;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2376,7 +2378,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
 }
 
 .session-state {
@@ -2386,16 +2388,16 @@ onUnmounted(() => {
   padding: 0 5px;
   border-radius: 8px;
   background: var(--bg);
-  font-size: 10px;
+  font-size: var(--fs-caption);
 }
 
 .session-state.running {
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .session-state.unread {
-  background: var(--accent, #4d8aff);
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .session-state.auto {
@@ -2415,6 +2417,7 @@ onUnmounted(() => {
 .session-time {
   margin-left: auto;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-action {
@@ -2443,7 +2446,7 @@ onUnmounted(() => {
 }
 
 .session-action.danger:hover {
-  color: var(--danger, #d64545);
+  color: var(--danger);
 }
 
 .session-rename {
@@ -2451,17 +2454,17 @@ onUnmounted(() => {
   min-width: 0;
   margin: 4px 6px;
   padding: 4px 6px;
-  border: 1px solid var(--accent, #4d8aff);
+  border: 1px solid var(--accent);
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .session-empty {
   margin: 12px 4px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .context-strip {
@@ -2478,7 +2481,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   box-shadow: var(--shadow-raised);
 }
 
@@ -2518,7 +2521,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: color-mix(in srgb, var(--card-bg) 88%, transparent);
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   font-weight: 600;
   line-height: 1;
   box-shadow: var(--shadow-raised);
@@ -2530,7 +2533,7 @@ onUnmounted(() => {
 
 .jump-bottom:hover {
   color: var(--text);
-  border-color: var(--accent, #4d8aff);
+  border-color: var(--accent);
   background: var(--card-bg);
 }
 
@@ -2557,7 +2560,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .suggestions {
@@ -2573,18 +2576,18 @@ onUnmounted(() => {
   border-radius: 10px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .suggestions button:hover {
-  border-color: var(--accent, #4d8aff);
+  border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--text);
   transform: translateY(-1px);
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent, #4d8aff) 12%, transparent);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 /* ===== 单列转录：一条流按发生顺序排，轮间一条细分隔 ===== */
@@ -2613,7 +2616,7 @@ onUnmounted(() => {
   min-height: 22px;
   margin-bottom: 3px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 /* 头像：助手是品牌渐变块，用户是素色圆角块；名字跟在旁边 */
@@ -2628,9 +2631,9 @@ onUnmounted(() => {
 }
 
 .entry.assistant .entry-avatar {
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent, #4d8aff), color-mix(in srgb, var(--accent, #4d8aff) 52%, #8fc6ff));
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent, #4d8aff) 30%, transparent);
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 52%, #8fc6ff));
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .entry.user .entry-avatar {
@@ -2670,14 +2673,14 @@ onUnmounted(() => {
 .entry-plain {
   max-width: 88%;
   padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 14%, transparent);
-  border-radius: 14px 14px 4px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: var(--radius) var(--radius) 4px var(--radius);
   background: linear-gradient(180deg, var(--accent-soft), color-mix(in srgb, var(--accent-soft) 55%, transparent));
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent, #4d8aff) 8%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* 用户消息 + 排队标记：运行中发的那条还没轮到它，标出来免得用户以为卡住了 */
@@ -2699,7 +2702,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--ai-soft);
   color: var(--ai);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   line-height: 1.6;
 }
 
@@ -2726,11 +2729,11 @@ onUnmounted(() => {
   min-width: 0;
   max-width: 100%;
   padding: 1px 8px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.6;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2744,15 +2747,15 @@ onUnmounted(() => {
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent, #4d8aff);
-  font-size: 11px;
+  color: var(--accent);
+  font-size: var(--fs-caption);
 }
 
 .entry-markdown {
   /* 与署名行的头像对齐：头像 22px + 间距 7px ≈ 正文缩进 29px */
   margin-left: 29px;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--font-md);
+  line-height: var(--lh-body);
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -2773,7 +2776,7 @@ onUnmounted(() => {
 .md-body :deep(h5),
 .md-body :deep(h6) {
   margin: 14px 0 6px;
-  font-size: 13.5px;
+  font-size: var(--font-md);
   font-weight: 650;
   line-height: 1.4;
 }
@@ -2801,7 +2804,7 @@ onUnmounted(() => {
 }
 
 .md-body :deep(li::marker) {
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 /* 任务项：Markdown 的 - [x] 转成方框 + 正文，勾选态用 accent 勾 */
@@ -2822,7 +2825,7 @@ onUnmounted(() => {
 }
 
 .md-body :deep(.md-task.on) {
-  border-color: color-mix(in srgb, var(--accent, #4d8aff) 45%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: var(--accent-soft);
 }
 
@@ -2832,8 +2835,8 @@ onUnmounted(() => {
   left: 2.5px;
   width: 4px;
   height: 2px;
-  border-bottom: 1.5px solid var(--accent, #4d8aff);
-  border-left: 1.5px solid var(--accent, #4d8aff);
+  border-bottom: 1.5px solid var(--accent);
+  border-left: 1.5px solid var(--accent);
   content: '';
   transform: rotate(-45deg);
 }
@@ -2855,14 +2858,14 @@ onUnmounted(() => {
 
 .md-body :deep(a.md-link),
 .md-body :deep(a.md-wikilink) {
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
   text-decoration: none;
   cursor: pointer;
   word-break: break-all;
 }
 
 .md-body :deep(a.md-link) {
-  border-bottom: 1px dashed color-mix(in srgb, var(--accent, #4d8aff) 45%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .md-body :deep(a.md-link:hover) {
@@ -2877,7 +2880,7 @@ onUnmounted(() => {
 }
 
 .md-body :deep(a.md-wikilink:hover) {
-  background: color-mix(in srgb, var(--accent, #4d8aff) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .md-body :deep(code.md-code) {
@@ -2885,7 +2888,7 @@ onUnmounted(() => {
   border-radius: 4px;
   background: var(--bg-secondary);
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .md-body :deep(pre.md-pre) {
@@ -2902,7 +2905,7 @@ onUnmounted(() => {
   border: none;
   background: none;
   font-family: var(--font-mono, monospace);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   line-height: 1.55;
 }
 
@@ -2917,7 +2920,7 @@ onUnmounted(() => {
 .md-body :deep(table.md-table) {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .md-body :deep(table.md-table th),
@@ -2958,14 +2961,14 @@ onUnmounted(() => {
 }
 
 .md-body :deep(sup.cite) {
-  color: var(--accent, #4d8aff);
-  font-size: 10px;
+  color: var(--accent);
+  font-size: var(--fs-caption);
 }
 
 .cursor {
   display: inline-block;
   animation: blink 1s steps(2, start) infinite;
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 @keyframes blink {
@@ -2976,14 +2979,14 @@ onUnmounted(() => {
 .think {
   margin-left: 29px;
   border: 1px solid var(--border);
-  border-left: 3px solid color-mix(in srgb, var(--warning, #c97a1e) 70%, var(--border));
+  border-left: 3px solid color-mix(in srgb, var(--warning) 70%, var(--border));
   border-radius: 8px;
   background: var(--bg-secondary);
   overflow: hidden;
 }
 
 .think.live {
-  border-left-color: var(--accent, #4d8aff);
+  border-left-color: var(--accent);
 }
 
 .think-head {
@@ -2993,7 +2996,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 6px 10px;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   text-align: left;
   cursor: pointer;
 }
@@ -3005,7 +3008,7 @@ onUnmounted(() => {
 }
 
 .think.live .think-head b {
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .think-meta {
@@ -3025,7 +3028,7 @@ onUnmounted(() => {
   padding-top: 6px;
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -3049,11 +3052,11 @@ onUnmounted(() => {
 }
 
 .tool.running {
-  border-left-color: var(--accent, #4d8aff);
+  border-left-color: var(--accent);
 }
 
 .tool.failed {
-  border-left: 3px solid var(--danger, #d64545);
+  border-left: 3px solid var(--danger);
 }
 
 .tool-head {
@@ -3063,7 +3066,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 7px 11px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: left;
 }
 
@@ -3077,12 +3080,12 @@ onUnmounted(() => {
   justify-content: center;
   flex-shrink: 0;
   background: var(--accent-soft);
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .tool.failed .tool-icon {
   background: var(--danger-soft);
-  color: var(--danger, #d64545);
+  color: var(--danger);
 }
 
 .tool-head b {
@@ -3097,7 +3100,7 @@ onUnmounted(() => {
   overflow: hidden;
   color: var(--text-faint);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -3109,7 +3112,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg);
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   font-weight: 550;
 }
 
@@ -3120,12 +3123,12 @@ onUnmounted(() => {
 
 .tool.running .tool-state {
   background: var(--accent-soft);
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .tool.failed .tool-state {
   background: var(--danger-soft);
-  color: var(--danger, #d64545);
+  color: var(--danger);
 }
 
 .tool-body {
@@ -3140,7 +3143,7 @@ onUnmounted(() => {
   overflow: auto;
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -3149,7 +3152,7 @@ onUnmounted(() => {
 .tool-pending {
   margin: 8px 0 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 /* ===== 常驻运行状态条：还在跑就一直贴在转录区底部（sticky），收口即消失。
@@ -3163,11 +3166,11 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 10px;
   padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 24%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
   border-radius: 8px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent, #4d8aff) 9%, var(--bg-secondary)), var(--bg-secondary) 78%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 9%, var(--bg-secondary)), var(--bg-secondary) 78%);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 /* ===== Agent 提问弹窗：贴在输入区上方（对话最下侧），顶部色带头 + 可点选选项卡 ===== */
@@ -3180,10 +3183,10 @@ onUnmounted(() => {
   overflow-y: auto;
   margin-bottom: 8px;
   padding: 0 0 10px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 35%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   border-radius: 12px;
   background: var(--bg-secondary);
-  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 -6px 18px rgba(31, 29, 25, 0.18);
 }
 
 .ask-head {
@@ -3193,9 +3196,9 @@ onUnmounted(() => {
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
   border-radius: 11px 11px 0 0;
-  background: color-mix(in srgb, var(--accent, #4d8aff) 7%, var(--bg-secondary));
-  color: var(--accent, #4d8aff);
-  font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-secondary));
+  color: var(--accent);
+  font-size: var(--fs-small);
 }
 
 .ask-head b {
@@ -3206,14 +3209,14 @@ onUnmounted(() => {
   padding: 0 5px;
   border-radius: 8px;
   background: var(--bg);
-  color: var(--accent, #4d8aff);
-  font-size: 11px;
+  color: var(--accent);
+  font-size: var(--fs-caption);
 }
 
 .ask-note {
   margin-left: auto;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .ask-item {
@@ -3230,12 +3233,12 @@ onUnmounted(() => {
 .ask-title {
   margin: 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .ask-question {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -3256,17 +3259,17 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   text-align: left;
   cursor: pointer;
 }
 
 .ask-option:hover:not(:disabled) {
-  border-color: var(--accent, #4d8aff);
+  border-color: var(--accent);
 }
 
 .ask-option.picked {
-  border-color: var(--accent, #4d8aff);
+  border-color: var(--accent);
   background: var(--accent-soft);
 }
 
@@ -3277,9 +3280,9 @@ onUnmounted(() => {
 
 .ask-option-desc {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 400;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 
 .ask-reply {
@@ -3291,13 +3294,13 @@ onUnmounted(() => {
 .ask-input {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .ask-error {
   margin: 0;
-  color: var(--danger, #e5534b);
-  font-size: 11px;
+  color: var(--danger);
+  font-size: var(--fs-caption);
 }
 
 .run-live-title {
@@ -3317,9 +3320,9 @@ onUnmounted(() => {
 
 .run-live-time {
   flex-shrink: 0;
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -3327,26 +3330,26 @@ onUnmounted(() => {
 .run-live-queued {
   flex-shrink: 0;
   padding: 1px 7px;
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   background: var(--accent-soft);
-  color: var(--accent, #4d8aff);
-  font-size: 11px;
+  color: var(--accent);
+  font-size: var(--fs-caption);
 }
 
 /* 状态条上的缓存命中率：每一步（一次模型请求）结束都会刷新，跑动中就能看到往上走 */
 .run-live-usage {
   flex-shrink: 0;
   padding: 1px 7px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--accent, #4d8aff) 12%, transparent);
-  color: var(--accent, #4d8aff);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 /* 子代理的命中率：与主对话的数字同排但明示归属（虚线框，不混成一个数） */
 .run-live-usage.sub {
-  border: 1px dashed color-mix(in srgb, var(--accent, #4d8aff) 38%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, transparent);
   background: transparent;
   color: var(--text-faint);
 }
@@ -3362,16 +3365,16 @@ onUnmounted(() => {
   padding: 2px 9px;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent, #4d8aff);
-  font-size: 11px;
+  color: var(--accent);
+  font-size: var(--fs-caption);
   font-weight: 550;
   white-space: nowrap;
   animation: head-live-pulse 2.2s ease-in-out 3;
 }
 
 @keyframes head-live-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #4d8aff) 0%, transparent); }
-  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #4d8aff) 9%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3386,7 +3389,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--bg);
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: var(--fs-caption);
   white-space: nowrap;
 }
 
@@ -3396,12 +3399,12 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--danger, #c42b1c);
-  border-color: color-mix(in srgb, var(--danger, #c42b1c) 32%, var(--border));
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
 }
 
 .head-stop:hover:not(:disabled) {
-  border-color: var(--danger, #c42b1c);
+  border-color: var(--danger);
   background: var(--danger-soft);
 }
 
@@ -3433,8 +3436,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent, #4d8aff), color-mix(in srgb, var(--accent, #4d8aff) 52%, #8fc6ff));
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 52%, #8fc6ff));
 }
 
 .subagent-pill {
@@ -3447,7 +3450,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   line-height: 1.6;
   text-align: left;
   cursor: pointer;
@@ -3498,14 +3501,15 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg);
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
 }
 
 .subagent-time {
   flex-shrink: 0;
   color: var(--text-faint);
   font-family: var(--font-mono, monospace);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 状态着色：整颗胶囊随状态染色（标签跟着走，动态与用时保持压暗） */
@@ -3568,7 +3572,7 @@ onUnmounted(() => {
   padding: 0 10px 8px;
   border: 1px solid var(--border);
   border-left: 2px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--bg-secondary);
 }
 
@@ -3587,13 +3591,13 @@ onUnmounted(() => {
 .subagent-meta {
   margin: 8px 0 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .subagent-block h4 {
   margin: 10px 0 4px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -3603,7 +3607,7 @@ onUnmounted(() => {
   overflow: auto;
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -3614,7 +3618,7 @@ onUnmounted(() => {
   max-height: 260px;
   overflow: auto;
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -3631,7 +3635,7 @@ onUnmounted(() => {
   gap: 7px;
   padding: 3px 0;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .subagent-steps li + li {
@@ -3660,17 +3664,17 @@ onUnmounted(() => {
 }
 
 .subagent-steps li.running .step-state {
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .subagent-steps li.failed .step-state {
-  color: var(--danger, #d64545);
+  color: var(--danger);
 }
 
 .subagent-pending {
   margin: 8px 0 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 /* 它派出的子代理：同一套胶囊，小一号，横向排开自动换行 */
@@ -3690,7 +3694,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.6;
 }
 
@@ -3720,6 +3724,7 @@ onUnmounted(() => {
 .nested-time {
   flex-shrink: 0;
   color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .nested-state {
@@ -3757,8 +3762,8 @@ onUnmounted(() => {
 
 .run-error {
   margin: 8px 0;
-  color: var(--danger, #d64545);
-  font-size: 12px;
+  color: var(--danger);
+  font-size: var(--fs-small);
 }
 
 .completion {
@@ -3779,14 +3784,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
 }
 
 .usage-hit {
   padding: 1px 8px;
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   background: var(--accent-soft);
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
   cursor: default;
 }
 
@@ -3797,8 +3803,8 @@ onUnmounted(() => {
 
 .usage-sub {
   padding: 1px 8px;
-  border: 1px dashed color-mix(in srgb, var(--accent, #4d8aff) 38%, transparent);
-  border-radius: 9px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: var(--radius-control);
   color: var(--text-faint);
   cursor: default;
 }
@@ -3807,7 +3813,7 @@ onUnmounted(() => {
 .agent-setup {
   margin-bottom: 10px;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 30%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   border-radius: 12px;
   background: var(--accent-soft);
 }
@@ -3827,7 +3833,7 @@ onUnmounted(() => {
   height: 22px;
   border-radius: 7px;
   background: var(--card-bg);
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .setup-copy {
@@ -3838,14 +3844,14 @@ onUnmounted(() => {
 }
 
 .setup-copy b {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
 }
 
 .setup-copy span {
   color: var(--text-secondary);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
 }
 
 .setup-dismiss {
@@ -3884,12 +3890,12 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--card-bg);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .setup-key:focus {
   outline: none;
-  border-color: var(--accent, #4d8aff);
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -3897,8 +3903,8 @@ onUnmounted(() => {
 .setup-error {
   margin: 6px 0 0;
   color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-ui);
 }
 
 .setup-error {
@@ -3909,7 +3915,7 @@ onUnmounted(() => {
   padding: 0;
   border: none;
   background: none;
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
   font-size: inherit;
   cursor: pointer;
 }
@@ -3926,14 +3932,14 @@ onUnmounted(() => {
 /* 输入卡：textarea 与发送按钮装进一张聚焦会亮起描边的卡片里 */
 .composer-card {
   border: 1px solid var(--control-border-strong);
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--card-bg);
   box-shadow: var(--shadow-raised);
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .composer-card:focus-within {
-  border-color: var(--accent, #4d8aff);
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-raised);
 }
 
@@ -3946,7 +3952,7 @@ onUnmounted(() => {
   border-radius: 0;
   background: none;
   box-shadow: none;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.55;
 }
 
@@ -3971,11 +3977,11 @@ onUnmounted(() => {
   max-width: 100%;
   padding: 4px 5px 4px 9px;
   border: 1px solid var(--ai-line);
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   background: var(--ai-soft);
   color: var(--ai);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
 }
 
 .position-copy {
@@ -4036,12 +4042,12 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 
 .attach-chip.inbox {
-  border-color: color-mix(in srgb, var(--accent, #4d8aff) 28%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
   background: var(--accent-soft);
 }
 
@@ -4056,7 +4062,7 @@ onUnmounted(() => {
 .attach-source {
   flex: none;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
 }
 
 .attach-chip.uploading {
@@ -4150,7 +4156,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -4158,17 +4164,17 @@ onUnmounted(() => {
   border: none;
   background: none;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
 .selection-head .text-action:hover {
-  color: var(--accent, #4d8aff);
+  color: var(--accent);
 }
 
 .selection-item {
   border: 1px solid var(--border);
-  border-left: 2px solid var(--accent, #4d8aff);
+  border-left: 2px solid var(--accent);
   border-radius: 6px;
   background: var(--bg);
   overflow: hidden;
@@ -4191,7 +4197,7 @@ onUnmounted(() => {
   border: none;
   background: none;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   text-align: left;
   cursor: pointer;
 }
@@ -4230,7 +4236,7 @@ onUnmounted(() => {
 
 .selection-remove:hover {
   background: var(--bg-secondary);
-  color: var(--danger, #d64545);
+  color: var(--danger);
 }
 
 .selection-text {
@@ -4242,7 +4248,7 @@ onUnmounted(() => {
   padding-top: 6px;
   color: var(--text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -4253,8 +4259,8 @@ onUnmounted(() => {
   margin: 0;
   padding: 0 8px 7px;
   color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -4266,7 +4272,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
 }

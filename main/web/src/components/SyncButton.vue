@@ -245,10 +245,10 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, var(--channel) 32%, transparent);
   border-radius: 999px;
   background: var(--channel-soft);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1;
   white-space: nowrap;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
 }
 
 /* 悬停时把描边压深一档：通道底的饱和度已经说明状态，不再换底色（换了会像另一个通道） */
@@ -321,7 +321,7 @@ onUnmounted(() => {
   padding: 0 4px 0 12px;
   gap: 8px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: var(--font-md);
   text-align: left;
 }
 

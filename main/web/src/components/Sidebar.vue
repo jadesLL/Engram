@@ -2102,7 +2102,7 @@ onUnmounted(() => {
   border-bottom-color: color-mix(in srgb, var(--sidebar-control-border) 60%, var(--text-faint));
   border-radius: var(--radius-control);
   background: var(--sidebar-control);
-  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
 }
 
 .search-field:hover {
@@ -2132,7 +2132,7 @@ onUnmounted(() => {
   padding: 0 28px 0 30px;
   background: transparent;
   box-shadow: none;
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 
 .search-field input:focus {
@@ -2253,7 +2253,7 @@ onUnmounted(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-md);
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -2294,6 +2294,7 @@ onUnmounted(() => {
 
 .side-scroll::-webkit-scrollbar {
   width: 6px;
+  /* 滑块颜色交给全局 ::-webkit-scrollbar-thumb（--scrollbar 令牌），这里只收宽度 */
 }
 
 .sidebar-category {
@@ -2388,7 +2389,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: 0 3px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -2490,7 +2491,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 500;
   letter-spacing: 0;
   text-align: left;
@@ -2540,7 +2541,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: 0 3px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -2562,7 +2563,7 @@ onUnmounted(() => {
   padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }
@@ -2629,7 +2630,7 @@ onUnmounted(() => {
   margin: 2px 0;
   padding: 5px 8px 5px 20px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .batch-bar {
@@ -2648,7 +2649,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .batch-btn {
@@ -2658,7 +2659,7 @@ onUnmounted(() => {
   border-radius: 4px;
   color: var(--text-secondary);
   background: var(--sidebar-control);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .batch-btn:hover {
@@ -2821,7 +2822,7 @@ onUnmounted(() => {
   }
 
   .sub-head {
-    font-size: 13px;
+    font-size: var(--font-md);
   }
 
   /* 按住时的反馈：触屏没有 hover，只有 :active 这一层（形状跟着各自圆角走，不会变方） */
@@ -2897,7 +2898,7 @@ onUnmounted(() => {
 
 .kb-hint {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   white-space: nowrap;
 }
 
@@ -2932,7 +2933,7 @@ onUnmounted(() => {
   border-radius: 14px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   white-space: nowrap;
 }
 
@@ -2948,7 +2949,7 @@ onUnmounted(() => {
 
 .kb-chip-n {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3052,7 +3053,7 @@ onUnmounted(() => {
 
 .kb-col-count {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 18px;
   font-variant-numeric: tabular-nums;
 }
@@ -3113,7 +3114,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: var(--bg);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -3152,7 +3153,7 @@ onUnmounted(() => {
   padding: 6px 8px;
   border-radius: 6px;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   text-align: left;
   /* 与窄栏行一致：长按是 App 的多选/菜单手势，不能被 WebView 原生文本选择抢走 */
   user-select: none;

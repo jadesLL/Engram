@@ -335,7 +335,7 @@ onUnmounted(() => {
 
 .ab-title {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-h1);
   line-height: 1.2;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -346,9 +346,9 @@ onUnmounted(() => {
   flex: none;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   white-space: nowrap;
 }
 
@@ -379,7 +379,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   white-space: nowrap;
   transition: transform 0.14s ease, background 0.14s ease;

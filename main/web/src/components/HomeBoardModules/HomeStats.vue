@@ -70,7 +70,7 @@ function bar(value: number) {
   letter-spacing: -.04em;
   font-variant-numeric: lining-nums tabular-nums;
 }
-.stats-hero .unit { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.stats-hero .unit { font-size: var(--fs-caption); color: var(--text-faint); white-space: nowrap; }
 .stats-words { margin-left: auto; font-size: 10px; color: var(--text-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .stats-meter { display: flex; height: 5px; border-radius: 999px; overflow: hidden; background: var(--card-line-soft); flex: none; }
 .stats-meter > i { display: block; height: 100%; }
@@ -86,7 +86,7 @@ function bar(value: number) {
   flex: 1;
   min-height: 36px;
   padding: 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   text-align: left;
   border-radius: 0;
   border-top: 1px solid var(--card-line-soft);

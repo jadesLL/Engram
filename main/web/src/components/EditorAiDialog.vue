@@ -357,13 +357,13 @@ function onKeydown(event: KeyboardEvent) {
 .ai-head-copy { flex: 1; min-width: 0; }
 .ai-head-copy h2 {
   margin: 0;
-  font-size: 16.5px;
+  font-size: var(--fs-h2);
   font-weight: 650;
   color: var(--text);
 }
 .ai-head-copy p {
   margin: 3px 0 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.45;
   color: var(--text-secondary);
 }
@@ -394,7 +394,7 @@ function onKeydown(event: KeyboardEvent) {
   border-radius: 11px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.75;
 }
 .ai-quote {
@@ -421,7 +421,7 @@ function onKeydown(event: KeyboardEvent) {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.6;
   color: var(--text);
 }
@@ -438,7 +438,7 @@ function onKeydown(event: KeyboardEvent) {
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .ai-chip:hover { border-color: var(--accent); color: var(--accent); }
 .ai-chip.active {
@@ -471,7 +471,7 @@ function onKeydown(event: KeyboardEvent) {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.55;
 }
 .ai-status { background: var(--accent-soft); color: var(--text); }
@@ -511,7 +511,7 @@ function onKeydown(event: KeyboardEvent) {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.65;
   color: var(--text);
 }
@@ -523,13 +523,13 @@ function onKeydown(event: KeyboardEvent) {
   margin-top: 14px;
 }
 .ai-foot .spacer { flex: 1; }
-.ai-kbd { font-size: 11px; color: var(--text-faint); }
+.ai-kbd { font-size: var(--fs-caption); color: var(--text-faint); }
 .ai-btn {
   min-height: 34px;
   padding: 0 14px;
   border-radius: var(--radius-control);
   border: 1px solid transparent;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .ai-btn.ghost { border-color: var(--border); background: transparent; color: var(--text-secondary); }

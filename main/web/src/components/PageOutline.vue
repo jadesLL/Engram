@@ -105,11 +105,12 @@ const emit = defineEmits<{
   overscroll-behavior: contain;
   padding: 1px 0 3px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.14) transparent;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 .po-nav::-webkit-scrollbar { width: 6px; }
 .po-nav::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
+  /* 细滚动条颜色走全局令牌（深浅色自动翻档），不再散写黑色字面值 */
+  background: var(--scrollbar);
   border-radius: 8px;
 }
 .po-row {
@@ -124,7 +125,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.45;
   text-align: left;
   cursor: pointer;
@@ -142,14 +143,14 @@ const emit = defineEmits<{
 }
 .po-row[data-level="2"] {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 560;
 }
 .po-row[data-level="3"] { padding-left: 24px; }
 .po-row[data-level="4"] {
   padding-left: 36px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .po-row:hover { background: var(--bg-hover); color: var(--text); }
 .po-row:focus-visible {
@@ -188,7 +189,7 @@ const emit = defineEmits<{
 .po-empty-box strong {
   display: block;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .po-empty-box p {
@@ -257,7 +258,7 @@ const emit = defineEmits<{
 .mode-sheet .po-row[data-level="2"] { font-size: 14px; }
 .mode-sheet .po-row[data-level="3"] {
   padding-left: 30px;
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .mode-sheet .po-row[data-level="4"] { padding-left: 46px; }
 .mode-sheet .po-row::before {

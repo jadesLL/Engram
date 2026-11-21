@@ -3960,7 +3960,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
    选中态只改按钮文字色，注解保持次要色，一眼能分出「语言名」和「它是干什么的」 */
 :deep(.vditor-hint .eg-code-lang-note) {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--text-faint);
 }
 :deep(.vditor-hint .eg-code-lang-note)::before {
@@ -4047,7 +4047,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
 }
 .ai-menu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ai-menu-text b { font-size: 13.5px; font-weight: 600; }
-.ai-menu-text small { font-size: 11.5px; line-height: 1.35; color: var(--text-secondary); }
+.ai-menu-text small { font-size: 11.5px; line-height: var(--lh-tight); color: var(--text-secondary); }
 .ai-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
 @media (max-width: 768px) {
   /* 手机上 AI 菜单也按贴底动作面板的尺寸走，手指点得准 */
@@ -4063,8 +4063,8 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   }
   .ai-menu-row { min-height: 52px; padding: 8px 10px; }
   .ai-menu-icon { width: 34px; height: 34px; border-radius: 10px; }
-  .ai-menu-text b { font-size: 14.5px; }
-  .ai-menu-text small { font-size: 12px; }
+  .ai-menu-text b { font-size: var(--fs-h3); }
+  .ai-menu-text small { font-size: var(--fs-small); }
   .ai-menu-mask { background: rgba(20, 18, 15, 0.42); }
 }
 .link-popup input { width: 100%; }
@@ -4078,7 +4078,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   align-items: baseline;
   gap: 6px;
 }
-.link-item .faint { margin-left: auto; font-size: 11px; }
+.link-item .faint { margin-left: auto; font-size: var(--fs-caption); }
 .link-item:hover { background: var(--bg-hover); }
 .link-item.sel,
 .link-item.sel:hover {
@@ -4091,7 +4091,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   margin-top: 6px;
   padding: 6px 8px 1px;
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .link-popup-foot kbd {
   padding: 0 4px;
@@ -4176,7 +4176,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   .insert-sub {
     flex: none;
     margin: 2px 0 6px;
-    font-size: 12.5px;
+    font-size: var(--font-sm);
     color: var(--text-secondary);
   }
   .insert-body {
@@ -4189,7 +4189,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   .insert-group + .insert-group { margin-top: 8px; }
   .insert-group-title {
     margin: 6px 4px 4px;
-    font-size: 12px;
+    font-size: var(--fs-small);
     font-weight: 650;
     letter-spacing: 0.04em;
     color: var(--text-secondary);
@@ -4229,7 +4229,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   .insert-row-text b { font-size: 14px; font-weight: 600; }
   .insert-row-text small {
     font-size: 11.5px;
-    line-height: 1.35;
+    line-height: var(--lh-tight);
     color: var(--text-secondary);
   }
   .insert-row-chevron { flex: none; color: var(--text-faint); }

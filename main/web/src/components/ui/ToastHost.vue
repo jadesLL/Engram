@@ -103,7 +103,8 @@ function onCardClick(item: ToastItem) {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--card-bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 22px rgba(0, 0, 0, 0.1);
+  /* 阴影走 --shadow-toast 令牌（暖棕黑，深浅色各自翻档），不再散写 rgba */
+  box-shadow: var(--shadow-toast);
 }
 /* 带标题/动作的通知：图标与关闭按钮对齐第一行，不再垂直居中整块 */
 .app-toast.rich { align-items: flex-start; }
@@ -111,9 +112,6 @@ function onCardClick(item: ToastItem) {
 .app-toast.rich .toast-close { margin-top: 1px; }
 .app-toast.clickable { cursor: pointer; }
 .app-toast.clickable:hover { border-color: var(--border-strong); background: var(--bg-hover); }
-:global(html.dark) .app-toast {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 22px rgba(0, 0, 0, 0.42);
-}
 
 .toast-icon {
   flex: none;
@@ -171,7 +169,7 @@ function onCardClick(item: ToastItem) {
   padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--accent);
   background: var(--card-bg);
@@ -192,7 +190,7 @@ function onCardClick(item: ToastItem) {
 .toast-action {
   padding: 3px 9px;
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -212,10 +210,12 @@ function onCardClick(item: ToastItem) {
 .toast-enter-active,
 .toast-leave-active,
 .toast-move {
-  transition: opacity 200ms ease, transform 200ms ease;
+  /* 动效档位走令牌：出现 180ms 淡入右移收回，离场更快一档不留残影 */
+  transition: opacity var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-standard);
 }
 .toast-leave-active {
-  transition-duration: 160ms;
+  transition-duration: var(--motion-fast);
 }
 .toast-enter-from {
   opacity: 0;
@@ -247,8 +247,8 @@ function onCardClick(item: ToastItem) {
   .app-toast {
     padding: 11px 12px;
     border-radius: 12px;
-    /* 贴底后阴影改向上：底缘贴着导航栏，原来的向下投影会被压成一道深边 */
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.04), 0 10px 26px rgba(0, 0, 0, 0.12);
+    /* 贴底后阴影改向上：底缘贴着导航栏，原来的向下投影会被压成一道深边（方向性阴影，保留字面值但统一暖棕色相） */
+    box-shadow: 0 -2px 10px rgba(31, 29, 25, 0.05), 0 10px 26px rgba(31, 29, 25, 0.13);
   }
   .toast-enter-from {
     opacity: 0;
@@ -267,6 +267,7 @@ function onCardClick(item: ToastItem) {
   :global(html.dark) .app-toast {
     box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.35), 0 10px 26px rgba(0, 0, 0, 0.35);
   }
+  /* ↑ 深色档阴影：贴底方向性阴影沿用黑基调（深底上黑投影自然），浅色档统一暖棕 */
   /*
    * 首页 / 知识库右下有「新建」FAB（Home.vue 的 .new-fab：距底 88px + 高 56px）时，
    * 通知抬到 FAB 上方，别整条压住主操作（Material 的 Snackbar 也在 FAB 之上）。

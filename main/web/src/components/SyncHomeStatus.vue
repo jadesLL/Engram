@@ -97,7 +97,7 @@ onUnmounted(() => sync.unsubscribe());
   font-size: var(--font-sm);
   line-height: 1.6;
   text-align: left;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 
 .sync-pill:hover {
@@ -148,6 +148,6 @@ onUnmounted(() => sync.unsubscribe());
 }
 
 @media (max-width: 640px) {
-  .sync-detail { display: block; max-width: 38vw; font-size: 11px; }
+  .sync-detail { display: block; max-width: 38vw; font-size: var(--fs-caption); }
 }
 </style>

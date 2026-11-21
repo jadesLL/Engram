@@ -206,7 +206,7 @@ defineExpose({ open, close, toggle });
 }
 .rel-head h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .rel-total {
@@ -214,7 +214,7 @@ defineExpose({ open, close, toggle });
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
 }
 .rel-x {
@@ -241,7 +241,7 @@ defineExpose({ open, close, toggle });
   margin: 0;
   padding: 7px 8px 3px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .rel-group em { font-style: normal; }
 .rel-row {
@@ -255,7 +255,7 @@ defineExpose({ open, close, toggle });
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -267,7 +267,7 @@ defineExpose({ open, close, toggle });
   flex: none;
   width: 15px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .rel-row:hover .rel-arw { color: var(--accent); }
 .rel-name {
@@ -280,7 +280,7 @@ defineExpose({ open, close, toggle });
 .rel-note {
   flex: none;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .rel-chips {
   display: flex;
@@ -302,7 +302,7 @@ defineExpose({ open, close, toggle });
   padding: 8px 13px;
   border-top: 1px solid var(--border);
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   white-space: nowrap;
 }
 .rel-graph {
@@ -312,7 +312,7 @@ defineExpose({ open, close, toggle });
   background: none;
   color: var(--accent);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 .rel-graph:hover { text-decoration: underline; }
@@ -350,6 +350,6 @@ defineExpose({ open, close, toggle });
   background: var(--border-strong);
 }
 .rel-overlay.mobile .rel-body { padding: 4px 4px 10px; }
-.rel-overlay.mobile .rel-row { padding: 9px 12px; font-size: 13px; }
+.rel-overlay.mobile .rel-row { padding: 9px 12px; font-size: var(--font-md); }
 .rel-overlay.mobile .rel-head { padding: 4px 8px 9px 13px; border-bottom: 0; }
 </style>

@@ -46,7 +46,7 @@ const bullets = computed(() => {
   margin: 0 0 8px;
   font-family: var(--font-display);
   font-size: 17px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   letter-spacing: -.01em;
   color: var(--text);
 }
@@ -60,7 +60,7 @@ const bullets = computed(() => {
   padding: 7px 0;
   border-radius: 0;
   border-top: 1px solid var(--ai-line);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.45;
   color: var(--text-secondary);
   text-align: left;

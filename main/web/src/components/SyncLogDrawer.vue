@@ -641,6 +641,8 @@ async function askClear(): Promise<void> {
 </script>
 
 <style scoped>
+/* 2026-11 令牌还债：字面色/字号/阴影迁移到全局令牌（ui-polish-round1） */
+
 /*
  * 悬浮玻璃卡片（UI 2.0 语言）：四周留 8px 露出窗口底色，与 Agent 卡片、图片资产卡片同材质。
  * 没有遮罩：卡片浮在正文之上，用户边看日志边操作页面。
@@ -702,7 +704,7 @@ async function askClear(): Promise<void> {
   gap: 6px;
   margin-bottom: 6px;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   min-width: 0;
 }
 .log-crumb .sep { opacity: 0.6; }
@@ -713,7 +715,7 @@ async function askClear(): Promise<void> {
   align-items: center;
   gap: 8px;
 }
-.log-title h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.log-title h3 { margin: 0; font-size: var(--fs-h3); font-weight: 650; }
 .log-title .spacer { flex: 1; }
 
 .state-pill {
@@ -724,15 +726,15 @@ async function askClear(): Promise<void> {
   display: inline-flex;
   align-items: center;
   border-radius: 10px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   line-height: 1.4;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
-.state-pill.ok { background: var(--success-soft, rgba(46, 158, 91, 0.14)); color: var(--success, #2e9e5b); }
-.state-pill.warn { background: var(--warn-soft, rgba(216, 160, 18, 0.16)); color: var(--warn, #b8860b); }
-.state-pill.bad { background: var(--danger-soft, rgba(214, 69, 69, 0.14)); color: var(--danger, #d64545); }
+.state-pill.ok { background: var(--success-soft); color: var(--success); }
+.state-pill.warn { background: var(--warn-soft); color: var(--warn); }
+.state-pill.bad { background: var(--danger-soft); color: var(--danger); }
 
 .icon-btn {
   width: 26px;
@@ -752,19 +754,19 @@ async function askClear(): Promise<void> {
   align-items: center;
   gap: 4px 10px;
   margin-top: 8px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--text-faint);
 }
 .sum-item { white-space: nowrap; }
 .sum-item strong {
   margin-left: 4px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 650;
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-.sum-item.ok strong { color: var(--success, #2e9e5b); }
-.sum-item.bad strong { color: var(--danger, #d64545); }
+.sum-item.ok strong { color: var(--success); }
+.sum-item.bad strong { color: var(--danger); }
 
 .log-error {
   display: flex;
@@ -773,14 +775,14 @@ async function askClear(): Promise<void> {
   margin: 10px 0 0;
   padding: 7px 9px;
   border-radius: var(--radius);
-  border-left: 3px solid var(--danger, #d64545);
-  background: var(--danger-soft, rgba(214, 69, 69, 0.1));
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
   color: var(--text-secondary);
-  font-size: 11.5px;
-  line-height: 1.55;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
   word-break: break-all;
 }
-.log-error > svg { flex-shrink: 0; margin-top: 2px; color: var(--danger, #d64545); }
+.log-error > svg { flex-shrink: 0; margin-top: 2px; color: var(--danger); }
 
 .log-filters {
   margin-top: 10px;
@@ -798,7 +800,7 @@ async function askClear(): Promise<void> {
   flex-shrink: 0;
   min-width: 52px;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
 }
 .chip {
   height: 25px;
@@ -808,7 +810,7 @@ async function askClear(): Promise<void> {
   gap: 4px;
   border: 1px solid var(--border-strong);
   border-radius: 20px;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--text-secondary);
   background: transparent;
   cursor: pointer;
@@ -823,14 +825,14 @@ async function askClear(): Promise<void> {
 /* 结果三档各自上色：有改动=强调色、没改动=中性、失败=危险色（颜色永远配文字） */
 .chip.on.out-changed { color: var(--accent); background: var(--accent-soft); }
 .chip.on.out-none { color: var(--text-secondary); background: var(--bg-tertiary); }
-.chip.on.out-failed { color: var(--danger, #d64545); background: var(--danger-soft, rgba(214, 69, 69, 0.12)); }
+.chip.on.out-failed { color: var(--danger); background: var(--danger-soft); }
 /* 内容类型：与列表里的标签同一套色，点到哪一类一眼看得出来 */
 .chip.on.type-raw { color: var(--t-raw, #a86800); background: var(--t-raw-soft, rgba(168, 104, 0, 0.12)); }
 .chip.on.type-concept { color: var(--t-concept, #6b4fa8); background: var(--t-concept-soft, rgba(107, 79, 168, 0.12)); }
 .chip.on.type-entity { color: var(--t-entity, #0f6cbd); background: var(--t-entity-soft, rgba(15, 108, 189, 0.12)); }
-.chip.on.type-agent { color: var(--t-agent, #0f7b0f); background: var(--t-agent-soft, rgba(15, 123, 15, 0.12)); }
+.chip.on.type-agent { color: var(--t-agent, var(--success)); background: var(--t-agent-soft, color-mix(in srgb, var(--success) 12%, transparent)); }
 .chip.on.type-other { color: var(--text-secondary); background: var(--bg-tertiary); }
-.chip .cnt { opacity: 0.75; font-size: 10.5px; }
+.chip .cnt { opacity: 0.75; font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 .chip.dim { opacity: 0.45; cursor: not-allowed; }
 .chip.action { height: 26px; }
 .chip.action:disabled { opacity: 0.6; cursor: default; }
@@ -859,7 +861,7 @@ async function askClear(): Promise<void> {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   outline: none;
   min-width: 0;
 }
@@ -889,7 +891,7 @@ async function askClear(): Promise<void> {
   text-align: left;
   padding: 7px 9px;
   border-radius: 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--text-secondary);
 }
 .menu button:hover { background: var(--bg-tertiary); color: var(--text); }
@@ -897,7 +899,7 @@ async function askClear(): Promise<void> {
 .filter-hint {
   margin: 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .log-body {
@@ -907,7 +909,7 @@ async function askClear(): Promise<void> {
   padding: 12px 16px 16px;
 }
 
-.log-hint { margin: 8px 0; color: var(--text-faint); font-size: 12.5px; line-height: 1.7; }
+.log-hint { margin: 8px 0; color: var(--text-faint); font-size: var(--font-sm); line-height: var(--lh-body); }
 .log-hint.error { color: var(--danger); }
 /* 同步进行中的实时提示：不是错误也不是空状态，用品牌色点一下存在感 */
 .log-hint.live { color: var(--accent, var(--brand, var(--text-faint))); }
@@ -928,8 +930,8 @@ async function askClear(): Promise<void> {
 }
 /* 失败那一档整行带一条红底渐晕：扫一眼列表就知道哪几条要处理 */
 .log-item.failed {
-  border-color: rgba(214, 69, 69, 0.28);
-  background: linear-gradient(90deg, var(--danger-soft, rgba(214, 69, 69, 0.1)), var(--bg-secondary) 60%);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: linear-gradient(90deg, var(--danger-soft), var(--bg-secondary) 60%);
 }
 
 /*
@@ -945,7 +947,7 @@ async function askClear(): Promise<void> {
   gap: 8px;
   padding: 6px 9px;
   text-align: left;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--text-secondary);
   border-radius: 6px;
 }
@@ -969,7 +971,7 @@ async function askClear(): Promise<void> {
   flex-shrink: 0;
   padding: 0 7px;
   border-radius: 5px;
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
   background: var(--bg-tertiary);
@@ -977,7 +979,7 @@ async function askClear(): Promise<void> {
 }
 .log-row .badge.changed { background: var(--accent-soft); color: var(--accent); }
 .log-row .badge.none { background: var(--bg-tertiary); color: var(--text-faint); }
-.log-row .badge.failed { background: var(--danger-soft, rgba(214, 69, 69, 0.12)); color: var(--danger, #d64545); }
+.log-row .badge.failed { background: var(--danger-soft); color: var(--danger); }
 
 .log-row .sum {
   flex: 1 1 auto;
@@ -1023,7 +1025,7 @@ async function askClear(): Promise<void> {
   gap: 4px;
   padding: 0 6px;
   border-radius: 5px;
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -1034,8 +1036,8 @@ async function askClear(): Promise<void> {
 .log-row .tag[data-type="概念"] .dot { background: var(--t-concept, #6b4fa8); }
 .log-row .tag[data-type="实体"] { color: var(--t-entity, #0f6cbd); background: var(--t-entity-soft, rgba(15, 108, 189, 0.12)); }
 .log-row .tag[data-type="实体"] .dot { background: var(--t-entity, #0f6cbd); }
-.log-row .tag[data-type="内置 Agent"] { color: var(--t-agent, #0f7b0f); background: var(--t-agent-soft, rgba(15, 123, 15, 0.12)); }
-.log-row .tag[data-type="内置 Agent"] .dot { background: var(--t-agent, #0f7b0f); }
+.log-row .tag[data-type="内置 Agent"] { color: var(--t-agent, var(--success)); background: var(--t-agent-soft, color-mix(in srgb, var(--success) 12%, transparent)); }
+.log-row .tag[data-type="内置 Agent"] .dot { background: var(--t-agent, var(--success)); }
 .log-row .tag[data-type="其他"] { color: var(--text-secondary); background: var(--bg-tertiary); }
 .log-row .tag[data-type="其他"] .dot { background: var(--text-faint); }
 
@@ -1043,10 +1045,11 @@ async function askClear(): Promise<void> {
   flex-shrink: 0;
   padding: 0 8px;
   border-radius: 20px;
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   color: var(--accent);
   background: var(--accent-soft);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .log-row .caret {
   flex-shrink: 0;
@@ -1069,7 +1072,7 @@ async function askClear(): Promise<void> {
   align-items: center;
   gap: 8px;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
 }
 .sec-title .rule { flex: 1; height: 1px; background: var(--border); }
 
@@ -1081,7 +1084,7 @@ async function askClear(): Promise<void> {
   gap: 7px;
   padding: 4px 9px;
   background: var(--bg-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -1089,13 +1092,13 @@ async function askClear(): Promise<void> {
 .group-head .dot[data-type="原始资料"] { background: var(--t-raw, #a86800); }
 .group-head .dot[data-type="概念"] { background: var(--t-concept, #6b4fa8); }
 .group-head .dot[data-type="实体"] { background: var(--t-entity, #0f6cbd); }
-.group-head .dot[data-type="内置 Agent"] { background: var(--t-agent, #0f7b0f); }
-.group-head .n { margin-left: auto; font-weight: 400; color: var(--text-faint); font-size: 10.5px; }
+.group-head .dot[data-type="内置 Agent"] { background: var(--t-agent, var(--success)); }
+.group-head .n { margin-left: auto; font-weight: 400; color: var(--text-faint); font-size: var(--fs-caption); }
 
 .file { padding: 5px 9px 7px; border-top: 1px solid var(--border); }
 .file-path {
   font-family: var(--font-mono, Consolas, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--text);
   word-break: break-all;
 }
@@ -1106,13 +1109,13 @@ async function askClear(): Promise<void> {
   border-radius: 5px;
   overflow: hidden;
   font-family: var(--font-mono, Consolas, monospace);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .diff .dl {
   display: flex;
   gap: 8px;
   padding: 1px 8px;
-  line-height: 1.62;
+  line-height: var(--lh-body);
 }
 .diff .dl .ln {
   flex: none;
@@ -1126,12 +1129,12 @@ async function askClear(): Promise<void> {
 .diff .dl .text { min-width: 0; white-space: pre-wrap; word-break: break-word; }
 /* 上下文行：灰底/灰字，让「改在哪一行」有参照；新增绿、删除红（和 git diff 读法一致） */
 .diff .dl.ctx .text { color: var(--text-secondary); }
-.diff .dl.add { background: var(--diff-add-bg, rgba(15, 123, 15, 0.07)); }
-.diff .dl.add .sign { color: var(--success, #0f7b0f); font-weight: 600; }
-.diff .dl.add .text { color: var(--success, #0f7b0f); }
-.diff .dl.del { background: var(--diff-del-bg, rgba(196, 43, 28, 0.06)); }
-.diff .dl.del .sign { color: var(--danger, #c42b1c); font-weight: 600; }
-.diff .dl.del .text { color: var(--danger, #c42b1c); }
+.diff .dl.add { background: var(--diff-add-bg, color-mix(in srgb, var(--success) 7%, transparent)); }
+.diff .dl.add .sign { color: var(--success); font-weight: 600; }
+.diff .dl.add .text { color: var(--success); }
+.diff .dl.del { background: var(--diff-del-bg, color-mix(in srgb, var(--danger) 6%, transparent)); }
+.diff .dl.del .sign { color: var(--danger); font-weight: 600; }
+.diff .dl.del .text { color: var(--danger); }
 .diff .dl.note .text { color: var(--text-faint); font-style: italic; }
 .diff .hunk-head {
   display: flex;
@@ -1140,7 +1143,7 @@ async function askClear(): Promise<void> {
   padding: 2px 8px;
   background: var(--bg-tertiary);
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   border-top: 1px solid var(--border);
 }
 .diff .hunk-head:first-child { border-top: 0; }
@@ -1151,7 +1154,7 @@ async function askClear(): Promise<void> {
   display: grid;
   grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
   gap: 3px 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
 }
 .data-grid .dk { min-width: 0; color: var(--text-faint); overflow-wrap: anywhere; }
 .data-grid .dv {
@@ -1173,8 +1176,8 @@ async function askClear(): Promise<void> {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   font-family: var(--font-mono, Consolas, monospace);
-  font-size: 10.5px;
-  line-height: 1.6;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
   white-space: pre;
 }
 
@@ -1192,8 +1195,8 @@ async function askClear(): Promise<void> {
   padding: 9px 16px;
   border-top: 1px solid var(--border);
   color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.6;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
 }
 .log-foot code {
   font-family: var(--font-mono, Consolas, monospace);

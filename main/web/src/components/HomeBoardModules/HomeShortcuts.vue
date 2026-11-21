@@ -89,7 +89,7 @@ function go(path: string) {
   transition: background 150ms ease, color 150ms ease;
 }
 .wc-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.wc-text strong { font-size: 12.5px; font-weight: 600; line-height: 1.4; color: var(--text); }
+.wc-text strong { font-size: var(--font-sm); font-weight: 600; line-height: 1.4; color: var(--text); }
 .wc-text em { font-style: normal; font-size: 10px; color: var(--text-muted, var(--text-faint)); }
 .short-label { display: none; }
 @container (max-width: 520px) {
@@ -124,7 +124,7 @@ function go(path: string) {
   .wc-text { align-items: center; gap: 0; max-width: 100%; }
   .wc-text strong {
     /* 横条档 328px 宽要塞 6 个入口：11.5px 会把「问 Agent」挤成省略号 */
-    font-size: 11px;
+    font-size: var(--fs-caption);
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -160,7 +160,7 @@ const timeText = computed(() => relativeTimeText(props.page.updated_at));
   padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
   /* 触屏上纵向滑动列表不要被行内手势接管；长按判定自己处理横向漂移。
@@ -339,7 +339,7 @@ const timeText = computed(() => relativeTimeText(props.page.updated_at));
     line-clamp: 2;
     white-space: normal;
     overflow-wrap: anywhere;
-    line-height: 1.35;
+    line-height: var(--lh-tight);
   }
 
   /* ⋯ 菜单：26px 同样偏小，热区补到 44×40（横向往标题侧伸，视觉图标位置不变） */

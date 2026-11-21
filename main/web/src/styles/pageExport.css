@@ -389,34 +389,36 @@
   color: #7c7a77;
 }
 
-/* ---------- 代码高亮（Vditor 的 hljs 类名，固定 github 浅色主题） ---------- */
+/* ---------- 代码高亮（Vditor 的 hljs 类名，品牌暖纸四族高亮） ----------
+ * 与屏显同一色板（main.css 的 html .vditor-reset .hljs-*），导出窗口加载不到应用令牌，
+ * 这里落同一组静态值：墨=正文/注释 · 陶土=关键字 · 松针=字符串 · 黄铜=数字，标题=陶土亮档。 */
 
 .engram-export-doc .hljs-comment,
-.engram-export-doc .hljs-quote { color: #6a737d; font-style: italic; }
+.engram-export-doc .hljs-quote { color: #736e60; font-style: italic; }
 .engram-export-doc .hljs-keyword,
 .engram-export-doc .hljs-selector-tag,
 .engram-export-doc .hljs-literal,
-.engram-export-doc .hljs-type { color: #d73a49; }
+.engram-export-doc .hljs-type { color: #ad4a27; }
 .engram-export-doc .hljs-string,
 .engram-export-doc .hljs-regexp,
-.engram-export-doc .hljs-addition { color: #032f62; }
+.engram-export-doc .hljs-addition,
+.engram-export-doc .hljs-attr,
+.engram-export-doc .hljs-attribute { color: #33694d; }
 .engram-export-doc .hljs-number,
 .engram-export-doc .hljs-symbol,
 .engram-export-doc .hljs-bullet,
 .engram-export-doc .hljs-variable,
-.engram-export-doc .hljs-template-variable { color: #005cc5; }
+.engram-export-doc .hljs-template-variable { color: #8a5200; }
 .engram-export-doc .hljs-title,
 .engram-export-doc .hljs-section,
 .engram-export-doc .hljs-name,
 .engram-export-doc .hljs-selector-id,
-.engram-export-doc .hljs-selector-class { color: #6f42c1; }
-.engram-export-doc .hljs-attr,
-.engram-export-doc .hljs-attribute,
+.engram-export-doc .hljs-selector-class { color: #bf5b3c; }
 .engram-export-doc .hljs-built_in,
-.engram-export-doc .hljs-meta { color: #e36209; }
-.engram-export-doc .hljs-deletion { color: #b31d28; background: #ffeef0; }
+.engram-export-doc .hljs-meta { color: #bf5b3c; }
+.engram-export-doc .hljs-deletion { color: #a83a32; background: rgba(196, 43, 28, 0.08); }
 .engram-export-doc .hljs-emphasis { font-style: italic; }
-.engram-export-doc .hljs-strong { font-weight: 700; }
+.engram-export-doc .hljs-strong { font-weight: 600; }
 
 /* ---------- 页脚 ---------- */
 

@@ -88,14 +88,14 @@ defineEmits<{ (e: 'complete', card: TaskCard): void }>();
   align-items: center;
   gap: 6px;
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   color: var(--text-secondary);
 }
 .panel.overdue h3 { color: var(--danger); }
 .panel .num { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-weight: 600; }
 .rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.row { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--text); }
+.row { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-small); color: var(--text); }
 .row .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip {
   flex: none;

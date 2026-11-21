@@ -215,7 +215,7 @@ function fileIconClass(ext: string): string {
   padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
   touch-action: pan-y;
@@ -291,7 +291,7 @@ function fileIconClass(ext: string): string {
   white-space: nowrap;
 }
 .has-document-date { height: 52px; }
-.file-date { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.file-date { display: block; margin-top: 2px; color: var(--text-secondary); font-size: var(--fs-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
 
 .row-trailing {
   position: relative;
@@ -434,7 +434,7 @@ function fileIconClass(ext: string): string {
     line-clamp: 2;
     white-space: normal;
     overflow-wrap: anywhere;
-    line-height: 1.35;
+    line-height: var(--lh-tight);
   }
 
   /* 按住反馈：触屏没有 hover，只有 :active 这一层 */

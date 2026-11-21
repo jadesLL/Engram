@@ -388,7 +388,7 @@ defineExpose({ open: openMenu, close: () => closeMenu() });
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
 }
 .app-select-trigger:hover:not(:disabled) { background: var(--control-bg-hover); }
 .app-select-trigger:focus-visible,
@@ -428,7 +428,7 @@ defineExpose({ open: openMenu, close: () => closeMenu() });
   border-radius: 12px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
 }
 .app-select.v-chip .app-select-trigger:hover:not(:disabled),
@@ -464,7 +464,7 @@ defineExpose({ open: openMenu, close: () => closeMenu() });
   overscroll-behavior: contain;
   opacity: 0;
   transform: translateY(-4px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition: opacity var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard);
 }
 .app-select-menu.is-up { transform: translateY(4px); }
 .app-select-menu.ready { opacity: 1; transform: none; }
@@ -477,7 +477,7 @@ defineExpose({ open: openMenu, close: () => closeMenu() });
   border-radius: 6px;
   color: var(--text-secondary);
   font-size: var(--font-sm);
-  line-height: 1.35;
+  line-height: var(--lh-tight);
   white-space: nowrap;
   cursor: pointer;
 }

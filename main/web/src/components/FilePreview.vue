@@ -778,7 +778,7 @@ defineExpose({ downloadFile, openExternal });
 .fp-actions .btn { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
 .office-status {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -808,7 +808,7 @@ defineExpose({ downloadFile, openExternal });
   border-radius: 0;
   border-bottom: 2px solid transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .fp-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
 .tab-count { font-size: 10px; color: var(--text-tertiary); }
@@ -849,7 +849,7 @@ defineExpose({ downloadFile, openExternal });
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
 }
-.pre { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
+.pre { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: var(--font-md); }
 .office-online { flex: 1; min-height: 0; width: 100%; background: var(--bg); overflow: hidden; }
 .office-fallback-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .fallback-banner {
@@ -863,7 +863,7 @@ defineExpose({ downloadFile, openExternal });
   color: var(--warning);
   flex-shrink: 0;
 }
-.fallback-banner span { flex: 1; font-size: 13px; }
+.fallback-banner span { flex: 1; font-size: var(--font-md); }
 .office-fallback { background: var(--bg-secondary); }
 .office-fallback :deep(.docx-wrapper) { background: transparent; padding: 8px 0; }
 .office-fallback :deep(section.docx) { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); margin-bottom: 16px; }
@@ -892,7 +892,7 @@ defineExpose({ downloadFile, openExternal });
   border-bottom: 1px solid var(--border);
 }
 .extraction-summary > div:first-child { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.extraction-summary span { color: var(--text-secondary); font-size: 12px; }
+.extraction-summary span { color: var(--text-secondary); font-size: var(--fs-small); }
 .extraction-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 .extraction-warning {
   max-width: var(--content-max);
@@ -901,7 +901,7 @@ defineExpose({ downloadFile, openExternal });
   border-left: 3px solid var(--warning);
   background: var(--warn-soft);
   color: var(--warning);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .extraction-empty { max-width: var(--content-max); margin: 0 auto; padding: 50px 0; text-align: center; }
 .extraction-page { max-width: var(--content-max); margin: 0 auto; padding: 14px 0 18px; border-bottom: 1px solid var(--border); }

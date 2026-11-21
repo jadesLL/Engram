@@ -179,7 +179,7 @@ onBeforeUnmount(() => {
 }
 .icon-btn { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; }
 .icon-btn:hover { background: var(--bg-hover); color: var(--accent); }
-.zoom-label { min-width: 44px; text-align: center; color: var(--text-secondary); font-size: 11px; }
+.zoom-label { min-width: 44px; text-align: center; color: var(--text-secondary); font-size: var(--fs-caption); }
 .toolbar-spacer { flex: 1; }
 .image-viewport {
   flex: 1;

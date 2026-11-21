@@ -73,7 +73,7 @@ const shown = computed(() => (props.cards || []).slice(0, Math.min(Math.max(1, p
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 500;
   line-height: 1.42;
   color: var(--text);

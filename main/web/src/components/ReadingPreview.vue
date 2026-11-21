@@ -1116,6 +1116,28 @@ async function renderMarkdown() {
     prepareLinks(next);
     /* 纪要文首的「来源/会议时间/链接/整理说明」引用块折成一行，点开再看详情 */
     promoteSourceCitations(next);
+    /* Vditor 的 highlight.js 是异步脚本：preview 返回时脚本经常还没就绪，代码块落成纯文本
+     * 还被存进渲染缓存（阅读态从此一直无高亮，2026-11-22 验收样张复现）。这里等 hljs 到位
+     * （最多 2s）后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块现场补
+     * ——渲染缓存排在高亮之后，不会再固化无高亮版本。 */
+    for (let i = 0; i < 20; i++) {
+      const highlightElement = (
+        window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }
+      ).hljs?.highlightElement;
+      if (highlightElement) {
+        next.querySelectorAll('pre code').forEach((el) => {
+          const block = el as HTMLElement;
+          if (block.classList.contains('hljs')) return;
+          try {
+            highlightElement(block);
+          } catch {
+            /* 未知语言等高亮失败不阻塞正文渲染 */
+          }
+        });
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
     // 小页也进缓存（主题切换会重跑整页渲染，见 renderCache 注释）
@@ -1486,7 +1508,7 @@ onBeforeUnmount(() => {
   color: var(--accent);
 }
 .outline-tool-label {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   letter-spacing: 0.02em;
 }
 /* 导出一级入口：和 A−/16px/100% 同一套白底控件（发丝描边 + 底缘加深），
@@ -1504,7 +1526,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: var(--control-bg);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
   transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
@@ -1558,7 +1580,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .more-label {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   letter-spacing: 0.02em;
 }
 /* 本页没有小标题时按钮留在原位（不闪不跳），只把它标成不可用 */
@@ -1628,7 +1650,7 @@ onBeforeUnmount(() => {
   border-radius: 0;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
@@ -1661,7 +1683,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   text-align: center;
   cursor: pointer;
@@ -1693,7 +1715,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
@@ -1723,7 +1745,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   text-align: center;
   cursor: pointer;
@@ -1756,7 +1778,7 @@ onBeforeUnmount(() => {
 }
 .display-menu-label {
   padding: 4px 8px 2px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-faint);
   letter-spacing: 0.04em;
@@ -1777,7 +1799,7 @@ onBeforeUnmount(() => {
   border-radius: calc(var(--radius-control) - 2px);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   cursor: pointer;
 }
 .display-menu-seg button:hover { color: var(--text); }
@@ -1801,7 +1823,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   cursor: pointer;
   text-align: left;
 }
@@ -1865,14 +1887,14 @@ onBeforeUnmount(() => {
   line-height: 1.28;
   letter-spacing: 0;
 }
-.reading-document-date { display: block; margin-bottom: 10px; color: var(--text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+.reading-document-date { display: block; margin-bottom: 10px; color: var(--text-secondary); font-size: var(--font-md); font-variant-numeric: tabular-nums; }
 .reading-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 9px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .reading-type {
   color: var(--accent);
@@ -1899,8 +1921,8 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
 }
 /* 失败态由调用方在槽内容上加 class（这里用 :deep 是为了能命中槽里的元素） */
 .reading-status :deep(.failed) {
@@ -1951,7 +1973,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .reading-content :deep(.reading-fold:hover) {
   background: var(--control-bg-hover);
@@ -1982,7 +2004,7 @@ onBeforeUnmount(() => {
   margin: 1.55em 0 0.55em;
   color: var(--text-secondary);
   font-size: 1em;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .numbered-headings .reading-content :deep(.reading-heading.reading-numbered::before) {
   content: attr(data-reading-number);
@@ -2043,7 +2065,7 @@ onBeforeUnmount(() => {
   list-style: none;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .reading-content :deep(.cite-summary::-webkit-details-marker) { display: none; }
 .reading-content :deep(.cite-summary:focus-visible) {
@@ -2066,7 +2088,7 @@ onBeforeUnmount(() => {
 }
 .reading-content :deep(.cite-meta) {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
@@ -2091,7 +2113,7 @@ onBeforeUnmount(() => {
   align-items: baseline;
 }
 .reading-content :deep(.cite-row dt) {
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.75;
   color: var(--text-faint);
 }
@@ -2147,7 +2169,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: inherit;
   font-size: 0.86em;
-  line-height: 1.7;
+  line-height: var(--lh-body);
 }
 /* 表格描边只留「顶一条、底一条」：容器只画顶边，底边交给末行单元格的下边框
    （th/td 本来就有 1px 下边框，见下）。原先容器再画一条 border-bottom，加上 Vditor
@@ -2196,7 +2218,7 @@ onBeforeUnmount(() => {
 .reading-content :deep(figcaption) {
   margin-top: 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: center;
 }
 .reading-content :deep(.katex-display),
@@ -2224,7 +2246,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   margin: 0 0 10px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .reading-outline nav {
   min-height: 0;
@@ -2239,7 +2261,7 @@ onBeforeUnmount(() => {
   padding: 5px 8px;
   border-left: 2px solid transparent;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.45;
   text-decoration: none;
 }
@@ -2359,7 +2381,7 @@ onBeforeUnmount(() => {
   padding: 4px 8px 9px 7px;
   border-bottom: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .outline-sheet .reading-outline nav {
@@ -2373,7 +2395,7 @@ onBeforeUnmount(() => {
   align-items: center;
   min-height: 44px;
   padding: 9px 12px;
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 /* 面板右上角的关闭按钮（遮罩之外的第二条明确出路） */
 .outline-x {
@@ -2443,7 +2465,7 @@ onBeforeUnmount(() => {
 }
 .settings-sheet-head h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .settings-sheet-x {
@@ -2486,7 +2508,7 @@ onBeforeUnmount(() => {
 .reading-export-label {
   padding: 0 2px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -2505,7 +2527,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: var(--control-bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
   cursor: pointer;
 }

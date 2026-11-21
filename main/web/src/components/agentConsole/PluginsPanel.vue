@@ -392,7 +392,7 @@ function handleMutationError(error: unknown): void {
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -426,7 +426,7 @@ function handleMutationError(error: unknown): void {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .panel-error p {
   display: flex;
@@ -461,13 +461,13 @@ function handleMutationError(error: unknown): void {
 }
 .card-head h4 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: var(--fs-h3);
   font-weight: 600;
 }
 .card-head p {
   margin: 4px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
 }
 .card-body {
@@ -522,7 +522,7 @@ function handleMutationError(error: unknown): void {
   min-width: 0;
 }
 .plugin-copy strong {
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .plugin-copy span {
@@ -564,13 +564,13 @@ function handleMutationError(error: unknown): void {
   flex-wrap: wrap;
 }
 .experimental-title strong {
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .experimental-copy p {
   margin: 4px 0 0;
   color: var(--text-faint);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .tag {
   padding: 1px 7px;
@@ -583,7 +583,7 @@ function handleMutationError(error: unknown): void {
 .inventory-summary {
   margin: 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .inventory-group + .inventory-group {
@@ -633,12 +633,12 @@ function handleMutationError(error: unknown): void {
   flex-wrap: wrap;
 }
 .inventory-title strong {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .inventory-title code {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .inventory-meta {
   display: flex;
@@ -647,13 +647,13 @@ function handleMutationError(error: unknown): void {
   flex-wrap: wrap;
   margin-top: 3px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .inventory-desc {
   margin: 4px 0 0;
   color: var(--text-secondary);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .empty-hint {
   margin: 8px 0;
@@ -661,7 +661,7 @@ function handleMutationError(error: unknown): void {
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .card-actions {
@@ -676,7 +676,7 @@ function handleMutationError(error: unknown): void {
 .action-hint {
   color: var(--text-faint);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .faint {
   color: var(--text-faint);

@@ -93,8 +93,8 @@ const total = computed(() => columns.value.reduce((sum, col) => sum + col.cards.
     background: transparent;
   }
   .board-col:first-child { border-top: 0; }
-  .board-name { flex: 1; font-size: 11px; }
-  .board-num { order: 2; font-size: 20px; }
+  .board-name { flex: 1; font-size: var(--fs-caption); }
+  .board-num { order: 2; font-size: var(--fs-h1); }
   .board-item, .board-more { display: none; }
 }
 </style>

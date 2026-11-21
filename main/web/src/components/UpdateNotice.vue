@@ -496,25 +496,25 @@ onUnmounted(() => {
 .update-notice-heading span { color: var(--text-secondary); font-size: 11.5px; overflow-wrap: anywhere; }
 .update-notice-close { flex: none; border: 0; background: none; color: var(--text-faint); border-radius: 5px; padding: 3px; display: grid; place-items: center; }
 .update-notice-close:hover { background: var(--bg-hover); color: var(--text); }
-.update-notice-checked { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); padding: 0 18px 13px; font-size: 11px; }
+.update-notice-checked { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); padding: 0 18px 13px; font-size: var(--fs-caption); }
 .update-notice-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
 .update-notice-body { border-top: 1px solid var(--border); padding: 13px 18px 15px; }
-.update-notice-caption { color: var(--text-faint); font-size: 11px; font-weight: 600; margin-bottom: 9px; }
+.update-notice-caption { color: var(--text-faint); font-size: var(--fs-caption); font-weight: 600; margin-bottom: 9px; }
 .update-notice-body ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; max-height: 190px; overflow-y: auto; }
-.update-notice-body li { display: flex; align-items: flex-start; gap: 8px; color: var(--text); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.update-notice-body li { display: flex; align-items: flex-start; gap: 8px; color: var(--text); font-size: var(--fs-small); line-height: 1.45; overflow-wrap: anywhere; }
 .update-notice-check { flex: none; width: 16px; height: 16px; display: grid; place-items: center; margin-top: 1px; color: var(--success); background: var(--success-soft); border-radius: 5px; }
 /* 一键更新进度块 */
 .update-notice-progress { border-top: 1px solid var(--border); padding: 11px 18px 12px; }
 .update-notice-progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .update-notice-progress-label { color: var(--text); font-size: 11.5px; font-weight: 600; }
-.update-notice-progress-pct { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.update-notice-progress-pct { color: var(--text-secondary); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 .update-notice-progress-bar { margin-top: 7px; height: 4px; border-radius: 999px; background: var(--bg-hover); overflow: hidden; }
-.update-notice-progress-bar i { display: block; height: 100%; background: var(--accent); transition: width 200ms ease; }
-.update-notice-progress-log { margin-top: 7px; max-height: 76px; overflow: hidden; color: var(--text-faint); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.update-notice-progress-bar i { display: block; height: 100%; background: var(--accent); transition: width var(--motion-base) var(--ease-standard); }
+.update-notice-progress-log { margin-top: 7px; max-height: 76px; overflow: hidden; color: var(--text-faint); font-size: var(--fs-caption); line-height: var(--lh-ui); overflow-wrap: anywhere; }
 .update-notice-progress.failed .update-notice-progress-label { color: var(--danger); }
 .update-notice-progress.failed .update-notice-progress-log { color: var(--danger); }
 .update-notice-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 18px; border-top: 1px solid var(--border); background: var(--bg-secondary); }
-.update-notice-foot button { border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
+.update-notice-foot button { border-radius: 6px; padding: 6px 10px; font-size: var(--fs-small); font-weight: 600; }
 .update-notice-foot button:disabled { opacity: 0.6; cursor: default; }
 .update-notice-foot-left { display: flex; align-items: center; gap: 6px; }
 .update-notice-later { color: var(--text-secondary); background: var(--card-bg); border: 1px solid var(--border-strong); }

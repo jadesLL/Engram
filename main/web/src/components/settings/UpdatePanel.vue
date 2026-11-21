@@ -1343,8 +1343,8 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--bg-secondary);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  line-height: 1.7;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
   color: var(--text-secondary);
 }
 .log-line {
@@ -1369,7 +1369,7 @@ onUnmounted(() => {
   height: 100%;
   border-radius: 3px;
   background: var(--accent, #3b82f6);
-  transition: width 200ms ease;
+  transition: width var(--motion-base) var(--ease-standard);
 }
 
 /* 自动更新状态槽：文案行 + 进度轨都常驻（固定高度），阶段切换不增删节点。
@@ -1385,7 +1385,7 @@ onUnmounted(() => {
   min-height: 18px;
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;

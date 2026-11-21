@@ -102,8 +102,13 @@
       </span>
     </div>
 
-    <div v-if="inbox.loading && !inbox.loaded" class="loading-line">
-      <AppSpinner :size="14" /> 正在读取收集箱…
+    <!-- 加载骨架（2026-11 加载态）：保行高与滚动条，暖纸微光，不再转圈 -->
+    <div v-if="inbox.loading && !inbox.loaded" class="inbox-skeleton" aria-busy="true" aria-label="正在读取收集箱">
+      <div v-for="i in 4" :key="i" class="inbox-skeleton-row">
+        <AppSkeleton variant="line" width="38%" />
+        <AppSkeleton variant="line" width="88%" />
+        <AppSkeleton variant="line" width="62%" />
+      </div>
     </div>
 
     <!-- 无边框行式列表：行间只留发丝分隔线，悬停才浮起 -->
@@ -326,6 +331,7 @@ import {
 } from '../lib/inboxAgent';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
+import AppSkeleton from '../components/ui/AppSkeleton.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import AppModal from '../components/ui/AppModal.vue';
 
@@ -1007,12 +1013,12 @@ onBeforeUnmount(() => {
 
 .page-head h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-h1);
   font-weight: 600;
   letter-spacing: -0.2px;
 }
 
-.page-head .sub { font-size: 12.5px; color: var(--text-faint); }
+.page-head .sub { font-size: var(--font-sm); color: var(--text-faint); }
 
 .spacer { flex: 1; }
 
@@ -1029,10 +1035,10 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: var(--card-bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
   text-decoration: none;
   box-shadow: var(--shadow-raised);
-  transition: background 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 
 .btn:hover { background: var(--bg-hover); }
@@ -1047,7 +1053,7 @@ onBeforeUnmount(() => {
 .btn.primary:hover { background: var(--action-solid-hover); }
 .btn.primary:active { background: var(--action-solid-pressed); }
 
-.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.btn.sm { height: 26px; padding: 0 10px; font-size: var(--font-sm); }
 .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .btn[disabled]:hover { background: var(--card-bg); }
 .btn.primary[disabled]:hover { background: var(--action-solid); }
@@ -1094,8 +1100,8 @@ onBeforeUnmount(() => {
   box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-.drop-half b { display: block; font-size: 14.5px; font-weight: 600; }
-.drop-half small { font-size: 12px; color: var(--text-faint); }
+.drop-half b { display: block; font-size: var(--fs-h3); font-weight: 600; }
+.drop-half small { font-size: var(--fs-small); color: var(--text-faint); }
 .drop-half:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: -2px; }
 
 .intake .divider { width: 1px; margin: 14px 0; background: var(--border); }
@@ -1112,8 +1118,8 @@ onBeforeUnmount(() => {
   background: var(--bg-secondary);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
-  transition: border-color 120ms ease;
+  font-size: var(--font-md);
+  transition: border-color var(--motion-fast) var(--ease-standard);
 }
 
 .url-half input:focus { outline: none; border-color: var(--inbox-accent); box-shadow: 0 0 0 3px var(--inbox-accent-soft); }
@@ -1131,7 +1137,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   max-width: 1180px;
   margin-bottom: 16px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text-faint);
   line-height: 1.6;
 }
@@ -1144,7 +1150,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 2px 8px;
   border-radius: 5px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text-faint);
 }
 
@@ -1157,7 +1163,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   max-width: 1180px;
   margin-bottom: 12px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
   color: var(--text-faint);
 }
@@ -1173,14 +1179,35 @@ onBeforeUnmount(() => {
 .video-hint a:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 2px; border-radius: 3px; }
 
 .error-line,
-.loading-line {
+.inbox-skeleton {
   display: flex;
-  align-items: center;
-  gap: 7px;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 12px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
 }
+.inbox-skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+/* 列表入场 stagger（2026-11 动效）：首次挂载的行按 20ms 级联淡入，仅前 8 行参与；
+ * 筛选/上传变化时行会重挂载所以也会级联——级联极短，不构成打扰；reduced-motion 全局塌缩 */
+@keyframes inbox-row-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.list .row { animation: inbox-row-enter var(--motion-slow) var(--ease-enter) backwards; }
+.list .row:nth-child(2) { animation-delay: 20ms; }
+.list .row:nth-child(3) { animation-delay: 40ms; }
+.list .row:nth-child(4) { animation-delay: 60ms; }
+.list .row:nth-child(5) { animation-delay: 80ms; }
+.list .row:nth-child(6) { animation-delay: 100ms; }
+.list .row:nth-child(7) { animation-delay: 120ms; }
+.list .row:nth-child(8) { animation-delay: 140ms; }
 
 .error-line { color: var(--danger); }
 
@@ -1199,9 +1226,9 @@ onBeforeUnmount(() => {
   height: 27px;
   padding: 0 12px;
   border-radius: 999px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 
 .seg button:hover { color: var(--text); }
@@ -1229,7 +1256,7 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-.hint { font-size: 12px; color: var(--text-faint); }
+.hint { font-size: var(--fs-small); color: var(--text-faint); }
 
 /* ===== 文件列表：无边框行式，行间发丝分隔线，悬停浮起 ===== */
 .row {
@@ -1309,7 +1336,7 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
   border-radius: 9px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1342,7 +1369,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   align-items: center;
   gap: 6px;
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text-faint);
   min-width: 0;
 }
@@ -1371,7 +1398,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -1412,7 +1439,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   border-radius: 9px;
   background: var(--success-soft);
   color: var(--success);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1434,12 +1461,12 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   height: 27px;
   padding: 0 12px;
   border-radius: 999px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--inbox-accent);
   background: var(--inbox-accent-soft);
   white-space: nowrap;
-  transition: background 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 
 .primary-act:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
@@ -1490,7 +1517,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   width: 100%;
   padding: 7px 10px;
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   text-align: left;
   text-decoration: none;
@@ -1507,7 +1534,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
 
 .review-sub {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   word-break: break-all;
 }
 
@@ -1516,7 +1543,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   align-items: center;
   gap: 7px;
   padding: 26px 2px;
-  font-size: 13px;
+  font-size: var(--font-md);
   color: var(--text-secondary);
 }
 
@@ -1609,6 +1636,6 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
   .seg { flex: 1 1 100%; flex-wrap: wrap; }
   .seg button { flex: 1 1 calc(50% - 2px); padding: 0 8px; }
   .toolbar .spacer { display: none; }
-  .toolbar .hint { font-size: 11px; }
+  .toolbar .hint { font-size: var(--fs-caption); }
 }
 </style>

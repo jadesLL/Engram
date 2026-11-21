@@ -92,7 +92,7 @@ function ariaOf(date: string) {
   gap: 6px;
   padding-bottom: 4px;
 }
-.weekday-row span { text-align: center; font-size: 11px; color: var(--text-faint); }
+.weekday-row span { text-align: center; font-size: var(--fs-caption); color: var(--text-faint); }
 .month-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -128,7 +128,7 @@ function ariaOf(date: string) {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
@@ -152,7 +152,7 @@ function ariaOf(date: string) {
   background: var(--accent-soft);
   color: var(--text);
   font-size: 10.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -171,7 +171,7 @@ function ariaOf(date: string) {
   align-items: center;
   gap: 6px;
   margin: 0 0 8px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 650;
 }
 .week-load .note { font-size: 11.5px; font-weight: 500; color: var(--text-faint); }
@@ -182,8 +182,8 @@ function ariaOf(date: string) {
   gap: 10px;
   padding: 4px 0;
 }
-.load-label { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-.load-label em { font-style: normal; margin-left: 6px; font-size: 11px; color: var(--text-secondary); }
+.load-label { font-size: var(--fs-small); color: var(--text-secondary); white-space: nowrap; }
+.load-label em { font-style: normal; margin-left: 6px; font-size: var(--fs-caption); color: var(--text-secondary); }
 .load-row.current .load-label { color: var(--accent); font-weight: 600; }
 .load-track { height: 6px; border-radius: 3px; background: var(--bg-tertiary); overflow: hidden; }
 .load-track i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
@@ -208,7 +208,7 @@ function ariaOf(date: string) {
   .cell { min-height: 0; padding: 8px 10px; }
   .cell.dim, .cell:not(.has-tasks):not(.today) { display: none; }
   .cell-btn { flex-direction: column; gap: 5px; }
-  .cell-date { gap: 6px; font-size: 12px; }
+  .cell-date { gap: 6px; font-size: var(--fs-small); }
   .cell-weekday { display: inline; }
   .load-row { grid-template-columns: 1fr 52px; }
   .load-track { display: none; }

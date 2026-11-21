@@ -211,7 +211,7 @@ onMounted(() => {
   border: 1px solid var(--control-border-strong);
   border-radius: 12px;
   background: var(--card-bg);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 .search-box.focused {
   border-color: var(--accent);
@@ -236,9 +236,9 @@ onMounted(() => {
   border-radius: 8px;
   background: var(--action-solid);
   color: var(--on-action-solid);
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
-  transition: background 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 .search-go:hover { background: var(--action-solid-hover); }
 .search-go:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -252,8 +252,8 @@ onMounted(() => {
   border-radius: 13px;
   background: var(--card-bg);
   color: var(--text-secondary);
-  font-size: 12px;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  font-size: var(--fs-small);
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
 }
 .filter-chips button:hover { border-color: var(--border-strong); color: var(--text); }
 .filter-chips button.on {
@@ -273,11 +273,11 @@ onMounted(() => {
   border-radius: var(--radius);
   background: var(--card-bg);
   cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 .hit:hover { border-color: var(--accent); box-shadow: var(--shadow); }
 .hit-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; min-width: 0; }
-.hit-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 650; }
+.hit-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-h3); font-weight: 650; }
 .hit-badge {
   flex: none;
   padding: 1px 7px;
@@ -288,9 +288,9 @@ onMounted(() => {
   font-weight: 600;
 }
 .hit-badge.file { background: var(--success-soft); color: var(--success); }
-.hit-time { margin-left: auto; flex: none; font-size: 11px; color: var(--text-faint); }
+.hit-time { margin-left: auto; flex: none; font-size: var(--fs-caption); color: var(--text-faint); }
 .hit-snippet {
-  font-size: 13px;
+  font-size: var(--font-md);
   color: var(--text-secondary);
   line-height: 1.65;
   display: -webkit-box;
@@ -311,7 +311,7 @@ html.dark .hit-snippet :deep(mark) { background: rgba(255, 213, 79, 0.3); }
   border-radius: 5px;
   background: var(--bg-secondary);
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 @media (max-width: 768px) {

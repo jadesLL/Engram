@@ -35,13 +35,13 @@ withDefaults(defineProps<{ icon?: string; title?: string; hint?: string }>(), {
 .app-empty-title {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .app-empty-hint {
   margin: 0;
   max-width: 320px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .app-empty-actions {

@@ -102,12 +102,12 @@ onUnmounted(() => {
 }
 
 .update-card span {
-  font-size: 13px;
+  font-size: var(--font-md);
   color: var(--text-secondary);
 }
 
 .update-card em {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-style: normal;
   color: var(--text-faint);
 }

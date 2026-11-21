@@ -118,7 +118,7 @@ function dismiss() {
 
 .pill-copy b {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 650;
   color: var(--text);
 }
@@ -141,7 +141,7 @@ function dismiss() {
   border-radius: 8px;
   background: var(--control-bg);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
@@ -158,7 +158,7 @@ function dismiss() {
   border-radius: 6px;
   background: transparent;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1;
   cursor: pointer;
 }

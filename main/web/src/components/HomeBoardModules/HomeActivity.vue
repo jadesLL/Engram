@@ -86,7 +86,7 @@ function dotColor(page: any): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 550;
 }
 </style>

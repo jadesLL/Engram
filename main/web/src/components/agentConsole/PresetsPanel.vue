@@ -139,7 +139,7 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -173,7 +173,7 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .panel-error p {
   display: flex;
@@ -205,7 +205,7 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
   border-radius: 16px;
   background: var(--card-bg);
   box-shadow: 0 1px 2px rgba(29, 27, 23, 0.035);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 .preset-card.is-current {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
@@ -247,14 +247,14 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
   flex: 1;
   margin: 8px 0 0;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.65;
 }
 .preset-broken {
   margin: 6px 0 0;
   color: var(--warning);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   overflow-wrap: anywhere;
 }
 .preset-actions {
@@ -280,7 +280,7 @@ async function setDefault(preset: PresetItemPayload): Promise<void> {
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: center;
 }
 

@@ -54,8 +54,12 @@
 
     <p v-if="board?.summary" class="summary">{{ board.summary }}</p>
 
-    <div v-if="tasks.loading && !tasks.loaded" class="loading-hint">
-      <AppSpinner :size="14" /> 正在读看板…
+    <!-- 加载骨架（2026-11 加载态）：按看板「标题行 + 三列卡」占位，不再转圈 -->
+    <div v-if="tasks.loading && !tasks.loaded" class="tasks-skeleton" aria-busy="true" aria-label="正在读看板">
+      <AppSkeleton variant="line" width="30%" />
+      <div class="tasks-skeleton-grid">
+        <AppSkeleton v-for="i in 3" :key="i" variant="block" height="130px" />
+      </div>
     </div>
 
     <template v-else-if="board">
@@ -199,6 +203,7 @@ import { useRouter } from 'vue-router';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
+import AppSkeleton from '../components/ui/AppSkeleton.vue';
 import Icon from '../components/Icon.vue';
 import TaskBoardPanels from '../components/taskBoard/TaskBoardPanels.vue';
 import TaskMonthBoard from '../components/taskBoard/TaskMonthBoard.vue';
@@ -610,7 +615,7 @@ onBeforeUnmount(() => {
   letter-spacing: -0.2px;
 }
 
-.page-head .sub { font-size: 12.5px; color: var(--text-faint); }
+.page-head .sub { font-size: var(--font-sm); color: var(--text-faint); }
 .spacer { flex: 1; }
 .head-actions { display: flex; align-items: center; gap: 8px; }
 
@@ -624,7 +629,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: var(--accent-soft);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .running-bar b { color: var(--text); font-weight: 600; }
@@ -638,7 +643,7 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
   padding: 9px 12px;
   border-radius: var(--radius-control);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .notice.danger { background: var(--danger-soft); color: var(--danger); }
@@ -648,7 +653,7 @@ onBeforeUnmount(() => {
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
@@ -661,17 +666,20 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: linear-gradient(90deg, var(--accent-soft), transparent 75%), var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--font-md);
+  line-height: var(--lh-body);
 }
 
-.loading-hint {
+.tasks-skeleton {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-faint);
-  font-size: 12.5px;
+  flex-direction: column;
+  gap: 14px;
   padding: 24px 0;
+}
+.tasks-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
 }
 
 .first-run {
@@ -684,7 +692,7 @@ onBeforeUnmount(() => {
 }
 
 .first-run-title { margin: 6px 0 0; color: var(--text-secondary); font-size: 13.5px; }
-.first-run-hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.8; }
+.first-run-hint { margin: 0; color: var(--text-faint); font-size: var(--fs-small); line-height: 1.8; }
 
 /* ===== 工具条：周 / 月视图切换 + 时间翻页 + 条数 ===== */
 .toolbar {
@@ -708,7 +716,7 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
@@ -737,12 +745,12 @@ onBeforeUnmount(() => {
   min-width: 158px;
   white-space: nowrap;
   text-align: center;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
-.toolbar-count { color: var(--text-secondary); font-size: 12px; }
+.toolbar-count { color: var(--text-secondary); font-size: var(--fs-small); }
 .filter-toggle { display: none; }
 @media (max-width: 768px) {
   .filter-toggle { display: inline-flex; }
@@ -773,7 +781,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   padding-top: 3px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -787,7 +795,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--card-bg);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 18px;
   cursor: pointer;
   transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
@@ -802,7 +810,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.fchip-count { opacity: 0.6; font-size: 11px; }
+.fchip-count { opacity: 0.6; font-size: var(--fs-caption); }
 
 .filter-empty {
   margin: 0 0 14px;
@@ -810,7 +818,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: var(--warn-soft);
   color: var(--warning);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .gaps {
@@ -826,12 +834,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
   color: var(--warning);
 }
 
-.gaps ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.8; }
+.gaps ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: var(--font-sm); line-height: 1.8; }
 .gaps-hint { margin: 8px 0 0; color: var(--text-faint); font-size: 11.5px; }
 
 /* 窄屏：工具条与筛选折行；周/月视图内部自己按 1024 / 640 换形态 */

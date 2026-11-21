@@ -211,7 +211,7 @@ async function toggleSessionLog(): Promise<void> {
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -245,7 +245,7 @@ async function toggleSessionLog(): Promise<void> {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .panel-error p {
   display: flex;
@@ -280,13 +280,13 @@ async function toggleSessionLog(): Promise<void> {
 }
 .card-head h4 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: var(--fs-h3);
   font-weight: 600;
 }
 .card-head p {
   margin: 4px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
 }
 .card-body {
@@ -303,14 +303,14 @@ async function toggleSessionLog(): Promise<void> {
 }
 .setting-copy strong {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .setting-copy span {
   display: block;
   margin-top: 5px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
 }
 .diag-actions {
@@ -333,7 +333,7 @@ async function toggleSessionLog(): Promise<void> {
   gap: 14px;
   padding: 9px 0;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .diag-row:last-child {
   border-bottom: 0;
@@ -381,7 +381,7 @@ async function toggleSessionLog(): Promise<void> {
 }
 .diag-foot {
   margin: 12px 0 0;
-  line-height: 1.7;
+  line-height: var(--lh-body);
 }
 .faint {
   color: var(--text-faint);

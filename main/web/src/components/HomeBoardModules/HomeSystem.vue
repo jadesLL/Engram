@@ -118,7 +118,7 @@ const cells = computed(() => [
   flex: none;
   margin: 9px 0 0;
   font-size: 9.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;

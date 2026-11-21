@@ -502,7 +502,7 @@ watch(() => [info.value.repoUrl, info.value.authType, info.value.username], sync
   height: 100%;
   border-radius: 3px;
   background: var(--accent, #3b82f6);
-  transition: width 200ms ease;
+  transition: width var(--motion-base) var(--ease-standard);
 }
 
 /* 更新内容：纯文本列表 + 行间细线，不套外框、不铺灰底（去卡中卡） */
@@ -513,7 +513,7 @@ watch(() => [info.value.repoUrl, info.value.authType, info.value.username], sync
 .update-notes-caption {
   margin: 0 0 6px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
 }
 .update-notes ul {
@@ -524,7 +524,7 @@ watch(() => [info.value.repoUrl, info.value.authType, info.value.username], sync
 }
 .update-notes li {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
   overflow-wrap: anywhere;
 }

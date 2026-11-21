@@ -184,7 +184,12 @@
           </button>
         </div>
 
-        <div v-if="loading" class="gv-state"><AppSpinner :size="16" /> 正在加载图谱…</div>
+        <!-- 加载骨架（2026-11 加载态）：三行暖纸微光占位，不再转圈 -->
+        <div v-if="loading" class="gv-state gv-state-loading" aria-busy="true" aria-label="正在加载图谱">
+          <AppSkeleton variant="line" width="72%" />
+          <AppSkeleton variant="line" width="92%" />
+          <AppSkeleton variant="line" width="56%" />
+        </div>
         <div v-else-if="loadError" class="gv-state error">
           <p>{{ loadError }}</p>
           <button class="gv-btn" @click="load">重试</button>
@@ -256,7 +261,7 @@ import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, watch, nex
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
-import AppSpinner from '../components/ui/AppSpinner.vue';
+import AppSkeleton from '../components/ui/AppSkeleton.vue';
 import Icon from '../components/Icon.vue';
 import { notify } from '../lib/notify';
 import { createGraphFrame } from '../lib/graphFrame';
@@ -891,21 +896,23 @@ function cssVar(el: HTMLElement | undefined, name: string, fallback: string) {
   const v = el ? getComputedStyle(el).getPropertyValue(name).trim() : '';
   return v || fallback;
 }
+/** 图谱画布系列色（2026-11 图表配色）：从全站令牌读（--chart-*，见 claude-code.css），主题切换即刷新 */
 let palette = {
-  bg: '#fafafa', edge: 'rgba(99,91,113,.18)', edgeHot: '#7657c8',
-  label: '#55515e', labelHot: '#33313a', node: '#777181', nodeHot: '#514b60',
-  focus: '#7657c8',
+  bg: '#f7f5ef', edge: 'rgba(122,106,78,.18)', edgeHot: '#d97757',
+  label: '#736e60', labelHot: '#1f1e1b', node: '#7a7466', nodeHot: '#4c473b',
+  focus: '#d97757',
 };
 function refreshPalette() {
-  const dark = app.dark;
+  const el = rootRef.value;
   palette = {
-    bg: cssVar(rootRef.value, '--bg', dark ? '#1e1e1e' : '#fafafa'),
-    edge: dark ? 'rgba(171,165,186,.18)' : 'rgba(99,91,113,.18)',
-    edgeHot: dark ? '#b59af6' : '#7657c8',
-    label: dark ? '#b8b3c2' : '#55515e',
-    labelHot: dark ? '#e6e2ed' : '#33313a',
-    node: dark ? '#aba5b7' : '#777181', nodeHot: dark ? '#ddd8e7' : '#514b60',
-    focus: dark ? '#b59af6' : '#7657c8',
+    bg: cssVar(el, '--bg', app.dark ? '#141413' : '#f7f5ef'),
+    edge: cssVar(el, '--chart-edge', app.dark ? 'rgba(236,229,214,.14)' : 'rgba(122,106,78,.18)'),
+    edgeHot: cssVar(el, '--chart-edge-hot', app.dark ? '#e08a6a' : '#d97757'),
+    label: cssVar(el, '--chart-label', app.dark ? '#837d71' : '#736e60'),
+    labelHot: cssVar(el, '--chart-label-hot', app.dark ? '#e9e5da' : '#1f1e1b'),
+    node: cssVar(el, '--chart-node', app.dark ? '#b3ada0' : '#7a7466'),
+    nodeHot: cssVar(el, '--chart-node-hot', app.dark ? '#e9e5da' : '#4c473b'),
+    focus: cssVar(el, '--chart-focus', app.dark ? '#e08a6a' : '#d97757'),
   };
 }
 const theme = () => palette;
@@ -1449,19 +1456,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 2026-11 令牌还债（ui-polish-round1）：组件内写死的一套紫色调色板已删——
+   全部语义令牌（--bg/--text/--accent…）直接继承 html:root 的全站主题，
+   claude-code.css 里为这里做的整组换色补丁也随之删除。 */
 .graph-view {
-  --bg: #fafafa; --bg-secondary: #f3f2f5; --bg-tertiary: #eeedf1; --card-bg: #ffffff;
-  --text: #33313a; --text-secondary: #696572; --text-faint: #77717f;
-  --border: #e4e2e8; --border-strong: #cac6d1; --bg-hover: #eeedf2;
-  --accent: #7657c8; --accent-hover: #6344b5; --accent-soft: #eee8fb; --on-accent: #fff;
   height: 100%; position: relative; isolation: isolate; display: flex; flex-direction: column;
   overflow: hidden; background: var(--bg); color: var(--text);
-}
-.graph-view.dark {
-  --bg: #1e1e1e; --bg-secondary: #29272d; --bg-tertiary: #302d35; --card-bg: #252429;
-  --text: #e0dce7; --text-secondary: #b4aebf; --text-faint: #aaa3b4;
-  --border: #39353f; --border-strong: #534d5e; --bg-hover: #34303c;
-  --accent: #b59af6; --accent-hover: #c3adfa; --accent-soft: #383045; --on-accent: #241d32;
 }
 button { font: inherit; cursor: pointer; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
@@ -1473,7 +1473,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-brand b { color: var(--text); font-size: 14px; font-weight: 600; }
 .gv-seg { display: flex; gap: 2px; }
 .gv-seg button {
-  appearance: none; border: 0; background: transparent; font-size: 13px;
+  appearance: none; border: 0; background: transparent; font-size: var(--font-md);
   color: var(--text-secondary); padding: 6px 10px; border-radius: 4px; white-space: nowrap;
   transition: background .16s, color .16s;
 }
@@ -1485,12 +1485,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   flex: 1; min-width: 150px; max-width: 260px; color: var(--text-faint); transition: border-color .16s;
 }
 .gv-search:focus-within { border-color: var(--accent); }
-.gv-search input { border: 0; background: transparent; outline: none; font: inherit; font-size: 13px; color: var(--text); width: 100%; min-width: 0; }
+.gv-search input { border: 0; background: transparent; outline: none; font: inherit; font-size: var(--font-md); color: var(--text); width: 100%; min-width: 0; }
 .gv-chips { display: flex; gap: 6px; align-items: center; overflow-x: auto; order: 5; width: 100%; }
 .gv-chips:empty { display: none; }
 .gv-chip {
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 10px;
-  border-radius: 99px; font-size: 12px; background: var(--accent-soft); color: var(--accent);
+  border-radius: 99px; font-size: var(--fs-small); background: var(--accent-soft); color: var(--accent);
 }
 .gv-chip button { border: 0; background: transparent; color: inherit; padding: 0 2px; font-size: 16px; }
 .gv-actions { display: flex; gap: 6px; margin-left: auto; }
@@ -1500,7 +1500,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   transition: color .16s, background .16s, border-color .16s;
 }
 .gv-icon { width: 30px; flex: none; font-size: 19px; }
-.gv-tool { gap: 6px; padding: 0 11px; font-size: 13px; white-space: nowrap; }
+.gv-tool { gap: 6px; padding: 0 11px; font-size: var(--font-md); white-space: nowrap; }
 .gv-icon:hover, .gv-tool:hover { color: var(--text); background: var(--bg-hover); border-color: var(--border); }
 .gv-icon.on, .gv-tool.on { color: var(--accent); background: var(--accent-soft); }
 .gv-main { flex: 1; display: flex; min-height: 0; position: relative; }
@@ -1510,38 +1510,38 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   background: var(--card-bg); overflow-y: auto; padding: 12px;
   box-shadow: 0 4px 18px rgba(0,0,0,.06); overscroll-behavior: contain;
 }
-.gv-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; font-size: 13px; }
+.gv-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; font-size: var(--font-md); }
 .gv-panel-head > div { display: flex; align-items: center; gap: 5px; }
 .gv-panel-head .gv-panel-close { width: 26px; height: 26px; font-size: 21px; padding: 0; border-radius: 4px; }
 .gv-panel-close:hover { background: var(--bg-hover); }
 .gv-section { border-top: 1px solid var(--border); }
-.gv-section > summary { padding: 12px 2px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.gv-section > summary { padding: 12px 2px; cursor: pointer; font-size: var(--font-md); font-weight: 600; }
 .gv-section > summary::marker, .gv-advanced > summary::marker { color: var(--text-faint); }
 .gv-section-body { padding: 0 2px 10px; }
 .gv-section-body > input[type='range'] { width: 100%; margin: 8px 0; accent-color: var(--accent); }
-.gv-advanced > summary { cursor: pointer; padding: 8px 4px 12px; font-size: 12px; color: var(--text-secondary); }
+.gv-advanced > summary { cursor: pointer; padding: 8px 4px 12px; font-size: var(--fs-small); color: var(--text-secondary); }
 .gv-advanced .gv-fgroup:first-of-type { padding-top: 8px; }
 .gv-panel-head b { font-weight: 600; }
-.gv-panel-head button { border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; padding: 4px; }
+.gv-panel-head button { border: 0; background: transparent; color: var(--text-secondary); font-size: var(--fs-small); padding: 4px; }
 .gv-panel-head button:hover { color: var(--accent); }
 .gv-fgroup { padding: 0 0 10px; }
 .gv-fgroup + .gv-fgroup { padding-top: 2px; }
 .gv-fgroup h4 {
-  margin: 0 4px 8px; font-size: 12px; color: var(--text-secondary); font-weight: 600;
+  margin: 0 4px 8px; font-size: var(--fs-small); color: var(--text-secondary); font-weight: 600;
   display: flex; justify-content: space-between; align-items: center;
 }
-.gv-fgroup h4 button { border: 0; background: transparent; color: var(--text-faint); font-size: 12px; padding: 2px; }
+.gv-fgroup h4 button { border: 0; background: transparent; color: var(--text-faint); font-size: var(--fs-small); padding: 2px; }
 .gv-fgroup h4 button:hover { color: var(--accent); }
 .gv-frow {
   appearance: none; border: 0; background: transparent; width: 100%; text-align: left;
   display: flex; align-items: center; gap: 9px; min-height: 30px; padding: 5px 6px; border-radius: 4px;
-  font-size: 13px; color: var(--text-secondary); transition: background .14s, color .14s;
+  font-size: var(--font-md); color: var(--text-secondary); transition: background .14s, color .14s;
 }
 .gv-frow:hover { background: var(--bg-hover); color: var(--text); }
 .gv-frow.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .gv-frow .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .gv-frow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gv-frow .ct { min-width: 24px; text-align: right; font-size: 12px; color: var(--text-secondary); padding: 1px 4px; font-variant-numeric: tabular-nums; }
+.gv-frow .ct { min-width: 24px; text-align: right; font-size: var(--fs-small); color: var(--text-secondary); padding: 1px 4px; font-variant-numeric: tabular-nums; }
 .gv-frow.on .ct { color: var(--accent); }
 .gv-frow.switch { cursor: pointer; }
 .gv-sw { position: relative; width: 32px; height: 18px; flex: none; }
@@ -1552,7 +1552,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-sw input:checked + i::after { transform: translateX(14px); }
 .gv-sw input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 3px; }
 .gv-range { padding: 2px 8px 0; }
-.gv-range .lbl { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.gv-range .lbl { display: flex; justify-content: space-between; gap: 6px; font-size: var(--fs-small); color: var(--text-secondary); }
 .gv-range input[type='range'] { width: 100%; accent-color: var(--accent); margin: 5px 0; }
 .gv-stage {
   position: relative; flex: 1; min-width: 0; overflow: hidden; background-color: var(--bg);
@@ -1562,13 +1562,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-canvas.over { pointer-events: none; }
 .gv-stats {
   position: absolute; left: 20px; top: 18px; z-index: 5; display: flex; align-items: center; gap: 10px;
-  font-size: 12px; color: var(--text-secondary); pointer-events: none;
+  font-size: var(--fs-small); color: var(--text-secondary); pointer-events: none;
 }
 .gv-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .gv-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
 .gv-status-dot.busy { background: var(--accent); }
-.gv-layout-state { border-left: 1px solid var(--border-strong); padding-left: 10px; font-size: 12px; }
-.gv-help { position: absolute; bottom: 22px; left: 20px; color: var(--text-secondary); font-size: 12px; pointer-events: none; }
+.gv-layout-state { border-left: 1px solid var(--border-strong); padding-left: 10px; font-size: var(--fs-small); }
+.gv-help { position: absolute; bottom: 22px; left: 20px; color: var(--text-secondary); font-size: var(--fs-small); pointer-events: none; }
 .gv-hud {
   position: absolute; right: 20px; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 3px;
   padding: 3px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
@@ -1576,46 +1576,47 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-hud .gv-icon { background: transparent; }
 .gv-hud .gv-icon:hover { background: var(--bg-hover); }
 .gv-hud .gv-icon.on { background: var(--accent-soft); }
-.gv-zoom { font-size: 12px; width: 44px; text-align: center; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.gv-trow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
-.gv-trow output { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
-.gv-treset { width: 100%; min-height: 34px; margin-top: 14px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); }
+.gv-zoom { font-size: var(--fs-small); width: 44px; text-align: center; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.gv-trow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: var(--font-md); color: var(--text-secondary); }
+.gv-trow output { color: var(--text); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+.gv-treset { width: 100%; min-height: 34px; margin-top: 14px; font-size: var(--font-md); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); }
 .gv-treset:hover { background: var(--bg-hover); color: var(--text); }
 .gv-tip { position: absolute; z-index: 6; pointer-events: none; max-width: min(240px, calc(100% - 16px)); padding: 12px 14px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .gv-tip .t { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
 .gv-tip .t i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.gv-tip .m { margin-top: 6px; font-size: 12px; color: var(--text-secondary); display: flex; gap: 8px; flex-wrap: wrap; }
-.gv-tip .g { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+.gv-tip .m { margin-top: 6px; font-size: var(--fs-small); color: var(--text-secondary); display: flex; gap: 8px; flex-wrap: wrap; }
+.gv-tip .g { margin-top: 6px; font-size: var(--fs-small); color: var(--text-secondary); }
 .gv-state { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(340px, calc(100% - 40px)); display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text-secondary); z-index: 7; text-align: center; }
 .gv-state strong { font-size: 17px; color: var(--text); }
-.gv-state span { font-size: 13px; line-height: 1.7; }
+.gv-state span { font-size: var(--font-md); line-height: var(--lh-body); }
 .gv-state.error { color: var(--danger); }
+.gv-state-loading { width: min(460px, calc(100% - 40px)); }
 .gv-state .gv-btn { flex: none; padding: 0 16px; }
 .gv-detail { padding: 14px; }
-.gv-kind { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.gv-kind { font-size: var(--fs-small); color: var(--text-secondary); line-height: 1.6; }
 .gv-detail h3 { margin: 8px 0; font-size: 18px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.gv-detail h5 { margin: 18px 0 8px; font-size: 13px; color: var(--text); font-weight: 600; }
+.gv-detail h5 { margin: 18px 0 8px; font-size: var(--font-md); color: var(--text); font-weight: 600; }
 .gv-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 8px; margin: 14px 0; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.gv-nums div { font-size: 12px; color: var(--text-secondary); }
+.gv-nums div { font-size: var(--fs-small); color: var(--text-secondary); }
 .gv-nums b { display: block; margin-bottom: 5px; font-size: 18px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .gv-nums span { display: flex; align-items: center; gap: 5px; }
 .gv-nums i { width: 5px; height: 5px; border-radius: 50%; }
 .gv-tagbox { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.gv-tag { border: 0; font-size: 12px; padding: 5px 9px; border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); transition: background .16s, color .16s; }
-.gv-tag b { margin-left: 4px; font-size: 11px; font-weight: 500; }
+.gv-tag { border: 0; font-size: var(--fs-small); padding: 5px 9px; border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); transition: background .16s, color .16s; }
+.gv-tag b { margin-left: 4px; font-size: var(--fs-caption); font-weight: 500; }
 .gv-tag:hover { background: var(--accent-soft); color: var(--accent); }
 .gv-btnrow { display: flex; gap: 8px; margin: 18px 0 2px; }
-.gv-btn { font-size: 13px; flex: 1; min-height: 36px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card-bg); color: var(--text); transition: background .16s; }
+.gv-btn { font-size: var(--font-md); flex: 1; min-height: 36px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card-bg); color: var(--text); transition: background .16s; }
 .gv-btnrow .gv-btn:first-child, .gv-state .gv-btn { background: var(--action-solid); color: var(--on-action-solid); border-color: transparent; }
 .gv-btn:hover { background: var(--bg-hover); }
 .gv-btnrow .gv-btn:first-child:hover, .gv-state .gv-btn:hover { background: var(--action-solid-hover); }
 .gv-rel { display: flex; flex-direction: column; gap: 3px; }
-.gv-rel button { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; padding: 9px 5px; border-radius: 6px; text-align: left; font-size: 13px; color: var(--text-secondary); }
+.gv-rel button { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; padding: 9px 5px; border-radius: 6px; text-align: left; font-size: var(--font-md); color: var(--text-secondary); }
 .gv-rel button:hover { background: var(--bg-hover); color: var(--text); }
 .gv-rel button i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .gv-rel button span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
-.gv-rel button em { font-style: normal; margin-left: auto; color: var(--text-faint); font-size: 11px; max-width: 42%; overflow-wrap: anywhere; }
-.faint { color: var(--text-faint); font-size: 13px; }
+.gv-rel button em { font-style: normal; margin-left: auto; color: var(--text-faint); font-size: var(--fs-caption); max-width: 42%; overflow-wrap: anywhere; }
+.faint { color: var(--text-faint); font-size: var(--font-md); }
 button:active { transform: scale(.97); }
 .graph-panel-enter-active, .graph-panel-leave-active { transition: opacity .16s ease, transform .16s ease; }
 .graph-panel-enter-from, .graph-panel-leave-to { opacity: 0; transform: translateX(6px); }
