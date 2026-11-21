@@ -209,9 +209,9 @@ test('吸顶抬头贴住列头：列体不吃上内边距，呼吸位挪到第�
  * 目录满窗与 Agent 满窗原来是同一层（--z-subpanel），Agent 在 DOM 里更靠后，整片盖住
  * 目录头部——「展开全部类目」既点不到，展开后也看不到列体。修法两半：
  * ① Agent 从目录头下方（--kb-head-h）开始铺，目录头始终留在它之上可点；
- * ② 全部展开时把 Agent 收起，收起全部类目或退出满窗时按展开前的开/关状态恢复。
+ * ② 全部展开时把 Agent 收起，收起全部类目时按展开前的开/关状态恢复。
  */
-test('满窗目录与内置 Agent：展开全部时 Agent 让位，收起或退出满窗时恢复原状态', () => {
+test('满窗目录与内置 Agent：展开全部时 Agent 让位，收起全部类目时恢复原状态', () => {
   assert.match(sidebar, /let restoreChatForFullGroups = false/, '没有记住「展开前 Agent 是否开着」');
   assert.match(
     sidebar,
@@ -223,10 +223,11 @@ test('满窗目录与内置 Agent：展开全部时 Agent 让位，收起或退�
     /else if \(restoreChatForFullGroups\) \{\s*restoreChatForFullGroups = false;\s*app\.toggleChat\(true\);/,
     '收起全部类目时没有恢复 Agent'
   );
-  assert.match(
+  // 退出满窗（Esc / 导航）不自动恢复：导航时把 Agent 弹回来会盖住刚打开的页面
+  assert.doesNotMatch(
     sidebar,
-    /watch\(\s*\(\) => app\.sidebarFull,[\s\S]{0,220}?app\.toggleChat\(true\)/,
-    '退出满窗时没有恢复被收起期间的 Agent'
+    /watch\(\s*\(\) => app\.sidebarFull/,
+    '退出满窗又自动恢复了 Agent，会和导航时的「满窗 Agent 收起」规则打架'
   );
   // 用户在展开状态下自己重新打开 Agent，就不再替他恢复，避免收起类目时重复开/关
   assert.match(
