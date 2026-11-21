@@ -1116,6 +1116,21 @@ async function renderMarkdown() {
     prepareLinks(next);
     /* 纪要文首的「来源/会议时间/链接/整理说明」引用块折成一行，点开再看详情 */
     promoteSourceCitations(next);
+    /* Vditor 的 highlight.js 是异步脚本：首次渲染经常在脚本就绪前完成，代码块落成纯文本
+     * 还被存进渲染缓存（阅读态从此一直无高亮，2026-11-22 验收样张复现）。这里在 preview
+     * 落地后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块用已就绪的
+     * window.hljs 现场补——缓存捕获的是补完后的 HTML，不会再固化无高亮版本。 */
+    if (window.hljs) {
+      next.querySelectorAll('pre code').forEach((el) => {
+        const block = el as HTMLElement;
+        if (block.classList.contains('hljs')) return;
+        try {
+          window.hljs.highlightElement(block);
+        } catch {
+          /* 未知语言等高亮失败不阻塞正文渲染 */
+        }
+      });
+    }
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
     // 小页也进缓存（主题切换会重跑整页渲染，见 renderCache 注释）
