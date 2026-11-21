@@ -208,6 +208,7 @@ Engram 不是一个产品抄三份，而是**一套产品内核 + 三个运行�
 | 手势 | 拖拽分栏、拖放 | 下拉刷新（真对账）、卡片三向滑动、抽屉横滑、长按多选 |
 | 批量 | Shift 多选、全选 | 长按进选择态、整列勾选、批量动作条 |
 | 通知 | 更新图标/标题栏 | 贴底 Snackbar、系统通知（下载完成）、轻振 |
+| 界面缩放 | `Ctrl`（⌘）+ 滚轮整页 50%–200%，右上角百分比 + 重置（停手 1.5 秒收起），比例存 `config.json` 并在窗口创建时预置；`Ctrl+0` 复位 | 不接管（无滚轮手势；触屏缩放走系统 / WebView 自带能力，不显示桌面提示） |
 | 数据管理 | 数据目录选择、端口修改、备份/恢复 | 本机私有目录、可移植 v2 备份、卸载删数据提示 |
 | 更新 | 源码模式自更新 / exe 静默安装 / 自动更新 | 仅 OTA，系统安装确认不可省，签名一致才能覆盖 |
 | 设置 | 7 大类双栏 + 锚点 | 账户卡 + 分组列表 + 子页 push |
@@ -269,6 +270,8 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | 后台同步权限（**非 JS 桥**，host + 本地接口）：`BackgroundSyncHost` + `POST /api/sync/background/permissions`；保活为 `SyncGraceService`（`dataSync` 前台服务） | `MainActivity.java`（实现宿主）/ `SyncGraceService.kt` / `SyncPermissions.java` | `lib/backgroundSync.ts` + `SyncPanel.vue`（`/api/sync/status` 的 `background` 字段） | 桌面 / Docker 无 `background` 字段 → 卡片整块隐藏；没有宿主时申请接口为 no-op，状态照常可读 |
 
 **Windows 桥**：`main/desktop/preload.js` 通过 `contextBridge` 暴露 `window.wikiDesktop`（约 30 个方法，见文件）；Web 侧在 19 处调用，全部必须做「无桥不渲染/不调用」判断（样板：`App.vue` 用桥存在性判标题栏；`biometric.ts` 用 null 判降级）。
+
+界面缩放（2026-11-21）：`wikiDesktop.getUiZoom()/setUiZoom(factor)`——主进程把系数写 `config.json`、用 `webContents.setZoomFactor` 做**整页缩放**（CSS 视口与媒体查询一起变，不能用 CSS `zoom` 替代），窗口创建时经 `webPreferences.zoomFactor` 预置记忆值。Web 侧 `lib/uiZoom.ts` 无桥时**不接管** Ctrl/⌘ + 滚轮（Docker 浏览器保留原生缩放，也不显示右上角提示）；Android 无此桥。
 
 **规则**：
 

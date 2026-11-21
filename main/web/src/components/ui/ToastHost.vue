@@ -1,6 +1,21 @@
 <template>
   <Teleport to="body">
     <div class="toast-stack" role="status" aria-live="polite">
+      <!--
+        整页缩放提示（Ctrl + 滚轮）：和通知共用右上角栈，缩放停止 1.5 秒后自动收走。
+        只有桌面壳（有 wikiDesktop.getUiZoom/setUiZoom）才会显示；Docker 浏览器交给原生缩放。
+      -->
+      <Transition name="toast">
+        <div v-if="uiZoomState.visible" class="app-toast zoom-toast">
+          <span class="toast-icon">
+            <Icon name="zoom-in" :size="15" />
+          </span>
+          <div class="toast-body zoom-body">
+            <span class="zoom-text">缩放 <strong class="zoom-value">{{ zoomPercent(uiZoomState.factor) }}%</strong></span>
+            <button type="button" class="zoom-reset" v-tooltip="'重置到 100%（Ctrl+0）'" @click.stop="resetUiZoom">重置</button>
+          </div>
+        </div>
+      </Transition>
       <TransitionGroup name="toast">
         <div
           v-for="item in toastState.items"
@@ -38,6 +53,7 @@
 <script setup lang="ts">
 import Icon from '../Icon.vue';
 import { dismissToast, toastState, type ToastAction, type ToastItem, type ToastKind } from '../../lib/notify';
+import { resetUiZoom, uiZoomState, zoomPercent } from '../../lib/uiZoom';
 
 function iconFor(kind: ToastKind): string {
   if (kind === 'success') return 'check';
@@ -126,6 +142,44 @@ function onCardClick(item: ToastItem) {
   word-break: break-word;
 }
 .toast-title + .toast-text { margin-top: 3px; }
+
+/*
+ * 缩放提示：一行「缩放 125% + 重置」，不铺底、不加色条，和普通通知同款卡片。
+ * 数值用等宽数字，连续滚轮时百分比不会左右抖动。
+ */
+.zoom-toast .toast-icon { color: var(--accent); }
+.zoom-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.zoom-text {
+  flex: 1;
+  font-size: var(--font-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.zoom-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.zoom-reset {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--card-bg);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.zoom-reset:hover {
+  background: var(--accent-soft, var(--bg-hover));
+  border-color: var(--accent);
+}
 
 .toast-actions {
   display: flex;
