@@ -215,7 +215,7 @@ onMounted(() => {
 }
 .search-box.focused {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft), 0 4px 14px -4px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 0 0 2px var(--accent-soft), 0 4px 14px rgba(0, 0, 0, 0.08);
 }
 .search-box-icon { flex: none; color: var(--text-faint); }
 .search-input {

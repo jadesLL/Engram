@@ -3152,7 +3152,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
-  box-shadow: 0 10px 22px -14px rgba(43, 92, 230, 0.7);
+  box-shadow: 0 6px 16px rgba(43, 92, 230, 0.28);
   transition: background 0.14s ease, transform 0.12s ease;
 }
 
@@ -3530,7 +3530,7 @@ onBeforeUnmount(() => {
   padding: 8px 16px calc(18px + var(--safe-bottom));
   border-radius: 24px 24px 0 0;
   background: var(--card-bg);
-  box-shadow: 0 -18px 60px -20px rgba(20, 18, 15, 0.35);
+  box-shadow: 0 -12px 36px rgba(20, 18, 15, 0.16);
   animation: mi-sheet-up var(--motion-slow) var(--ease-enter) both;
 }
 

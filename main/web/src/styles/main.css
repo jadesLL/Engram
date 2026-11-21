@@ -38,7 +38,8 @@
     0 1px 0 rgba(255,255,255,.85) inset,
     0 -1px 0 rgba(255,255,255,.2) inset,
     0 0 0 1px rgba(255,255,255,.16) inset,
-    0 30px 60px -32px rgba(28,32,60,.5);
+    0 2px 4px rgba(28,32,60,.05),
+    0 10px 24px rgba(28,32,60,.12);
   --glass-filter: blur(32px) saturate(190%);
   /* 玻璃填充三档：soft 只提示体积 / fill 默认卡片 / strong 承载文字与浮层 */
   --glass-fill-strong: rgba(255,255,255,.46);
@@ -99,7 +100,12 @@
   --control-bg-pressed: #edeae7;
   --control-border: rgba(0, 0, 0, 0.06);
   --control-border-strong: rgba(0, 0, 0, 0.17);
-  /* 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） / card 内容卡（浮层分层：软投影分层，hover 抬升加深） */
+  /*
+   * 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） / card 内容卡（浮层分层：软投影分层，hover 抬升加深）
+   * 规则：大阴影不要用超过 -4px 的负 spread——box-shadow 的有效圆角是「元素圆角 + spread」，
+   * 负到比圆角还大时阴影会变成直角矩形，卡片是圆的、影子却是方的（2026-11-21 全站修过一轮）。
+   * 想要「收窄、只露底边」的效果，用「短偏移 + 小 blur + 低透明度」叠两层，而不是大负 spread。
+   */
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
   --shadow-raised: 0 1px 2px rgba(31, 30, 29, 0.05), 0 2px 8px -2px rgba(31, 30, 29, 0.06);
@@ -108,7 +114,7 @@
     0 1px 0 rgba(255,255,255,.95) inset,
     0 -1px 0 rgba(255,255,255,.25) inset,
     0 0 0 1px rgba(255,255,255,.22) inset,
-    0 36px 70px -34px rgba(28,32,60,.55);
+    0 16px 36px rgba(28,32,60,.16);
   --radius: 14px;
   --radius-control: 9px;
   /*
@@ -121,7 +127,7 @@
   --card-line: #e9e5dd;
   --card-line-soft: #f1eee7;
   --card-shadow: 0 1px 2px rgba(30, 27, 22, 0.035);
-  --card-shadow-hover: 0 1px 2px rgba(30, 27, 22, 0.04), 0 16px 32px -26px rgba(30, 27, 22, 0.35);
+  --card-shadow-hover: 0 1px 2px rgba(30, 27, 22, 0.04), 0 12px 28px rgba(30, 27, 22, 0.12);
   /* AI 强调色：只给 Agent 摘要/建议类内容，不替代品牌蓝 */
   --ai: #bf5b3c;
   --ai-soft: #fbefe9;
@@ -243,7 +249,8 @@ html.dark {
     0 1px 0 rgba(255,255,255,.07) inset,
     0 -1px 0 rgba(255,255,255,.02) inset,
     0 0 0 1px rgba(255,255,255,.04) inset,
-    0 30px 60px -30px rgba(0,0,0,.9);
+    0 2px 4px rgba(0,0,0,.2),
+    0 10px 24px rgba(0,0,0,.38);
   --glass-filter: blur(32px) saturate(150%);
   --bg-secondary: #14161b;
   --bg-tertiary: #1d212a;
@@ -253,7 +260,7 @@ html.dark {
   --card-line: rgba(255, 255, 255, 0.09);
   --card-line-soft: rgba(255, 255, 255, 0.06);
   --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
-  --card-shadow-hover: 0 1px 2px rgba(0, 0, 0, 0.28), 0 16px 32px -24px rgba(0, 0, 0, 0.62);
+  --card-shadow-hover: 0 1px 2px rgba(0, 0, 0, 0.28), 0 12px 28px rgba(0, 0, 0, 0.3);
   --ai: #e0906f;
   --ai-soft: rgba(224, 144, 111, 0.12);
   --ai-line: rgba(224, 144, 111, 0.22);
@@ -277,15 +284,15 @@ html.dark {
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
   --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.36);
   /* 2026-10 方案 A 精修：暗色卡片投影与徽章配色；浮层分层 hover 加深档 */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 32px -14px rgba(0, 0, 0, 0.55);
-  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.36), 0 20px 44px -14px rgba(0, 0, 0, 0.62);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 28px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.36), 0 16px 36px rgba(0, 0, 0, 0.34);
   /* 深色玻璃卡片阴影（2026-11）：沿用同一条玻璃光束，只换成深底上的半透明投影 */
   --shadow-card: var(--glass-shadow);
   --shadow-card-hover:
     0 1px 0 rgba(255,255,255,.1) inset,
     0 -1px 0 rgba(255,255,255,.03) inset,
     0 0 0 1px rgba(255,255,255,.06) inset,
-    0 36px 70px -30px rgba(0,0,0,.95);
+    0 16px 36px rgba(0,0,0,.5);
   --badge-idea: #e5b545;
   --badge-idea-soft: rgba(229, 181, 69, 0.15);
   --badge-concept: #7c9cf5;

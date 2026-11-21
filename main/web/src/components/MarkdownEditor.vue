@@ -4135,7 +4135,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
     padding: 8px 16px calc(14px + var(--safe-bottom));
     border-radius: 22px 22px 0 0;
     background: var(--card-bg);
-    box-shadow: 0 -18px 60px -20px rgba(20, 18, 15, 0.35);
+    box-shadow: 0 -12px 36px rgba(20, 18, 15, 0.16);
     animation: insert-sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .insert-sheet:focus { outline: none; }
