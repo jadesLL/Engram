@@ -103,8 +103,9 @@ test('④ 触控目标：顶栏图标 44、动作条按钮 48、提示字 12.5�
   for (const selector of ['.mi-bar-main', '.mi-bar-sub', '.mi-bar-danger']) {
     assert.match(ruleBody(selector), /height:\s*48px/, selector + ' 不是 48px 触控高度');
   }
-  assert.match(ruleBody('.mi-gesture'), /font-size:\s*12\.5px/, '手势提示还是 12px 小字');
-  assert.match(ruleBody('.mi-card-note'), /font-size:\s*12\.5px/, '卡面说明还是 12px 小字');
+  // 2026-11 令牌还债后提示字走 --font-sm（恒等于 12.5px），字面与令牌都算达标
+  assert.match(ruleBody('.mi-gesture'), /font-size:\s*(12\.5px|var\(--font-sm\))/, '手势提示小于 12.5px（字面或 --font-sm 令牌）');
+  assert.match(ruleBody('.mi-card-note'), /font-size:\s*(12\.5px|var\(--font-sm\))/, '卡面说明小于 12.5px（字面或 --font-sm 令牌）');
   // 视觉高度不足 44 的可点元素：用 ::after 扩命中区
   for (const selector of ['.mi-banner button::after', '.mi-mini::after', '.mi-receipt-undo::after']) {
     const body = ruleBody(selector);
