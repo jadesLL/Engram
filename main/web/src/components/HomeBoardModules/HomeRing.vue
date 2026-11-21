@@ -85,7 +85,7 @@ const topLabel = computed(() => top.value?.label || '');
   min-height: 26px;
   padding: 0;
   border-radius: 0;
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   text-align: left;
 }
 .ring-row + .ring-row { border-top: 1px solid var(--card-line-soft); }

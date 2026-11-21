@@ -111,7 +111,7 @@ function bar(value: number) {
   margin-top: auto;
   padding-top: 9px;
   border-top: 1px solid var(--card-line-soft);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   color: var(--text-faint);
 }
 @container (max-width: 260px) {

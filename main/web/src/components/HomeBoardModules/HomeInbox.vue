@@ -70,7 +70,7 @@ const sample = computed(() =>
   .inbox-hero .big { font-size: 28px; }
   .inbox-hero span:not(.big) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
-.inbox-hero span { font-size: 11.5px; color: var(--text-secondary); }
+.inbox-hero span { font-size: var(--fs-caption); color: var(--text-secondary); }
 .inbox-sub {
   flex: none;
   margin: 0 0 8px;
