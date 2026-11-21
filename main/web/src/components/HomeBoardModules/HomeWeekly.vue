@@ -86,6 +86,13 @@ const totals = computed(() =>
 .week-counts { flex: none; display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .week-new { font-size: 10px; font-weight: 650; color: var(--badge-idea); }
 .week-words { font-size: 10px; color: var(--text-muted, var(--text-faint)); }
+/* 2 格宽：标签列 + 轨道 + 计数放不下，轨道让位、计数改为右对齐可省略 */
+@container (max-width: 260px) {
+  .week-label { width: 42px; }
+  .week-bar { min-width: 12px; }
+  .week-counts { flex: 1; justify-content: flex-end; min-width: 0; }
+  .week-words { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 .week-foot {
   margin-top: auto;
   padding-top: 9px;

@@ -115,8 +115,15 @@ function bar(value: number) {
   color: var(--text-faint);
 }
 @container (max-width: 260px) {
+  /* 2 格宽：46px 数字 + nowrap 单位放不下，单位换行并收一档字号 */
+  .stats-hero { flex-wrap: wrap; row-gap: 2px; }
+  .stats-hero .big { font-size: 30px; }
   .stat-share { display: none; }
-  .stat-lb { width: 46px; }
+  /* 统计行本身也要收：标签 + 轨道 + 数值 + 间距在 134px 内容宽里不能超过 137px */
+  .stat-row { gap: 6px; }
+  .stat-lb { width: 40px; }
+  .stat-bar { min-width: 10px; }
+  .stat-vl { width: 34px; }
   .stats-words { display: none; }
 }
 </style>

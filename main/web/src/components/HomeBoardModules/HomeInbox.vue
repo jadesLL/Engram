@@ -65,6 +65,11 @@ const sample = computed(() =>
   font-variant-numeric: lining-nums tabular-nums;
 }
 .inbox-hero .big.zero { color: var(--text-faint); }
+/* 2 格宽：44px 数字 + 说明放不下；说明允许收缩省略，不再被压成一字一行 */
+@container (max-width: 260px) {
+  .inbox-hero .big { font-size: 28px; }
+  .inbox-hero span:not(.big) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 .inbox-hero span { font-size: 11.5px; color: var(--text-secondary); }
 .inbox-sub {
   flex: none;

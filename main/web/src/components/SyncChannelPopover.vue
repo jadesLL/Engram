@@ -534,6 +534,11 @@ function openSettings(): void {
 .po-current :deep(svg) { flex: none; margin-top: 2px; color: var(--channel); }
 .po-current strong { flex: none; color: var(--channel); font-weight: 600; }
 .po-current span { min-width: 0; color: var(--text-secondary); }
+/* 设备名 / 主机名 / 域名这类长无断点串：在浮层里就地折行，避免顶出卡片 */
+.po-sub,
+.po-current span,
+.po-other-reason,
+.po-other-hint { overflow-wrap: anywhere; }
 
 /* IPv4 降级 / 断开：色块跟着状态走（通道色仍由顶部的点与标题交代） */
 .po-current.tone-warn { background: var(--warn-soft); }

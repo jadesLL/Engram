@@ -276,8 +276,8 @@ onMounted(() => {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 .hit:hover { border-color: var(--accent); box-shadow: var(--shadow); }
-.hit-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.hit-name { font-size: 14.5px; font-weight: 650; }
+.hit-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; min-width: 0; }
+.hit-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 650; }
 .hit-badge {
   flex: none;
   padding: 1px 7px;

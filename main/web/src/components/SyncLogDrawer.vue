@@ -717,13 +717,16 @@ async function askClear(): Promise<void> {
 .log-title .spacer { flex: 1; }
 
 .state-pill {
-  height: 20px;
-  padding: 0 8px;
+  height: auto;
+  min-height: 20px;
+  max-width: 60%;
+  padding: 2px 8px;
   display: inline-flex;
   align-items: center;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
+  line-height: 1.4;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
@@ -1008,9 +1011,9 @@ async function askClear(): Promise<void> {
 
 .log-row .tags {
   display: inline-flex;
-  gap: 5px;
+  gap: 4px 5px;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 .log-row .tag {
   min-width: 52px;
@@ -1146,11 +1149,11 @@ async function askClear(): Promise<void> {
 
 .data-grid {
   display: grid;
-  grid-template-columns: minmax(90px, max-content) 1fr;
+  grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
   gap: 3px 10px;
   font-size: 11.5px;
 }
-.data-grid .dk { color: var(--text-faint); }
+.data-grid .dk { min-width: 0; color: var(--text-faint); overflow-wrap: anywhere; }
 .data-grid .dv {
   color: var(--text-secondary);
   word-break: break-all;

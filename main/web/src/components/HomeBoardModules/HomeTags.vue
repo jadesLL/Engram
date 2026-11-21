@@ -58,10 +58,16 @@ function bar(count: number) {
 .tag-row:nth-child(-n+2) { border-top: 0; }
 .tag-row:hover .tag-name { color: var(--accent); }
 .tag-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.tag-name { flex: none; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.tag-name { flex: 0 1 auto; min-width: 0; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 .tag-bar { flex: 1; min-width: 16px; height: 3px; border-radius: 2px; background: var(--card-line-soft); overflow: hidden; }
 .tag-bar i { display: block; height: 100%; border-radius: 2px; background: var(--text-faint); }
 .tag-row b { flex: none; width: 18px; text-align: right; font-size: 9.5px; font-weight: 650; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+/* 2 格宽：两列每列只剩约 60px，名字可省略、轨道与计数收窄，避免画出列边界 */
+@container (max-width: 260px) {
+  .tag-row { gap: 4px; }
+  .tag-name { max-width: 48px; }
+  .tag-bar { min-width: 10px; }
+}
 .tags-foot {
   margin-top: auto;
   padding-top: 9px;

@@ -1453,6 +1453,7 @@ onUnmounted(() => {
 }
 .setting-note.sync-device-name {
   margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- 中枢：绑定地址与成员列表（行间细线，不再每行套灰底） ---------- */
@@ -1500,11 +1501,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .peer-meta {
   color: var(--text-secondary);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .peer-token {
   display: flex;

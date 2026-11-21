@@ -124,6 +124,12 @@ watch(
 }
 .roam-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .roam-hint { font-size: 9.5px; }
+/* 2 格宽：三枚动作 + 说明放不下，先藏次要项并允许换行 */
+@container (max-width: 260px) {
+  .roam-top .roam-time { display: none; }
+  .roam-actions { flex-wrap: wrap; }
+  .roam-actions .roam-hint { display: none; }
+}
 .roam-open {
   margin-left: auto;
   display: inline-flex;
