@@ -337,8 +337,18 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 .board :is(.mini-task, .stat-row, .tag-row, .week-row, .section-row, .ring-row, .summary-row, .activity-item, .hb-row, .heat-recent-day) {
   border-radius: 6px;
 }
+/*
+ * 悬停底色必须跟着 6px 圆角走。模块 scoped 里为了「直的分隔线」写了 border-radius: 0，
+ * 与上面这条特异性相同且组件样式后加载，会把圆角覆盖回 0——结果悬停时是一块直角灰底
+ * （2026-11-21 用户报「还是直角的阴影」）。悬停/聚焦态用 :hover / :focus-visible 抬一级
+ * 优先级，只在有底色或焦点环时补圆角；这些行默认态仍是直角，分隔线不会被弯起来。
+ */
 .board :is(.mini-task, .stat-row, .tag-row, .week-row, .section-row, .ring-row, .summary-row, .activity-item, .hb-row, .heat-recent-day):hover {
+  border-radius: 6px;
   background: var(--cc-hover);
+}
+.board :is(.mini-task, .stat-row, .tag-row, .week-row, .section-row, .ring-row, .summary-row, .activity-item, .hb-row, .heat-recent-day):focus-visible {
+  border-radius: 6px;
 }
 
 /* ---------- 近期待办 ---------- */
