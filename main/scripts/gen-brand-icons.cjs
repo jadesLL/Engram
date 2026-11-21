@@ -106,7 +106,9 @@ const VARIANTS = {
     plateRingCss: 'rgba(31, 30, 27, 0.09)',
     orbit: ['#E08A6A', '#C15F3C'],
     core: ['#E08A6A', '#C15F3C'],
-    electron: '#B8863B',
+    electron: '#F7F5EF',
+    electronStroke: '#1F1E1B',
+    electronStrokeWidth: 1.4,
     wordmark: '#1F1E1B',
     tagline: '#736E60',
   },
@@ -117,7 +119,9 @@ const VARIANTS = {
     plateRingCss: 'rgba(247, 245, 239, 0.09)',
     orbit: ['#E08A6A', '#C15F3C'],
     core: ['#E08A6A', '#C15F3C'],
-    electron: '#D9A441',
+    electron: '#F7F5EF',
+    electronStroke: '#1F1E1B',
+    electronStrokeWidth: 1.4,
     wordmark: '#FFFFFF',
     tagline: '#C9C9C9',
   },
@@ -151,9 +155,13 @@ function defsBlock(variant, uid) {
 function markShapes(variant, uid, indent) {
   const el = electronPoint();
   const pad = indent || '  ';
+  const v = VARIANTS[variant];
+  const electronStroke = v.electronStroke
+    ? ` stroke="${v.electronStroke}" stroke-width="${n(v.electronStrokeWidth || 1.4)}"`
+    : '';
   return [
     `${pad}<ellipse cx="50" cy="50" rx="${n(G.orbitRx)}" ry="${n(G.orbitRy)}" fill="none" stroke="url(#${uid}-orbit)" stroke-width="${n(G.orbitStroke)}" transform="rotate(${n(G.orbitAngle)} 50 50)"/>`,
-    `${pad}<circle cx="${n(50 + el.x)}" cy="${n(50 + el.y)}" r="${n(G.electronR)}" fill="${VARIANTS[variant].electron}"/>`,
+    `${pad}<circle cx="${n(50 + el.x)}" cy="${n(50 + el.y)}" r="${n(G.electronR)}" fill="${v.electron}"${electronStroke}/>`,
     `${pad}<circle cx="50" cy="50" r="${n(G.coreR)}" fill="url(#${uid}-core)"/>`,
   ].join('\n');
 }
