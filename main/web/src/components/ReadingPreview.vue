@@ -1116,23 +1116,25 @@ async function renderMarkdown() {
     prepareLinks(next);
     /* 纪要文首的「来源/会议时间/链接/整理说明」引用块折成一行，点开再看详情 */
     promoteSourceCitations(next);
-    /* Vditor 的 highlight.js 是异步脚本：首次渲染经常在脚本就绪前完成，代码块落成纯文本
-     * 还被存进渲染缓存（阅读态从此一直无高亮，2026-11-22 验收样张复现）。这里在 preview
-     * 落地后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块用已就绪的
-     * window.hljs 现场补——缓存捕获的是补完后的 HTML，不会再固化无高亮版本。 */
-    const highlightElement = (
-      window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }
-    ).hljs?.highlightElement;
-    if (highlightElement) {
-      next.querySelectorAll('pre code').forEach((el) => {
-        const block = el as HTMLElement;
-        if (block.classList.contains('hljs')) return;
-        try {
-          highlightElement(block);
-        } catch {
-          /* 未知语言等高亮失败不阻塞正文渲染 */
-        }
-      });
+    /* Vditor 的 highlight.js 是异步脚本：preview 返回时脚本经常还没就绪，代码块落成纯文本
+     * 还被存进渲染缓存（阅读态从此一直无高亮，2026-11-22 验收样张复现）。这里等 hljs 到位
+     * （最多 2s）后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块现场补
+     * ——渲染缓存排在高亮之后，不会再固化无高亮版本。 */
+    for (let i = 0; i < 20; i++) {
+      const hljs = (window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }).hljs;
+      if (hljs?.highlightElement) {
+        next.querySelectorAll('pre code').forEach((el) => {
+          const block = el as HTMLElement;
+          if (block.classList.contains('hljs')) return;
+          try {
+            hljs.highlightElement(block);
+          } catch {
+            /* 未知语言等高亮失败不阻塞正文渲染 */
+          }
+        });
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
