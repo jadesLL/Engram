@@ -373,7 +373,15 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   background: transparent;
   position: relative;
 }
-.board .mini-task:hover .mini-check { border-color: var(--cc-ink-3); }
+/*
+ * 待办行悬停不铺底色（2026-11-21 用户报「这个阴影很不自然」）。
+ * 待办行之间没有分隔线，一块内嵌浅灰放在暖纸卡上会被读成孤立的投影；
+ * 悬停反馈交给勾选环与标题字重，触屏（hover: none）不保留悬停残留。
+ */
+.board .mini-task:hover { background: transparent; }
+@media (hover: hover) {
+  .board .mini-task:hover .mini-text { font-weight: 600; }
+}
 
 /* ---------- 运行状态：四行状态点 ---------- */
 .board .status-grid { grid-template-columns: 1fr; gap: 0; }
