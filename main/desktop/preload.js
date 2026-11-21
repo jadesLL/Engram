@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 保存长图：页面传 PNG 字节（ArrayBuffer），主进程弹另存为后落盘。
   // 返回 { filePath } / { canceled } / { error }。
   saveExportFile: (name, bytes) => ipcRenderer.invoke('desktop-save-export', name, bytes),
+  // ---------- 界面缩放（Ctrl + 滚轮） ----------
+  // 读回记忆的缩放系数（1 = 100%）；主进程在窗口创建时已通过 webPreferences.zoomFactor 应用
+  getUiZoom: () => ipcRenderer.invoke('get-ui-zoom'),
+  // 应用并持久化缩放系数（返回最终生效值；主进程按 0.5–2 夹取）
+  setUiZoom: (factor) => ipcRenderer.invoke('set-ui-zoom', factor),
   // ---------- 局域网访问（设置 → 同步群组：把本机当同步中枢时用） ----------
   // 查询开关状态（{ enabled }）：enabled=true 时内嵌服务监听 0.0.0.0，局域网设备可连
   getLanAccess: () => ipcRenderer.invoke('get-lan-access'),

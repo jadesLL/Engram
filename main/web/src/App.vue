@@ -37,6 +37,7 @@ import { loadRuntimeCapabilities } from './lib/capabilities';
 import { registerGlobalBackLayers } from './lib/globalBackLayers';
 import { installJoinLinkReceiver } from './lib/joinLink';
 import { installShareInboxReceiver } from './lib/shareInbox';
+import { installUiZoom } from './lib/uiZoom';
 import { api } from './api';
 import { notify } from './lib/notify';
 import {
@@ -81,6 +82,7 @@ async function settleServerUpdateFeedback(): Promise<void> {
 /** 安卓返回键接管层（全局浮层）的注销函数 */
 let stopBackLayers: (() => void) | null = null;
 let stopShareInbox: (() => void) | null = null;
+let stopUiZoom: (() => void) | null = null;
 onMounted(() => {
   loadRuntimeCapabilities().catch(() => {});
   // 上一次服务器更新是否成功（跨页面刷新结算，成功/回滚都在这里给提示）
@@ -88,6 +90,8 @@ onMounted(() => {
   // 安卓：点别人发来的邀请链接（engram://join?…）打开应用时，把链接交给设置页的同步表单
   installJoinLinkReceiver();
   stopShareInbox = installShareInboxReceiver();
+  // 桌面端整页缩放（Ctrl + 滚轮）：无桌面桥时是空实现，Docker/安卓不接管原生缩放
+  stopUiZoom = installUiZoom();
   if (isDesktop) document.documentElement.classList.add('desktop-frame');
   app.applyTheme();
   // 安卓侧滑返回：先关全局浮层（确认框/长按菜单/资产抽屉/同步日志/记灵感），
@@ -98,6 +102,8 @@ onMounted(() => {
   });
 });
 onUnmounted(() => {
+  stopUiZoom?.();
+  stopUiZoom = null;
   stopShareInbox?.();
   stopBackLayers?.();
   stopBackLayers = null;

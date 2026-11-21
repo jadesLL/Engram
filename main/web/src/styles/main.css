@@ -399,6 +399,17 @@ body {
  */
 html.desktop-frame { --win-titlebar-h: 36px; }
 html.desktop-frame #app { padding-top: var(--win-titlebar-h); }
+/*
+ * 整页缩放时标题栏反缩放：右上角的最小化/最大化/关闭按钮是 Windows 原生绘制的固定
+ * 36 物理像素，融合条如果跟着整页一起放大（150% → 54px）就会和按钮错位。
+ * 这里把标题栏乘 1/z 抵消掉（高度先按 36px 写，再由自身 zoom 回到 36 物理像素），
+ * 内容区留白 --win-titlebar-h 同步乘 1/z，两者仍然对齐；100% 时不加 ui-zoomed。
+ */
+html.desktop-frame.ui-zoomed { --win-titlebar-h: calc(36px * var(--ui-zoom-inverse, 1)); }
+html.desktop-frame.ui-zoomed .win-titlebar {
+  height: 36px;
+  zoom: var(--ui-zoom-inverse, 1);
+}
 .win-titlebar {
   position: fixed;
   top: 0;

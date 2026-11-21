@@ -120,6 +120,26 @@ function validPort(n) {
   return Number.isInteger(n) && n >= 1 && n <= 65535;
 }
 
+// ---------- 界面缩放（Ctrl + 滚轮） ----------
+// 缩放系数存 config.json，窗口创建时经 webPreferences.zoomFactor 预置：
+// 重开应用立即是上次的比例，不会先按 100% 画一帧再跳。渲染层只负责手势、
+// 档位与右上角提示（web/src/lib/uiZoom.ts），真正的整页缩放必须由主进程做，
+// 这样 CSS 视口宽度、媒体查询和 window.innerWidth 才会一起变。
+const UI_ZOOM_MIN = 0.5;
+const UI_ZOOM_MAX = 2;
+function clampUiZoom(value, fallback = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(UI_ZOOM_MAX, Math.max(UI_ZOOM_MIN, Math.round(n * 100) / 100));
+}
+function getUiZoom() {
+  return clampUiZoom(readConfig().uiZoom);
+}
+function applyUiZoom(factor) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.setZoomFactor(factor);
+}
+
 function getLocalPort() {
   const env = Number(process.env.ENGRAM_LOCAL_PORT);
   if (validPort(env)) return env;
@@ -387,6 +407,8 @@ function createWindow({ silent = false } = {}) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 记忆的界面缩放：在首次绘制前就按上次比例排版，避免启动闪一下 100%
+      zoomFactor: getUiZoom(),
     },
   });
   // 启动计时：窗口首次可绘制 + 页面加载完成。did-finish-load 会对启动页（data:）和主界面（http:）
@@ -402,6 +424,9 @@ function createWindow({ silent = false } = {}) {
     }
     startupMark('ui-loaded');
     startupSummary();
+    // 启动页（data:）→ 本地 http 的导航会重算页面缩放，这里按记忆值再对齐一次：
+    // 否则重载/重启后可能停在 100%，和右上角提示的档位对不上（用户以为没记住）
+    win.webContents.setZoomFactor(getUiZoom());
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     openExternally(url);
@@ -1095,6 +1120,19 @@ ipcMain.handle('choose-data-dir', async () => {
     isNew ? `已在 ${target} 新建数据仓库，正在启动本地服务…` : `已切换到 ${target}，正在启动本地服务…`,
   );
   return { dir: target, isNew };
+});
+
+// ---------- 界面缩放（Ctrl + 滚轮） ----------
+// 渲染层算出目标档位后交给主进程：持久化 + 应用到 webContents 的整页缩放。
+ipcMain.handle('get-ui-zoom', () => getUiZoom());
+ipcMain.handle('set-ui-zoom', (_e, raw) => {
+  const next = clampUiZoom(raw, getUiZoom());
+  const cfg = readConfig();
+  if (next === 1) delete cfg.uiZoom; // 回到 100% 即清除记录，config.json 不堆默认值
+  else cfg.uiZoom = next;
+  writeConfig(cfg);
+  applyUiZoom(next);
+  return next;
 });
 
 // 本地服务端口查询（仅本地模式有意义；isDefault=未自定义，envOverridden=环境变量覆写中）

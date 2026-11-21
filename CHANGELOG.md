@@ -15,6 +15,7 @@
 <!-- 合并功能时在这里按分类加一行，格式：- [平台影响: A|B|C|D|E|F|none] 描述（可带需求/PR 号）。
      发版时运行 node scripts/release/release-notes.mjs --render --write 生成本版段落
      （自动带上「安卓端自上一版本以来的累计更新」），不要手写版本段落。 -->
+- [平台影响: B,D] 桌面端新增界面缩放：按住 `Ctrl`（或 `⌘`）滚动滚轮整页缩放（50%–200%，每格一档），缩放时右上角浮出当前百分比与「重置」按钮，停手 1.5 秒自动收起，点「重置」或按 `Ctrl+0` 回到 100%；比例存本机 `config.json`，窗口创建时即按上次比例预置（重开应用不闪 100%）。缩放由主进程 `webContents.setZoomFactor` 执行，CSS 视口、分栏断点与阅读宽度一起变化（没有用 CSS `zoom`，避免媒体查询与物理窗口宽度脱节）；桌面融合标题栏按 1/缩放比反缩放、内容留白同步抵消，Windows 原生最小化/最大化/关闭按钮始终对齐。新增 `wikiDesktop.getUiZoom/setUiZoom` 桥与 `web/src/lib/uiZoom.ts` 单测。Docker 浏览器 / Android 无此桥时不接管 Ctrl + 滚轮，仍走浏览器 / 系统原生缩放（也不显示该提示）。
 - [平台影响: B] 编辑页代码块的语言下拉补中文注解：输入 ``` 后弹出的列表（Vditor 内置绘图语言 + hljs 全部语言名，纯英文）在每个英文语言名后跟一句中文——abc 乐谱 / plantuml UML 图 / mermaid 流程图·时序图 / flowchart 流程节点图 / echarts 数据图表 / mindmap 思维导图 / graphviz 关系网络图 / math 数学公式，另有 js、ts、json、yaml、toml、sql、bash、powershell、bat、dockerfile、diff、纯文本等常见项；注解只改显示，按钮上的 `data-value` 保持原样，选中后写进围栏的仍是 `plantuml` 这类原语言标记（渲染链路不变）。列表每次重绘按 `data-value` 查表补注，未收录的生僻语言不加注解。新增 `web/src/lib/codeBlockLangNotes.ts` 与单测。
 - [平台影响: B] 编辑工具栏（格式工具条）窄正文改「⋯ 更多」收纳：桌面工具栏改单行不换行，放不下的低频按钮按「删除线 / 待办 / 有序列表 / 表格 / 代码块 / 行内代码 / 撤销 / 重做 / 目录 / 沉浸阅读 / 全屏 / 源码切换 / 双链 / AI」顺序搬进右侧 ⋯ 的 Vditor 原生面板——搬的是真实按钮元素，点击、选中态同步与下拉定位照旧，空间回来按原位搬回；标题 / 加粗 / 斜体 / 引用 / 列表 / 链接 恒留工具条，分隔线随收纳自动悬空隐藏。此前窄正文（抽屉 dock / 文件树展开）会把工具栏叠成两三行。手机档（≤768）保持单行横滚不变；AI 菜单与本页目录浮层在按钮进面板后锚点退回 ⋯ 按钮。新增 `web/src/lib/editorToolbarMore.test.ts`。
 
