@@ -5,7 +5,7 @@
  * 语言：终端式等宽 + 暖纸底 + 细框面板 + 陶土点缀。
  *   - 整页一个等宽字族，数字用 tabular-nums；中文回落到 PingFang/雅黑
  *   - 面板不再用纸片投影，改成 1px 细框 + 贴边标题栏（Claude Code 的 tool 块）
- *   - 陶土色只管：✻、composer 的 >、逾期、热力、选中态，其余保持墨色
+ *   - 陶土色只管：composer 的 >、逾期、热力、选中态，其余保持墨色
  *   - 唯一保留「白底 + 发丝框」的是「记个想法」输入条（composer 惯例）
  * 深浅两套都由 --cc-* 令牌驱动，切换 html.dark 即可。
  */
@@ -181,23 +181,11 @@ html.dark .layout.cc-home {
   color: var(--cc-ink-3);
 }
 .layout.cc-home .board-greeting {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
   font-family: var(--cc-mono);
   font-size: clamp(26px, 2.6vw, 34px);
   font-weight: 500;
   letter-spacing: -.025em;
   line-height: 1.16;
-}
-.layout.cc-home .board-greeting::before {
-  content: "✻";
-  flex: none;
-  color: var(--cc-clay);
-  font-size: .62em;
-  font-weight: 400;
-  letter-spacing: 0;
-  transform: translateY(-2px);
 }
 .layout.cc-home .board-sub {
   font-size: 12px;
