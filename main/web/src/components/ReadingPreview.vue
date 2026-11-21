@@ -1120,13 +1120,15 @@ async function renderMarkdown() {
      * 还被存进渲染缓存（阅读态从此一直无高亮，2026-11-22 验收样张复现）。这里在 preview
      * 落地后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块用已就绪的
      * window.hljs 现场补——缓存捕获的是补完后的 HTML，不会再固化无高亮版本。 */
-    const hljs = (window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }).hljs;
-    if (hljs?.highlightElement) {
+    const highlightElement = (
+      window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }
+    ).hljs?.highlightElement;
+    if (highlightElement) {
       next.querySelectorAll('pre code').forEach((el) => {
         const block = el as HTMLElement;
         if (block.classList.contains('hljs')) return;
         try {
-          hljs.highlightElement(block);
+          highlightElement(block);
         } catch {
           /* 未知语言等高亮失败不阻塞正文渲染 */
         }
