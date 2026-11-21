@@ -11,6 +11,8 @@ import './styles/settings.css';
 import './styles/pageExport.css';
 // 首页看板模块之间的公共皮肤（抬头 / 卡片 / 行 / 徽章）：跨组件复用，写在全局表里
 import './styles/homeBoard.css';
+// 「Claude Code」全站主题层：令牌 + 壳层（左轨/目录树/看板/composer），必须最后加载
+import './styles/claude-code.css';
 
 // Android 本地端：接管系统栏安全区与系统返回（侧滑）手势；桌面/网页端是空实现
 installSystemInsets();

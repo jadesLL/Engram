@@ -204,7 +204,6 @@
 
 <script setup lang="ts">
 import { computed, effectScope, nextTick, onMounted, onUnmounted, ref, watch, type ComputedRef } from 'vue';
-import '../styles/claude-code-home.css';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from './Icon.vue';
