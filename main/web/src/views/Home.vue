@@ -468,7 +468,7 @@ function installSidebarSwipe(el: HTMLElement) {
       return;
     }
     const shouldClose = dx < -72;
-    el.style.transition = 'transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
+    el.style.transition = 'transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity var(--motion-base) var(--ease-standard)';
     el.style.transform = '';
     el.style.opacity = '';
     if (shouldClose) closeSidebar();
@@ -1543,7 +1543,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   border-radius: var(--radius-control);
   color: var(--text-secondary);
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 
 .rail-btn:hover {
@@ -1858,7 +1858,7 @@ onUnmounted(() => {
   background: var(--card-bg);
   box-shadow: var(--shadow-raised);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   white-space: nowrap;
   opacity: 0;
@@ -1869,7 +1869,7 @@ onUnmounted(() => {
 .pull-refresh.refreshing { opacity: 1; }
 
 /* 松手回弹才做过渡；跟手中（.pulling）必须一像素不差地贴着手指 */
-.pull-refresh:not(.pulling) { transition: transform 200ms ease, opacity 160ms ease; }
+.pull-refresh:not(.pulling) { transition: transform var(--motion-base) var(--ease-standard), opacity 160ms ease; }
 
 .pull-ring { display: flex; flex: none; }
 .pull-ring svg { display: block; transform: rotate(-90deg); }
@@ -2034,7 +2034,7 @@ html.kb-open .new-fab { display: none; }
 }
 
 .new-action-title { font-size: 15px; font-weight: 600; }
-.new-action-sub { font-size: 12.5px; color: var(--text-secondary); }
+.new-action-sub { font-size: var(--font-sm); color: var(--text-secondary); }
 .new-action-chevron { flex: none; color: var(--text-faint); }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -2284,7 +2284,7 @@ html.kb-open .new-fab { display: none; }
   }
 
   .more-account-sub {
-    font-size: 12.5px;
+    font-size: var(--font-sm);
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
@@ -2379,12 +2379,12 @@ html.kb-open .new-fab { display: none; }
   .more-row-title {
     font-size: 15px;
     font-weight: 550;
-    line-height: 1.35;
+    line-height: var(--lh-tight);
     color: var(--text);
   }
 
   .more-row-sub {
-    font-size: 12px;
+    font-size: var(--fs-small);
     line-height: 1.4;
     color: var(--text-secondary);
     white-space: nowrap;
@@ -2426,7 +2426,7 @@ html.kb-open .new-fab { display: none; }
     border-radius: 10px;
     background: var(--bg-tertiary);
     color: var(--text-secondary);
-    font-size: 12.5px;
+    font-size: var(--font-sm);
     white-space: nowrap;
   }
 
@@ -2443,7 +2443,7 @@ html.kb-open .new-fab { display: none; }
    * 这里只加字号，不抬整条栏（抬高会连带改 .content 的让位高度）。
    */
   @media (hover: none) and (pointer: coarse) {
-    .bottom-nav button span { font-size: 11px; }
+    .bottom-nav button span { font-size: var(--fs-caption); }
   }
 }
 
@@ -2570,7 +2570,7 @@ html.kb-open .new-fab { display: none; }
 
 .more-sheet-enter-active,
 .more-sheet-leave-active {
-  transition: transform 200ms ease, opacity 200ms ease;
+  transition: transform var(--motion-base) var(--ease-standard), opacity var(--motion-base) var(--ease-standard);
 }
 
 .more-sheet-enter-from,

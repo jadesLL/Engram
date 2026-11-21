@@ -302,7 +302,7 @@ function displayName(name: string): string {
   gap: 8px;
 }
 .asset-title h3 { margin: 0; font-size: 14px; font-weight: 650; }
-.asset-title .cnt { color: var(--text-faint); font-size: 12px; }
+.asset-title .cnt { color: var(--text-faint); font-size: var(--fs-small); }
 .asset-title .spacer { flex: 1; }
 
 .icon-btn {
@@ -346,7 +346,7 @@ function displayName(name: string): string {
   padding: 14px 16px 18px;
 }
 
-.asset-hint { margin: 6px 0; color: var(--text-faint); font-size: 12.5px; }
+.asset-hint { margin: 6px 0; color: var(--text-faint); font-size: var(--font-sm); }
 .asset-hint.error { color: var(--danger); }
 
 /* 正文里还有外链图没落本地时的提示条 */
@@ -372,7 +372,7 @@ function displayName(name: string): string {
   font-size: 11.5px;
   line-height: 1.6;
 }
-.remote-warn-text b { color: var(--text); font-size: 12px; }
+.remote-warn-text b { color: var(--text); font-size: var(--fs-small); }
 .remote-warn button {
   flex-shrink: 0;
   height: 24px;
@@ -438,7 +438,7 @@ function displayName(name: string): string {
   min-width: 0;
 }
 .nm {
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -464,7 +464,7 @@ function displayName(name: string): string {
   align-items: center;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--text-secondary);
   text-decoration: none;
   cursor: pointer;
@@ -487,7 +487,7 @@ function displayName(name: string): string {
   /* 不铺底色：卡片是毛玻璃，实心底条会在下缘压出一条不透明的带子（与 Agent 卡片同一处理） */
   color: var(--text-faint);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 
 .asset-preview {

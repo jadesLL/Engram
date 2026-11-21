@@ -73,7 +73,7 @@ const totals = computed(() =>
 }
 .week-row:first-of-type { border-top: 0; }
 .week-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.week-label { flex: none; width: 52px; font-size: 11px; color: var(--text-secondary); }
+.week-label { flex: none; width: 52px; font-size: var(--fs-caption); color: var(--text-secondary); }
 .week-bar {
   flex: 1;
   min-width: 24px;

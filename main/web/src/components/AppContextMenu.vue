@@ -346,7 +346,7 @@ onBeforeUnmount(() => {
 .context-menu-label {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--font-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

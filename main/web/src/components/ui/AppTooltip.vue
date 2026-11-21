@@ -202,8 +202,8 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: var(--card-bg);
   color: var(--text);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: none;
@@ -236,7 +236,7 @@ html.dark .app-tooltip {
 }
 .app-tooltip kbd {
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   padding: 1px 5px;
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
@@ -246,7 +246,7 @@ html.dark .app-tooltip {
 }
 .app-tooltip .tt-meta {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .app-tooltip .tt-arrow {
   position: absolute;

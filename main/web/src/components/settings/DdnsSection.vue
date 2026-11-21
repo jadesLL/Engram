@@ -659,7 +659,7 @@ onUnmounted(() => {
   padding: 10px 0;
   border-top: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .prereq-mark {
@@ -691,7 +691,7 @@ onUnmounted(() => {
   background: transparent;
   padding: 2px 0;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-decoration: none;
 }
 .prereq-steps .prereq-action:hover { text-decoration: underline; }
@@ -704,7 +704,7 @@ onUnmounted(() => {
 .ddns-refresh {
   margin-left: auto;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   white-space: nowrap;
 }
 
@@ -726,7 +726,7 @@ onUnmounted(() => {
 .ddns-families .value-note {
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: right;
 }
 .ddns-families .value-row.ok .value-note { color: var(--success); }
@@ -749,7 +749,7 @@ onUnmounted(() => {
 .ddns-help {
   margin-top: 8px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.65;
 }
 .ddns-help summary,
@@ -757,7 +757,7 @@ onUnmounted(() => {
   cursor: pointer;
   padding: 4px 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .ddns-help ol {
   margin: 6px 0 0;

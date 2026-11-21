@@ -492,7 +492,7 @@ onMounted(() => {
   align-items: center;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   white-space: nowrap;
 }
 .trash-filter {
@@ -543,7 +543,7 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;

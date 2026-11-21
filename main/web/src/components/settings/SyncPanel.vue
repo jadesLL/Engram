@@ -1379,7 +1379,7 @@ onUnmounted(() => {
 }
 .summary-line {
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .summary-line strong.ok { color: var(--success); }
 .summary-line strong.bad { color: var(--danger); }
@@ -1395,7 +1395,7 @@ onUnmounted(() => {
 .sync-error {
   margin: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-small);
   overflow-wrap: anywhere;
 }
 
@@ -1422,7 +1422,7 @@ onUnmounted(() => {
   flex: 1;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .role-option .btn { align-self: flex-start; }
@@ -1430,7 +1430,7 @@ onUnmounted(() => {
   flex: none;
   align-self: center;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 /* ---------- 表单行：控件宽度按字段类型给，移动端回落整行 ---------- */
@@ -1473,7 +1473,7 @@ onUnmounted(() => {
 .address-kind {
   flex: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .address-url {
   flex: 1;
@@ -1500,11 +1500,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 .peer-meta {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .peer-token {
   display: flex;
@@ -1512,7 +1512,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .peer-actions {
   display: flex;
@@ -1547,7 +1547,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   overflow-wrap: anywhere;
 }
 .copy-row .token-code-host {
@@ -1568,7 +1568,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
 }
-.invite-body strong { font-size: 13px; }
+.invite-body strong { font-size: var(--font-md); }
 .invite-body .setting-note { margin: 0; }
 .invite-actions { justify-content: flex-start; }
 
@@ -1640,7 +1640,7 @@ onUnmounted(() => {
   min-width: 0;
   padding: 5px 0;
   border-top: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 .lan-probe-kind {
   flex: none;
@@ -1673,7 +1673,7 @@ onUnmounted(() => {
 .ds-inputs input { width: 92px; }
 .ds-unit {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .dualstack-actions {
   margin: 12px 0 2px;

@@ -75,7 +75,7 @@ html:root {
   --sidebar-hover: var(--cc-hover);
   --sidebar-selection: var(--cc-clay-soft);
   --sidebar-selection-strong: var(--cc-clay-soft);
-  --sidebar-selection-border: rgba(217, 119, 87, .24);
+  --sidebar-selection-border: color-mix(in srgb, var(--cc-clay) 24%, transparent);
   --sidebar-glass-solid: var(--cc-pane);
   --sidebar-glass-border: var(--cc-rule);
   --sidebar-glass-shadow: none;
@@ -107,7 +107,7 @@ html.dark:root {
   --on-action-solid: var(--cc-canvas);
   --success: var(--cc-pine);
   --success-soft: rgba(127, 174, 140, .16);
-  --sidebar-selection-border: rgba(224, 138, 106, .28);
+  --sidebar-selection-border: color-mix(in srgb, var(--cc-clay) 28%, transparent);
   --badge-entity-soft: rgba(127, 174, 140, .16);
   --badge-note-soft: rgba(142, 154, 166, .16);
 }
@@ -272,13 +272,18 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   color: var(--cc-ink-2);
 }
 .manage-btn.primary {
-  border-color: rgba(217, 119, 87, .45);
+  border-color: color-mix(in srgb, var(--cc-clay) 45%, transparent);
   background: var(--cc-clay-soft);
   color: var(--cc-clay-deep);
 }
 
 /* ============================================================
  * 面板：细框 + 贴边标题栏，不再是纸片卡
+ * ------------------------------------------------------------
+ * 下面这组 !important 是机制不是 hack：HomeBoard 各模块的卡片材质写在
+ * scoped 样式里（选择器带 [data-v]，0,2,0），主题层要与它对冲必须抬一级；
+ * 令牌接管后这里只锁「细框纸面」这一种形态。若模块侧彻底删掉自己的
+ * 底色/边框声明，这些 !important 可随之退役。
  * ============================================================ */
 .board .shell:not(.managing) {
   background: var(--cc-pane) !important;
@@ -451,12 +456,15 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -.01em;
+  /* 转写体限宽（2026-11 排版收口）：长摘要一行拉满卡片会难读，阅读宽度与正文档一致 */
+  max-width: 62ch;
 }
 .board .digest-bullet {
   font-family: var(--cc-mono);
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--cc-ink-2);
+  max-width: 62ch;
 }
 .board .digest-foot { color: var(--cc-ink-3); }
 .board .digest-avatar { background: var(--cc-clay-soft); color: var(--cc-clay-deep); }
@@ -472,7 +480,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   padding: 10px 11px !important;
 }
 .board .shell.capture.tier-bar:not(.managing):hover {
-  border-color: rgba(217, 119, 87, .55) !important;
+  border-color: color-mix(in srgb, var(--cc-clay) 55%, transparent) !important;
   background: var(--cc-composer) !important;
   box-shadow: none !important;
   transform: none !important;
@@ -520,7 +528,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   background: var(--cc-composer);
 }
 .board .shell.capture .writing-panel:focus-within {
-  border-color: rgba(217, 119, 87, .55);
+  border-color: color-mix(in srgb, var(--cc-clay) 55%, transparent);
   box-shadow: none;
 }
 .board .shell.capture .editor .action-writing { position: relative; }
@@ -573,38 +581,28 @@ html.dark .board .activity-dot { border-color: var(--cc-pane); }
  * 二级页面的局部适配
  * ============================================================ */
 
-/* 图谱页在组件内写死了一套紫色调色板（含深色），这里整组换回暖纸 + 陶土 */
-html:root .graph-view {
-  --bg: var(--cc-canvas);
-  --bg-secondary: var(--cc-pane);
-  --bg-tertiary: var(--cc-track);
-  --card-bg: var(--cc-pane);
-  --text: var(--cc-ink);
-  --text-secondary: var(--cc-ink-2);
-  --text-faint: var(--cc-ink-3);
-  --border: var(--cc-rule);
-  --border-strong: var(--cc-rule-2);
-  --bg-hover: var(--cc-hover);
-  --accent: var(--cc-clay);
-  --accent-hover: var(--cc-clay-deep);
-  --accent-soft: var(--cc-clay-soft);
-  --on-accent: #fff;
+/*
+ * 图谱画布系列色（2026-11 图表配色）：画布是 2D canvas，不能直接引用 CSS 变量，
+ * GraphView 用 getComputedStyle 读 --chart-*；这里只做唯一定义源，深浅色随主题翻档。
+ * 紫色调色板已随组件内的字面值一并移除——焦点/关联边统一陶土，节点用墨阶。
+ */
+html:root {
+  --chart-edge: rgba(122, 106, 78, .18);
+  --chart-edge-hot: var(--cc-clay);
+  --chart-label: var(--cc-ink-3);
+  --chart-label-hot: var(--cc-ink);
+  --chart-node: #7a7466;
+  --chart-node-hot: #4c473b;
+  --chart-focus: var(--cc-clay);
 }
-html.dark:root .graph-view {
-  --bg: var(--cc-canvas);
-  --bg-secondary: var(--cc-pane);
-  --bg-tertiary: var(--cc-track);
-  --card-bg: var(--cc-pane);
-  --text: var(--cc-ink);
-  --text-secondary: var(--cc-ink-2);
-  --text-faint: var(--cc-ink-3);
-  --border: var(--cc-rule);
-  --border-strong: var(--cc-rule-2);
-  --bg-hover: var(--cc-hover);
-  --accent: var(--cc-clay);
-  --accent-hover: var(--cc-clay-deep);
-  --accent-soft: var(--cc-clay-soft);
-  --on-accent: #141413;
+html.dark:root {
+  --chart-edge: rgba(236, 229, 214, .14);
+  --chart-edge-hot: var(--cc-clay);
+  --chart-label: var(--cc-ink-3);
+  --chart-label-hot: var(--cc-ink);
+  --chart-node: #b3ada0;
+  --chart-node-hot: #e9e5da;
+  --chart-focus: var(--cc-clay);
 }
 
 /* 搜索命中、编辑器里的 mark：默认是高亮黄，换成陶土淡底 */

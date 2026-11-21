@@ -83,9 +83,9 @@ function shortDate(date: string) {
   padding: 1px 2px 7px;
   border-bottom: 1px solid var(--border);
 }
-.day-weekday { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.day-weekday { font-size: var(--fs-small); font-weight: 600; color: var(--text-secondary); }
 .day-col.today .day-weekday { color: var(--accent); }
-.day-date { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.day-date { font-size: var(--fs-caption); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .day-today {
   font-style: normal;
   font-size: 9.5px;
@@ -103,7 +103,7 @@ function shortDate(date: string) {
   border-radius: 9px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 18px;
   text-align: center;
 }

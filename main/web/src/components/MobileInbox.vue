@@ -2284,6 +2284,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 2026-11 令牌还债：字面色/字号/阴影迁移到全局令牌（ui-polish-round1） */
 /*
  * 手机端收集箱卡片台。视觉沿用 Engram 设计令牌：暖纸底、纯白卡片、Engram Blue，
  * 不引外部图片；封面全部用 CSS 渐变 + 线性图标。
@@ -2313,8 +2314,8 @@ onBeforeUnmount(() => {
   background-image:
     radial-gradient(520px 260px at 92% -8%, var(--accent-soft), transparent 70%),
     radial-gradient(420px 240px at -8% 6%, var(--warn-soft), transparent 72%);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--fs-h3);
+  line-height: var(--lh-ui);
 }
 
 /* ===== 头部 ===== */
@@ -2333,7 +2334,7 @@ onBeforeUnmount(() => {
 
 .mi-title {
   margin: 0;
-  font-size: 23px;
+  font-size: var(--fs-h1);
   line-height: 1.18;
   font-weight: 650;
   letter-spacing: -0.02em;
@@ -2341,7 +2342,7 @@ onBeforeUnmount(() => {
 
 .mi-sub {
   margin: 3px 0 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   color: var(--text-secondary);
   overflow-wrap: anywhere;
@@ -2391,8 +2392,8 @@ onBeforeUnmount(() => {
   border-radius: 11px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: var(--font-sm);
+  line-height: var(--lh-ui);
 }
 
 .mi-banner svg {
@@ -2412,7 +2413,7 @@ onBeforeUnmount(() => {
   min-height: 24px;
   padding: 0 6px;
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: inherit;
 }
@@ -2487,7 +2488,7 @@ onBeforeUnmount(() => {
 .mi-groups-text {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   color: var(--text);
 }
@@ -2502,7 +2503,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--accent);
 }
@@ -2535,7 +2536,7 @@ onBeforeUnmount(() => {
   position: relative;
   background: var(--card-bg);
   border: 1px solid var(--card-line);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   box-shadow: var(--card-shadow);
   overflow: hidden;
   transition: transform var(--motion-base) var(--ease-standard),
@@ -2625,7 +2626,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--cov-kicker, var(--cov-fg, var(--text)));
@@ -2774,7 +2775,7 @@ onBeforeUnmount(() => {
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
   white-space: nowrap;
   background: var(--bg-tertiary);
@@ -2840,7 +2841,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10.5px;
+  font-size: var(--fs-caption);
   font-weight: 650;
   white-space: nowrap;
 }
@@ -2848,15 +2849,16 @@ onBeforeUnmount(() => {
 .mi-time {
   margin-left: auto;
   flex: none;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   color: var(--text-secondary);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .mi-card-title {
   margin: 5px 0 0;
-  font-size: 16px;
-  line-height: 1.35;
+  font-size: var(--fs-h2);
+  line-height: var(--lh-tight);
   font-weight: 650;
   letter-spacing: -0.01em;
   display: -webkit-box;
@@ -2871,7 +2873,7 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 6px;
   margin: 5px 0 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.45;
   color: var(--text-secondary);
 }
@@ -2905,7 +2907,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   min-width: 0;
   margin-top: 5px;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   color: var(--text-secondary);
 }
 
@@ -2928,13 +2930,13 @@ onBeforeUnmount(() => {
   padding: 7px 11px;
   border: 2px solid currentColor;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.92);
-  font-size: 12.5px;
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  font-size: var(--font-sm);
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
   transform: rotate(-10deg);
-  box-shadow: 0 6px 18px rgba(29, 27, 23, 0.16);
+  box-shadow: 0 6px 18px rgba(31, 29, 25, 0.16);
 }
 
 .mi-stamp.is-in {
@@ -2953,7 +2955,7 @@ onBeforeUnmount(() => {
   flex: none;
   margin-bottom: auto;
   padding: 0 4px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.3;
   color: var(--text-secondary);
   text-align: center;
@@ -2972,7 +2974,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-head-select .mi-title {
-  font-size: 19px;
+  font-size: var(--fs-h1);
 }
 
 .mi-select-cancel,
@@ -2986,7 +2988,7 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border-radius: 12px;
   color: var(--accent);
-  font-size: 14px;
+  font-size: var(--fs-h3);
   font-weight: 600;
 }
 
@@ -3018,7 +3020,7 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 64px;
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   color: var(--text);
   text-align: left;
 }
@@ -3078,7 +3080,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--cov-bg, var(--bg-tertiary));
   color: var(--cov-fg, var(--text));
 }
@@ -3092,7 +3094,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-select-main b {
-  font-size: 14px;
+  font-size: var(--fs-h3);
   font-weight: 550;
   line-height: 1.4;
   display: -webkit-box;
@@ -3103,7 +3105,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-select-main small {
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--text-secondary);
 }
@@ -3115,7 +3117,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   margin: 2px 2px 0;
   padding: 4px 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.45;
   color: var(--text-secondary);
 }
@@ -3148,7 +3150,7 @@ onBeforeUnmount(() => {
   border-radius: 13px;
   background: var(--action-solid);
   color: var(--on-action-solid);
-  font-size: 15px;
+  font-size: var(--fs-h3);
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -3178,7 +3180,7 @@ onBeforeUnmount(() => {
   border-radius: 13px;
   background: var(--card-bg);
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--font-md);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3201,7 +3203,7 @@ onBeforeUnmount(() => {
   padding: 0 10px;
   border-radius: 13px;
   color: var(--danger);
-  font-size: 13.5px;
+  font-size: var(--font-md);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3231,7 +3233,7 @@ onBeforeUnmount(() => {
 .mi-groups-note {
   flex: none;
   margin: 8px 2px 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.6;
   color: var(--text-secondary);
 }
@@ -3251,7 +3253,7 @@ onBeforeUnmount(() => {
 .mi-group {
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--card-bg);
   box-shadow: var(--shadow-card);
 }
@@ -3269,7 +3271,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -3281,14 +3283,14 @@ onBeforeUnmount(() => {
 
 .mi-group-name h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-h3);
   font-weight: 650;
   line-height: 1.3;
 }
 
 .mi-group-name p {
   margin: 2px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--text-secondary);
 }
@@ -3302,8 +3304,9 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .mi-group-items {
@@ -3320,7 +3323,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.45;
   color: var(--text-secondary);
 }
@@ -3355,7 +3358,7 @@ onBeforeUnmount(() => {
 .mi-group-note {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--text-secondary);
   overflow-wrap: anywhere;
@@ -3375,10 +3378,10 @@ onBeforeUnmount(() => {
   height: 30px;
   padding: 0 11px;
   border: 1px solid var(--border-strong);
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   background: var(--card-bg);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3402,7 +3405,7 @@ onBeforeUnmount(() => {
 .mi-mini.success {
   border-color: transparent;
   background: var(--success);
-  color: #ffffff;
+  color: var(--on-accent);
 }
 
 .mi-mini:disabled {
@@ -3418,7 +3421,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 8px;
   padding: 48px 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   color: var(--text-secondary);
 }
 
@@ -3448,7 +3451,7 @@ onBeforeUnmount(() => {
 
 .mi-empty h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-h1);
   font-weight: 650;
   line-height: 1.2;
   letter-spacing: -0.02em;
@@ -3457,7 +3460,7 @@ onBeforeUnmount(() => {
 .mi-empty p {
   max-width: 310px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.6;
   color: var(--text-secondary);
 }
@@ -3486,7 +3489,7 @@ onBeforeUnmount(() => {
 
 .mi-stat b {
   display: block;
-  font-size: 20px;
+  font-size: var(--fs-h1);
   font-weight: 650;
   line-height: 1.2;
   letter-spacing: -0.02em;
@@ -3496,7 +3499,7 @@ onBeforeUnmount(() => {
 .mi-stat span {
   display: block;
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   color: var(--text-secondary);
 }
 
@@ -3505,7 +3508,7 @@ onBeforeUnmount(() => {
   height: 46px;
   margin-top: 16px;
   border-radius: 13px;
-  font-size: 15px;
+  font-size: var(--fs-h3);
   justify-content: center;
 }
 
@@ -3514,7 +3517,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
-  background: rgba(20, 18, 15, 0.42);
+  background: var(--mask);
   animation: mi-fade var(--motion-base) var(--ease-standard) both;
 }
 
@@ -3530,7 +3533,7 @@ onBeforeUnmount(() => {
   padding: 8px 16px calc(18px + var(--safe-bottom));
   border-radius: 24px 24px 0 0;
   background: var(--card-bg);
-  box-shadow: 0 -12px 36px rgba(20, 18, 15, 0.16);
+  box-shadow: 0 -12px 36px rgba(31, 29, 25, 0.16);
   animation: mi-sheet-up var(--motion-slow) var(--ease-enter) both;
 }
 
@@ -3574,7 +3577,7 @@ onBeforeUnmount(() => {
 
 .mi-detail-head-main h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-h2);
   font-weight: 650;
   line-height: 1.3;
   letter-spacing: -0.01em;
@@ -3583,7 +3586,7 @@ onBeforeUnmount(() => {
 
 .mi-detail-head-main p {
   margin: 4px 0 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   color: var(--text-secondary);
 }
@@ -3604,7 +3607,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 9px 11px;
   background: var(--bg-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.45;
 }
 
@@ -3648,7 +3651,7 @@ onBeforeUnmount(() => {
   height: 46px;
   border-radius: 12px;
   justify-content: center;
-  font-size: 14.5px;
+  font-size: var(--fs-h3);
 }
 
 .mi-detail-grid {
@@ -3663,7 +3666,7 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border-radius: 11px;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.3;
   white-space: normal;
   text-align: center;
@@ -3697,7 +3700,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--card-bg);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 550;
   white-space: nowrap;
   transition: background var(--motion-fast) var(--ease-standard),
@@ -3732,7 +3735,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   font-weight: 650;
   line-height: 21px;
   text-align: center;
@@ -3774,12 +3777,12 @@ onBeforeUnmount(() => {
 
 .mi-queue-head h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-h3);
   font-weight: 650;
 }
 
 .mi-queue-head span {
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   color: var(--text-secondary);
 }
 
@@ -3811,7 +3814,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--cov-bg, var(--bg-tertiary));
   color: var(--cov-fg, var(--text));
 }
@@ -3825,9 +3828,9 @@ onBeforeUnmount(() => {
 }
 
 .mi-row-main b {
-  font-size: 14px;
+  font-size: var(--fs-h3);
   font-weight: 600;
-  line-height: 1.35;
+  line-height: var(--lh-tight);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -3836,7 +3839,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-row-main small {
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--text-secondary);
   overflow: hidden;
@@ -3879,7 +3882,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 6px;
   padding: 28px 12px;
-  font-size: 13px;
+  font-size: var(--font-md);
   color: var(--text-secondary);
 }
 
@@ -3889,8 +3892,8 @@ onBeforeUnmount(() => {
 
 .mi-review-md {
   padding: 14px 13px 18px;
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: var(--fs-h3);
+  line-height: var(--lh-body);
   overflow-wrap: anywhere;
 }
 
@@ -3902,7 +3905,7 @@ onBeforeUnmount(() => {
 .mi-review-md :deep(h3),
 .mi-review-md :deep(h4) {
   margin: 18px 0 8px;
-  line-height: 1.35;
+  line-height: var(--lh-tight);
 }
 
 .mi-review-md :deep(p) {
@@ -3932,7 +3935,7 @@ onBeforeUnmount(() => {
   width: 100%;
   margin: 0 0 12px;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .mi-review-md :deep(th),
@@ -3951,7 +3954,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-review-md :deep(code) {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 .mi-review-md :deep(img) {
@@ -3975,7 +3978,7 @@ onBeforeUnmount(() => {
   min-height: 46px;
   border-radius: 12px;
   justify-content: center;
-  font-size: 14px;
+  font-size: var(--fs-h3);
 }
 
 /* 分享落袋回执 */
@@ -4004,14 +4007,14 @@ onBeforeUnmount(() => {
 
 .mi-receipt-title h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fs-h2);
   font-weight: 650;
   line-height: 1.3;
 }
 
 .mi-receipt-title p {
   margin: 2px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--text-secondary);
   overflow-wrap: anywhere;
@@ -4036,16 +4039,16 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--cov-bg, var(--bg-tertiary));
   color: var(--cov-fg, var(--text));
-  font-size: 16px;
+  font-size: var(--fs-h2);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .mi-receipt-cover::after {
-  border-radius: 10px;
+  border-radius: var(--card-radius);
 }
 
 .mi-receipt-card-main {
@@ -4057,9 +4060,9 @@ onBeforeUnmount(() => {
 }
 
 .mi-receipt-card-main b {
-  font-size: 13.5px;
+  font-size: var(--font-md);
   font-weight: 650;
-  line-height: 1.35;
+  line-height: var(--lh-tight);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -4068,7 +4071,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-receipt-card-main span {
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--text-secondary);
   overflow: hidden;
@@ -4084,7 +4087,7 @@ onBeforeUnmount(() => {
   padding: 14px 12px;
   border-radius: 12px;
   background: var(--bg-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
@@ -4096,7 +4099,7 @@ onBeforeUnmount(() => {
   padding: 10px 11px;
   border-radius: 11px;
   background: var(--accent-soft);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
@@ -4112,7 +4115,7 @@ onBeforeUnmount(() => {
 
 .mi-receipt-note {
   margin: 10px 0 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.55;
   color: var(--text-secondary);
 }
@@ -4128,7 +4131,7 @@ onBeforeUnmount(() => {
   height: 46px;
   border-radius: 12px;
   justify-content: center;
-  font-size: 14.5px;
+  font-size: var(--fs-h3);
 }
 
 .mi-receipt-undo {
@@ -4137,8 +4140,8 @@ onBeforeUnmount(() => {
   width: 100%;
   margin-top: 10px;
   padding: 8px 0;
-  border-radius: 9px;
-  font-size: 12.5px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-align: center;
@@ -4198,7 +4201,7 @@ html.dark .mi-mini.success {
 
 .mi-intake-head h2 {
   flex: 1;
-  font-size: 18px;
+  font-size: var(--fs-h2);
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -4210,7 +4213,7 @@ html.dark .mi-mini.success {
   width: 100%;
   padding: 12px 12px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--bg-secondary);
   text-align: left;
 }
@@ -4237,8 +4240,8 @@ html.dark .mi-mini.success {
   gap: 2px;
 }
 
-.mi-intake-file-text b { font-size: 14px; font-weight: 650; }
-.mi-intake-file-text small { font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
+.mi-intake-file-text b { font-size: var(--fs-h3); font-weight: 650; }
+.mi-intake-file-text small { font-size: var(--fs-caption); line-height: 1.45; color: var(--text-secondary); }
 
 .mi-intake-url {
   display: flex;
@@ -4254,7 +4257,7 @@ html.dark .mi-mini.success {
   border: 1px solid var(--border-strong);
   border-radius: 11px;
   background: var(--bg-secondary);
-  font-size: 13.5px;
+  font-size: var(--font-md);
 }
 
 .mi-intake-url input:focus {
@@ -4270,7 +4273,7 @@ html.dark .mi-mini.success {
   gap: 6px;
   align-items: flex-start;
   margin-top: 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-caption);
   line-height: 1.55;
   color: var(--text-secondary);
 }
@@ -4283,12 +4286,12 @@ html.dark .mi-mini.success {
   }
 
   .mi-bar-main {
-    font-size: 14px;
+    font-size: var(--fs-h3);
   }
 
   .mi-bar-sub,
   .mi-bar-danger {
-    font-size: 12.5px;
+    font-size: var(--font-sm);
   }
 }
 </style>

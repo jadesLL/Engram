@@ -7,7 +7,12 @@
     <!-- 更新入口挂载点：桌面端「更新」小按钮由 UpdateNotice Teleport 到这里（应用名右侧，永不与正文/抽屉重叠） -->
     <span id="win-titlebar-slot" class="win-titlebar-slot"></span>
   </div>
-  <router-view />
+  <!-- 路由切换过渡（2026-11 动效）：只做入场淡入（见 main.css .page-*），离场瞬时卸载，重页面切换不加延迟 -->
+  <router-view v-slot="{ Component, route }">
+    <Transition name="page">
+      <component :is="Component" :key="route.path" />
+    </Transition>
+  </router-view>
   <AssetDrawer />
   <!-- 同步详情抽屉：与图片资产抽屉同一挂载方式（Teleport 到 body），设置页只留一个入口按钮 -->
   <SyncLogDrawer />

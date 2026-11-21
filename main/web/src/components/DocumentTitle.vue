@@ -53,17 +53,17 @@ watch(() => props.pageId, () => { editing.value = false; });
 <style scoped>
 .document-title-row { display: flex; align-items: flex-start; gap: 16px; }
 .document-title-copy { flex: 1; min-width: 0; }
-.document-date { display: block; margin: 0 0 10px; font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.document-name { margin: 0; font-size: 30px; line-height: 1.35; font-weight: 650; letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.title-edit { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 5px 8px; border-radius: 6px; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.document-date { display: block; margin: 0 0 10px; font-size: var(--font-md); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.document-name { margin: 0; font-size: 30px; line-height: var(--lh-tight); font-weight: 650; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.title-edit { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 5px 8px; border-radius: 6px; color: var(--text-secondary); font-size: var(--fs-small); white-space: nowrap; }
 .title-edit:hover { color: var(--accent); background: var(--bg-hover); }
 .title-form { margin-top: 16px; padding: 16px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 9px; }
 .title-fields { display: flex; gap: 12px; }
-.title-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 12px; min-width: 0; }
+.title-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: var(--fs-small); min-width: 0; }
 .name-field { flex: 1; }
 .title-fields input { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 14px; }
 .title-form-foot { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.title-form-foot > span { font-size: 12px; color: var(--text-secondary); }
+.title-form-foot > span { font-size: var(--fs-small); color: var(--text-secondary); }
 .title-form-foot > div { display: flex; gap: 8px; }
 @media (max-width: 768px) {
   .document-title-row { flex-wrap: wrap; gap: 10px; }

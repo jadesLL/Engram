@@ -97,7 +97,7 @@ watch(() => [props.text, props.size], draw);
 .qr-code-error {
   margin: 0;
   padding: 12px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
   color: var(--danger, #d64545);
   text-align: center;

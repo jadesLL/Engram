@@ -112,9 +112,11 @@
    * 负到比圆角还大时阴影会变成直角矩形，卡片是圆的、影子却是方的（2026-11-21 全站修过一轮）。
    * 想要「收窄、只露底边」的效果，用「短偏移 + 小 blur + 低透明度」叠两层，而不是大负 spread。
    */
-  --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
-  --shadow-raised: 0 1px 2px rgba(31, 30, 29, 0.05), 0 2px 8px -2px rgba(31, 30, 29, 0.06);
+  /* 浮层阴影统一暖棕黑 rgba(31,29,25)：纯黑在暖纸底上会发「冷」（2026-11 阴影收口） */
+  --shadow: 0 8px 24px rgba(31, 29, 25, 0.16);
+  --shadow-dialog: 0 32px 64px rgba(31, 29, 25, 0.22), 0 2px 12px rgba(31, 29, 25, 0.12);
+  --shadow-raised: 0 1px 2px rgba(31, 29, 25, 0.06), 0 2px 8px -2px rgba(31, 29, 25, 0.07);
+  --shadow-toast: 0 1px 2px rgba(31, 29, 25, 0.05), 0 8px 22px rgba(31, 29, 25, 0.12);
   --shadow-card: var(--glass-shadow);
   --shadow-card-hover:
     0 1px 0 rgba(255,255,255,.95) inset,
@@ -181,6 +183,8 @@
   /* Win11 细滚动条（透明边框 + padding-box 裁剪，hover 时加粗） */
   --scrollbar: rgba(0, 0, 0, 0.3);
   --scrollbar-hover: rgba(0, 0, 0, 0.48);
+  /* 浮层遮罩：暖棕黑半透明，替代纯黑遮罩（2026-11 层级收口；blur 由 AppModal 等组件侧加） */
+  --mask: rgba(38, 34, 27, 0.32);
   /*
    * 全局浮层层级令牌：浮层统一引用，禁止手写魔法数。
    * 组件内部局部层叠上下文里的 1/2/5/20 等小值不受此约束。
@@ -195,9 +199,20 @@
   --z-overlay: 100;
   --z-toast: 220;
   --z-menu: 1200;
-  /* 字号层级 */
+  /* 字号层级：界面两档（存量，广泛使用）+ 六档阶梯（2026-11 排版收口）。
+   * 新样式字号只允许从阶梯取值；组件里写死的 px 在还债时向阶梯收敛。
+   * 行高三档：阅读正文 1.7 / UI 小字 1.5 / 紧凑标题 1.35。 */
   --font-sm: 12.5px;
   --font-md: 13px;
+  --fs-caption: 11px;
+  --fs-small: 12px;
+  --fs-body: 13px;
+  --fs-h3: 14.5px;
+  --fs-h2: 16.5px;
+  --fs-h1: 20px;
+  --lh-body: 1.7;
+  --lh-ui: 1.5;
+  --lh-tight: 1.35;
   /*
    * 动效标尺（2026-11 UI 修复）：新增/调整过渡只引用这五个值，不再散写 80–360ms。
    * fast  = hover / press / 开关 / 分段选择
@@ -357,6 +372,8 @@ html.dark {
   --scrollbar: rgba(255, 255, 255, 0.32);
   --scrollbar-hover: rgba(255, 255, 255, 0.5);
   --press-bg: rgba(255, 255, 255, 0.1);
+  --mask: rgba(10, 9, 7, 0.55);
+  --shadow-toast: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 22px rgba(0, 0, 0, 0.42);
 }
 
 * { box-sizing: border-box; }
@@ -468,6 +485,31 @@ html.desktop-frame .toast-stack {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/*
+ * 文字选中与输入光标（2026-11 细节打磨；此前全库 0 处定义，一直是浏览器默认蓝底）：
+ * 选中 = 强调色淡底 + 本色文字（color-mix 跟随主题，深浅色自动成立）；
+ * 光标用墨色——自动计算的光标色在暖纸底上偏灰脏。
+ */
+::selection {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text);
+}
+input, textarea { caret-color: var(--text); }
+
+/* 快捷键提示统一（此前只有设置页/导出各自写了一份）：白底 + 发丝描边 + 等宽小字 */
+kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -522,7 +564,17 @@ select option {
 }
 .btn:hover { background: var(--control-bg-hover); }
 .btn:active { background: var(--control-bg-pressed); }
-.btn:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent); }
+/*
+ * 键盘焦点环兜底（2026-11 焦点收口）：任何可聚焦元素 :focus-visible 一律 2px 强调色细环 +
+ * 2px 外扩，不再逐组件自写（.btn 原有的 box-shadow 焦点圈并入这条全局规则）。
+ * 鼠标点击不触发（:focus-visible 只认键盘）；文本框的焦点语言仍是 border + 光圈
+ * （见上方 input:focus），对 outline 免除避免双环。
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
 .btn.primary { background: var(--action-solid); border-color: transparent; color: var(--on-action-solid); }
 .btn.primary:hover { background: var(--action-solid-hover); }
 .btn.primary:active { background: var(--action-solid-pressed); }
@@ -627,11 +679,9 @@ html .vditor-reset blockquote {
   background: var(--bg-secondary);
   color: var(--text-secondary);
 }
+/* 表格去斑马纹（2026-11 编辑器排版）：斑马纹与「不铺底」语言打架，层次交给表头底 + 发丝线 */
 html .vditor-reset table tr {
-  background: var(--bg);
-}
-html .vditor-reset table tbody tr:nth-child(2n) {
-  background: var(--bg-secondary);
+  background: transparent;
 }
 
 /* Vditor 内容区排版精修（Typora/Obsidian 风可读宽行，深浅色自动跟随，三模式统一） */
@@ -703,7 +753,12 @@ html .vditor-reset table tbody tr:nth-child(2n) {
   padding: 6px 10px;
   text-align: left;
 }
-.vditor-ir th, .vditor-wysiwyg th, .vditor-sv th { background: var(--bg-tertiary); font-weight: 600; }
+.vditor-ir th, .vditor-wysiwyg th, .vditor-sv th {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+  font-size: 0.85em;
+  letter-spacing: 0.05em;
+}
 .vditor-ir ul, .vditor-ir ol,
 .vditor-wysiwyg ul, .vditor-wysiwyg ol,
 .vditor-sv ul, .vditor-sv ol { margin: 0.6em 0; padding-left: 1.6em; }
@@ -1090,4 +1145,97 @@ html.kb-open .content {
     background-color: var(--card-solid);
     background-image: none;
   }
+}
+
+/* ==========================================================================
+ * 2026-11 美化收口轮：路由过渡 / 骨架占位 / 打印 —— 全局件收在这一段
+ * ========================================================================== */
+
+/*
+ * 路由切换过渡：只做入场淡入 + 4px 上移，离场瞬时卸载——不给编辑器/首页这类重页面
+ * 增加切换延迟（不做 out-in 串行）。页面切走时新页立刻挂载、160ms 淡入，
+ * 「我从哪来、到了哪」由侧栏选中态和标题交代，不靠动画。
+ */
+.page-enter-active {
+  transition: opacity 160ms var(--ease-standard), transform 160ms var(--ease-standard);
+}
+.page-enter-from { opacity: 0; transform: translateY(4px); }
+
+/* 骨架占位工具类：暖纸底 + 暖色微光（同款实现见 SettingsPanelSkeleton；新骨架直接用这两类） */
+@keyframes app-skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.sk-line, .sk-block {
+  background: linear-gradient(90deg, var(--bg-secondary), var(--border), var(--bg-secondary));
+  background-size: 200% 100%;
+  animation: app-skeleton 1.4s ease-in-out infinite;
+}
+.sk-line { height: 12px; border-radius: 6px; }
+.sk-block { border-radius: var(--radius-control); }
+
+/*
+ * 代码语法高亮品牌化（2026-11 编辑器排版）：在 vditor 动态加载的 github 主题之上整体换色，
+ * 四族 = 墨（正文/注释）· 陶土（关键字）· 松针（字符串）· 黄铜（数字），标题走陶土亮档。
+ * 令牌深浅色自动翻档；选择器带 html 前缀压过动态注入的 github 链接样式。
+ * 导出（pageExport.css）落同一色板的静态值，屏显与 PDF 一致。
+ */
+html .vditor-reset .hljs { color: var(--text); background: transparent; }
+html .vditor-reset .hljs-comment,
+html .vditor-reset .hljs-quote { color: var(--text-faint); font-style: italic; }
+html .vditor-reset .hljs-keyword,
+html .vditor-reset .hljs-selector-tag,
+html .vditor-reset .hljs-literal,
+html .vditor-reset .hljs-tag,
+html .vditor-reset .hljs-type { color: var(--cc-clay-deep, var(--ai)); }
+html .vditor-reset .hljs-string,
+html .vditor-reset .hljs-regexp,
+html .vditor-reset .hljs-addition,
+html .vditor-reset .hljs-attr,
+html .vditor-reset .hljs-attribute { color: var(--success); }
+html .vditor-reset .hljs-number,
+html .vditor-reset .hljs-symbol,
+html .vditor-reset .hljs-bullet,
+html .vditor-reset .hljs-variable,
+html .vditor-reset .hljs-template-variable { color: var(--warning); }
+html .vditor-reset .hljs-title,
+html .vditor-reset .hljs-section,
+html .vditor-reset .hljs-name,
+html .vditor-reset .hljs-selector-id,
+html .vditor-reset .hljs-selector-class,
+html .vditor-reset .hljs-built_in,
+html .vditor-reset .hljs-meta { color: var(--ai); }
+html .vditor-reset .hljs-emphasis { font-style: italic; }
+html .vditor-reset .hljs-strong { font-weight: 600; }
+
+/* 任务列表勾选框：细环样式，勾中松针绿（与看板状态点同档）；原生的方块勾选框与暖纸语言不合 */
+html .vditor-reset .task-list-item input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0 6px 0 0;
+  border: 1.6px solid var(--text-faint);
+  border-radius: 50%;
+  background: transparent;
+  vertical-align: -3px;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+html .vditor-reset .task-list-item input[type='checkbox']:checked {
+  border-color: var(--success);
+  background: var(--success) center / 9px no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'%3E%3Cpath d='M2 5l2 2 3-4' stroke='%23fff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* 打印 / 导出 PDF：正文直出，壳层（轨道/侧栏/标题栏/底栏/通知/弹层/工具条）全部隐藏 */
+@media print {
+  body { background: var(--card-solid); }
+  .rail, .rail-cluster, .sidebar, .sidebar-inner, .win-titlebar, .bottom-nav,
+  .toast-stack, .app-modal-mask, .new-fab, .agent-pill,
+  .editor-view .vditor-toolbar, .reading-toolbar, .tabletop-console {
+    display: none !important;
+  }
+  #app, .content, .editor-area { overflow: visible !important; height: auto !important; }
 }

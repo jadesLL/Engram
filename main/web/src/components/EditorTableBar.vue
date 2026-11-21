@@ -143,7 +143,7 @@ const columnActions: ActionItem[] = [
   border-radius: 8px;
   box-shadow: var(--shadow-raised);
   user-select: none;
-  animation: table-bar-in 120ms ease-out;
+  animation: table-bar-in var(--motion-fast) var(--ease-standard)-out;
 }
 .tb-group { display: inline-flex; align-items: center; gap: 1px; }
 .tb-label {
@@ -206,7 +206,7 @@ const columnActions: ActionItem[] = [
 @media (hover: none) and (pointer: coarse) {
   .tb-btn { width: 44px; height: 44px; border-radius: 8px; }
   .tb-btn svg { width: 17px; height: 17px; }
-  .tb-more { min-width: 44px; height: 44px; border-radius: 8px; font-size: 13px; }
+  .tb-more { min-width: 44px; height: 44px; border-radius: 8px; font-size: var(--font-md); }
   .tb-sep { height: 24px; }
   .tb-label { font-size: 11.5px; }
 }

@@ -464,7 +464,7 @@ onBeforeUnmount(() => {
 .head-text p {
   margin: 5px 0 0;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.55;
   max-width: 68ch;
 }
@@ -485,7 +485,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--card-bg);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .state-dot {
   width: 8px;
@@ -506,7 +506,7 @@ onBeforeUnmount(() => {
   background: var(--text-faint);
 }
 .state-line strong {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .head-actions {
@@ -541,7 +541,7 @@ onBeforeUnmount(() => {
 }
 .console-capability p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.65;
 }
 .console-capability .btn {
@@ -581,7 +581,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-md);
   text-align: left;
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease-standard),
@@ -630,7 +630,7 @@ onBeforeUnmount(() => {
 }
 .banner-copy strong {
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -684,7 +684,7 @@ onBeforeUnmount(() => {
     border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--card-bg);
-    font-size: 12.5px;
+    font-size: var(--font-sm);
   }
   .nav-item.active {
     border-color: color-mix(in srgb, var(--accent) 34%, transparent);

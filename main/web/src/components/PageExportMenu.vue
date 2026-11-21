@@ -177,15 +177,15 @@ onBeforeUnmount(() => {
 }
 
 .export-item-text b {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 
 .export-item-text em {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-style: normal;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 </style>

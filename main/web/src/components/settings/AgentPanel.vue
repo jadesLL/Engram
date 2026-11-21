@@ -331,7 +331,7 @@ async function copy(text: string) {
 .tools-group-title {
   margin: 0 0 2px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
 }
 .tool-row {
@@ -352,13 +352,13 @@ async function copy(text: string) {
 }
 .tool-summary {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .tool-notes {
   margin: 2px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 /* 权限下拉：铺满行尾控件列（与其它面板的 :deep(.app-select) 约定一致） */
@@ -377,7 +377,7 @@ async function copy(text: string) {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.6;
   white-space: pre-wrap;
 }

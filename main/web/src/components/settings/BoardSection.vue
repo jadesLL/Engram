@@ -224,7 +224,7 @@ onUnmounted(() => {
 }
 .board-status-label {
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .board-status-actions {
@@ -233,7 +233,7 @@ onUnmounted(() => {
 .board-meta {
   color: var(--text-secondary);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 
 /* ---------- 间隔表单 ---------- */

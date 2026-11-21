@@ -569,7 +569,7 @@ onUnmounted(() => {
 }
 .dream-status-label {
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .dream-status-actions {
@@ -578,12 +578,12 @@ onUnmounted(() => {
 .dream-meta {
   color: var(--text-secondary);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 .dream-error {
   color: var(--danger);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   overflow-wrap: anywhere;
 }
 
@@ -614,7 +614,7 @@ onUnmounted(() => {
 }
 .dream-board-head h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .dream-board-hint {
@@ -634,7 +634,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .dream-round-time {
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -681,7 +681,7 @@ onUnmounted(() => {
   align-items: baseline;
   gap: 8px;
   padding: 2px 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .dream-item-link { color: var(--accent); text-decoration: none; }
@@ -698,7 +698,7 @@ onUnmounted(() => {
   border-radius: 3px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .dream-item-fail { color: var(--danger); }
 .dream-round-summary { margin-top: 12px; }
@@ -722,7 +722,7 @@ onUnmounted(() => {
 /* 小结按 Markdown 渲染（renderMarkdown 的产物是 v-html，样式要 :deep 才命得中） */
 .dream-md {
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.75;
 }
 .dream-md :deep(> :first-child) { margin-top: 0; }
@@ -734,11 +734,11 @@ onUnmounted(() => {
 .dream-md :deep(h6) {
   margin: 14px 0 6px;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .dream-md :deep(h2),
-.dream-md :deep(h3) { font-size: 13px; }
+.dream-md :deep(h3) { font-size: var(--font-md); }
 .dream-md :deep(p) { margin: 6px 0; }
 .dream-md :deep(strong) { color: var(--text); font-weight: 600; }
 .dream-md :deep(ul),
@@ -751,7 +751,7 @@ onUnmounted(() => {
   padding: 1px 4px;
   border-radius: 3px;
   background: var(--bg-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .dream-md :deep(pre) {
   margin: 6px 0;
@@ -776,7 +776,7 @@ onUnmounted(() => {
   width: 100%;
   margin: 6px 0;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .dream-md :deep(.md-table th),
 .dream-md :deep(.md-table td) {

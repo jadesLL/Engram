@@ -142,7 +142,7 @@ function formatSize(size: number): string {
 <style scoped>
 .picker-sub {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--faint);
   line-height: 1.45;
 }
@@ -172,7 +172,7 @@ function formatSize(size: number): string {
   outline: none;
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 
 .picker-state {
@@ -180,7 +180,7 @@ function formatSize(size: number): string {
   align-items: center;
   gap: 6px;
   margin: 4px 2px 10px;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.55;
   color: var(--faint);
 }
@@ -245,7 +245,7 @@ function formatSize(size: number): string {
 }
 
 .picker-name {
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 500;
   word-break: break-all;
 }

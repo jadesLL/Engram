@@ -17,7 +17,15 @@
     <!-- 页面编辑模式 -->
     <template v-else-if="page">
       <div v-if="pageLoading || pageError" class="page-state page-transition" role="status">
-        <template v-if="pageLoading"><AppSpinner :size="18" /><span>正在加载页面…</span></template>
+        <!-- 加载骨架（2026-11 加载态）：按「标题 + 三段正文」占位；错误态保留重试按钮 -->
+        <template v-if="pageLoading">
+          <div class="page-skeleton" aria-hidden="true">
+            <AppSkeleton variant="line" width="46%" height="20px" />
+            <AppSkeleton variant="line" width="92%" />
+            <AppSkeleton variant="line" width="88%" />
+            <AppSkeleton variant="line" width="64%" />
+          </div>
+        </template>
         <template v-else><p class="page-error-text">{{ pageError }}</p><button class="btn" type="button" @click="retryLoad">重试</button></template>
       </div>
       <ReadingPreview
@@ -721,6 +729,7 @@ import HomeBoard from '../components/HomeBoard.vue';
 import PageOutline from '../components/PageOutline.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
+import AppSkeleton from '../components/ui/AppSkeleton.vue';
 import { confirmDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { useRuntimeCapabilities } from '../lib/capabilities';
@@ -2374,7 +2383,7 @@ onUnmounted(() => {
   gap: 10px;
   padding: 0 8px 0 14px;
   border-radius: var(--radius);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   color: var(--text-faint);
 }
 .crumb {
@@ -2462,7 +2471,7 @@ onUnmounted(() => {
   justify-content: space-between;
 }
 .more-label {
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   color: var(--text-faint);
 }
@@ -2477,7 +2486,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
 }
 .more-ratios button:hover {
@@ -2500,7 +2509,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   text-align: left;
 }
 .more-item:hover {
@@ -2533,7 +2542,7 @@ onUnmounted(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
 }
 .topbar-width:hover,
@@ -2561,7 +2570,7 @@ onUnmounted(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -2576,13 +2585,13 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text-faint);
   padding: 0;
   border: none;
   background: none;
 }
-button.save-state { font: inherit; font-size: 12px; cursor: default; }
+button.save-state { font: inherit; font-size: var(--fs-small); cursor: default; }
 button.save-state.dirty { cursor: pointer; color: var(--text-secondary); }
 button.save-state.dirty:hover { color: var(--accent); }
 .save-state .dot {
@@ -2608,16 +2617,16 @@ button.save-state.dirty:hover { color: var(--accent); }
   border-radius: var(--radius-control);
   background: var(--action-solid);
   color: var(--on-action-solid);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   cursor: pointer;
-  transition: background 120ms ease, opacity 120ms ease;
+  transition: background var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard);
 }
 .save-btn:hover { background: var(--action-solid-hover); }
 .save-btn:active { background: var(--action-solid-pressed); }
 .save-btn:disabled { opacity: 0.42; cursor: default; background: var(--action-solid); }
 /* 关掉自动保存时按钮刚出现：轻微入场，避免被忽略（v-if 重新挂载触发） */
-.save-btn { animation: save-in 180ms ease-out; }
+.save-btn { animation: save-in var(--motion-base) var(--ease-standard)-out; }
 @keyframes save-in {
   from { opacity: 0; transform: translateY(-3px) scale(0.96); }
   to { opacity: 1; transform: none; }
@@ -2669,7 +2678,7 @@ button.save-state.dirty:hover { color: var(--accent); }
 }
 .title-input::placeholder { color: var(--text-faint); }
 .document-meta .tags-chips { flex: none; min-width: 0; }
-.document-file-info { color: var(--text-secondary); font-size: 12px; }
+.document-file-info { color: var(--text-secondary); font-size: var(--fs-small); }
 .document-file-info summary { cursor: pointer; }
 .document-file-info > div { display: flex; flex-direction: column; gap: 5px; padding: 12px; margin-top: 8px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; }
 .document-file-info code { color: var(--text); font: inherit; overflow-wrap: anywhere; }
@@ -2684,7 +2693,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .chrome-toggle:hover { color: var(--text); background: var(--bg-hover); }
 .head-meta {
@@ -2713,7 +2722,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   align-items: center;
   gap: 5px;
   height: 24px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   padding: 0 10px;
   border-radius: 12px;
   background: var(--card-bg);
@@ -2731,7 +2740,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   background: none;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1;
   padding: 0 1px;
 }
@@ -2742,7 +2751,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border: 1px solid var(--accent);
   border-radius: 12px;
   background: var(--card-bg);
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--text);
   padding: 0 10px;
 }
@@ -2839,6 +2848,12 @@ button.save-state.dirty:hover { color: var(--accent); }
   gap: 12px;
 }
 .page-error-text { margin: 0; color: var(--danger); }
+.page-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(560px, 82%);
+}
 .editor-area :deep(.vditor) {
   max-width: var(--editor-max);
   width: 100% !important;
@@ -2997,7 +3012,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   display: block;
   margin: 0 0 6px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   line-height: 1.3;
   color: var(--text-faint);
   user-select: none;
@@ -3090,7 +3105,7 @@ button.save-state.dirty:hover { color: var(--accent); }
 .evidence-section:last-child { border-bottom: 0; }
 .evidence-section h4 {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 700;
   color: var(--text-secondary);
 }
@@ -3098,7 +3113,7 @@ button.save-state.dirty:hover { color: var(--accent); }
 .claim + .claim { border-top: 1px dashed var(--border); }
 .claim summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-md);
   line-height: 1.55;
   color: var(--text);
 }
@@ -3106,7 +3121,7 @@ button.save-state.dirty:hover { color: var(--accent); }
 .claim-fact + .claim-fact { margin-top: 12px; }
 .claim-fact p {
   margin: 6px 0;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
   color: var(--text-secondary);
 }
@@ -3117,7 +3132,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border-radius: 6px;
   background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.55;
 }
 .source-link,
@@ -3127,7 +3142,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   gap: 7px;
   width: 100%;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: left;
 }
 .source-link:hover { text-decoration: underline; }
@@ -3219,7 +3234,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   .crumb-item,
   .crumb-sep { display: none; }
   .crumb { flex: 1 1 auto; }
-  .crumb-current { font-size: 13px; }
+  .crumb-current { font-size: var(--font-md); }
   .save-state { white-space: nowrap; flex: none; }
   /* 手机上可用区本就窄，正文列铺满（百分比在这里没有意义） */
   .editor-view { --doc-col: 100%; --doc-pad: 0px; }
@@ -3336,8 +3351,8 @@ button.save-state.dirty:hover { color: var(--accent); }
   .fmt-copy span {
     display: block;
     margin-top: 4px;
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: var(--fs-small);
+    line-height: var(--lh-ui);
     color: var(--text-secondary);
   }
   .fmt-stepper {
@@ -3368,7 +3383,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   .fmt-size {
     min-width: 54px;
     text-align: center;
-    font-size: 12.5px;
+    font-size: var(--font-sm);
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
@@ -3391,7 +3406,7 @@ button.save-state.dirty:hover { color: var(--accent); }
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--font-sm);
   }
   .fmt-seg button.active {
     background: var(--card-bg);
@@ -3415,7 +3430,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   .fmt-outline-count {
     flex: none;
     color: var(--text-faint);
-    font-size: 12px;
+    font-size: var(--fs-small);
     font-variant-numeric: tabular-nums;
   }
   .fmt-outline-chev { flex: none; color: var(--text-faint); }

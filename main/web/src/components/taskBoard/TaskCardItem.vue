@@ -93,7 +93,7 @@ function compactWhen(text: string): string {
 .card-head .complete-task { margin-left: auto; }
 .card-text {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.55;
   color: var(--text);
   display: -webkit-box;
@@ -138,7 +138,7 @@ function compactWhen(text: string): string {
   background: var(--card-bg);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 18px;
   white-space: nowrap;
   cursor: pointer;

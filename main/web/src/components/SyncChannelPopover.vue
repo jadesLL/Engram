@@ -417,7 +417,7 @@ function openSettings(): void {
   background: var(--channel);
 }
 
-.po-head strong { font-size: 14.5px; }
+.po-head strong { font-size: var(--fs-h3); }
 
 /* 地址靠右 + 等宽：排查时要抄的就是它 */
 .po-host {
@@ -426,7 +426,7 @@ function openSettings(): void {
   overflow: hidden;
   color: var(--text-faint);
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -434,7 +434,7 @@ function openSettings(): void {
 .po-sub {
   margin: 3px 0 0 18px;
   color: var(--text-faint);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
 }
 
 /* 断开态：红字（与胶囊的红点红字同一档），但不铺红底——浮层里已经有一行原因，不必再喊一次 */
@@ -447,7 +447,7 @@ function openSettings(): void {
   margin: 12px 0 0;
   padding: 10px 0 0;
   border-top: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 
 .po-kv dt { color: var(--text-faint); }
@@ -470,7 +470,7 @@ function openSettings(): void {
 }
 
 .po-switch input { margin: 0; }
-.po-switch span { color: var(--text-faint); font-size: 12px; }
+.po-switch span { color: var(--text-faint); font-size: var(--fs-small); }
 
 .po-probes {
   display: flex;
@@ -502,7 +502,7 @@ function openSettings(): void {
 
 .po-probe-ok { flex: none; margin-left: auto; color: var(--success); }
 .po-probe-bad { flex: none; margin-left: auto; color: var(--danger); }
-.po-faint { color: var(--text-faint); font-size: 12.5px; }
+.po-faint { color: var(--text-faint); font-size: var(--font-sm); }
 
 /* ---------- 连接说明（替代原来的「探测记录」） ----------
    默认只留「现在是怎么连上的」；其余内容全部收进下面的一行折叠，保持浮层短。 */
@@ -515,7 +515,7 @@ function openSettings(): void {
 .po-story-title {
   margin: 0 0 6px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
   letter-spacing: 0.02em;
 }
 
@@ -527,7 +527,7 @@ function openSettings(): void {
   padding: 8px 10px;
   border-radius: 9px;
   background: var(--channel-soft);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.55;
 }
 
@@ -575,7 +575,7 @@ function openSettings(): void {
 .po-fold-title {
   flex: none;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .po-fold summary:hover .po-fold-title { color: var(--text-secondary); }
@@ -628,7 +628,7 @@ function openSettings(): void {
 
 .po-other-name {
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 
@@ -637,15 +637,15 @@ function openSettings(): void {
 .po-other-reason {
   margin: 3px 0 0 12px;
   color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: var(--lh-ui);
 }
 
 .po-other-hint {
   margin: 3px 0 0 12px;
   color: var(--text-faint);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
 }
 
 /* 有结论（降级 / 失败）的通道：点与状态短语用对应状态色，原因文字抬一档保证可读 */
@@ -679,7 +679,7 @@ function openSettings(): void {
   gap: 6px;
   margin: 10px 0 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 @media (max-width: 640px) {

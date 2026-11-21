@@ -223,7 +223,7 @@ html.dark .login-card {
 html.dark .logo {
   filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.5));
 }
-h1 { margin: 0; font-size: 20px; text-align: center; font-weight: 600; }
+h1 { margin: 0; font-size: var(--fs-h1); text-align: center; font-weight: 600; }
 p { margin: 0; text-align: center; }
 .btn { justify-content: center; }
 .error { color: var(--danger); font-size: var(--font-md); }
@@ -242,7 +242,7 @@ p { margin: 0; text-align: center; }
   align-items: center;
   gap: 10px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .bio-or::before,
 .bio-or::after {
@@ -259,7 +259,7 @@ p { margin: 0; text-align: center; }
   gap: 8px;
   min-height: 32px;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -278,7 +278,7 @@ p { margin: 0; text-align: center; }
   padding: 4px 8px;
   border-radius: 6px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .bio-forget:hover { color: var(--text-secondary); }
 .bio-forget:active { background: var(--press-bg); }
@@ -289,7 +289,7 @@ p { margin: 0; text-align: center; }
   justify-content: center;
   gap: 5px;
   color: var(--warning);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .pwd-strength {
@@ -308,12 +308,12 @@ p { margin: 0; text-align: center; }
   display: block;
   height: 100%;
   border-radius: 2px;
-  transition: width 200ms ease, background 200ms ease;
+  transition: width var(--motion-base) var(--ease-standard), background var(--motion-base) var(--ease-standard);
 }
 .strength-fill.weak { background: var(--danger); }
 .strength-fill.medium { background: var(--warning); }
 .strength-fill.strong { background: var(--success); }
-.strength-label { font-size: 11px; font-weight: 600; min-width: 16px; text-align: center; }
+.strength-label { font-size: var(--fs-caption); font-weight: 600; min-width: 16px; text-align: center; }
 .strength-label.weak { color: var(--danger); }
 .strength-label.medium { color: var(--warning); }
 .strength-label.strong { color: var(--success); }

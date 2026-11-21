@@ -70,7 +70,7 @@ const sample = computed(() =>
   flex: none;
   margin: 0 0 8px;
   font-size: 10px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -85,7 +85,7 @@ const sample = computed(() =>
   min-height: 34px;
   border-top: 1px solid var(--card-line-soft);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .inbox-list li:first-child { border-top: 0; }
 .file-ic {

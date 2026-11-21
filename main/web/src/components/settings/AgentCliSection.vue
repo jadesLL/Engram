@@ -467,7 +467,7 @@ onMounted(loadAll);
 }
 .cli-status-copy strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .cli-status-actions {
   flex: none;
@@ -477,7 +477,7 @@ onMounted(loadAll);
 .cli-status-error {
   color: var(--text-secondary);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   overflow-wrap: anywhere;
 }
 
@@ -498,7 +498,7 @@ onMounted(loadAll);
 }
 .block-head h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-md);
 }
 
 /* ---------- 客户端列表：一行一个客户端，右侧只放状态 + 动作 ---------- */
@@ -521,7 +521,7 @@ onMounted(loadAll);
   background: none;
   color: var(--text-secondary);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: var(--lh-ui);
   overflow-wrap: anywhere;
   white-space: normal;
 }
@@ -535,8 +535,8 @@ onMounted(loadAll);
   margin: 0;
   padding-left: 20px;
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.7;
+  font-size: var(--fs-small);
+  line-height: var(--lh-body);
 }
 .remote-steps li + li {
   margin-top: 10px;
@@ -553,7 +553,7 @@ onMounted(loadAll);
 }
 .remote-token-select {
   min-width: 180px;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .command-line {
   margin-top: 6px;

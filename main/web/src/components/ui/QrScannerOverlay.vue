@@ -192,8 +192,8 @@ onUnmounted(() => {
   margin: 0;
   padding: 18px;
   color: #fff;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--font-md);
+  line-height: var(--lh-body);
   text-align: center;
   background: rgb(0 0 0 / 72%);
 }
@@ -210,8 +210,8 @@ onUnmounted(() => {
 }
 
 .qr-scanner-text span {
-  font-size: 12px;
-  line-height: 1.7;
+  font-size: var(--fs-small);
+  line-height: var(--lh-body);
   color: var(--text-secondary);
 }
 

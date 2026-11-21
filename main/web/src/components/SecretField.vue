@@ -214,7 +214,7 @@ async function copyText(value: string): Promise<void> {
   background: var(--bg-soft, rgba(127, 127, 127, 0.08));
   border-radius: 6px;
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   user-select: none;
 }
 .secret-text:hover {

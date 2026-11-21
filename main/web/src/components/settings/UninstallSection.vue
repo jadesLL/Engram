@@ -102,7 +102,7 @@ async function doUninstall() {
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   cursor: pointer;
 }
 .wipe-message {

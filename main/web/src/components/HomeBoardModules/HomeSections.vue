@@ -71,5 +71,5 @@ function iconOf(key: string): string {
 }
 .section-row:hover .section-ic { background: var(--accent-soft); color: var(--accent); }
 .section-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.section-label { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.section-label { font-size: var(--font-sm); font-weight: 600; color: var(--text); }
 </style>

@@ -458,9 +458,9 @@ onBeforeUnmount(() => {
   border-radius: 6px;
 }
 .icon-btn:hover:not(:disabled), .icon-btn.active { background: var(--bg-hover); color: var(--accent); }
-.page-control { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.page-control { display: flex; align-items: center; gap: 5px; font-size: var(--fs-small); color: var(--text-secondary); }
 .page-control input { width: 42px; height: 28px; padding: 2px 5px; text-align: center; }
-.zoom-label { min-width: 42px; text-align: center; font-size: 11px; color: var(--text-secondary); }
+.zoom-label { min-width: 42px; text-align: center; font-size: var(--fs-caption); color: var(--text-secondary); }
 .toolbar-separator { width: 1px; height: 20px; margin: 0 4px; background: var(--border); }
 .toolbar-spacer { flex: 1; }
 .pdf-search { height: 32px; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
@@ -513,7 +513,7 @@ onBeforeUnmount(() => {
   background: var(--bg);
   box-shadow: var(--shadow);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   pointer-events: none;
 }
 .pdf-message { height: 100%; display: grid; place-items: center; color: var(--text-secondary); }

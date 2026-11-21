@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   text-align: left;
   cursor: pointer;
 }

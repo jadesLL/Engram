@@ -30,7 +30,7 @@ withDefaults(defineProps<{ label: string; hint?: string }>(), { hint: '' });
 .console-field-label {
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.45;
 }
 .console-field-label small {

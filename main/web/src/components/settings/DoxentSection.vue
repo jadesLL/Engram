@@ -949,7 +949,7 @@ onBeforeUnmount(() => {
 }
 .doxent-status-hint {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .doxent-progress {
@@ -977,7 +977,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .doxent-steps li {
@@ -1011,21 +1011,21 @@ onBeforeUnmount(() => {
 .doxent-bind-detail {
   margin: 8px 0 0;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--font-sm);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .doxent-bind-elapsed {
   margin: 2px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
   line-height: 1.6;
 }
 .doxent-link-row {
   margin-top: 4px;
 }
 .doxent-link-row a {
-  font-size: 13px;
+  font-size: var(--font-md);
   overflow-wrap: anywhere;
 }
 </style>
