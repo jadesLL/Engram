@@ -1772,6 +1772,15 @@ onUnmounted(() => {
   transition: none;
 }
 
+/*
+ * 满窗目录的头部高度：内置 Agent 在满窗目录里要让出这一条（见 ChatDrawer 的
+ * .layout.sidebar-full 规则），目录的「全部展开 / 新建 / 收回」才始终可点。
+ * 数值与 Sidebar 的 .kb-head 高度同源，改那边时一起改。
+ */
+.layout.sidebar-full {
+  --kb-head-h: 52px;
+}
+
 .layout.sidebar-full .sidebar {
   position: absolute;
   top: var(--safe-top);

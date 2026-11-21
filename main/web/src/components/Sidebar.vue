@@ -1491,8 +1491,40 @@ function groupCollapseKey(colKey: string, groupKey: string) {
 const FULL_GROUP_KEYS = COLLAPSE_ALL_KEYS.filter((key) => key.includes(':'));
 const fullGroupsCollapsed = computed(() => FULL_GROUP_KEYS.every((key) => collapsed.value[key]));
 
+/**
+ * 展开全部类目时暂时让位的 Agent：展开满窗目录是为了扫列，右侧 Agent 页会把列体和
+ * 目录头部一起盖住（z 同级、DOM 在后）。所以「全部展开」= 先把 Agent 收起来，
+ * 记住它当时开没开；「收起全部类目」或退出满窗时再按原样恢复，本来关着就一直关着。
+ */
+let restoreChatForFullGroups = false;
+
+watch(
+  () => app.chatDrawerOpen,
+  (open) => {
+    // 用户在展开状态下又自己打开了 Agent：已经不再需要替他恢复
+    if (open) restoreChatForFullGroups = false;
+  }
+);
+
+watch(
+  () => app.sidebarFull,
+  (full) => {
+    if (full || !restoreChatForFullGroups) return;
+    restoreChatForFullGroups = false;
+    app.toggleChat(true);
+  }
+);
+
 function toggleFullGroups() {
-  const target = !fullGroupsCollapsed.value;
+  const willExpand = fullGroupsCollapsed.value;
+  if (willExpand) {
+    restoreChatForFullGroups = app.chatDrawerOpen;
+    if (restoreChatForFullGroups) app.minimizeChat();
+  } else if (restoreChatForFullGroups) {
+    restoreChatForFullGroups = false;
+    app.toggleChat(true);
+  }
+  const target = !willExpand;
   for (const key of FULL_GROUP_KEYS) collapsed.value[key] = target;
 }
 
