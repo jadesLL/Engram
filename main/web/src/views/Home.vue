@@ -1903,14 +1903,14 @@ onUnmounted(() => {
   gap: 8px;
   padding: 0 20px 0 18px;
   border-radius: 18px;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--action-solid);
+  color: var(--on-action-solid);
   font-size: 15px;
   font-weight: 600;
   box-shadow: var(--shadow-dialog);
 }
 
-.new-fab:active { background: var(--accent-pressed); }
+.new-fab:active { background: var(--action-solid-pressed); }
 
 /* 软键盘弹起时底栏与常驻胶囊都收起了，FAB 也别挡输入区 */
 html.kb-open .new-fab { display: none; }

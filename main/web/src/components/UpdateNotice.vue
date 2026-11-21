@@ -521,8 +521,8 @@ onUnmounted(() => {
 .update-notice-later:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
 .update-notice-link { color: var(--accent); background: none; border: 1px solid transparent; }
 .update-notice-link:hover { background: var(--accent-soft); }
-.update-notice-go { color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent); white-space: nowrap; }
-.update-notice-go:hover:not(:disabled) { background: var(--accent-hover); }
+.update-notice-go { color: var(--on-action-solid); background: var(--action-solid); border: 1px solid var(--action-solid); white-space: nowrap; }
+.update-notice-go:hover:not(:disabled) { background: var(--action-solid-hover); border-color: var(--action-solid-hover); }
 @media (max-width: 768px) {
   /* 安卓边到边：fixed 顶栏元素要让开状态栏（桌面/网页端 --safe-top 为 0，观感不变） */
   .update-notice { top: calc(var(--win-titlebar-h, 0px) + 8px + var(--safe-top)); right: calc(10px + var(--safe-right)); }

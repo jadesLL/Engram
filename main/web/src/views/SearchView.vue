@@ -234,13 +234,13 @@ onMounted(() => {
   padding: 0 16px;
   border: none;
   border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--action-solid);
+  color: var(--on-action-solid);
   font-size: 13px;
   font-weight: 600;
   transition: background 120ms ease;
 }
-.search-go:hover { background: var(--accent-hover); }
+.search-go:hover { background: var(--action-solid-hover); }
 .search-go:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* 范围筛选 chips */

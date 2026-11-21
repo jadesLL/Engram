@@ -1039,17 +1039,18 @@ onBeforeUnmount(() => {
 
 .btn.primary {
   border-color: transparent;
-  background: var(--inbox-accent);
-  color: var(--on-accent);
+  background: var(--action-solid);
+  color: var(--on-action-solid);
   box-shadow: none;
 }
 
-.btn.primary:hover { background: var(--accent-hover); }
+.btn.primary:hover { background: var(--action-solid-hover); }
+.btn.primary:active { background: var(--action-solid-pressed); }
 
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
 .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .btn[disabled]:hover { background: var(--card-bg); }
-.btn.primary[disabled]:hover { background: var(--inbox-accent); }
+.btn.primary[disabled]:hover { background: var(--action-solid); }
 
 /* 提示的落点：disabled 的按钮收不到鼠标事件，包一层 span 让它照样能弹 */
 .tip-wrap { display: inline-flex; }
@@ -1442,8 +1443,8 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
 }
 
 .primary-act:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-.primary-act.solid { background: var(--inbox-accent); color: var(--on-accent); }
-.primary-act.solid:hover { background: var(--accent-hover); }
+.primary-act.solid { background: var(--action-solid); color: var(--on-action-solid); }
+.primary-act.solid:hover { background: var(--action-solid-hover); }
 .primary-act:disabled { opacity: 0.45; cursor: not-allowed; }
 .primary-act:disabled:hover { background: var(--inbox-accent-soft); }
 

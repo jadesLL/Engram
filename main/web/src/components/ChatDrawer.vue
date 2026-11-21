@@ -4089,16 +4089,20 @@ onUnmounted(() => {
   padding: 4px 8px 8px;
 }
 
-/* 发送：渐变胶囊按钮，是整张卡片里唯一的高亮色块 */
+/* 发送：胶囊主按钮。整张卡片里唯一的实心墨色块，不再做彩色渐变 */
 .composer-actions .btn.primary {
   border-radius: 999px;
   border-color: transparent;
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #8fc6ff));
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--action-solid);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--action-solid) 22%, transparent);
 }
 
 .composer-actions .btn.primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--accent-hover), color-mix(in srgb, var(--accent) 80%, #8fc6ff));
+  background: var(--action-solid-hover);
+}
+
+.composer-actions .btn.primary:active:not(:disabled) {
+  background: var(--action-solid-pressed);
 }
 
 .composer-actions .btn.primary:disabled {

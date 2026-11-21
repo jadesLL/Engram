@@ -534,8 +534,9 @@ function onKeydown(event: KeyboardEvent) {
 }
 .ai-btn.ghost { border-color: var(--border); background: transparent; color: var(--text-secondary); }
 .ai-btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
-.ai-btn.primary { background: var(--accent); color: var(--on-accent, #fff); }
-.ai-btn.primary:hover { filter: brightness(1.06); }
+.ai-btn.primary { background: var(--action-solid); color: var(--on-action-solid, #fff); }
+.ai-btn.primary:hover { background: var(--action-solid-hover); }
+.ai-btn.primary:active { background: var(--action-solid-pressed); }
 .ai-btn:disabled { opacity: 0.45; cursor: default; }
 @keyframes ai-pop {
   from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)) scale(0.98); }

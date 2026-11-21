@@ -2572,8 +2572,8 @@ onBeforeUnmount(() => {
     padding: 0 18px 0 15px;
     border: 0;
     border-radius: 16px;
-    background: var(--accent);
-    color: var(--on-accent);
+    background: var(--action-solid);
+    color: var(--on-action-solid);
     font: inherit;
     font-size: 15px;
     font-weight: 600;
@@ -2589,7 +2589,7 @@ onBeforeUnmount(() => {
   }
   .reading-edit-fab:active {
     transform: scale(0.97);
-    background: var(--accent-pressed);
+    background: var(--action-solid-pressed);
   }
   .reading-grid {
     padding-bottom: 104px;

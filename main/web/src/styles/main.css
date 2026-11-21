@@ -69,6 +69,12 @@
   --accent-pressed: #1e46bd;
   --accent-soft: rgba(43, 92, 230, 0.09);
   --on-accent: #ffffff;
+  /* 主操作（确认 / 保存 / 提交）实心底色：单独成组，主题层可整体换成墨色而不动 --accent 的点缀语义。
+   * 未加载主题时回落到品牌主色。 */
+  --action-solid: var(--accent);
+  --action-solid-hover: var(--accent-hover);
+  --action-solid-pressed: var(--accent-pressed);
+  --on-action-solid: var(--on-accent);
   --danger: #c42b1c;
   --warn: #9d5d00;
   --success: #0f7b0f;
@@ -280,6 +286,10 @@ html.dark {
   --accent-pressed: #3f6ae8;
   --accent-soft: rgba(77, 124, 255, 0.16);
   --on-accent: #ffffff;
+  --action-solid: var(--accent);
+  --action-solid-hover: var(--accent-hover);
+  --action-solid-pressed: var(--accent-pressed);
+  --on-action-solid: var(--on-accent);
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
   --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.36);
@@ -513,9 +523,9 @@ select option {
 .btn:hover { background: var(--control-bg-hover); }
 .btn:active { background: var(--control-bg-pressed); }
 .btn:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent); }
-.btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
-.btn.primary:hover { background: var(--accent-hover); }
-.btn.primary:active { background: var(--accent-pressed); }
+.btn.primary { background: var(--action-solid); border-color: transparent; color: var(--on-action-solid); }
+.btn.primary:hover { background: var(--action-solid-hover); }
+.btn.primary:active { background: var(--action-solid-pressed); }
 .btn.danger { color: var(--danger); }
 .btn.danger-solid { background: var(--danger); border-color: transparent; color: #fff; }
 .btn.danger-solid:hover { opacity: 0.9; }

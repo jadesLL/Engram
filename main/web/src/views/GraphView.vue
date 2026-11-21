@@ -1606,9 +1606,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-tag:hover { background: var(--accent-soft); color: var(--accent); }
 .gv-btnrow { display: flex; gap: 8px; margin: 18px 0 2px; }
 .gv-btn { font-size: 13px; flex: 1; min-height: 36px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card-bg); color: var(--text); transition: background .16s; }
-.gv-btnrow .gv-btn:first-child, .gv-state .gv-btn { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.gv-btnrow .gv-btn:first-child, .gv-state .gv-btn { background: var(--action-solid); color: var(--on-action-solid); border-color: transparent; }
 .gv-btn:hover { background: var(--bg-hover); }
-.gv-btnrow .gv-btn:first-child:hover, .gv-state .gv-btn:hover { background: var(--accent-hover); }
+.gv-btnrow .gv-btn:first-child:hover, .gv-state .gv-btn:hover { background: var(--action-solid-hover); }
 .gv-rel { display: flex; flex-direction: column; gap: 3px; }
 .gv-rel button { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; padding: 9px 5px; border-radius: 6px; text-align: left; font-size: 13px; color: var(--text-secondary); }
 .gv-rel button:hover { background: var(--bg-hover); color: var(--text); }

@@ -34,7 +34,7 @@ test('速记提交按钮的文字标签不换行', () => {
   assert.match(label[0], /white-space:\s*nowrap/, '「记下」在窄档里可能折行，按钮会忽高忽低');
 });
 
-test('速记提交按钮：禁用态用主色细环，不再铺灰块', () => {
+test('速记提交按钮：禁用态用主操作色细环，不再铺灰块', () => {
   const source = read('components/HomeBoardModules/HomeActionComposer.vue');
   const styles = source.slice(source.lastIndexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '');
   const disabled = styles.match(/\.action-send:disabled,\s*\.action-submit:disabled\s*\{[^}]*\}/);
@@ -45,9 +45,10 @@ test('速记提交按钮：禁用态用主色细环，不再铺灰块', () => {
     '禁用态又退回实心灰底：白卡上的「记下」会重新变成一块废弃感灰块'
   );
   assert.match(disabled[0], /background:\s*transparent/, '禁用态应透明底，把卡面让出来');
+  // 2026-11-21：主操作色从 --accent 抽成 --action-solid（确认/保存/提交统一墨色），细环跟着主操作色走
   assert.match(
     disabled[0],
-    /box-shadow:\s*inset\s+0\s+0\s+0\s+1px\s+color-mix\(in srgb,\s*var\(--accent\)/,
-    '禁用态缺少 1px 主色细环：和设置页选中态不是同一套语言'
+    /box-shadow:\s*inset\s+0\s+0\s+0\s+1px\s+color-mix\(in srgb,\s*var\(--action-solid\)/,
+    '禁用态缺少 1px 主操作色细环：和设置页选中态不是同一套语言'
   );
 });

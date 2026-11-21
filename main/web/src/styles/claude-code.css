@@ -6,6 +6,7 @@
  *   - 整页一个等宽字族，数字用 tabular-nums；中文回落到 PingFang/雅黑
  *   - 面板不再用纸片投影，改成 1px 细框 + 贴边标题栏（Claude Code 的 tool 块）
  *   - 陶土色只管：composer 的 >、逾期、热力、选中态，其余保持墨色
+ *   - 确认 / 保存 / 提交这类主操作按钮走实心墨色（--action-solid），不铺陶土色块
  *   - 唯一保留「白底 + 发丝框」的是「记个想法」输入条（composer 惯例）
  * 深浅两套都由 --cc-* 令牌驱动，切换 html.dark 即可。
  */
@@ -40,6 +41,11 @@ html:root {
   --accent: var(--cc-clay);
   --accent-soft: var(--cc-clay-soft);
   --on-accent: #fff;
+  /* 主操作按钮不是点缀：确认 / 保存 / 提交一律实心墨色，陶土只留作 >、选中与热力这类小面积记号 */
+  --action-solid: var(--cc-ink);
+  --action-solid-hover: #35322b;
+  --action-solid-pressed: #131210;
+  --on-action-solid: var(--cc-composer);
   /* 语义色也收进暖色：成功=橄榄，危险保留红（只做状态，不做装饰） */
   --success: var(--cc-olive);
   --success-soft: rgba(111, 117, 81, .12);
@@ -92,6 +98,11 @@ html.dark:root {
   --cc-hover: rgba(255, 246, 228, .055);
   --text-muted: #8a8478;
   --on-accent: #141413;
+  /* 深色档的主操作反过来用亮墨：仍是「墨色实心」，只是明暗对调，保持终端里的反显感 */
+  --action-solid: var(--cc-ink);
+  --action-solid-hover: #f5f1e7;
+  --action-solid-pressed: #d8d3c6;
+  --on-action-solid: var(--cc-canvas);
   --success: #9aa06f;
   --success-soft: rgba(154, 160, 111, .16);
   --sidebar-selection-border: rgba(224, 138, 106, .28);
