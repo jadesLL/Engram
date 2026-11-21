@@ -32,6 +32,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     val brain = File(root, "brain")
     private val trashRoot = File(brain, ".trash")
     private val lock = Any()
+    private val appContext = context.applicationContext
     /** sync_log 当前行数（-1 = 还没数过）；只为「攒满上限再删一次」服务，不要求绝对精确 */
     private var logRows = -1
 
@@ -40,6 +41,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         seedDirectories()
         writableDatabase
         scan()
+        adoptAllPageAssetsOnce()
     }
 
     private fun seedDirectories() {
@@ -151,6 +153,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             while (c.moveToNext()) state[c.getString(0)] = c.getLong(1) to c.getLong(2)
         }
         val seen = HashSet<String>()
+        val refreshedPages = ArrayList<String>()
         var refreshed = 0
         var reused = 0
         db.beginTransaction()
@@ -163,7 +166,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
                     indexed.contains(rel) && state[rel] == stamp -> reused++
                     // 旧版已为 App 私有文件建立索引；升级时只登记文件状态，避免整库重复解析。
                     indexed.contains(rel) && !state.containsKey(rel) -> { recordScanState(rel, file); reused++ }
-                    !InboxFiles.contains(rel) && (file.extension.equals("md", true) || file.extension.equals("markdown", true)) -> { indexPageInternal(rel, false); refreshed++ }
+                    !InboxFiles.contains(rel) && (file.extension.equals("md", true) || file.extension.equals("markdown", true)) -> { indexPageInternal(rel, false); refreshedPages += rel; refreshed++ }
                     else -> { indexFileInternal(rel, null, false); refreshed++ }
                 }
             }
@@ -184,6 +187,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         } finally {
             db.endTransaction()
         }
+        // 本轮重新索引过的页面顺手做一次图片归属收编（事务外执行：拷贝文件与写 outbox 都要能看到已提交行）
+        for (rel in refreshedPages) adoptPageFile(rel)
         Log.i("EngramStartup", "scan complete: reused=$reused refreshed=$refreshed elapsedMs=${System.currentTimeMillis() - startedAt}")
     }
 
@@ -379,11 +384,16 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         val title = body.optString("title", current.getString("title"))
         val type = body.optString("type", current.getString("type"))
         require(PAGE_TYPES.contains(type)) { "非法页面类型：$type" }
-        val content = if (body.has("content")) body.optString("content") else parsed.body
+        var content = if (body.has("content")) body.optString("content") else parsed.body
+        // 图片归属收编（与 server writePage 同序）：正文里引用别的父项的图先复制进本页资产目录
+        // 并改写引用，页面与「查看引用图片」才不会脱节；源文件还没同步到时保留原引用。
+        val adoption = adoptForeignAssetRefs(id, content)
+        if (adoption.adopted > 0) content = adoption.content
         parsed.fields["标题"] = title; parsed.fields["类型"] = type; parsed.fields["更新日期"] = now()
         if (body.has("tags")) parsed.fields["标签"] = body.getJSONArray("tags").toString()
         atomicWrite(safe(oldPath), renderMarkdown(parsed.fields, content).toByteArray())
         var meta = indexPage(oldPath)
+        if (!fromSync && adoption.adopted > 0) adoption.files.forEach { enqueue("file", it.relPath) }
         if (type != current.getString("type") && oldPath.startsWith("Wiki/") && !oldPath.startsWith("Wiki/归档/")) {
             val targetPath = "${typeDirectory(type)}/${File(oldPath).name}"
             if (targetPath != oldPath && !safe(targetPath).exists()) {
@@ -401,10 +411,15 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     fun writeSyncedPage(path: String, content: String, revision: Int) = synchronized(lock) {
-        atomicWrite(safe(path), content.toByteArray())
+        // 同步落地的页面同样过一遍图片归属收编（与 server writePage 对 sync 来源的处理一致）；
+        // 文件由对端持有，这里只保证本机 assets/<本页id>/ 的归属和正文一致，不额外入队。
+        val existingId = pageIdByPath(path)
+        val adoption = if (existingId == null) null else adoptForeignAssetRefs(existingId, content)
+        val body = adoption?.takeIf { it.adopted > 0 }?.content ?: content
+        atomicWrite(safe(path), body.toByteArray())
         val meta = indexPage(path)
         writableDatabase.execSQL("UPDATE pages SET sync_revision=? WHERE id=?", arrayOf(revision, meta.getString("id")))
-        writableDatabase.execSQL("INSERT OR REPLACE INTO page_revisions(path,revision,content,ts) VALUES(?,?,?,?)", arrayOf(path, revision, content, now()))
+        writableDatabase.execSQL("INSERT OR REPLACE INTO page_revisions(path,revision,content,ts) VALUES(?,?,?,?)", arrayOf(path, revision, body, now()))
     }
 
     fun rawPage(path: String): String? = synchronized(lock) { safe(path).takeIf { it.exists() }?.readText() }
@@ -1277,6 +1292,84 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     private fun mediaUrl(pageId: String, name: String) =
         "/media/$pageId/${java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")}"
+
+    // ---------------------------------------------------------------------
+    // 图片归属收编（与 server lib/pageAssets.ts 的 adoptForeignAssetRefs 同语义）
+    // ---------------------------------------------------------------------
+
+    private data class AdoptedAsset(val relPath: String)
+    private data class AssetAdoption(val content: String, val adopted: Int, val files: List<AdoptedAsset>)
+
+    /**
+     * 收编正文里属于别的父项的图片：把文件复制进 `assets/<pageId>/` 并改写引用。
+     * 纯逻辑在 [PageAssetAdoption]，这里只负责读写 brain 目录；只复制不移动。
+     */
+    private fun adoptForeignAssetRefs(pageId: String, markdown: String): AssetAdoption {
+        val result = PageAssetAdoption.adopt(
+            pageId = pageId,
+            markdown = markdown,
+            read = { ref ->
+                runCatching {
+                    val source = safe("assets/${ref.parentId}/${ref.name}")
+                    if (source.isFile) source.readBytes() else null
+                }.getOrNull()
+            },
+            write = { name, bytes ->
+                runCatching {
+                    val dir = File(brain, "assets/$pageId").also { it.mkdirs() }
+                    val target = File(dir, name)
+                    if (!target.exists()) atomicWrite(target, bytes)
+                }.isSuccess
+            },
+        )
+        return AssetAdoption(
+            content = result.content,
+            adopted = result.adopted,
+            files = result.files.map { AdoptedAsset("assets/$pageId/${it.name}") },
+        )
+    }
+
+    /** 扫描到某个页面文件重新索引后，顺手收编它的跨父项图片引用（本地写入口径：入同步队列） */
+    private fun adoptPageFile(rel: String) {
+        val id = pageIdByPath(rel) ?: return
+        val file = runCatching { safe(rel) }.getOrNull() ?: return
+        if (!file.isFile) return
+        val parsed = runCatching { parseMarkdown(file.readText()) }.getOrNull() ?: return
+        val adoption = adoptForeignAssetRefs(id, parsed.body)
+        if (adoption.adopted == 0) return
+        atomicWrite(file, renderMarkdown(parsed.fields, adoption.content).toByteArray(StandardCharsets.UTF_8))
+        indexPageInternal(rel, false)
+        adoption.files.forEach { enqueue("file", it.relPath) }
+    }
+
+    /**
+     * 升级后一次性把存量页面里的跨父项图片引用收编进本页（对应 server 启动扫描）。
+     * 用偏好标记只跑一次；之后新写入由 updatePage / scan 的增量路径处理。
+     */
+    private fun adoptAllPageAssetsOnce() = synchronized(lock) {
+        val prefs = appContext.getSharedPreferences("engram-maintenance", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asset_adoption_v1", false)) return@synchronized
+        val pages = ArrayList<Pair<String, String>>()
+        readableDatabase.rawQuery("SELECT id,path FROM pages WHERE deleted=0", null).use { c ->
+            while (c.moveToNext()) pages += c.getString(0) to c.getString(1)
+        }
+        var repaired = 0
+        for ((id, path) in pages) {
+            val file = runCatching { safe(path) }.getOrNull() ?: continue
+            if (!file.isFile) continue
+            val parsed = runCatching { parseMarkdown(file.readText()) }.getOrNull() ?: continue
+            val adoption = adoptForeignAssetRefs(id, parsed.body)
+            if (adoption.adopted == 0) continue
+            val ok = runCatching {
+                atomicWrite(file, renderMarkdown(parsed.fields, adoption.content).toByteArray(StandardCharsets.UTF_8))
+                indexPageInternal(path, false)
+                adoption.files.forEach { enqueue("file", it.relPath) }
+            }.isSuccess
+            if (ok) repaired++
+        }
+        prefs.edit().putBoolean("asset_adoption_v1", true).apply()
+        if (repaired > 0) Log.i("EngramStartup", "asset adoption: repaired=$repaired")
+    }
 
     /** 父项的图片资产清单（扫描 assets/<pageId>/），形状对齐 server publicAsset */
     fun listPageAssets(pageId: String): JSONArray {
