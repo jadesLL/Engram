@@ -1121,13 +1121,15 @@ async function renderMarkdown() {
      * （最多 2s）后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块现场补
      * ——渲染缓存排在高亮之后，不会再固化无高亮版本。 */
     for (let i = 0; i < 20; i++) {
-      const hljs = (window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }).hljs;
-      if (hljs?.highlightElement) {
+      const highlightElement = (
+        window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }
+      ).hljs?.highlightElement;
+      if (highlightElement) {
         next.querySelectorAll('pre code').forEach((el) => {
           const block = el as HTMLElement;
           if (block.classList.contains('hljs')) return;
           try {
-            hljs.highlightElement(block);
+            highlightElement(block);
           } catch {
             /* 未知语言等高亮失败不阻塞正文渲染 */
           }
