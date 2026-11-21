@@ -23,7 +23,7 @@ html:root {
   --cc-clay: #d97757;
   --cc-clay-deep: #ad4a27;
   --cc-clay-soft: rgba(217, 119, 87, .11);
-  --cc-olive: #6f7551;
+  --cc-pine: #33694d;
   --cc-slate: #5a6570;
   --cc-track: #ece7d9;
   --cc-hover: rgba(122, 106, 78, .07);
@@ -46,9 +46,11 @@ html:root {
   --action-solid-hover: #35322b;
   --action-solid-pressed: #131210;
   --on-action-solid: var(--cc-composer);
-  /* 语义色也收进暖色：成功=橄榄，危险保留红（只做状态，不做装饰） */
-  --success: var(--cc-olive);
-  --success-soft: rgba(111, 117, 81, .12);
+  /* 语义色也收进暖色：成功=松针绿（比橄榄更深、更干净），危险保留红（只做状态，不做装饰） */
+  --success: var(--cc-pine);
+  --success-soft: rgba(51, 105, 77, .10);
+  /* 通道绿（IPv6）与成功色同一档，否则同一屏里会出现两种绿；其 soft 底本来就复用 success-soft */
+  --link-v6: var(--cc-pine);
   --border: var(--cc-rule);
   --border-strong: var(--cc-rule-2);
   --card-bg: var(--cc-pane);
@@ -61,8 +63,8 @@ html:root {
   --badge-idea-soft: var(--cc-clay-soft);
   --badge-concept: var(--cc-clay-deep);
   --badge-concept-soft: var(--cc-clay-soft);
-  --badge-entity: var(--cc-olive);
-  --badge-entity-soft: rgba(111, 117, 81, .14);
+  --badge-entity: var(--cc-pine);
+  --badge-entity-soft: rgba(51, 105, 77, .12);
   --badge-note: var(--cc-slate);
   --badge-note-soft: rgba(90, 101, 112, .14);
   --ai: var(--cc-clay-deep);
@@ -92,7 +94,7 @@ html.dark:root {
   --cc-clay: #e08a6a;
   --cc-clay-deep: #f0a184;
   --cc-clay-soft: rgba(217, 119, 87, .16);
-  --cc-olive: #9aa06f;
+  --cc-pine: #7fae8c;
   --cc-slate: #8e9aa6;
   --cc-track: #262420;
   --cc-hover: rgba(255, 246, 228, .055);
@@ -103,10 +105,10 @@ html.dark:root {
   --action-solid-hover: #f5f1e7;
   --action-solid-pressed: #d8d3c6;
   --on-action-solid: var(--cc-canvas);
-  --success: #9aa06f;
-  --success-soft: rgba(154, 160, 111, .16);
+  --success: var(--cc-pine);
+  --success-soft: rgba(127, 174, 140, .16);
   --sidebar-selection-border: rgba(224, 138, 106, .28);
-  --badge-entity-soft: rgba(154, 160, 111, .16);
+  --badge-entity-soft: rgba(127, 174, 140, .16);
   --badge-note-soft: rgba(142, 154, 166, .16);
 }
 
@@ -400,7 +402,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   height: 5px;
   flex: none;
   border-radius: 50%;
-  background: var(--cc-olive);
+  background: var(--cc-pine);
 }
 .board .status-cell.warn::before { background: var(--cc-clay); }
 .board .status-cell .k { flex: 1; font-size: 12.5px; color: var(--cc-ink-2); }
