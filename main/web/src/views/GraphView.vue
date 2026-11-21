@@ -272,6 +272,8 @@ interface ApiEdge { from: string; to: string; label?: string }
 interface GNode {
   id: string; label: string; group: string; raw: boolean; words: number; tags: string[]; updatedAt: string;
   deg: number; inDeg: number; r: number; x: number; y: number; vx: number; vy: number; fixed: boolean;
+  /** 压暗程度：0 正常、1 完全压暗；选中/悬停时逐帧缓动，避免非关联节点瞬间变灰 */
+  dim: number;
 }
 /** 右栏「关联页面」列表项：邻居节点 + 合并后的关系名 */
 type RelItem = GNode & { rel: string };
@@ -433,7 +435,7 @@ async function load() {
   const nodes: GNode[] = (data.nodes || []).map((n) => ({
     id: n.id, label: n.label, group: n.group, raw: !!n.raw, words: n.words || 0,
     tags: n.tags || [], updatedAt: n.updatedAt || '',
-    deg: 0, inDeg: 0, r: 4, x: 0, y: 0, vx: 0, vy: 0, fixed: false,
+    deg: 0, inDeg: 0, r: 4, x: 0, y: 0, vx: 0, vy: 0, fixed: false, dim: 0,
   }));
   const index = new Map<string, number>();
   nodes.forEach((n, i) => index.set(n.id, i));
@@ -462,6 +464,7 @@ async function load() {
   posCache.clear();
   userAdjusted = false;
   selected.value = null;
+  pendingClick = null;
   applyFilter();
   layoutHint.value = '';
 }
@@ -794,7 +797,66 @@ const view = { x: 0, y: 0, s: 1 };
 let bctx: CanvasRenderingContext2D | null = null;
 let octx: CanvasRenderingContext2D | null = null;
 let hover: GNode | null = null;
-const focusedNode = () => drag?.node || hover || selected.value;
+/** 单击后到选中生效之间（200ms 双击判定窗口）临时保持焦点，避免压暗过渡先回亮再压暗 */
+let pendingClick: GNode | null = null;
+const focusedNode = () => drag?.node || hover || pendingClick || selected.value;
+
+/* ──────────────────────── 焦点过渡 ──────────────────────── */
+
+/**
+ * 选中/悬停时的「压暗不相关节点 + 高亮关联边」曾经是硬切，点了节点整张图会突然变灰。
+ * 现在每个节点各自缓动 dim：节点、标签、连边都跟着渐变；高亮层淡入淡出，切换焦点时
+ * 旧焦点淡出、新焦点淡入（交叉淡化）。系统开启「减少动态效果」时直接到位。
+ */
+const FOCUS_TAU = 55;          // ms，指数逼近的时间常数：视觉上约 200ms 完成，260ms 内完全到位
+const DIM_NODE = 0.76;         // 压暗后节点保留 24% 不透明度（与改造前的观感一致）
+const DIM_EDGE = 0.75;         // 焦点态下无关连边保留 25%（约等于原来的 quietEdge）
+const DIM_SETTLE = 0.008;      // 与目标值的残差小于该值即视为到位
+
+let lastFocusStepAt = 0;
+let focusAnimating = false;
+/** 焦点存在程度 0→1：驱动连边整体压暗与高亮层显隐 */
+let focusMix = 0;
+/** 高亮层：cur 是当前焦点，prev 是切换前的焦点（交叉淡化用）；失去焦点后仍用 cur 淡出 */
+let overlayPrev: GNode | null = null;
+let overlayCur: GNode | null = null;
+let overlayT = 1;
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** 推进一帧焦点过渡；延续动画时把 focusAnimating 置真，由 paintFrame 继续排帧。 */
+function stepFocus() {
+  const now = performance.now();
+  const dt = lastFocusStepAt && now - lastFocusStepAt < 100 ? Math.min(48, now - lastFocusStepAt) : 16;
+  lastFocusStepAt = now;
+  const k = reducedMotion() ? 1 : 1 - Math.exp(-dt / FOCUS_TAU);
+
+  const focus = focusedNode();
+  const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
+  const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map((a) => rawNodes[a.i].id))]) : null;
+
+  focusAnimating = false;
+  const ease = (current: number, target: number) => {
+    const next = current + (target - current) * k;
+    if (Math.abs(target - next) < DIM_SETTLE) return target;
+    focusAnimating = true;
+    return next;
+  };
+  for (const n of visible) n.dim = ease(n.dim, relatedIds && !relatedIds.has(n.id) ? 1 : 0);
+
+  if (focus && overlayCur?.id !== focus.id) {
+    overlayPrev = overlayCur;
+    overlayCur = focus;
+    overlayT = overlayPrev ? 0 : 1;
+    focusAnimating = true;
+  }
+  focusMix = ease(focusMix, focus ? 1 : 0);
+  if (overlayPrev) {
+    overlayT = ease(overlayT, 1);
+    if (overlayT === 1) overlayPrev = null;
+  }
+  if (!focus && focusMix === 0) { overlayCur = null; overlayPrev = null; }
+}
+
 const paintFrame = createGraphFrame((labels) => {
   // Physics and paint share the same frame so hit testing sees exactly the positions on screen.
   if (simActive) {
@@ -806,11 +868,12 @@ const paintFrame = createGraphFrame((labels) => {
       setLayoutHint();
     }
   }
+  stepFocus();
   if (labels) planLabels();
   zoomPercent.value = Math.round(view.s * 100);
   drawBase();
   drawOver();
-  if (simActive) paintFrame.schedule();
+  if (simActive || focusAnimating) paintFrame.schedule();
 });
 let fitTimer = 0;
 let labelTimer = 0;
@@ -831,7 +894,7 @@ function cssVar(el: HTMLElement | undefined, name: string, fallback: string) {
 let palette = {
   bg: '#fafafa', edge: 'rgba(99,91,113,.18)', edgeHot: '#7657c8',
   label: '#55515e', labelHot: '#33313a', node: '#777181', nodeHot: '#514b60',
-  focus: '#7657c8', quietEdge: 'rgba(99,91,113,.045)',
+  focus: '#7657c8',
 };
 function refreshPalette() {
   const dark = app.dark;
@@ -843,7 +906,6 @@ function refreshPalette() {
     labelHot: dark ? '#e6e2ed' : '#33313a',
     node: dark ? '#aba5b7' : '#777181', nodeHot: dark ? '#ddd8e7' : '#514b60',
     focus: dark ? '#b59af6' : '#7657c8',
-    quietEdge: dark ? 'rgba(171,165,186,.055)' : 'rgba(99,91,113,.045)',
   };
 }
 const theme = () => palette;
@@ -875,7 +937,9 @@ function planLabels() {
   const focus = focusedNode();
   const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
   const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map(a => rawNodes[a.i].id))]) : null;
-  const candidates = relatedIds ? visible.filter(n => relatedIds.has(n.id)) : visible;
+  // 标签规划保留全部可见节点：焦点出现时关联节点优先占位，其余标签随压暗一起淡出，
+  // 不再瞬间消失；焦点消失后它们又原地淡回。
+  const candidates = visible;
   const placed: GraphLabelBox[] = focus ? [focusLabelBox(focus, bctx)] : [];
   const nodeBoxes = candidates.map((n) => {
     const r = nodeScreenR(n.r) + 2;
@@ -883,7 +947,8 @@ function planLabels() {
   });
   const intersect = (a: typeof placed[0], b: typeof placed[0]) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  const order = candidates.slice().sort((a, b) => b.deg - a.deg || b.words - a.words);
+  const relatedRank = (n: GNode) => (relatedIds?.has(n.id) ? 1 : 0);
+  const order = candidates.slice().sort((a, b) => relatedRank(b) - relatedRank(a) || b.deg - a.deg || b.words - a.words);
   const budget = view.s > 1.6 ? 60 : view.s > 1.0 ? 34 : 22;
   for (const n of order) {
     if (n === focus) continue;
@@ -915,20 +980,12 @@ function planLabels() {
   }
 }
 
-function drawBase() {
-  if (!bctx || !W) return;
+/** 连边整体随焦点出现压暗、随焦点消失回亮；一次批量描边，只调整体 alpha。 */
+function strokeEdges() {
+  if (!bctx) return;
   const T = theme();
-  const focus = focusedNode();
-  const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
-  const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map(a => rawNodes[a.i].id))]) : null;
-  bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  bctx.clearRect(0, 0, W, H);
-  if (!visible.length) return;
-  bctx.save();
-  bctx.translate(view.x, view.y);
-  bctx.scale(view.s, view.s);
-
-  // 边：一次性批量描边（不逐条 stroke，省一半时间）
+  bctx.lineWidth = 0.7 * linkScale() / view.s;
+  bctx.strokeStyle = T.edge;
   bctx.beginPath();
   for (const l of visibleLinks) {
     const a = rawNodes[l.a];
@@ -936,9 +993,23 @@ function drawBase() {
     bctx.moveTo(a.x, a.y);
     bctx.lineTo(b.x, b.y);
   }
-  bctx.lineWidth = 0.7 * linkScale() / view.s;
-  bctx.strokeStyle = focus ? T.quietEdge : T.edge;
+  bctx.globalAlpha = 1 - DIM_EDGE * focusMix;
   bctx.stroke();
+  bctx.globalAlpha = 1;
+}
+
+function drawBase() {
+  if (!bctx || !W) return;
+  const T = theme();
+  const focus = focusedNode();
+  bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  bctx.clearRect(0, 0, W, H);
+  if (!visible.length) return;
+  bctx.save();
+  bctx.translate(view.x, view.y);
+  bctx.scale(view.s, view.s);
+
+  strokeEdges();
 
   // 紧凑圆点保留关联度的大小差异，物理碰撞半径不随外观改变。
   for (const n of visible) {
@@ -948,13 +1019,13 @@ function drawBase() {
     const rr = nodeScreenR(n.r);
     bctx.beginPath();
     bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
-    bctx.globalAlpha = relatedIds && !relatedIds.has(n.id) ? 0.24 : 1;
+    bctx.globalAlpha = 1 - DIM_NODE * n.dim;
     bctx.fillStyle = nodePaintColor(n);
     bctx.fill();
   }
   bctx.restore();
 
-  // 标签
+  // 标签：和节点共用压暗程度，焦点之外的标签逐渐淡出而不是瞬间消失
   bctx.textBaseline = 'middle';
   bctx.textAlign = 'left';
   const occupied: GraphLabelBox[] = [];
@@ -963,12 +1034,14 @@ function drawBase() {
   }
   for (const L of labelPlan) {
     if (L.n.id === focus?.id) continue; // The overlay draws the focused title once.
+    const alpha = 1 - L.n.dim;
+    if (alpha < 0.02) continue;
     const x = Math.round(L.n.x * view.s + view.x + L.dx);
     const y = Math.round(L.n.y * view.s + view.y + L.dy);
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     // Nodes move while dragging. Recheck collisions without rebuilding or swapping label anchors.
     if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: bctx.measureText(L.text).width, h: L.fs + 4 }, occupied)) continue;
-    bctx.globalAlpha = relatedIds && !relatedIds.has(L.n.id) ? 0.6 : 1;
+    bctx.globalAlpha = alpha;
     bctx.lineWidth = 4;
     bctx.strokeStyle = T.bg;
     bctx.strokeText(L.text, x, y);
@@ -999,23 +1072,21 @@ function focusLabelBox(node: GNode, ctx: CanvasRenderingContext2D): GraphLabelBo
   };
 }
 
-function drawOver() {
-  if (!octx || !W) return;
+/** 单个焦点的高亮层：紫色关联边 + 提亮邻居 + 焦点圆环 + 强制标签，整体按 alpha 淡入淡出。 */
+function paintOverlayNode(node: GNode, alpha: number) {
+  if (!octx || alpha <= 0.004 || !visibleIds.has(node.id)) return;
   const T = theme();
-  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  octx.clearRect(0, 0, W, H);
-  const focus = focusedNode();
-  if (!focus) return;
-  const idx = nodeIndex.get(focus.id);
+  const idx = nodeIndex.get(node.id);
   if (idx == null) return;
   octx.save();
+  octx.globalAlpha = alpha;
   octx.translate(view.x, view.y);
   octx.scale(view.s, view.s);
   octx.beginPath();
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
     if (!visibleIds.has(m.id)) continue;
-    octx.moveTo(focus.x, focus.y);
+    octx.moveTo(node.x, node.y);
     octx.lineTo(m.x, m.y);
   }
   octx.lineWidth = (1.3 * linkScale()) / view.s;
@@ -1030,23 +1101,36 @@ function drawOver() {
     octx.fillStyle = colorGroups.value ? colorOf(m) : T.nodeHot;
     octx.fill();
   }
-  const fr = nodeRadius(focus.r) + 1 / view.s;
+  const fr = nodeRadius(node.r) + 1 / view.s;
   octx.beginPath();
-  octx.arc(focus.x, focus.y, fr, 0, Math.PI * 2);
+  octx.arc(node.x, node.y, fr, 0, Math.PI * 2);
   octx.fillStyle = T.focus;
   octx.fill();
   octx.restore();
 
   // 焦点标签强制显示
-  const box = focusLabelBox(focus, octx);
+  const box = focusLabelBox(node, octx);
+  octx.save();
+  octx.globalAlpha = alpha;
   octx.textAlign = 'center';
   octx.textBaseline = 'middle';
   octx.lineWidth = 4;
   octx.strokeStyle = T.bg;
-  octx.strokeText(focus.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
+  octx.strokeText(node.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
   octx.fillStyle = T.focus;
-  octx.fillText(focus.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
+  octx.fillText(node.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
+  octx.restore();
+}
 
+function drawOver() {
+  if (!octx || !W) return;
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, W, H);
+  octx.globalAlpha = 1;
+  if (!overlayCur || focusMix <= 0) return;
+  // 切换焦点时旧高亮淡出、新高亮淡入，避免紫色连线从一个节点瞬移到另一个节点。
+  if (overlayPrev) paintOverlayNode(overlayPrev, focusMix * (1 - overlayT));
+  paintOverlayNode(overlayCur, focusMix * (overlayPrev ? overlayT : 1));
 }
 
 /* ────────────────────────── 视图操作 ────────────────────────── */
@@ -1127,6 +1211,7 @@ function onPointerDown(ev: PointerEvent) {
   cv.setPointerCapture(ev.pointerId);
   const { x, y } = pointerPos(ev);
   const node = hitTest(x, y);
+  pendingClick = null; // 新的一次按下接管焦点
   const w = screenToWorld(x, y);
   drag = { node, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, offsetX: node ? node.x - w.x : 0, offsetY: node ? node.y - w.y : 0, moved: false };
   if (node) { node.fixed = true; node.vx = 0; node.vy = 0; }
@@ -1198,11 +1283,16 @@ function onPointerUp(ev: PointerEvent) {
   if (ev.type === 'pointercancel' || ev.type === 'lostpointercapture') return;
   if (wasDrag || !node) return;
 
+  // 单击后 200ms 才真正选中（等第二次点击判定双击）。这段等待里保留节点焦点，
+  // 否则压暗过渡会先回亮再压暗，看起来像闪一下。
+  pendingClick = node;
+
   // 单击 = 选中（打开页面走右栏按钮）；300ms 内的第二次点击 = 以它为中心（只挪视图，不重排）
   const now = Date.now();
   if (node.id === lastClickId && now - lastClickAt < 300) {
     clearTimeout(clickTimer);
     lastClickAt = 0;
+    pendingClick = null;
     centerOn(node);
     return;
   }
@@ -1210,6 +1300,7 @@ function onPointerUp(ev: PointerEvent) {
   lastClickId = node.id;
   clearTimeout(clickTimer);
   clickTimer = window.setTimeout(() => {
+    pendingClick = null;
     selectNode(node);
   }, 200);
 }
