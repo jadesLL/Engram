@@ -61,7 +61,10 @@ const shown = computed(() => (props.cards || []).slice(0, Math.min(Math.max(1, p
   border: 1.5px solid var(--border-strong);
   border-radius: 50%;
 }
-.mini-task:hover .mini-check { border-color: var(--accent); }
+/* 触屏没有 hover：不加悬停环，避免点过后残留一圈陶土色 */
+@media (hover: hover) {
+  .mini-task:hover .mini-check { border-color: var(--accent); }
+}
 .mini-main { flex: 1; min-width: 0; }
 /* 单行标题：卡内行高预算 49px 只够「一行标题 + 来源」，放两行会让来源溢出到
    行边界外、被下一行的 1px 分隔线压住；完整标题在悬停 tooltip 与任务看板里。 */
