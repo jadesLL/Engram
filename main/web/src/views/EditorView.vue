@@ -2606,16 +2606,16 @@ button.save-state.dirty:hover { color: var(--accent); }
   padding: 0 11px;
   border: 1px solid transparent;
   border-radius: var(--radius-control);
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--action-solid);
+  color: var(--on-action-solid);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 120ms ease, opacity 120ms ease;
 }
-.save-btn:hover { background: var(--accent-hover); }
-.save-btn:active { background: var(--accent-pressed); }
-.save-btn:disabled { opacity: 0.42; cursor: default; background: var(--accent); }
+.save-btn:hover { background: var(--action-solid-hover); }
+.save-btn:active { background: var(--action-solid-pressed); }
+.save-btn:disabled { opacity: 0.42; cursor: default; background: var(--action-solid); }
 /* 关掉自动保存时按钮刚出现：轻微入场，避免被忽略（v-if 重新挂载触发） */
 .save-btn { animation: save-in 180ms ease-out; }
 @keyframes save-in {

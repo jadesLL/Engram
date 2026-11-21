@@ -464,8 +464,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 }
 .settings-actions .done {
   margin-left:auto;
-  background:var(--accent);
-  color:#fff;
+  background:var(--action-solid);
+  color:var(--on-action-solid);
   padding:8px 16px;
   border-radius:8px;
 }

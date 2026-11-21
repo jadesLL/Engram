@@ -1010,8 +1010,9 @@ onUnmounted(() => {
 }
 .manage-btn:hover { border-color: var(--accent); color: var(--accent); }
 .manage-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.manage-btn.primary { border-color: transparent; background: var(--accent); color: #fff; }
-.manage-btn.primary:hover { color: #fff; filter: brightness(1.05); }
+.manage-btn.primary { border-color: transparent; background: var(--action-solid); color: var(--on-action-solid); }
+.manage-btn.primary:hover { background: var(--action-solid-hover); color: var(--on-action-solid); }
+.manage-btn.primary:active { background: var(--action-solid-pressed); }
 .manage-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* 添加模块面板：两列类型卡，点一下追加一块 */

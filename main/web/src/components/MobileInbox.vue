@@ -2451,7 +2451,7 @@ onBeforeUnmount(() => {
   width: 100%;
   margin-top: 8px;
   padding: 5px 10px 5px 8px;
-  border: 1px solid var(--accent-border, rgba(43, 92, 230, 0.3));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 12px;
   background: var(--accent-soft);
   text-align: left;
@@ -3146,19 +3146,19 @@ onBeforeUnmount(() => {
   gap: 6px;
   overflow: hidden;
   border-radius: 13px;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--action-solid);
+  color: var(--on-action-solid);
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
-  box-shadow: 0 6px 16px rgba(43, 92, 230, 0.28);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--action-solid) 22%, transparent);
   transition: background 0.14s ease, transform 0.12s ease;
 }
 
 .mi-bar-main:active {
   transform: scale(0.985);
-  background: var(--accent-hover);
+  background: var(--action-solid-pressed);
 }
 
 .mi-bar-main:disabled {
@@ -3394,7 +3394,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-mini.primary {
-  border-color: var(--accent-border, rgba(43, 92, 230, 0.3));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);
   color: var(--accent);
 }
