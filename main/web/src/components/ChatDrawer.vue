@@ -2156,6 +2156,21 @@ onUnmounted(() => {
   left: calc(var(--sidebar-width) + 72px);
 }
 
+/*
+ * 知识库目录满窗（Home 的 .layout.sidebar-full）：目录头部那一条是「全部展开 / 新建 / 收回」
+ * 的唯一入口，必须留在 Agent 之上可点。让 Agent（满窗 / 停靠 / 浮层三种形态）从目录头下方开始铺，
+ * 层级提到目录面板（--z-subpanel）之上；停靠卡片再多留 8px 呼吸位。
+ * 头部高度由 Home 的 --kb-head-h 提供，和 Sidebar 的 .kb-head 保持同一来源。
+ */
+.layout.sidebar-full .chat-drawer:not(.embedded) {
+  top: calc(var(--safe-top) + var(--kb-head-h, 52px));
+  z-index: calc(var(--z-subpanel) + 1);
+}
+
+.layout.sidebar-full .chat-drawer.dock:not(.embedded) {
+  top: calc(var(--safe-top) + var(--kb-head-h, 52px) + 8px);
+}
+
 /* 满窗下头部/正文/输入区/会话列表同列居中限宽，长文与工具结果不被拉成一整屏 */
 .chat-drawer.full .chat-head,
 .chat-drawer.full .context-strip,

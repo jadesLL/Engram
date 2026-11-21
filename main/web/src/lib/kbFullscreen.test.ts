@@ -202,3 +202,49 @@ test('吸顶抬头贴住列头：列体不吃上内边距，呼吸位挪到第�
   assert.match(ruleBody(sidebar, '.kb-group:first-child > .kb-sub-head'), /margin-top:\s*10px/, '第一个类目的呼吸位（原 6px 内边距 + 4px 外边距）丢了');
   assert.match(ruleBody(sidebar, '.kb-group:first-child > .kb-row:first-child'), /margin-top:\s*6px/, '单组平铺列（概念/归档）第一行的呼吸位丢了');
 });
+
+/**
+ * 2026-11-22 用户报障：「知识库全屏……全部展开那个按钮……开着内置 Agent 的时候会被挡」。
+ *
+ * 目录满窗与 Agent 满窗原来是同一层（--z-subpanel），Agent 在 DOM 里更靠后，整片盖住
+ * 目录头部——「展开全部类目」既点不到，展开后也看不到列体。修法两半：
+ * ① Agent 从目录头下方（--kb-head-h）开始铺，目录头始终留在它之上可点；
+ * ② 全部展开时把 Agent 收起，收起全部类目或退出满窗时按展开前的开/关状态恢复。
+ */
+test('满窗目录与内置 Agent：展开全部时 Agent 让位，收起或退出满窗时恢复原状态', () => {
+  assert.match(sidebar, /let restoreChatForFullGroups = false/, '没有记住「展开前 Agent 是否开着」');
+  assert.match(
+    sidebar,
+    /function toggleFullGroups\(\)\s*\{\s*const willExpand = fullGroupsCollapsed\.value;\s*if \(willExpand\) \{\s*restoreChatForFullGroups = app\.chatDrawerOpen;\s*if \(restoreChatForFullGroups\) app\.minimizeChat\(\);/,
+    '全部展开时没有收起 Agent（或没记住原状态）'
+  );
+  assert.match(
+    sidebar,
+    /else if \(restoreChatForFullGroups\) \{\s*restoreChatForFullGroups = false;\s*app\.toggleChat\(true\);/,
+    '收起全部类目时没有恢复 Agent'
+  );
+  assert.match(
+    sidebar,
+    /watch\(\s*\(\) => app\.sidebarFull,[\s\S]{0,220}?app\.toggleChat\(true\)/,
+    '退出满窗时没有恢复被收起期间的 Agent'
+  );
+  // 用户在展开状态下自己重新打开 Agent，就不再替他恢复，避免收起类目时重复开/关
+  assert.match(
+    sidebar,
+    /watch\(\s*\(\) => app\.chatDrawerOpen,[\s\S]{0,160}?if \(open\) restoreChatForFullGroups = false;/,
+    '用户手动重开 Agent 后仍会触发自动恢复'
+  );
+});
+
+test('满窗目录头部不会被 Agent 页盖住：Agent 从目录头下方开始铺，并抬到目录面板之上', () => {
+  const drawer = read('components/ChatDrawer.vue');
+  assert.match(home, /\.layout\.sidebar-full\s*\{\s*--kb-head-h:\s*52px;/, '满窗没有提供目录头高度变量（Agent 无从让位）');
+  const body = ruleBody(drawer, '.layout.sidebar-full .chat-drawer:not(.embedded)');
+  assert.match(body, /top:\s*calc\(var\(--safe-top\) \+ var\(--kb-head-h, 52px\)\)/, 'Agent 没有从目录头下方开始铺');
+  assert.match(body, /z-index:\s*calc\(var\(--z-subpanel\) \+ 1\)/, 'Agent 仍与目录面板同层，目录头会被盖住');
+  assert.match(
+    drawer,
+    /\.layout\.sidebar-full \.chat-drawer\.dock:not\(\.embedded\)\s*\{\s*top:\s*calc\(var\(--safe-top\) \+ var\(--kb-head-h, 52px\) \+ 8px\)/,
+    '停靠卡片的 8px 呼吸位丢了'
+  );
+});
