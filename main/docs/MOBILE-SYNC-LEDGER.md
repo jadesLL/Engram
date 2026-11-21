@@ -11,10 +11,10 @@
 
 | 日期 | 来源提交 | 类型 | 要补什么 | 手机侧改动点 | 状态 | 目标版本 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-11-19 | feat/asset-owner-repair | A | 图片归属自愈：正文引用别的父项（复制正文 / Agent 转写留下 `/media/<旧id>/…`）时，收编进本页资产目录并改写引用；服务端已在 `writePage` 与启动扫描落地 | Android 本地服务的 `LocalDatabase.updatePage` / 页面扫描入口加同语义收编（复制 `assets/<旧父项id>/` 文件到本页目录、改写引用并保留 `#w=`）；否则手机上复制正文后「查看引用图片」仍显示 0/无 | 待办 | v1.5.16 | 手机本地服务是同一套资产模型；同步拉回的页面正文已由中枢改写，但手机本机复制正文仍会复现 |
+| 2026-11-19 | feat/asset-owner-repair | A | 图片归属自愈：正文引用别的父项（复制正文 / Agent 转写留下 `/media/<旧id>/…`）时，收编进本页资产目录并改写引用；服务端已在 `writePage` 与启动扫描落地 | Android 侧已在 `e07e6767` 补齐：`LocalDatabase.updatePage` / `writeSyncedPage` / 扫描重新索引的页面都走 `PageAssetAdoption`（复制 `assets/<旧父项id>/` 文件到本页目录、改写引用并保留 `#w=` 与 title），升级后一次性补齐存量页面；`PageAssetAdoptionTest` 覆盖复制 / 幂等 / 源缺失 / HTML src / 写入失败 | 完成 | v1.5.16 | 手机本地服务是同一套资产模型；同步拉回的页面正文已由中枢改写，但手机本机复制正文仍会复现 |
 | 2026-11-08 | feat/agent-model-sync | F | 新增 preference 键 `agent_model_config`（内置 Agent 模型配置与相关 Key）与 `video_config`（视频理解开关）的跨端同步 | 无：Android 不跑 dsh、不持有模型 Key，未知 preference key 按现有逻辑跳过；视频提炼与聊天都在中枢执行 | 不适用 | v1.6.x | 见 docs/AGENT-MODEL-SYNC.md「平台影响」与 docs/ANDROID.md「Agent 与自动化配置」 |
 
-（暂无待办；上面一行是确认「不适用」的登记，不算待办）
+（暂无待办；上面一行是确认「不适用」的登记，不算待办。2026-11-21 的 A 类「图片归属自愈」已随 v1.5.16 完成。）
 
 ## 历史
 
