@@ -33,6 +33,17 @@ class InboxFilesTest {
         } finally { brain.deleteRecursively() }
     }
 
+    @Test fun shareWithoutDisplayExtensionFallsBackToMime() {
+        assertEquals("image.jpg", InboxFiles.withExtension("image", "image/jpeg"))
+        assertEquals("clip.pdf", InboxFiles.withExtension("clip", "application/pdf; charset=binary"))
+        assertEquals("clip.pdf", InboxFiles.withExtension("clip", " application/PDF "))
+        assertEquals("文件.mp4", InboxFiles.withExtension("文件", "video/mp4"))
+        assertEquals("photo.PNG", InboxFiles.withExtension("photo.PNG", "image/jpeg"))
+        assertEquals("合同.txt", InboxFiles.withExtension("合同.txt", "application/pdf"))
+        assertEquals("未知类型", InboxFiles.withExtension("未知类型", "application/x-not-a-real-type"))
+        assertEquals("没有类型", InboxFiles.withExtension("没有类型", null))
+    }
+
     @Test fun rejectsTraversalAndKnowledgePaths() {
         val brain = Files.createTempDirectory("engram-inbox-path").toFile()
         try {
