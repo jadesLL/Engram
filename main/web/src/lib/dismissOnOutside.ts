@@ -43,6 +43,7 @@ const MODAL_LAYER_SELECTOR = [
   '.fmt-mask',
   '.insert-mask',
   '.ai-menu-mask',
+  '.vi-mask',
   '.context-menu-mask',
   '.new-mask',
   '.more-mask',

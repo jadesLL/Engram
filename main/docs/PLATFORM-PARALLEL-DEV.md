@@ -284,7 +284,7 @@ Windows 窗口可自由缩放，因此桌面/浏览器形态也要在 640/768/10
 | 类别 | 判据 | 例子 | 手机侧动作 |
 | --- | --- | --- | --- |
 | 本地实现 | 只读写本机 `brain/` 或 `wiki.db` | auth、pages、files/assets、search、graph、trash、settings、backup/restore、sync config/status/log/pairing/reconcile、app-update | Kotlin/Ktor 路由实现 |
-| 窄代理到中枢 | 中枢做实事，手机只转发（成员令牌） | assistant 会话/run/events、agent-console 18 条、video-config、dream、guide、customer-research、tasks/board、inbox、ideas | `EngramLocalServer.kt` 的 `proxyHub` / `proxyAgent` + 未绑定中枢时 409 中文提示 |
+| 窄代理到中枢 | 中枢做实事，手机只转发（成员令牌） | assistant 会话/run/events、agent-console 18 条、video-config、dream、guide、customer-research、tasks/board、inbox、ideas、speech（语音转写） | `EngramLocalServer.kt` 的 `proxyHub` / `proxyAgent` + 未绑定中枢时 409 中文提示 |
 | 不代理（owner 级） | 成员令牌不能做 | 成员邀请/peers、DDNS、TLS、外部 Agent 接入、Agent 令牌发放 | 能力位 false，UI 不出现；直接访问给可读说明 |
 | 手机专属 | 只有壳层能做 | `/api/app-update/*`（OTA）、`/api/sync/background` 与 `/api/sync/background/permissions`（退到后台后 10 分钟的宽限窗口与通知 / 电池优化权限）、本机分享落袋（单独分享一条网页链接时由壳层抓 HTML 原件并按标题落袋，失败回退 `.txt`） | Kotlin 实现 |
 
