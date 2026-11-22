@@ -16,21 +16,15 @@
 
     <!-- 页面编辑模式 -->
     <template v-else-if="page">
-      <div v-if="pageLoading || pageError" class="page-state page-transition" role="status">
-        <!-- 加载骨架（2026-11 加载态）：按「标题 + 三段正文」占位；错误态保留重试按钮 -->
-        <template v-if="pageLoading">
-          <div class="page-skeleton" aria-hidden="true">
-            <AppSkeleton variant="line" width="46%" height="20px" />
-            <AppSkeleton variant="line" width="92%" />
-            <AppSkeleton variant="line" width="88%" />
-            <AppSkeleton variant="line" width="64%" />
-          </div>
-        </template>
-        <template v-else><p class="page-error-text">{{ pageError }}</p><button class="btn" type="button" @click="retryLoad">重试</button></template>
+      <!-- 换页时不再用骨架遮住已有正文（用户报障「每次切换都会闪烁一下」）：旧页保持可见，
+           新页数据回来后才整体换稿；骨架只留给还没有任何页面的首次加载（见下方 spinner）。 -->
+      <div v-if="pageError" class="page-state page-transition" role="status">
+        <p class="page-error-text">{{ pageError }}</p>
+        <button class="btn" type="button" @click="retryLoad">重试</button>
       </div>
       <ReadingPreview
         v-if="app.readingMode"
-        v-show="!pageLoading && !pageError"
+        v-show="!pageError"
         :markdown="content"
         :title="title"
         :format-document-title="isRawPage"
@@ -69,7 +63,7 @@
       <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态。
            窄正文（抽屉 dock / 文件树展开）时低频项收进右侧 ⋯ 菜单，顶栏尺寸与文案不变 -->
       <div
-        v-show="!app.readingMode && !pageLoading && !pageError"
+        v-show="!app.readingMode && !pageError"
         class="editor-topbar chrome-float"
         :class="`topbar-${topbarMenuMode}`"
         data-tip-chrome
@@ -276,7 +270,7 @@
 
       <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
            不再用悬浮纸面卡片；evidence-drawer 为绝对定位浮层，不参与文档流） -->
-      <div v-show="!app.readingMode && !pageLoading && !pageError" class="editor-body">
+      <div v-show="!app.readingMode && !pageError" class="editor-body">
       <div class="editor-main">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <DocumentTitle v-if="isRawPage" :title="title" :page-id="String(page.id)" :disabled="pageLoading" @save="saveDocumentTitle" />
@@ -504,7 +498,7 @@
            放在 editor-body 之外、直接挂 editor-view：它和顶栏一样是悬浮 chrome（绝对定位浮在正文之上），
            不再参与文档流，正文因此多出上下两条白条的高度。
            v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
-      <div v-if="!app.readingMode" v-show="!pageLoading && !pageError" class="statusbar chrome-float" data-tip-chrome>
+      <div v-if="!app.readingMode" v-show="!pageError" class="statusbar chrome-float" data-tip-chrome>
         <span class="sb-item">{{ wordCount }} 字</span>
         <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
         <div class="spacer"></div>
@@ -729,7 +723,6 @@ import HomeBoard from '../components/HomeBoard.vue';
 import PageOutline from '../components/PageOutline.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
-import AppSkeleton from '../components/ui/AppSkeleton.vue';
 import { confirmDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { useRuntimeCapabilities } from '../lib/capabilities';
@@ -2848,12 +2841,6 @@ button.save-state.dirty:hover { color: var(--accent); }
   gap: 12px;
 }
 .page-error-text { margin: 0; color: var(--danger); }
-.page-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: min(560px, 82%);
-}
 .editor-area :deep(.vditor) {
   max-width: var(--editor-max);
   width: 100% !important;

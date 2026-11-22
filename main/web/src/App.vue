@@ -48,10 +48,14 @@
     </template>
     <span v-else class="win-titlebar-spacer"></span>
   </div>
-  <!-- 路由切换过渡（2026-11 动效）：只做入场淡入（见 main.css .page-*），离场瞬时卸载，重页面切换不加延迟 -->
-  <router-view v-slot="{ Component, route }">
+  <!-- 路由切换过渡（2026-11 动效）：只做入场淡入（见 main.css .page-*），离场瞬时卸载，重页面切换不加延迟。
+       **不要给根组件加 :key="route.path"**：根 router-view 里装的是 Home（侧栏 + 子路由外壳），
+       按完整路径打 key 会让 /page/A → /page/B 这类切换把整个外壳卸载重建——侧栏重拉、
+       编辑页归零、先闪骨架再出正文（2026-11-22 用户报障「每次切换都会闪烁一下这个软件」）。
+       组件类型变化（登录页 ↔ 主界面）Transition 本来就会入场，同类型路由切换不需要重建。 -->
+  <router-view v-slot="{ Component }">
     <Transition name="page">
-      <component :is="Component" :key="route.path" />
+      <component :is="Component" />
     </Transition>
   </router-view>
   <AssetDrawer />

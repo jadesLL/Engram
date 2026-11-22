@@ -1119,24 +1119,34 @@ async function renderMarkdown() {
     /* Vditor 的 highlight.js 是异步脚本：preview 返回时脚本经常还没就绪，代码块落成纯文本
      * 还被存进渲染缓存（阅读态从此一直无高亮，2026-11-22 验收样张复现）。这里等 hljs 到位
      * （最多 2s）后补一遍同步高亮：已带 hljs 类的块不动（Vditor 自己已高亮），纯文本块现场补
-     * ——渲染缓存排在高亮之后，不会再固化无高亮版本。 */
-    for (let i = 0; i < 20; i++) {
-      const highlightElement = (
-        window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }
-      ).hljs?.highlightElement;
-      if (highlightElement) {
-        next.querySelectorAll('pre code').forEach((el) => {
-          const block = el as HTMLElement;
-          if (block.classList.contains('hljs')) return;
-          try {
-            highlightElement(block);
-          } catch {
-            /* 未知语言等高亮失败不阻塞正文渲染 */
-          }
-        });
-        break;
+     * ——渲染缓存排在高亮之后，不会再固化无高亮版本。
+     *
+     * 但**只有页面里真有未高亮的代码块才值得等**：没有 <pre><code> 时 Vditor 的
+     * highlightRender 直接 return，根本不会去加载 hljs，window.hljs 永远不会出现。
+     * 旧逻辑无条件等满 20×100ms，普通笔记/报告每切一次就白等 2s 才落地正文
+     * （用户报障「刚切过去是白屏，过一会才出现文字」）。 */
+    const hasPendingCodeBlock = Array.from(next.querySelectorAll<HTMLElement>('pre code')).some(
+      (block) => !block.classList.contains('hljs'),
+    );
+    if (hasPendingCodeBlock) {
+      for (let i = 0; i < 20; i++) {
+        const highlightElement = (
+          window as unknown as { hljs?: { highlightElement?: (el: HTMLElement) => void } }
+        ).hljs?.highlightElement;
+        if (highlightElement) {
+          next.querySelectorAll('pre code').forEach((el) => {
+            const block = el as HTMLElement;
+            if (block.classList.contains('hljs')) return;
+            try {
+              highlightElement(block);
+            } catch {
+              /* 未知语言等高亮失败不阻塞正文渲染 */
+            }
+          });
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
