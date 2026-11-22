@@ -99,6 +99,11 @@
          uses-feature required="false"：扫码只是可选功能，别让没有摄像头的设备装不上。 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- 编辑器「语音输入」：录音走 WebView 的 getUserMedia，Capacitor 的 WebChromeClient
+         在网页请求 AUDIO_CAPTURE 时向系统申请这条运行时权限（与上面的 CAMERA 同一条路径，
+         见 mobile/node_modules/@capacitor/android 的 BridgeWebChromeClient.onPermissionRequest）。
+         录音只用于当次转写、不落手机存储；没有麦克风的设备仍可正常使用其它功能。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 登录页的「指纹/人脸解锁」走系统 BiometricPrompt（见 BiometricUnlock.java）：
          API 28+ 要 USE_BIOMETRIC，API 23-27 的旧指纹接口要 USE_FINGERPRINT（判能力用，不采集）。
          两个都是普通权限，安装即授予，不会弹权限对话框。 -->

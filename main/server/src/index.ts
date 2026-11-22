@@ -47,6 +47,7 @@ import { agentToolRoutes } from './routes/agentTools.js';
 import { assetRoutes } from './routes/assets.js';
 import { doxentRoutes } from './routes/doxent.js';
 import { mediaRoutes } from './routes/media.js';
+import { speechRoutes } from './routes/speech.js';
 import { scanVaultPages, scanVaultDeferred, readPage, writePage } from './lib/vault.js';
 import { startVaultWatch } from './lib/vaultWatch.js';
 import { heartbeat } from './lib/events.js';
@@ -159,6 +160,8 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(assetRoutes);
   // 图片资产直链：必须早于静态托管的 SPA fallback 注册，否则未命中会返回 index.html
   await app.register(mediaRoutes);
+  // 编辑器语音输入的转写口（录音一次性上送，不在服务端落盘）
+  await app.register(speechRoutes);
   await app.register(officeRoutes);
   await app.register(searchRoutes);
   await app.register(graphRoutes);

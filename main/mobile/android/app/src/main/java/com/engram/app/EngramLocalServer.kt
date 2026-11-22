@@ -648,6 +648,12 @@ class EngramLocalServer private constructor(private val context: Context) {
         // PUT 只认 enabled（模型与 Key 在中枢的「内置 Agent 控制台 → 模型」里配，手机只读状态、改开关）。
         get("/api/settings/video-config") { call.proxyHub("GET", "/api/settings/video-config") }
         put("/api/settings/video-config") { call.proxyHub("PUT", "/api/settings/video-config", call.receiveText()) }
+        // 编辑器「语音输入」：手机没有模型也没有 Key，状态与录音转写都窄代理到中枢
+        //（转写在有 Omni 模型的那台设备上完成；录音只在请求里存在，不落手机存储、不进同步）。
+        get("/api/speech/status") { call.proxyHub("GET", "/api/speech/status") }
+        post("/api/speech/transcribe") {
+            call.proxyHubUpload("/api/speech/transcribe", defaultField = "audio", triggerSync = false)
+        }
         // 自动整理（梦境思考）：状态 / 计划 / 立即运行 / 停止都由中枢的 dsh 执行，手机只转发操作。
         get("/api/assistant/dream") { call.proxyAgent("GET", "/api/assistant/dream") }
         put("/api/assistant/dream") { call.proxyAgent("PUT", "/api/assistant/dream", call.receiveText()) }
@@ -1136,11 +1142,15 @@ class EngramLocalServer private constructor(private val context: Context) {
      * 「Limit of 1048576 bytes exceeded while searching for "----WebKitFormBoundary…"」，
      * 整份文件存不进收集箱（手机端导入 HEIC 照片就是这么失败的）。阈值见 MultipartLimits。
      */
-    private suspend fun ApplicationCall.proxyHubUpload() {
+    private suspend fun ApplicationCall.proxyHubUpload(
+        targetPath: String = "/api/inbox/upload",
+        defaultField: String = "file",
+        triggerSync: Boolean = true,
+    ) {
         if (!authorize()) return
         if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
         val boundary = "----EngramAndroid${UUID.randomUUID().toString().replace("-", "")}"
-        val remote = agent.openMultipart("/api/inbox/upload", boundary)
+        val remote = agent.openMultipart(targetPath, boundary)
         try {
             remote.doOutput = true
             remote.setChunkedStreamingMode(64 * 1024)
@@ -1159,7 +1169,7 @@ class EngramLocalServer private constructor(private val context: Context) {
                             writeMultipartHeader(
                                 output,
                                 boundary,
-                                part.name.orEmpty().ifBlank { "file" },
+                                part.name.orEmpty().ifBlank { defaultField },
                                 sanitizeFileName(part.originalFileName ?: "file"),
                                 part.contentType?.toString(),
                             )
@@ -1175,8 +1185,9 @@ class EngramLocalServer private constructor(private val context: Context) {
             val status = remote.responseCode
             val source = if (status in 200..299) remote.inputStream else remote.errorStream
             val bytes = source?.use { it.readBytesLimited(MAX_HUB_JSON_BYTES) } ?: ByteArray(0)
-            // 上传成功（中枢已落盘）同样立刻排一轮同步：收集箱文件与转换状态都要靠同步轮拉回本机
-            if (status in 200..299) sync.request(false)
+            // 收集箱上传成功（中枢已落盘）同样立刻排一轮同步：文件与转换状态都要靠同步轮拉回本机。
+            // 语音转写这类一次性请求没有新增内容，调用方传 triggerSync=false 跳过。
+            if (status in 200..299 && triggerSync) sync.request(false)
             response.header(HttpHeaders.CacheControl, "no-store")
             response.header(HttpHeaders.ContentLength, bytes.size.toString())
             respondOutputStream(ContentType.Application.Json, HttpStatusCode.fromValue(status)) { write(bytes) }

@@ -168,6 +168,15 @@
       @regenerate="runAi(aiLastInstruction)"
     />
 
+    <!-- 语音输入面板：点工具栏麦克风打开；录音在浏览器侧转 WAV，转写结果先预览再插入 -->
+    <VoiceInputPanel
+      :open="voiceOpen"
+      :top="voicePos.top"
+      :left="voicePos.left"
+      @close="closeVoicePanel"
+      @insert="insertVoiceText"
+    />
+
     <!-- 手机档工具栏尾部「插入」打开的分组底部面板：遮罩 + 抓柄 + 22px 顶圆角 + 44px 行高。
          动作全部落到 Vditor 自己的插入/面板上（insertValue / 链接面板 / 双链弹窗），不另造编辑器状态。 -->
     <Teleport to="body">
@@ -278,6 +287,7 @@ import { notify } from '../lib/notify';
 import EditorImageResizer from './EditorImageResizer.vue';
 import EditorTableBar from './EditorTableBar.vue';
 import EditorAiDialog from './EditorAiDialog.vue';
+import VoiceInputPanel from './VoiceInputPanel.vue';
 import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
@@ -628,6 +638,12 @@ const TOOLBAR_ICONS: Record<string, string[]> = {
     'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
     'M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z',
   ],
+  mic: [
+    'M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z',
+    'M19 10v1a7 7 0 0 1-14 0v-1',
+    'M12 18v4',
+    'M8 22h8',
+  ],
 };
 
 function toolbarIconSvg(paths: string[]): string {
@@ -681,6 +697,15 @@ function overrideToolbarIcons() {
     const tip = active ? '收起本页目录' : '本页目录';
     outlineButton.setAttribute('aria-label', tip);
     outlineButton.classList.toggle('vditor-menu--current', active);
+  }
+  // 语音输入：面板开着时按钮保持选中态（与全屏 / 目录同一套写法）
+  const voiceButtons = Array.from(
+    vditorEl.value.querySelectorAll<HTMLElement>('.vditor-toolbar button[data-type="engram-voice"]')
+  );
+  for (const voiceButton of voiceButtons) {
+    const active = Boolean(voiceOpen.value);
+    voiceButton.setAttribute('aria-label', active ? '收起语音输入' : '语音输入（说话转文字）');
+    voiceButton.classList.toggle('vditor-menu--current', active);
   }
 }
 
@@ -738,11 +763,23 @@ const aiToolbarItem = {
   icon: toolbarIconSvg(TOOLBAR_ICONS.ai),
   click: () => openAiMenu(),
 };
+/**
+ * 语音输入：录音走系统默认麦克风（可在面板里换），转写由中枢的 Omni 模型完成，
+ * 结果先落在可编辑预览里，确认后插入光标处。与 AI 写作同属「往正文里写字」的入口。
+ */
+const voiceToolbarItem = {
+  name: 'engram-voice',
+  tip: '语音输入（说话转文字）',
+  icon: toolbarIconSvg(TOOLBAR_ICONS.mic),
+  click: () => toggleVoicePanel(),
+};
 
-// 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变
+// 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变。
+// 语音输入放第 6 位（紧跟列表）：手机工具条是横向滚动容器，放末尾要划一下才看得到，
+// 390px 实测第 8 位起会被右侧渐隐盖住一半。
 const mobileToolbar = [
   'headings', 'bold', 'italic', 'list', 'ordered-list',
-  wikilinkToolbarItem,
+  voiceToolbarItem, wikilinkToolbarItem,
   'link', 'undo', 'edit-mode', readingToolbarItem,
   aiToolbarItem, insertToolbarItem,
 ];
@@ -763,7 +800,7 @@ const desktopToolbar = [
   'headings', 'bold', 'italic', 'strike', '|',
   'quote', 'list', 'ordered-list', 'check', '|',
   'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
-  aiToolbarItem, '|',
+  aiToolbarItem, voiceToolbarItem, '|',
   'undo', 'redo', '|',
   'edit-mode', fullscreenToolbarItem, outlineToolbarItem, readingToolbarItem,
   moreToolbarItem,
@@ -1010,7 +1047,7 @@ function scheduleToolbarOverflow() {
 const TOOLBAR_COLLAPSE_ORDER = [
   'strike', 'check', 'ordered-list', 'table', 'code', 'inline-code',
   'undo', 'redo', 'engram-outline', 'reading', 'engram-fullscreen',
-  'edit-mode', 'wikilink', 'engram-ai',
+  'edit-mode', 'wikilink', 'engram-ai', 'engram-voice',
 ];
 let toolbarCollapseMore: HTMLElement | null = null;
 let toolbarCollapsePanel: HTMLElement | null = null;
@@ -1287,6 +1324,9 @@ function bindKeys() {
   observeEditMode();
   // AI 工具栏按钮：mousedown.prevent 保住当前选区，点按钮不会把要改写的那段丢掉
   el.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-ai"]')
+    ?.addEventListener('mousedown', (e) => e.preventDefault());
+  // 语音输入同理：面板打开/关上都不该顺手收掉正文里的光标
+  el.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-voice"]')
     ?.addEventListener('mousedown', (e) => e.preventDefault());
   // 菜单跟着视口走：桌面重算落点；手机是贴底面板，宽度变化不影响。编辑器内滚动则收起。
   window.addEventListener('resize', onAiMenuResize);
@@ -3021,6 +3061,7 @@ function positionAiMenu() {
 
 function openAiMenu() {
   if (!ready || !vditor) return;
+  closeVoicePanel();
   closeInsertPanel(false);
   closeActionsSheet(false);
   linkPopup.value = false;
@@ -3039,6 +3080,78 @@ function openAiMenu() {
 
 function closeAiMenu() {
   aiMenuOpen.value = false;
+}
+
+/* ---------- 语音输入 ----------
+ * 与 AI 菜单同一套浮层口径：打开时记下光标 Range（面板抢焦点后 Vditor 选区会丢），
+ * 确认插入时先恢复 Range 再走 insertText；关闭面板时面板自己释放麦克风。 */
+const voiceOpen = ref(false);
+const voicePos = ref({ top: 0, left: 0 });
+/** 与 VoiceInputPanel 的宽度/最大高度一致（手机档走贴底面板，不参与这套落点） */
+const VOICE_PANEL_WIDTH = 320;
+const VOICE_PANEL_HEIGHT = 420;
+
+function positionVoicePanel() {
+  const rect = toolbarButtonRect('engram-voice');
+  if (!rect) return;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - VOICE_PANEL_WIDTH - 8));
+  let top = rect.bottom + 6;
+  if (top + VOICE_PANEL_HEIGHT > window.innerHeight - 8) {
+    top = Math.max(8, rect.top - VOICE_PANEL_HEIGHT - 6);
+  }
+  voicePos.value = { top: Math.round(top), left: Math.round(left) };
+}
+
+function openVoicePanel() {
+  if (!ready || !vditor) return;
+  closeAiMenu();
+  closeInsertPanel(false);
+  closeActionsSheet(false);
+  linkPopup.value = false;
+  hideSelectionBar();
+  hideTableBar();
+  const range = selectionRangeInEditor();
+  savedSelectionRange = range ? range.cloneRange() : null;
+  savedSelectionText = range && !range.collapsed ? (window.getSelection()?.toString() || '') : '';
+  positionVoicePanel();
+  voiceOpen.value = true;
+  overrideToolbarIcons();
+}
+
+function closeVoicePanel() {
+  if (!voiceOpen.value) return;
+  voiceOpen.value = false;
+  overrideToolbarIcons();
+}
+
+function toggleVoicePanel() {
+  if (voiceOpen.value) closeVoicePanel();
+  else openVoicePanel();
+}
+
+/** 面板里点「插入到光标处」：恢复打开面板时的落点，再走与 AI 插入同一条写回链路 */
+function insertVoiceText(text: string) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed || !vditor) return;
+  if (!restoreAiRange(savedSelectionRange)) {
+    const fallback = endOfEditorRange();
+    if (!fallback || !restoreAiRange(fallback)) {
+      notify.info('没有找到插入位置，请先把光标放到正文里再试');
+      return;
+    }
+  }
+  beginUserEditing();
+  userInputPending = true;
+  // 与 AI 插入同一套：连续 input 先压住，落定后统一 emit 一次（撤销栈仍在 Vditor 里）
+  syncingModelValue = true;
+  try {
+    vditor.insertValue(wikiLinksToMarkdown(trimmed));
+  } finally {
+    beginUserEditing();
+  }
+  vditor.focus();
+  void nextTick(() => emitEditorValue());
+  closeVoicePanel();
 }
 
 function startAiFromMenu(mode: EditorAiTask) {
@@ -3583,6 +3696,8 @@ watch(
   () => {
     if (aiMenuOpen.value) closeAiMenu();
     if (aiOpen.value) closeAiDialog();
+    // 换页时语音面板必须收起：录音/插入都不能落到上一页，麦克风也要释放
+    if (voiceOpen.value) closeVoicePanel();
   }
 );
 

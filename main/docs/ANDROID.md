@@ -158,6 +158,14 @@ main/mobile/
 - **提醒**：应用内是那枚绿色更新图标 + 设置页徽标；退到后台时下载完成会发一条系统通知（Android 13+ 需通知权限，面板上给「允许通知」按钮按需申请）。
 - **边界**：调试包（`versionName` 带 `-local-first-debug` 后缀）不参与覆盖安装——它与正式包 `applicationId` 不同，装正式包会变成两个 App 并存，面板会说明原因；远端 Release 必须有 `.apk` 附件（发版 dispatch 勾选 `binaries` 才会上传）；签名必须与已装版本一致才能覆盖升级，keystore 丢失只能卸载重装。
 
+## 编辑器语音输入（A + D 类）
+
+编辑页工具栏的麦克风入口在手机与桌面共用同一份 Web 实现（`web/src/lib/voiceInput.ts` + `components/VoiceInputPanel.vue`）：
+
+- **录音**：WebView 的 `getUserMedia` + `MediaRecorder`，默认走系统默认麦克风（面板里「自动（跟随系统）」，也可以换成本机其他输入设备，选择只存本机 localStorage、不参与多端同步）；录音在 WebView 内转成 **WAV 16k 单声道**再上送，只在当次请求里存在，不落手机存储、不进同步。Manifest 声明 `android.permission.RECORD_AUDIO`，取流时由 Capacitor 的 `BridgeWebChromeClient.onPermissionRequest` 向系统申请运行时权限（与「扫码绑定」的摄像头同一条路径）；被拒绝 / 被占用 / 没有麦克风都在面板里给中文原因，不会留下点了没反应的按钮。
+- **转写**：手机没有模型也没有 Key，`GET /api/speech/status` 与 `POST /api/speech/transcribe`（multipart，字段 `audio`）都窄代理到中枢，由中枢的 DashScope Omni 模型（默认 `qwen3.8-omni-flash`，与视频理解共用同一份内置 Agent 模型配置）完成；未绑定中枢时返回 409 中文提示。转写结果先落在可编辑预览里，点「插入到光标处」才写正文。
+- **降级**：Docker 走 http 局域网地址时不是安全上下文，Web 侧会直接说明「浏览器只允许 https 或 localhost」，不发起录音；桌面端与 Docker 网页端不读系统听写，全部走同一个转写接口。
+
 ## 导出 PDF 与长图（D 类）
 
 阅读顶栏 / 编辑顶栏 / 右键菜单的「导出」在手机上与桌面共用同一套 Web 实现（`web/src/lib/pageExportCapture.ts`）。手机档顶栏第一行仍只放 返回编辑 / 目录 / 主题 / 更多，导出收在「更多」面板的「导出 PDF / 导出长图」两个按钮里。原生侧只提供两个出口，桥名 `EngramPageExport`（`PageExportBridge.java`，在 `MainActivity.onCreate` 里与系统栏 / 指纹 / 收集箱抓取同一时机安装）：
