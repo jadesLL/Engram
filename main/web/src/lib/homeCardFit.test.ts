@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
  * 2×2 网格用 flex:1 + min-height:0 被压缩后，格子内容继续向下溢出；收集箱的
  * 固定文字行超过卡高，列表项下限又强制至少 1 行。修法：
  *   1. 卡面统一 overflow:hidden —— 卡片不允许出现内部滚动条；
- *   2. 运行状态在矮卡里收起底部说明行，网格行用 minmax(0,1fr) 收敛；
+ *   2. 运行状态改成「结论 + 两条明细」后，矮卡收起副行与库计数、明细行裁掉溢出；
  *   3. 收集箱按卡高收敛数字字号，列表容量允许为 0，底部按钮 flex:none 常驻。
  *
  * 版式没法用单测跑，沿用 mobileLayout.test.ts 的写法：读源码断言关键声明。
@@ -66,13 +66,12 @@ test('卡面正文不允许内部滚动：module-content 用 overflow:hidden', (
   assert.doesNotMatch(body, /overflow:\s*auto/, '卡面正文不允许 overflow:auto');
 });
 
-test('运行状态：矮卡收起说明行，网格行可压缩且不溢出压字', () => {
+test('运行状态：矮卡收起副行与库计数，明细行不溢出压字', () => {
   const system = readSrc('components/HomeBoardModules/HomeSystem.vue');
-  assert.match(ruleBody(system, '.status-grid'), /grid-auto-rows:\s*minmax\(0,\s*1fr\)/);
-  assert.match(ruleBody(system, '.status-cell'), /overflow:\s*hidden/);
-  const short = containerBody(system, '(max-height: 170px)');
-  assert.match(short, /\.status-line\s*\{\s*display:\s*none/, '矮卡没有空间时说明行必须收起');
-  assert.match(short, /\.status-cell\s*\{[\s\S]*?flex-direction:\s*row/, '矮卡状态格改成单行，避免上下挤到裁字');
+  assert.match(ruleBody(system, '.system-row'), /overflow:\s*hidden/);
+  const short = containerBody(system, '(max-height: 220px)');
+  assert.match(short, /\.system-verdict-sub\s*\{\s*display:\s*none/, '矮卡没有空间时副行必须收起');
+  assert.match(short, /\.system-stats\s*\{\s*display:\s*none/, '矮卡没有空间时库计数必须收起');
 });
 
 test('收集箱：列表容量可降到 0，底部按钮常驻且矮卡数字会收敛', () => {
