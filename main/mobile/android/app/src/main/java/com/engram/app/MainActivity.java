@@ -38,6 +38,7 @@ import org.json.JSONObject;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -676,6 +677,12 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
     /**
      * 系统分享入口：文字与文件先写进 Android 私有库的「收集箱」，写入成功后走
      * 普通同步 outbox。这里只接收用户主动分享给 Engram 的 URI，不申请全盘存储权限。
+     *
+     * 覆盖面（2026-11 用户要求「绝大部分软件都能分享进来」）：
+     * - 文字：EXTRA_TEXT → EXTRA_HTML_TEXT → ClipData 里的每一段（去重，同一段只存一次）；
+     * - 文件：任意 MIME 的 content://（相册/文件管理器/微信等），以及旧应用仍会用的 file:// 路径；
+     * - 分享方没给 MIME type 的 Intent 由 Manifest 里不带 data 的 SEND 过滤器接住；
+     * - 分享方只给了「image」这类无扩展名时，按 MIME 补扩展名，收集箱才能按类型分组与预览。
      */
     private void handleIncomingShare(Intent intent) {
         if (intent == null) return;
@@ -694,6 +701,12 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
             ArrayList<String> failures = new ArrayList<>();
             try {
                 EngramLocalServer server = EngramLocalServer.getInstance(getApplicationContext());
+                // 标题：EXTRA_SUBJECT 是标准字段，少数分享方（部分浏览器）只填 EXTRA_TITLE。
+                String subject = firstNonBlank(intent.getStringExtra(Intent.EXTRA_SUBJECT),
+                        intent.getStringExtra(Intent.EXTRA_TITLE));
+
+                // 文字：EXTRA_TEXT 优先，其次 HTML；再补 ClipData 里的每一段（去重后逐条落袋）。
+                LinkedHashSet<String> texts = new LinkedHashSet<>();
                 CharSequence sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
                 String text = sharedText == null ? null : sharedText.toString();
                 if (text == null || text.trim().isEmpty()) {
@@ -701,10 +714,15 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
                     if (html != null) text = (Build.VERSION.SDK_INT >= 24
                             ? Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY) : Html.fromHtml(html)).toString();
                 }
-                String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
-                if (text != null && !text.trim().isEmpty()) {
+                if (text != null && !text.trim().isEmpty()) texts.add(text);
+                ClipData clip = intent.getClipData();
+                if (clip != null) for (int i = 0; i < clip.getItemCount(); i++) {
+                    CharSequence clipText = clip.getItemAt(i).getText();
+                    if (clipText != null && !clipText.toString().trim().isEmpty()) texts.add(clipText.toString());
+                }
+                for (String item : texts) {
                     try {
-                        server.importSharedText(subject, text);
+                        server.importSharedText(subject, item);
                         imported++;
                     } catch (Exception error) { failures.add("文字：" + error.getMessage()); }
                 }
@@ -718,27 +736,30 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
                     if (single != null) uris.add(single);
                 }
                 // 有的分享方只放 ClipData；同一 URI 常同时出现在 EXTRA_STREAM，必须去重。
-                ClipData clip = intent.getClipData();
                 if (clip != null) for (int i = 0; i < clip.getItemCount(); i++) {
                     Uri uri = clip.getItemAt(i).getUri();
                     if (uri != null) uris.add(uri);
                 }
-                if ((text == null || text.trim().isEmpty()) && clip != null && clip.getItemCount() > 0) {
-                    CharSequence clipText = clip.getItemAt(0).getText();
-                    if (clipText != null && !clipText.toString().trim().isEmpty()) {
-                        try { server.importSharedText(subject, clipText.toString()); imported++; }
-                        catch (Exception error) { failures.add("文字：" + error.getMessage()); }
-                    }
-                }
                 for (Uri uri : uris) {
                     File staged = null;
                     try {
-                        if (uri == null || !"content".equalsIgnoreCase(uri.getScheme())) {
-                            throw new IllegalArgumentException("分享文件必须通过 content URI 授权读取");
+                        String scheme = uri == null ? null : uri.getScheme();
+                        if (!"content".equalsIgnoreCase(scheme) && !"file".equalsIgnoreCase(scheme)) {
+                            throw new IllegalArgumentException("不支持的分享地址："
+                                    + (scheme == null || scheme.trim().isEmpty() ? "缺少协议" : scheme));
                         }
                         String name = sharedDisplayName(uri);
+                        String resolverMime = null;
+                        if ("content".equalsIgnoreCase(scheme)) {
+                            try { resolverMime = getContentResolver().getType(uri); } catch (Exception ignored) { }
+                        }
+                        // 具体 MIME 优先用分享 URI 自己报的；FileProvider 等对无扩展名文件会兜底成
+                        // application/octet-stream，这时改信分享方 Intent 里的 type（如 image/png）。
+                        String mime = specificMime(resolverMime) ? resolverMime
+                                : (specificMime(intent.getType()) ? intent.getType() : null);
+                        name = InboxFiles.INSTANCE.withExtension(name, mime);
                         staged = File.createTempFile("engram-share-", ".tmp", getCacheDir());
-                        try (InputStream input = getContentResolver().openInputStream(uri);
+                        try (InputStream input = openSharedStream(uri);
                              OutputStream output = new FileOutputStream(staged)) {
                             if (input == null) throw new IllegalStateException("无法读取分享文件");
                             byte[] buffer = new byte[64 * 1024];
@@ -773,6 +794,30 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
                 runOnUiThread(() -> Toast.makeText(this, "接收分享失败：" + error.getMessage(), Toast.LENGTH_LONG).show());
             }
         }, "engram-share-import").start();
+    }
+
+    /** 打开分享 URI：content:// 走系统授权，旧应用仍可能给 file:// 绝对路径。 */
+    private InputStream openSharedStream(Uri uri) throws Exception {
+        if ("file".equalsIgnoreCase(uri.getScheme())) {
+            return new FileInputStream(new File(uri.getPath()));
+        }
+        return getContentResolver().openInputStream(uri);
+    }
+
+    /** 分享标题兜底：EXTRA_SUBJECT 为空时用 EXTRA_TITLE（两者都没填返回 null）。 */
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value;
+        }
+        return null;
+    }
+
+    /** 能不能拿来推断扩展名：带通配符的（image 斜杠星号这类）和 octet-stream 都不算具体类型。 */
+    private static boolean specificMime(String mime) {
+        if (mime == null) return false;
+        String value = mime.trim().toLowerCase();
+        if (value.isEmpty() || value.contains("*")) return false;
+        return !"application/octet-stream".equals(value);
     }
 
     /** 页面/登录未就绪时保留投递；网页接收后负责等待登录并打开、刷新收集箱。 */
