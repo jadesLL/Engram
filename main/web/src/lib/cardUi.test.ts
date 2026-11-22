@@ -91,7 +91,11 @@ test('卡片 v2：低价值卡有明确的数据形状', () => {
   assert.match(digest, /digest-quote/, 'Agent 摘要没有主结论');
   assert.match(digest, /digest-bullet/, 'Agent 摘要没有可追的线索行');
   const system = read('components/HomeBoardModules/HomeSystem.vue');
-  assert.match(system, /status-grid/, '运行状态没有回到 2×2 指标格');
+  assert.match(system, /const verdict = computed/, '运行状态没有结论模型');
+  assert.match(system, /system-verdict-line/, '运行状态没有先给结论行');
+  assert.match(system, /system-rows/, '运行状态没有保留后台任务与同步明细');
+  assert.match(system, /项后台任务失败/, '异常时结论没有点明失败数量');
+  assert.match(system, /pointer:\s*coarse/, '运行状态明细行没有给触屏留热区');
   const tags = read('components/HomeBoardModules/HomeTags.vue');
   assert.match(tags, /tag-bar/, '常用标签没有改成带占比的排行条');
   const roam = read('components/HomeBoardModules/HomeRoam.vue');

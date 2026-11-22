@@ -169,7 +169,7 @@ const MODULE_ENTRIES: Array<Omit<ModuleMeta, 'tone'>> = [
   { kind: 'tags', title: '常用标签', hint: '库里出现最多的标签，点一个去搜', icon: 'hash', w: DEFAULT_THIRD, h: 6 },
   { kind: 'sections', title: '分区导航', hint: '按 Wiki 目录与原始资料分类进入', icon: 'folder', w: DEFAULT_THIRD, h: 6 },
   { kind: 'roam', title: '随机漫游', hint: '随手翻到一篇，看看以前写过什么', icon: 'compass', w: DEFAULT_THIRD, h: 6 },
-  { kind: 'system', title: '运行状态', hint: '版本、运行形态、队列与同步一句话说完', icon: 'server', w: DEFAULT_HALF, h: 6 },
+  { kind: 'system', title: '运行状态', hint: '先给结论，再看后台任务与多端同步', icon: 'server', w: DEFAULT_HALF, h: 3 },
   { kind: 'sync', title: '多端同步状态', hint: '同步中 / 已完成的通道与进度', icon: 'plug', w: DEFAULT_HALF, h: 6 },
   { kind: 'ring', title: '库占比', hint: '概念 / 实体 / 资料 的占比环 + 总数', icon: 'graph', w: DEFAULT_THIRD, h: 8 },
   { kind: 'heat', title: '知识热力', hint: '近 4–12 周页面最近改动的日期分布', icon: 'activity', w: DEFAULT_THIRD, h: 4 },
