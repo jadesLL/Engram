@@ -1,5 +1,5 @@
 <template>
-  <AppModal :open="open" title="从收集箱添加文件" :close-on-mask="false" @close="emit('close')">
+  <AppModal :open="open" title="从收集箱添加文件" @close="emit('close')">
     <template #subtitle>
       <p class="picker-sub">选中后随这条消息交给 Agent 处理；文件本身不会移动，也不会入库。</p>
     </template>

@@ -5,6 +5,7 @@
     <transition name="sync-log-slide">
       <aside
         v-if="state.open"
+        ref="rootEl"
         class="sync-log-drawer"
         :class="{ 'is-full': isFull }"
         :style="isFull ? undefined : { right: `${cardRight}px` }"
@@ -239,6 +240,7 @@ import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
 import { useServerUpdateStore } from '../stores/serverUpdate';
+import { useDismissOnOutside } from '../lib/dismissOnOutside';
 import {
   OUTCOME_HINTS,
   OUTCOME_LABELS,
@@ -285,6 +287,18 @@ import {
 
 const app = useAppStore();
 const serverUpdate = useServerUpdateStore();
+const rootEl = ref<HTMLElement | null>(null);
+
+/*
+ * 点卡片外面收起（与图片资产卡片、Agent 卡片同一手感）：
+ * 优先级 40 与卡片 z-index（--z-chrome）同向；模态框/其它遮罩在场时由上层先收口。
+ */
+useDismissOnOutside({
+  open: () => state.open,
+  root: () => rootEl.value,
+  close: closeSyncLogDrawer,
+  priority: () => 40,
+});
 /** 空闲时 5 秒一跳；同步进行中收到 2 秒——用户正盯着「这轮又改了什么」，5 秒太钝 */
 const AUTO_REFRESH_MS = 5000;
 const AUTO_REFRESH_BUSY_MS = 2000;

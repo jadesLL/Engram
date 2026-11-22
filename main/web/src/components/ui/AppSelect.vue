@@ -30,6 +30,7 @@
         :id="listId"
         ref="menuRef"
         class="app-select-menu"
+        data-overlay-keep
         :class="{ ready: placed, 'is-up': openUp }"
         :style="menuStyle"
         role="listbox"

@@ -5,12 +5,14 @@
     <div
       v-if="contextMenuState.open && touchMode"
       class="context-menu-mask"
+      data-overlay-keep
       @click="closeContextMenu"
     />
     <div
       v-if="contextMenuState.open"
       ref="menuEl"
       class="app-context-menu"
+      data-overlay-keep
       :class="{ ready, 'submenu-left': submenuLeft, sheet: touchMode }"
       :style="touchMode ? undefined : { left: `${left}px`, top: `${top}px` }"
       role="menu"
