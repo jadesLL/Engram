@@ -1,5 +1,6 @@
 <template>
   <aside
+    ref="rootEl"
     class="chat-drawer"
     :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull, dropping: dropActive, embedded: !!embedded }"
     :style="drawerStyle"
@@ -722,6 +723,7 @@ import LiveDuration from './ui/LiveDuration.vue';
 import InboxFilePicker from './InboxFilePicker.vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
+import { useDismissOnOutside } from '../lib/dismissOnOutside';
 import { useInboxStore, type InboxUpload } from '../stores/inbox';
 import {
   useChatStore,
@@ -826,6 +828,7 @@ const agentHint = computed(() => {
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+const rootEl = ref<HTMLElement | null>(null);
 
 /* ===== 首启引导：模型与预设已配好，只让用户填一个 API Key ===== */
 /** `/api/assistant/status` 的模型配置状态；null = 还没读到（按已配置处理，不闪设置卡） */
@@ -1024,6 +1027,19 @@ function pickAskOption(question: ChatQuestion, label: string) {
 const isFull = computed(() => app.chatDrawerMode === 'full');
 /** 悬浮形态：桌面端的默认档——右侧一张玻璃卡片与正文并排，正文让出它的宽度 */
 const isDock = computed(() => !props.embedded && !props.overlay && !isFull.value);
+
+/*
+ * 点抽屉外面收起（桌面右侧悬浮卡片 / 手机叠层抽屉）：
+ * 与图片资产、同步详情卡片同一套「点外关」手感；满窗铺满正文、/agent 嵌入态是页面正文区，
+ * 两者都不参与。优先级跟 z-index 同向（悬浮 25 / 叠层 35），多张卡片同时开着只关最上面那张。
+ * 输入区里弹出的下拉（AppSelect）与挑选文件弹窗有各自的上层，不会被误关（见 lib/dismissOnOutside）。
+ */
+useDismissOnOutside({
+  open: () => app.chatDrawerOpen && !props.embedded && !isFull.value,
+  root: () => rootEl.value,
+  close: () => app.toggleChat(false),
+  priority: () => (props.overlay ? 35 : 25),
+});
 
 /* ===== 左缘拖拽调宽：只在「右侧悬浮」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
 const viewportWidth = ref(window.innerWidth);

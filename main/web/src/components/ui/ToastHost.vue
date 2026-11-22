@@ -6,7 +6,7 @@
         只有桌面壳（有 wikiDesktop.getUiZoom/setUiZoom）才会显示；Docker 浏览器交给原生缩放。
       -->
       <Transition name="toast">
-        <div v-if="uiZoomState.visible" class="app-toast zoom-toast">
+        <div v-if="uiZoomState.visible" class="app-toast zoom-toast" data-overlay-keep>
           <span class="toast-icon">
             <Icon name="zoom-in" :size="15" />
           </span>
@@ -21,6 +21,7 @@
           v-for="item in toastState.items"
           :key="item.id"
           class="app-toast"
+          data-overlay-keep
           :class="[item.kind, { clickable: item.clickable, rich: item.title || item.actions?.length }]"
           @click="item.clickable && onCardClick(item)"
         >

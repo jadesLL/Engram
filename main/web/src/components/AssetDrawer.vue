@@ -6,6 +6,7 @@
     <transition name="asset-slide">
       <aside
         v-if="state.open"
+        ref="rootEl"
         class="asset-drawer"
         role="dialog"
         aria-label="图片资产"
@@ -122,6 +123,7 @@ import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import { confirmDialog } from '../lib/confirm';
+import { useDismissOnOutside } from '../lib/dismissOnOutside';
 import { useAppStore } from '../stores/app';
 import {
   assetDrawerState as state,
@@ -135,8 +137,21 @@ import {
 
 type FilterKey = 'all' | 'referenced' | 'orphan';
 const filter = ref<FilterKey>('all');
+const rootEl = ref<HTMLElement | null>(null);
 
 const app = useAppStore();
+
+/*
+ * 点卡片外面收起：卡片是右侧悬浮窗，用户点到正文/侧栏时按弹窗习惯关闭。
+ * 优先级取 --z-chrome（40）：与 Agent 卡片、同步详情同时开着时只关最上面那张；
+ * 大图预览（.asset-preview）盖着时由预览先收（见 lib/dismissOnOutside 的模态层保护）。
+ */
+useDismissOnOutside({
+  open: () => state.open,
+  root: () => rootEl.value,
+  close: closeAssetDrawer,
+  priority: () => 40,
+});
 
 /**
  * 卡片离右缘的距离：Agent 悬浮卡片占着右侧时让开它的宽度，
