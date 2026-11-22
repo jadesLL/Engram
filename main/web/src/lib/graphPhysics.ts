@@ -5,10 +5,13 @@ export function createGraphClock(step: () => void) {
   let elapsed = 0;
   return {
     reset() { previous = null; elapsed = 0; },
+    /** 返回本次推进实际跑了几个物理步（高刷屏上会有 0 步的帧，调用方据此跳过重绘）。 */
     advance(now: number) {
       elapsed += previous === null ? interval : Math.min(50, Math.max(0, now - previous));
       previous = now;
-      while (elapsed + 1e-6 >= interval) { elapsed -= interval; step(); }
+      let ticks = 0;
+      while (elapsed + 1e-6 >= interval) { elapsed -= interval; step(); ticks++; }
+      return ticks;
     },
   };
 }

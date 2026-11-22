@@ -267,7 +267,8 @@ import { notify } from '../lib/notify';
 import { createGraphFrame } from '../lib/graphFrame';
 import { createRequestSeq } from '../lib/requestSeq';
 import { createGraphClock, stepGraphForces, type ForceLink } from '../lib/graphPhysics';
-import { acceptGraphLabel, type GraphLabelBox } from '../lib/graphLabels';
+import { acceptGraphLabel, createLabelGrid, type GraphLabelBox } from '../lib/graphLabels';
+import { clearGraphPositions, getGraphPosition, hasGraphPosition, rememberGraphPosition } from '../lib/graphPositions';
 
 /* ────────────────────────── 常量 ────────────────────────── */
 
@@ -309,8 +310,15 @@ const TAG_GROUPS: { name: string; tags: string[] }[] = [
 const BUSINESS_TYPES = ['customer', 'person', 'org', 'project'];
 const FILTER_KEY = 'engram.graph.filters';
 
-/** 拖动时保持温和的牵引，松手后冷却并自然收敛。 */
-const P = { alphaDecay: 0.025, dragAlpha: 0.25, settleAlpha: 0.004, settleSpeed: 0.035 };
+/**
+ * 拖动时保持温和的牵引，松手后冷却并自然收敛。
+ * 收敛判据是「速度连续几帧足够小」，不再等 alpha 衰减到 0.004——后者要跑 370+ 帧（6 秒），
+ * 但实测 2 秒后位置差异已小于 10px，多余的四秒只是持续重绘，看起来就是「卡卡的」。
+ */
+const P = {
+  alphaDecay: 0.025, dragAlpha: 0.25, settleAlpha: 0.02, settleSpeed: 0.12,
+  settleTicks: 6, maxTicks: 900, warmupMs: 140,
+};
 /** 外观与力学档位，沿用现有设置与用户保存的值。 */
 const OPT_KEY = 'engram.graph.options';
 const OPT_DEFAULTS = { nodeScale: 100, linkScale: 100, cF: 65, rF: 50, lF: 60, lD: 40 };
@@ -435,7 +443,6 @@ async function load() {
     return;
   }
   if (!loadSeq.isCurrent(seq)) return; // 期间换过中心页：这次响应作废（loading 归新请求管）
-  loading.value = false;
 
   const nodes: GNode[] = (data.nodes || []).map((n) => ({
     id: n.id, label: n.label, group: n.group, raw: !!n.raw, words: n.words || 0,
@@ -466,12 +473,14 @@ async function load() {
   dateMaxNum = dateNum(dates[dates.length - 1] || '') || dateMinNum + 1;
 
   version.value++;
-  posCache.clear();
   userAdjusted = false;
   selected.value = null;
   pendingClick = null;
-  applyFilter();
   layoutHint.value = '';
+  // 坐标跨路由保留：再次进入同一张图不再从随机位置重摆；有缓存时连预热都省掉。
+  // applyFilter 的同步预热只在这里做——首次进入时加载骨架还盖着画布，抖动被预热吃掉。
+  applyFilter(P.warmupMs);
+  loading.value = false;
 }
 
 /* ────────────────────────── 筛选 ────────────────────────── */
@@ -671,10 +680,11 @@ function restoreFilters() {
 
 /* ────────────────────────── 力导向布局 ────────────────────────── */
 
-const posCache = new Map<string, { x: number; y: number }>();
 let alpha = 1;
 let settled = true;
 let simActive = false;
+let settleStreak = 0;
+let simTicks = 0;
 let forceLinks: ForceLink[] = [];
 const physicsClock = createGraphClock(() => { if (simActive) tick(); });
 let seed = 20260929;
@@ -702,7 +712,7 @@ function derivePhysics() {
 let PH = derivePhysics();
 function syncPhysics() { PH = derivePhysics(); }
 
-function applyFilter() {
+function applyFilter(warmupMs = 0) {
   saveFilters();
   const keep = rawNodes.filter(passFilter);
   visible = keep;
@@ -721,11 +731,12 @@ function applyFilter() {
   }
 
   // 位置：优先沿用上一次坐标；新出现的节点落在已有邻居附近（保留心智地图）
+  let cachedCount = 0;
   for (const n of keep) {
     if (n.vx == null || Number.isNaN(n.vx)) { n.vx = 0; n.vy = 0; }
     if (Number.isNaN(n.x) || Number.isNaN(n.y)) { n.x = 0; n.y = 0; }
-    const cached = posCache.get(n.id);
-    if (cached && Number.isFinite(cached.x) && Number.isFinite(cached.y)) { n.x = cached.x; n.y = cached.y; continue; }
+    const cached = getGraphPosition(n.id);
+    if (cached) { n.x = cached.x; n.y = cached.y; cachedCount++; continue; }
     const idx = nodeIndex.get(n.id);
     const nb = idx == null ? [] : adj[idx].map((a) => rawNodes[a.i]).filter((m) => visSet.has(m.id) && Number.isFinite(m.x) && !Number.isNaN(m.x));
     if (nb.length) {
@@ -741,11 +752,41 @@ function applyFilter() {
   }
 
   selected.value = selected.value && visSet.has(selected.value.id) ? rawNodes[nodeIndex.get(selected.value.id)!] : null;
-  alpha = pinned.value ? 0 : 1; settled = pinned.value;
+  alpha = pinned.value ? 0 : 1;
+  settleStreak = 0;
+  simTicks = 0;
+  // 全部节点都有上次坐标：直接呈现，不再空转几秒；只有新节点需要收敛时才预热。
+  settled = pinned.value || keep.length === 0 || cachedCount === keep.length;
+  if (settled) alpha = 0;
+  else if (warmupMs > 0) prewarm(warmupMs);
   userAdjusted = false; // 换了筛选条件：让视图重新居中
   version.value++;
   run();
-  scheduleFit();
+  if (settled) fit(false); else scheduleFit();
+}
+
+/**
+ * 首次进入（或首次展开全库）时先同步跑一小段力学——加载骨架还盖着画布，
+ * 把原来 6 秒的可见抖动压成一次 ~140ms 预热 + 不到 1 秒的收尾，预算到点就交给动画。
+ */
+function prewarm(budgetMs: number) {
+  if (!visible.length || pinned.value) return;
+  const until = performance.now() + budgetMs;
+  let streak = 0;
+  let ticks = 0;
+  while (ticks < P.maxTicks) {
+    const speed = stepGraphForces(visible, forceLinks, PH, alpha);
+    alpha += (0 - alpha) * P.alphaDecay;
+    ticks++;
+    if (speed < P.settleSpeed && alpha <= P.settleAlpha) streak++; else streak = 0;
+    if (streak >= P.settleTicks) break;
+    if (performance.now() >= until) break;
+  }
+  settleStreak = streak;
+  simTicks = ticks;
+  settled = streak >= P.settleTicks;
+  if (settled) { alpha = 0; for (const n of visible) { n.vx = 0; n.vy = 0; } }
+  for (const n of visible) rememberGraphPosition(n.id, n.x, n.y);
 }
 
 function tick() {
@@ -753,24 +794,32 @@ function tick() {
   const draggingNode = !!drag?.node && drag.moved;
   const maxSpeed = stepGraphForces(visible, forceLinks, PH, alpha);
   alpha += ((draggingNode ? P.dragAlpha : 0) - alpha) * P.alphaDecay;
-  settled = !draggingNode && alpha <= P.settleAlpha && maxSpeed < P.settleSpeed;
+  simTicks++;
+  if (!draggingNode && alpha <= P.settleAlpha && maxSpeed < P.settleSpeed) settleStreak++; else settleStreak = 0;
+  settled = !draggingNode && (settleStreak >= P.settleTicks || simTicks >= P.maxTicks);
   if (settled) for (const n of visible) { n.vx = 0; n.vy = 0; }
-  for (const n of visible) posCache.set(n.id, { x: n.x, y: n.y });
+  // 每帧都写坐标缓存既费内存又制造 GC 压力；每隔几帧 + 收敛时落一次足够。
+  if (settled || simTicks % 6 === 0) for (const n of visible) rememberGraphPosition(n.id, n.x, n.y);
 }
 
 function run() {
-  if (!simActive) physicsClock.reset();
+  const wasActive = simActive;
+  if (!wasActive) physicsClock.reset();
   simActive = !pinned.value && !settled;
+  if (simActive && !wasActive) simTicks = 0;
   setLayoutHint();
-  paintFrame.schedule(settled);
+  requestPaint(settled);
 }
 
 function relayout() {
   pinned.value = false;
   seed = Math.floor(Math.random() * 4294967296);
-  posCache.clear();
+  clearGraphPositions();
   for (const n of visible) { n.x = 0; n.y = 0; n.vx = 0; n.vy = 0; }
-  alpha = pinned.value ? 0 : 1; settled = pinned.value;
+  alpha = 1;
+  settled = false;
+  settleStreak = 0;
+  simTicks = 0;
   run();
   scheduleFit();
 }
@@ -783,10 +832,11 @@ function togglePin() {
     simActive = false;
     settled = true;
     setLayoutHint();
-    paintFrame.schedule(true);
+    requestPaint(true);
   } else {
     alpha = 0.4;
     settled = false;
+    settleStreak = 0;
     run();
   }
 }
@@ -826,7 +876,9 @@ let focusMix = 0;
 let overlayPrev: GNode | null = null;
 let overlayCur: GNode | null = null;
 let overlayT = 1;
-const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** 每帧都新建 MediaQueryList 没必要；开关只随系统设置变化，监听一次即可。 */
+const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+const reducedMotion = () => motionQuery.matches;
 
 /** 推进一帧焦点过渡；延续动画时把 focusAnimating 置真，由 paintFrame 继续排帧。 */
 function stepFocus() {
@@ -862,22 +914,39 @@ function stepFocus() {
   if (!focus && focusMix === 0) { overlayCur = null; overlayPrev = null; }
 }
 
+/** 外部（交互/数据/主题/尺寸）触发的重绘；与物理推进区分开，后者只在真正走了一步时重绘。 */
+let forcePaint = true;
+let lastAnimPaintAt = 0;
+function requestPaint(planLabels = false) {
+  forcePaint = true;
+  paintFrame.schedule(planLabels);
+}
+
 const paintFrame = createGraphFrame((labels) => {
+  const now = performance.now();
   // Physics and paint share the same frame so hit testing sees exactly the positions on screen.
+  let stepped = 0;
   if (simActive) {
-    physicsClock.advance(performance.now());
+    stepped = physicsClock.advance(now);
     if (settled) {
       simActive = false;
       labels = true;
-      if (!userAdjusted) fit();
+      if (!userAdjusted) fit(false);
       setLayoutHint();
     }
   }
   stepFocus();
-  if (labels) planLabels();
-  zoomPercent.value = Math.round(view.s * 100);
-  drawBase();
-  drawOver();
+  let paintNow = forcePaint || labels || stepped > 0;
+  // 120/144Hz 屏上焦点过渡不必满帧重绘：60Hz 足够顺，省下的光栅预算留给交互输入。
+  if (!paintNow && focusAnimating && now - lastAnimPaintAt >= 14) paintNow = true;
+  forcePaint = false;
+  if (paintNow) {
+    lastAnimPaintAt = now;
+    if (labels) planLabels();
+    zoomPercent.value = Math.round(view.s * 100);
+    drawBase();
+    drawOver();
+  }
   if (simActive || focusAnimating) paintFrame.schedule();
 });
 let fitTimer = 0;
@@ -888,7 +957,7 @@ function scheduleFit() {
 }
 function scheduleLabels() {
   clearTimeout(labelTimer);
-  labelTimer = window.setTimeout(() => paintFrame.schedule(true), 100);
+  labelTimer = window.setTimeout(() => requestPaint(true), 100);
 }
 
 /** 画布需要具体颜色，不能直接用 CSS 变量；从根元素的令牌读，主题切换时刷新（画布底色与 App 背景保持一致） */
@@ -921,7 +990,8 @@ const nodePaintColor = (n: GNode) => colorGroups.value ? colorOf(n) : palette.no
 function resize() {
   const stage = stageRef.value;
   if (!stage) return;
-  dpr = Math.min(2, window.devicePixelRatio || 1);
+  // 图谱是一堆小圆点 + 13px 标签，1.5 倍已看不出差别；2 倍在 4K/200% 屏上要多刷 78% 像素。
+  dpr = Math.min(1.5, window.devicePixelRatio || 1);
   const rect = stage.getBoundingClientRect();
   W = Math.max(1, Math.round(rect.width));
   H = Math.max(1, Math.round(rect.height));
@@ -937,7 +1007,19 @@ function resize() {
 }
 
 /** 标签布局：在屏幕空间规划一次，存成「相对节点的像素偏移」——平移缩放不需要重排文字 */
-let labelPlan: { n: GNode; text: string; fs: number; bold: boolean; dx: number; dy: number }[] = [];
+let labelPlan: { n: GNode; text: string; fs: number; bold: boolean; dx: number; dy: number; w: number }[] = [];
+/** measureText 结果按「字重+字号+文本」缓存：缩放时同一批标签会反复量宽度 */
+const labelWidthCache = new Map<string, number>();
+function measureLabel(ctx: CanvasRenderingContext2D, text: string, fs: number, bold: boolean) {
+  const key = `${bold ? 600 : 400}|${fs}|${text}`;
+  const hit = labelWidthCache.get(key);
+  if (hit != null) return hit;
+  ctx.font = `${bold ? 600 : 400} ${fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
+  const w = ctx.measureText(text).width;
+  if (labelWidthCache.size > 4000) labelWidthCache.clear();
+  labelWidthCache.set(key, w);
+  return w;
+}
 function planLabels() {
   if (!bctx) return;
   labelPlan = [];
@@ -948,10 +1030,16 @@ function planLabels() {
   // 不再瞬间消失；焦点消失后它们又原地淡回。
   const candidates = visible;
   const placed: GraphLabelBox[] = focus ? [focusLabelBox(focus, bctx)] : [];
-  const nodeBoxes = candidates.map((n) => {
+  // 节点避让只收屏幕内节点并放进均匀网格：原来的 `.some()` 每个候选位置都扫全部节点，
+  // 复杂度 O(n²)，节点变多后一次标签排布就要几十毫秒。
+  const grid = createLabelGrid(96);
+  for (const n of candidates) {
     const r = nodeScreenR(n.r) + 2;
-    return { n, x: n.x * view.s + view.x - r, y: n.y * view.s + view.y - r, w: r * 2, h: r * 2 };
-  });
+    const x = n.x * view.s + view.x - r;
+    const y = n.y * view.s + view.y - r;
+    if (x + r * 2 < 0 || x > W || y + r * 2 < 0 || y > H) continue;
+    grid.add({ x, y, w: r * 2, h: r * 2 });
+  }
   const intersect = (a: typeof placed[0], b: typeof placed[0]) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const relatedRank = (n: GNode) => (relatedIds?.has(n.id) ? 1 : 0);
@@ -963,8 +1051,7 @@ function planLabels() {
     const text = n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label;
     const fs = window.innerWidth <= 768 ? (n.deg > 12 ? 15 : 14) : (n.deg > 12 ? 14 : 13);
     const bold = n.deg > 12;
-    bctx.font = `${bold ? 600 : 400} ${fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
-    const tw = bctx.measureText(text).width;
+    const tw = measureLabel(bctx, text, fs, bold);
     const th = fs + 3;
     const sx = n.x * view.s + view.x;
     const sy = n.y * view.s + view.y;
@@ -979,11 +1066,11 @@ function planLabels() {
     for (const c of cands) {
       const b = { x: Math.round(c.x), y: Math.round(c.y), w: tw + 4, h: th + 2 };
       if (b.x < 6 || b.x + b.w > W - 6 || b.y < 4 || b.y + b.h > H - 4) continue;
-      if (!placed.some((p) => intersect(b, p)) && !nodeBoxes.some((p) => p.n !== n && intersect(b, p))) { box = b; break; }
+      if (!placed.some((p) => intersect(b, p)) && !grid.intersects(b)) { box = b; break; }
     }
     if (!box) continue; // 放不下就不放，宁缺毋滥
     placed.push(box);
-    labelPlan.push({ n, text, fs, bold, dx: box.x - sx + 2, dy: box.y - sy + th / 2 });
+    labelPlan.push({ n, text, fs, bold, dx: box.x - sx + 2, dy: box.y - sy + th / 2, w: tw });
   }
 }
 
@@ -1019,16 +1106,43 @@ function drawBase() {
   strokeEdges();
 
   // 紧凑圆点保留关联度的大小差异，物理碰撞半径不随外观改变。
-  for (const n of visible) {
-    const sx = n.x * view.s + view.x;
-    const sy = n.y * view.s + view.y;
-    if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
-    const rr = nodeScreenR(n.r);
-    bctx.beginPath();
-    bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
-    bctx.globalAlpha = 1 - DIM_NODE * n.dim;
-    bctx.fillStyle = nodePaintColor(n);
-    bctx.fill();
+  // 没有焦点时所有节点同一透明度：按颜色分组走单条路径，少几百次 beginPath/fill；
+  // 压暗过渡期间每个节点 alpha 不同，只能逐点画。
+  let dimmed = !!focus || focusMix > 0;
+  if (!dimmed) for (const n of visible) if (n.dim > 0.002) { dimmed = true; break; }
+  if (!dimmed) {
+    const groups = new Map<string, GNode[]>();
+    for (const n of visible) {
+      const sx = n.x * view.s + view.x;
+      const sy = n.y * view.s + view.y;
+      if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
+      const color = nodePaintColor(n);
+      const list = groups.get(color);
+      if (list) list.push(n); else groups.set(color, [n]);
+    }
+    bctx.globalAlpha = 1;
+    for (const [color, list] of groups) {
+      bctx.beginPath();
+      for (const n of list) {
+        const rr = nodeScreenR(n.r) / view.s;
+        bctx.moveTo(n.x + rr, n.y);
+        bctx.arc(n.x, n.y, rr, 0, Math.PI * 2);
+      }
+      bctx.fillStyle = color;
+      bctx.fill();
+    }
+  } else {
+    for (const n of visible) {
+      const sx = n.x * view.s + view.x;
+      const sy = n.y * view.s + view.y;
+      if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
+      const rr = nodeScreenR(n.r);
+      bctx.beginPath();
+      bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
+      bctx.globalAlpha = 1 - DIM_NODE * n.dim;
+      bctx.fillStyle = nodePaintColor(n);
+      bctx.fill();
+    }
   }
   bctx.restore();
 
@@ -1047,7 +1161,8 @@ function drawBase() {
     const y = Math.round(L.n.y * view.s + view.y + L.dy);
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     // Nodes move while dragging. Recheck collisions without rebuilding or swapping label anchors.
-    if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: bctx.measureText(L.text).width, h: L.fs + 4 }, occupied)) continue;
+    // 宽度用规划时缓存的测量值，不再每帧为每个标签 measureText。
+    if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: L.w, h: L.fs + 4 }, occupied)) continue;
     bctx.globalAlpha = alpha;
     bctx.lineWidth = 4;
     bctx.strokeStyle = T.bg;
@@ -1129,12 +1244,21 @@ function paintOverlayNode(node: GNode, alpha: number) {
   octx.restore();
 }
 
+/** 高亮层上一帧是否有内容：没有焦点时不必每帧清一整张画布 */
+let overlayPainted = false;
 function drawOver() {
   if (!octx || !W) return;
+  if (!overlayCur || focusMix <= 0) {
+    if (!overlayPainted) return;
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    octx.clearRect(0, 0, W, H);
+    overlayPainted = false;
+    return;
+  }
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, W, H);
   octx.globalAlpha = 1;
-  if (!overlayCur || focusMix <= 0) return;
+  overlayPainted = true;
   // 切换焦点时旧高亮淡出、新高亮淡入，避免紫色连线从一个节点瞬移到另一个节点。
   if (overlayPrev) paintOverlayNode(overlayPrev, focusMix * (1 - overlayT));
   paintOverlayNode(overlayCur, focusMix * (overlayPrev ? overlayT : 1));
@@ -1143,7 +1267,7 @@ function drawOver() {
 /* ────────────────────────── 视图操作 ────────────────────────── */
 
 function usableWidth() { return W > 768 && (facetsOpen.value || detailOpen.value) ? Math.max(320, W - 320) : W; }
-function fit() {
+function fit(schedule = true) {
   if (!visible.length) return;
   cancelAnimationFrame(camRaf);
   let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
@@ -1157,7 +1281,7 @@ function fit() {
   view.s = s;
   view.x = width / 2 - ((x0 + x1) / 2) * s;
   view.y = H / 2 - ((y0 + y1) / 2) * s;
-  paintFrame.schedule(true);
+  if (schedule) requestPaint(true);
 }
 
 function screenToWorld(mx: number, my: number) {
@@ -1183,7 +1307,7 @@ function centerOn(node: GNode) {
   const from = { x: view.x, y: view.y, s: view.s };
   const to = { x: usableWidth() / 2 - node.x * s, y: H / 2 - node.y * s, s };
   const t0 = performance.now();
-  const dur = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 240;
+  const dur = reducedMotion() ? 1 : 240;
   cancelAnimationFrame(camRaf);
   userAdjusted = true; // 用户主动对焦：收敛后不再自动带动视图
   const step = () => {
@@ -1192,7 +1316,7 @@ function centerOn(node: GNode) {
     view.s = from.s + (to.s - from.s) * e;
     view.x = from.x + (to.x - from.x) * e;
     view.y = from.y + (to.y - from.y) * e;
-    paintFrame.schedule(k === 1);
+    requestPaint(k === 1);
     if (k < 1) camRaf = requestAnimationFrame(step);
   };
   step();
@@ -1224,7 +1348,7 @@ function onPointerDown(ev: PointerEvent) {
   if (node) { node.fixed = true; node.vx = 0; node.vy = 0; }
   hover = null;
   tip.value = null;
-  paintFrame.schedule(true);
+  requestPaint(true);
   cursor.value = 'grabbing';
 }
 
@@ -1253,13 +1377,14 @@ function onPointerMove(ev: PointerEvent) {
       view.y = drag.vy + dy;
       userAdjusted = true;
     }
-    paintFrame.schedule();
+    requestPaint();
     return;
   }
   const node = hitTest(x, y);
   if (node !== hover) {
     hover = node;
-    paintFrame.schedule(true);
+    // 焦点出现时关联节点优先占字（标签排布已网格化，重排成本 ~1ms）。
+    requestPaint(true);
     cursor.value = node ? 'pointer' : 'grab';
     if (node) {
       tip.value = {
@@ -1280,13 +1405,15 @@ function onPointerUp(ev: PointerEvent) {
   const node = drag.node;
   drag = null;
   if (baseRef.value?.hasPointerCapture(ev.pointerId)) baseRef.value.releasePointerCapture(ev.pointerId);
-  if (node) { node.fixed = false; posCache.set(node.id, { x: node.x, y: node.y }); }
+  if (node) { node.fixed = false; rememberGraphPosition(node.id, node.x, node.y); }
   // Keep neighbor momentum on release; cool the forces instead of freezing or restarting the layout.
   if (node && wasDrag && !pinned.value) {
     settled = false;
+    settleStreak = 0;
+    simTicks = 0; // 拖动是一次新的收敛，别继承之前跑过的帧数上限
     run();
   }
-  paintFrame.schedule(true);
+  requestPaint(true);
   if (ev.type === 'pointercancel' || ev.type === 'lostpointercapture') return;
   if (wasDrag || !node) return;
 
@@ -1316,7 +1443,7 @@ function onPointerLeave() {
   if (drag) return;
   hover = null;
   tip.value = null;
-  paintFrame.schedule(true);
+  requestPaint(true);
 }
 
 function selectNode(node: GNode) {
@@ -1328,7 +1455,7 @@ function selectNode(node: GNode) {
   detailOpen.value = true;
   facetsOpen.value = false;
   if (W > 768 && node.x * view.s + view.x > usableWidth() - 24) centerOn(node);
-  paintFrame.schedule(true);
+  requestPaint(true);
 }
 
 function zoomAt(k: number, x: number, y: number) {
@@ -1338,7 +1465,7 @@ function zoomAt(k: number, x: number, y: number) {
   view.y = y - (y - view.y) * (ns / view.s);
   view.s = ns;
   userAdjusted = true;
-  paintFrame.schedule();
+  requestPaint();
   scheduleLabels();
 }
 function zoomBy(k: number) { zoomAt(k, W / 2, H / 2); }
@@ -1366,7 +1493,7 @@ function switchMode(next: 'business' | 'all' | 'local') {
     return;
   }
   if (wasLocal) { load(); return; }
-  posCache.clear();
+  // 业务/全库共用同一套坐标：切换时保留位置（新出现的节点再局部收敛），不整图重摆。
   applyFilter();
 }
 
@@ -1390,28 +1517,29 @@ let optTimer = 0;
 watch(opt, () => {
   syncPhysics();
   saveOptions();
-  paintFrame.schedule(true);
+  requestPaint(true);
   clearTimeout(optTimer);
   optTimer = window.setTimeout(() => {
     if (pinned.value || !visible.length) return;
     alpha = Math.max(alpha, 0.6);
     settled = false;
+    settleStreak = 0;
     run();
   }, 140);
 });
 
 watch(() => app.dark, () => {
   refreshPalette();
-  paintFrame.schedule(true);
+  requestPaint(true);
 }, { flush: 'post' });
-watch(selected, () => paintFrame.schedule(true));
-watch(colorGroups, () => { saveOptions(); paintFrame.schedule(true); });
+watch(selected, () => requestPaint(true));
+watch(colorGroups, () => { saveOptions(); requestPaint(true); });
 
 watch(() => route.params.id, (id) => {
   if (!id) return;
   pageId.value = id as string;
   mode.value = 'local';
-  posCache.clear();
+  // 局部图沿用全局图里的坐标：同一节点换视图不跳位。
   load();
 });
 
@@ -1433,7 +1561,7 @@ onMounted(async () => {
   cv.addEventListener('lostpointercapture', onPointerUp);
   cv.addEventListener('pointerleave', onPointerLeave);
   cv.addEventListener('wheel', onWheel, { passive: false });
-  ro = new ResizeObserver(() => { resize(); paintFrame.schedule(true); });
+  ro = new ResizeObserver(() => { resize(); requestPaint(true); });
   ro.observe(stageRef.value!);
   if (pageId.value) mode.value = 'local';
   await nextTick();
