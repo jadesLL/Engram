@@ -155,6 +155,17 @@
         <p v-if="checkError" class="setting-message err">{{ checkError }}</p>
         <p v-else-if="checkResult?.warning" class="setting-message warn">{{ checkResult.warning }}</p>
 
+        <!-- 更新内容：与首页更新图标同一口径（更新 / 优化 / 修复），这里给完整条目 -->
+        <div v-if="serverNoteSections.length" class="update-notes">
+          <p class="update-notes-caption">本次更新内容</p>
+          <div v-for="section in serverNoteSections" :key="section.title" class="update-notes-group">
+            <p class="update-notes-group-label">{{ section.title }}</p>
+            <ul>
+              <li v-for="(line, index) in section.items" :key="index">{{ line }}</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="setting-row">
           <div class="setting-copy">
             <strong>立即更新</strong>
@@ -292,6 +303,16 @@
           尚未配置更新源，见下方「更新源配置」。
         </p>
         <p v-else-if="installerMode && desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
+
+        <div v-if="desktopNoteSections.length" class="update-notes">
+          <p class="update-notes-caption">本次更新内容</p>
+          <div v-for="section in desktopNoteSections" :key="section.title" class="update-notes-group">
+            <p class="update-notes-group-label">{{ section.title }}</p>
+            <ul>
+              <li v-for="(line, index) in section.items" :key="index">{{ line }}</li>
+            </ul>
+          </div>
+        </div>
 
         <div v-if="installerMode && desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
           <div class="setting-copy">
@@ -478,6 +499,7 @@ import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollap
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
+import { releaseNoteSections } from '../../lib/releaseNotes';
 // 仓库地址解析与安卓端「安卓端更新」分组共用一份（lib/repoSourceUrl.ts），避免两处慢慢跑偏
 import { parseRepoUrl } from '../../lib/repoSourceUrl';
 // 自动更新状态槽的纯展示逻辑（文案/色调/进度宽度，且保证任何阶段都有文字），单测在 lib/updatePanelState.test.ts
@@ -562,6 +584,10 @@ const configLoaded = ref(false);
 const checking = ref(false);
 const checkResult = ref<any>(null);
 const checkError = ref('');
+/** 更新说明：Release 正文由 CHANGELOG 版本段落生成，按「更新 / 优化 / 修复」分组展示 */
+const serverNoteSections = computed(() => (checkResult.value?.hasUpdate
+  ? releaseNoteSections(String(checkResult.value?.releaseNotes || ''), 20)
+  : []));
 
 const updating = ref(false);
 const healthWaiting = ref(false);
@@ -606,6 +632,10 @@ async function checkAlreadyLatest(log: (line: string) => void) {
 
 const desktopChecking = ref(false);
 const desktopCheck = ref<any>(null);
+/** 安装包的更新说明：主进程检查 Release 时一并带回正文（旧版壳没有 notes，分组为空） */
+const desktopNoteSections = computed(() => (desktopCheck.value?.hasUpdate
+  ? releaseNoteSections(String(desktopCheck.value?.notes || ''), 20)
+  : []));
 /** 旧版桌面端 exe 的 preload 缺 desktopUpdateCheck API：无法应用内更新，引导手动下载 */
 const desktopUnsupported = ref(false);
 const downloading = ref(false);
@@ -1331,6 +1361,38 @@ onUnmounted(() => {
 }
 .password-control .btn {
   white-space: nowrap;
+}
+
+/* 更新说明：与首页更新面板 / 安卓更新面板同一口径（更新 / 优化 / 修复），细线分隔不套外框 */
+.update-notes {
+  margin: 0 0 12px;
+}
+.update-notes-caption {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+.update-notes-group + .update-notes-group {
+  margin-top: 8px;
+}
+.update-notes-group-label {
+  margin: 0 0 3px;
+  color: var(--text-faint);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+.update-notes ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+.update-notes li {
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 /* 更新日志：等宽滚动区（输出流，保留容器边界） */

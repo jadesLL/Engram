@@ -116,7 +116,7 @@ test('--render --write：生成版本段落、清空未发布区、带安卓累�
   assert.equal(section.date, '2026-11-09');
   const body = section.bodyLines.join('\n');
   assert.match(body, /\*\*本版主线\*\*/);
-  assert.match(body, /### 新增/);
+  assert.match(body, /### 更新/);
   assert.match(body, /- \[平台影响: B\] 设置页支持导出诊断包/);
   assert.match(body, /### 内部/);
   assert.match(body, /\*\*安卓端：自 v1\.5\.10 以来的累计更新\*\*/);

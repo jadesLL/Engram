@@ -36,12 +36,18 @@
         <div class="update-notice-checked"><span class="update-notice-ok" />已自动检查 · {{ checkedLabel }}</div>
         <div class="update-notice-body">
           <div class="update-notice-caption">本次更新内容</div>
-          <ul>
-            <li v-for="(change, index) in changes" :key="index">
-              <span class="update-notice-check"><Icon name="check" :size="11" :stroke-width="2" /></span>
-              <span>{{ change }}</span>
-            </li>
-          </ul>
+          <!-- 按「更新 / 优化 / 修复」分组：只展示用户能看懂的条目，不显示提交标题、Merge 记录或平台影响标记 -->
+          <div class="update-notice-groups">
+            <div v-for="section in changeSections" :key="section.title" class="update-notice-group">
+              <div class="update-notice-group-label">{{ section.title }}</div>
+              <ul>
+                <li v-for="(change, index) in section.items" :key="index">
+                  <span class="update-notice-check"><Icon name="check" :size="11" :stroke-width="2" /></span>
+                  <span>{{ change }}</span>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
         <!-- 一键更新按下后就地显示进度：源码/安装包形态会随即重启应用，服务端形态会等服务恢复后自动刷新 -->
         <div v-if="applyPhase !== 'idle'" class="update-notice-progress" :class="{ failed: applyPhase === 'error' }">
@@ -74,7 +80,8 @@ import { useRouter } from 'vue-router';
 import { useUpdateStore } from '../stores/update';
 import { useAppUpdateStore } from '../stores/appUpdate';
 import { useRuntimeCapabilities } from '../lib/capabilities';
-import { appUpdateCheckedLabel, appUpdateStatusText, releaseHighlights } from '../lib/appUpdate';
+import { appUpdateCheckedLabel, appUpdateStatusText } from '../lib/appUpdate';
+import { releaseNoteSections } from '../lib/releaseNotes';
 import {
   applyDesktopInstallerUpdate,
   applyServerUpdate,
@@ -95,6 +102,8 @@ interface SourceUpdateState {
   remoteCommit?: string;
   localCommit?: string;
   changes?: string[];
+  /** 远端 CHANGELOG 增量条目的 Markdown 片段（主进程解析；旧版桌面壳没有这个字段） */
+  changeNotes?: string;
   checkedAt?: number | null;
 }
 
@@ -355,29 +364,55 @@ async function runApkUpdate(log: (line: string) => void) {
   log('已调起系统安装器：请在系统弹窗点「安装」，完成后 Engram 会自动重启，数据不受影响。');
 }
 
-/** Release 正文只作为纯文本显示，提取前几条内容；不渲染远端 Markdown/HTML。 */
-function releaseSummary(notes: string): string[] {
-  return notes.split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^(?:#{1,6}\s|```|---+$|\|\s*[-:]+|<)/.test(line))
-    .map((line) => line.replace(/^[-*+]\s+|^\d+[.)]\s+/, '').replace(/!?\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*_`]/g, '').trim())
+interface ChangeGroup {
+  title: string;
+  items: string[];
+}
+
+/**
+ * 旧版桌面壳只回原始提交标题：过滤 Merge / docs / chore / ci / test / build 这类内部提交，
+ * 避免更新面板再把「Merge branch …」「docs(changelog): …」当成更新内容展示。
+ */
+function sanitizeCommitChanges(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => String(item).trim())
+    .filter((line) => line && !/^(?:Merge\b|Revert\b|docs(?:\(|:)|chore(?:\(|:)|ci(?:\(|:)|test(?:\(|:)|build(?:\(|:)|release(?:\(|:))/i.test(line))
+    .map((line) => line.replace(/^[*_`]+|[*_`]+$/g, '').trim())
     .filter(Boolean)
     .slice(0, 5)
     .map((line) => line.slice(0, 160));
 }
 
-const changes = computed(() => {
+/** 统一成「分类 + 条目」渲染结构；无内容时给一句可操作的兜底说明 */
+function fallbackGroup(text: string): ChangeGroup[] {
+  return [{ title: '更新', items: [text] }];
+}
+
+/**
+ * 更新内容分组：源码模式读远端 CHANGELOG 的增量片段（主进程解析），
+ * Docker / 桌面安装包 / 手机端读 Release 正文（由 CHANGELOG 版本段落生成）。
+ * 三端共用 lib/releaseNotes.ts 的「更新 / 优化 / 修复」口径。
+ */
+const changeSections = computed<ChangeGroup[]>(() => {
+  const toGroups = (notes: string) => releaseNoteSections(notes, 5).map((section) => ({ title: section.title, items: section.items }));
   if (apkMode.value) {
-    const items = releaseHighlights(appUpdate.info.releaseNotes);
-    return items.length ? items : ['新版本已可下载：点「立即下载并安装」，装完 Engram 自动重启。'];
+    const groups = toGroups(appUpdate.info.releaseNotes);
+    return groups.length ? groups : fallbackGroup('新版本已可下载：点「立即下载并安装」，装完 Engram 自动重启。');
   }
   if (sourceMode.value) {
-    const items = Array.isArray(sourceState.value.changes) ? sourceState.value.changes : [];
-    return items.length ? items.slice(0, 5).map((item) => String(item).slice(0, 160)) : ['远端已有新提交，可前往软件更新查看提交号并更新。'];
+    const groups = toGroups(sourceState.value.changeNotes || '');
+    if (groups.length) return groups;
+    const legacy = sanitizeCommitChanges(sourceState.value.changes);
+    if (legacy.length) return [{ title: '更新', items: legacy }];
+    const behind = Number(sourceState.value.behind) || 0;
+    return fallbackGroup(behind > 0
+      ? `本次更新包含 ${behind} 个新提交（以内部改进为主），可前往软件更新查看提交号并更新。`
+      : '远端已有新提交，可前往软件更新查看提交号并更新。');
   }
-  if (mainImageUpdate.value) return ['main 通道有新的镜像构建，可前往软件更新查看并升级。'];
-  const items = releaseSummary(updateStore.lastResult?.releaseNotes || '');
-  return items.length ? items : ['此版本尚未提供更新说明，可前往软件更新查看版本与更新方式。'];
+  if (mainImageUpdate.value) return fallbackGroup('main 通道有新的镜像构建，可前往软件更新查看并升级。');
+  const groups = toGroups(updateStore.lastResult?.releaseNotes || '');
+  return groups.length ? groups : fallbackGroup('此版本尚未提供更新说明，可前往软件更新查看版本与更新方式。');
 });
 
 const checkedLabel = computed(() => {
@@ -503,7 +538,10 @@ onUnmounted(() => {
 .update-notice-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
 .update-notice-body { border-top: 1px solid var(--border); padding: 13px 18px 15px; }
 .update-notice-caption { color: var(--text-faint); font-size: var(--fs-caption); font-weight: 600; margin-bottom: 9px; }
-.update-notice-body ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; max-height: 190px; overflow-y: auto; }
+/* 分类分组：更新 / 优化 / 修复各一段小标题，滚动区放在外层，组内条目不再各自滚动 */
+.update-notice-groups { display: grid; gap: 12px; max-height: 232px; overflow-y: auto; }
+.update-notice-group-label { color: var(--text-faint); font-size: var(--fs-caption); font-weight: 600; margin-bottom: 7px; }
+.update-notice-body ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 .update-notice-body li { display: flex; align-items: flex-start; gap: 8px; color: var(--text); font-size: var(--fs-small); line-height: 1.45; overflow-wrap: anywhere; }
 .update-notice-check { flex: none; width: 16px; height: 16px; display: grid; place-items: center; margin-top: 1px; color: var(--success); background: var(--success-soft); border-radius: 5px; }
 /* 一键更新进度块 */
