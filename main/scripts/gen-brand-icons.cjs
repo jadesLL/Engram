@@ -108,7 +108,7 @@ const VARIANTS = {
     core: ['#E08A6A', '#C15F3C'],
     electron: '#F7F5EF',
     electronStroke: '#1F1E1B',
-    electronStrokeWidth: 1.4,
+    electronStrokeWidth: 2.6, // 1.4 在 32px ICO 帧只有 0.45px，肉眼等于没有；2.6 起桌面小尺寸才可见
     wordmark: '#1F1E1B',
     tagline: '#736E60',
   },
@@ -121,7 +121,7 @@ const VARIANTS = {
     core: ['#E08A6A', '#C15F3C'],
     electron: '#F7F5EF',
     electronStroke: '#1F1E1B',
-    electronStrokeWidth: 1.4,
+    electronStrokeWidth: 2.6,
     wordmark: '#FFFFFF',
     tagline: '#C9C9C9',
   },
@@ -236,7 +236,7 @@ function lockupSvg(variant) {
     `  <rect x="${n(boxX + inset)}" y="${n(boxY + inset)}" width="${n(box - G.plateStroke * scale)}" height="${n(box - G.plateStroke * scale)}" rx="${n((G.plateR * box) / 100 - inset)}" fill="none" stroke="${v.plateRingCss}" stroke-width="${n(G.plateStroke * scale)}"/>`,
     `  <g transform="translate(${n(boxX + box / 2)} ${n(boxY + box / 2)}) scale(${n(scale)})">`,
     `    <ellipse cx="0" cy="0" rx="${n(G.orbitRx)}" ry="${n(G.orbitRy)}" fill="none" stroke="url(#${uid}-orbit)" stroke-width="${n(G.orbitStroke)}" transform="rotate(${n(G.orbitAngle)})"/>`,
-    `    <circle cx="${n(el.x)}" cy="${n(el.y)}" r="${n(G.electronR)}" fill="${v.electron}"/>`,
+    `    <circle cx="${n(el.x)}" cy="${n(el.y)}" r="${n(G.electronR)}" fill="${v.electron}"${v.electronStroke ? ` stroke="${v.electronStroke}" stroke-width="${n(v.electronStrokeWidth || 1.4)}"` : ''}/>`,
     `    <circle cx="0" cy="0" r="${n(G.coreR)}" fill="url(#${uid}-core)"/>`,
     '  </g>',
     `  <text x="126" y="66" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="46" font-weight="700" letter-spacing="-0.6" fill="${v.wordmark}">Engram</text>`,
@@ -326,6 +326,12 @@ function paintMark(ctx, unit, variant) {
   ctx.arc(el.x, el.y, G.electronR, 0, Math.PI * 2);
   ctx.fillStyle = v.electron;
   ctx.fill();
+  // 与 SVG 管线对齐：纸珠必须有墨描边，否则小尺寸 ICO/PNG 里珠子融进纸底
+  if (v.electronStroke) {
+    ctx.strokeStyle = v.electronStroke;
+    ctx.lineWidth = v.electronStrokeWidth || 1.4;
+    ctx.stroke();
+  }
 
   const coreGradient = ctx.createLinearGradient(CORE_GRAD.x1, CORE_GRAD.y1, CORE_GRAD.x2, CORE_GRAD.y2);
   coreGradient.addColorStop(0, v.core[0]);

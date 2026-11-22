@@ -21,7 +21,7 @@
   <rect x="16.704" y="16.704" width="86.592" height="86.592" rx="18.656" fill="none" stroke="rgba(31, 30, 27, 0.09)" stroke-width="1.408"/>
   <g transform="translate(60 60) scale(0.88)">
     <ellipse cx="0" cy="0" rx="36" ry="15.5" fill="none" stroke="url(#engram-light-lockup-orbit)" stroke-width="8.5" transform="rotate(-28)"/>
-    <circle cx="22.695" cy="-21.628" r="6" fill="#F7F5EF"/>
+    <circle cx="22.695" cy="-21.628" r="6" fill="#F7F5EF" stroke="#1F1E1B" stroke-width="2.6"/>
     <circle cx="0" cy="0" r="11" fill="url(#engram-light-lockup-core)"/>
   </g>
   <text x="126" y="66" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="46" font-weight="700" letter-spacing="-0.6" fill="#1F1E1B">Engram</text>
