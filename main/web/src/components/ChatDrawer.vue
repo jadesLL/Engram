@@ -3123,14 +3123,6 @@ onUnmounted(() => {
   }
 }
 
-/* 触屏：思考段与执行记录的折叠头是整行按钮，矮行在手指上点不准，热区补到 44px */
-@media (hover: none) and (pointer: coarse) {
-  .think-head,
-  .tool-head {
-    min-height: 44px;
-  }
-}
-
 /* ===== 执行记录：沿用思考段的终端语言——无框、无底、无图标徽章；
  * 一行「图标 + 工具名 + 摘要 + 状态」，展开在导轨下列参数与输出；状态直接写字，不用胶囊 ===== */
 .tool {
@@ -4519,6 +4511,12 @@ onUnmounted(() => {
   }
   .drawer-resizer::before {
     left: 21px;
+  }
+
+  /* 思考段与执行记录的折叠头是整行按钮，矮行在手指上点不准，热区补到 44px */
+  .think-head,
+  .tool-head {
+    min-height: 44px;
   }
 }
 </style>
