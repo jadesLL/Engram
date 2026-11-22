@@ -4,7 +4,7 @@
     ref="boardEl"
     class="board"
     :class="{ 'editing-board': store.editing, 'mobile-edit': mobileEditing }"
-    :style="{ '--board-cols': displayColumns, '--grid-row-h': `${unit}px` }"
+    :style="{ '--board-cols': displayColumns, '--grid-row-h': `${rowUnit}px` }"
   >
     <div class="board-cq">
       <div class="board-inner">
@@ -261,6 +261,7 @@ import { homeDateLine, homeGreeting, pageBadge, sinceShort, dueLabel, taskMeta, 
 import {
   GRID_COLS,
   GRID_CANVAS_WIDTH,
+  GRID_ROW_PITCH,
   canvasScale,
   canvasDelta,
   normalizePlace,
@@ -685,13 +686,19 @@ const displayPlaces = computed(() => {
     displayColumns.value
   );
 });
+/*
+ * 列宽（横轴一格）随画布实测宽度算：宽窗铺满后列变宽，卡片横向吃掉多出来的空间。
+ * 行高不跟着列宽等比放大（否则宽屏上卡片会被拉成两倍高、内容稀稀拉拉）：
+ * 桌面固定用设计稿行高 GRID_ROW_PITCH，纵向密度与窄窗一致，首页仍在可控的滚动长度内。
+ */
 const unit = computed(() => {
   if (mobileEditing.value) return MOBILE_EDIT_ROW_H;
   return Math.max(1, (gridWidth.value - 14 * (displayColumns.value - 1)) / displayColumns.value);
 });
+const rowUnit = computed(() => (mobileEditing.value ? MOBILE_EDIT_ROW_H : GRID_ROW_PITCH));
 const gridRows = computed(() => Math.max(2, usedRows(displayPlaces.value)));
 const boardScale = computed(() => (mobileCanvas.value ? 1 : canvasScale(availableWidth.value)));
-const canvasHeight = computed(() => (gridRows.value * (unit.value + 14) - 14) * boardScale.value);
+const canvasHeight = computed(() => (gridRows.value * (rowUnit.value + 14) - 14) * boardScale.value);
 let frameObserver: ResizeObserver | null = null;
 watch(gridFrameEl, (el) => {
   frameObserver?.disconnect();
@@ -710,7 +717,7 @@ let frame = 0;
 let gesture: {
   mode: 'move' | 'resize'; id: string; pointer: number;
   startX: number; startY: number; x: number; y: number; scroll: number; scrollX: number;
-  origin: GridPlace; snapshot: HomeBoard; cell: number; scale: number; active: boolean;
+  origin: GridPlace; snapshot: HomeBoard; cellX: number; cellY: number; scale: number; active: boolean;
 } | null = null;
 function modulePlace(module: HomeModule): GridPlace { return { col: module.col, row: module.row, w: module.w, h: module.h }; }
 function startDrag(event: PointerEvent, id: string) { beginGesture(event, id, 'move'); }
@@ -729,7 +736,8 @@ function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') 
   gestureMode.value = mode;
   gesture = { mode, id, pointer: event.pointerId, startX: event.clientX, startY: event.clientY,
     x: event.clientX, y: event.clientY, scroll: boardEl.value?.scrollTop || 0, scrollX: boardEl.value?.scrollLeft || 0,
-    origin: modulePlace(module), snapshot: JSON.parse(JSON.stringify(store.board)), cell: unit.value + 14, scale: boardScale.value, active: false };
+    origin: modulePlace(module), snapshot: JSON.parse(JSON.stringify(store.board)),
+    cellX: unit.value + 14, cellY: rowUnit.value + 14, scale: boardScale.value, active: false };
   window.addEventListener('pointermove', onGestureMove, { passive: false });
   window.addEventListener('pointerup', onGestureEnd);
   window.addEventListener('pointercancel', onGestureEnd);
@@ -754,8 +762,8 @@ function updateGesture() {
   const dy = canvasDelta(g.y - g.startY + (g.mode === 'move' ? (host?.scrollTop || 0) - g.scroll : 0), g.scale);
   ghost.value = { x: dx, y: dy };
   const wanted = normalizePlace(g.mode === 'move'
-    ? { ...g.origin, col: g.origin.col + Math.round(dx / g.cell), row: g.origin.row + Math.round(dy / g.cell) }
-    : { ...g.origin, w: g.origin.w + Math.round(dx / g.cell), h: g.origin.h + Math.round(dy / g.cell) });
+    ? { ...g.origin, col: g.origin.col + Math.round(dx / g.cellX), row: g.origin.row + Math.round(dy / g.cellY) }
+    : { ...g.origin, w: g.origin.w + Math.round(dx / g.cellX), h: g.origin.h + Math.round(dy / g.cellY) });
   targetPreview.value = wanted;
   previewBoard.value = moveModuleTo(g.snapshot, g.id, wanted);
   // 缩放只在指针移动时重算；移动卡片则持续更新以支持边缘自动滚动。
@@ -789,7 +797,8 @@ function onGestureEnd(event?: PointerEvent) {
 }
 watch(() => store.editing, (editing) => { if (!editing) onGestureEnd(); });
 // 侧栏开合或窗口改宽时取消尚未提交的手势，避免中途更换坐标系。
-watch(boardScale, () => { if (gesture) onGestureEnd(); });
+// 宽窗铺满后 scale 恒为 1，列宽（unit）自己会变，所以列宽也要盯。
+watch([boardScale, unit], () => { if (gesture) onGestureEnd(); });
 
 /** 键盘微调：方向键挪位、Shift+方向键改尺寸（触屏与键盘用户的等价入口） */
 function onModuleKey(module: HomeModule, dx: number, dy: number, resize: boolean) {
@@ -898,14 +907,14 @@ onUnmounted(() => {
 /* 上下 auto 之外，.board-inner 原有的 margin: auto 也把左右留白一起管了 */
 .board-cq > .board-inner { margin-top: 0; margin-bottom: 0; }
 /*
- * 桌面卡片栅格固定 1056px（单格约 75px），浏览态与编辑态共用。
- * 卡片区域整体缩放到可用宽度，标题与工具栏保持可读尺寸。
- * 宽窗口 auto 外边距居中；浏览/编辑预留相同滚动条空间，比例保持一致。
+ * 桌面卡片栅格随正文宽度铺满（2026-11 用户口径：「首页要占满全屏」）：
+ * 不再锁 1120px 上限——正文有多宽画布就多宽，12 列均分、列随之变宽（行高固定，见 rowUnit）；
+ * 可用宽度不足 1056px 时仍按原逻辑整体等比缩小（见 canvasScale），窄窗观感不变。
+ * 浏览/编辑预留相同滚动条空间，比例保持一致。
  */
 .board-inner {
   margin: auto;
   width: 100%;
-  max-width: 1120px;
   padding: 40px 32px 64px;
 }
 
@@ -1067,8 +1076,9 @@ onUnmounted(() => {
  * 每张卡的 grid-column / grid-row 由数据（col/row/w/h）直接写成内联样式，
  * 所以拖动 = 改数字、缩放 = 改数字，浏览器负责摆位——不会出现「卡片飞出页面」这种事
  * （2026-10-06 的瀑布流用绝对定位 + 脚本算像素，拖动时确实会跑到容器外）。
- * ResizeObserver 按实际画布宽度计算正方形行高；桌面画布不随窗口宽度变化。
- * 手势使用相同的格子尺寸与 14px 间距。
+ * ResizeObserver 按实际画布宽度算列宽；行高固定为设计稿 GRID_ROW_PITCH（宽窗只加宽、不加高）。
+ * 画布宽度 = max(正文宽度, 1056px)，宽窗铺满（>1056 时不再缩放），窄窗才是「1056 画布等比缩小」。
+ * 手势按列宽 / 行高分别换算落格。
  */
 .board-grid-frame {
   position: relative;
@@ -1077,8 +1087,11 @@ onUnmounted(() => {
 }
 .board-grid {
   display: grid;
-  width: 1056px;
-  min-width: 1056px;
+  /*
+   * 画布宽度：正文比设计稿（1056px）宽时跟着铺满，窄时保底 1056 再整体缩放。
+   * 两种情况的 drag/resize 都走同一套换算：横向按列宽、纵向按行高，缩放再乘 canvasScale。
+   */
+  width: max(100%, 1056px);
   grid-template-columns: repeat(var(--board-cols), minmax(0, 1fr));
   grid-auto-rows: var(--grid-row-h);
   /* 只画用到的行数（--grid-rows 由脚本按内容算），避免底部留一大片空白 */
