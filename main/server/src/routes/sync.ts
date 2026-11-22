@@ -199,7 +199,7 @@ function peerView(peer: SyncPeer) {
 }
 
 /** 补拉与订阅交接使用同一份载荷与分类门禁。 */
-function enrichReplayOp(op: SyncOp, compact = false) {
+function enrichReplayOp(op: SyncOp, compact = false, pageHashes?: Map<string, string>) {
   if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
   if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
   // 客户调研记录：正文由客户端按 op.hash 按需拉 /api/sync/research，补拉 op 里不塞报告正文
@@ -209,13 +209,29 @@ function enrichReplayOp(op: SyncOp, compact = false) {
     // compact 模式不内嵌正文；但可以先把「这份路径已经不存在（改名 / 删除后的旧 op）」标出来：
     // 手机端补积压时这类旧 op 会连片出现（实测一次改名留下 330 条），逐条去交换 404 纯属浪费。
     // 老客户端不认识 missing 字段，会照旧自己拉一次并 404 跳过，行为不变。
+    // 同时带当前正文的 hash：成员端本地内容没变（最常见的是自己刚推上去的页面）就不必再拉一次。
     let gone = false;
+    let hash = '';
     try {
-      gone = !fs.existsSync(safeJoin(op.target));
+      const abs = safeJoin(op.target);
+      gone = !fs.existsSync(abs);
+      if (!gone) {
+        const cached = pageHashes?.get(op.target);
+        if (cached !== undefined) {
+          hash = cached;
+        } else {
+          try {
+            hash = sha256(fs.readFileSync(abs));
+          } catch {
+            hash = ''; // 读不到就不带 hash：调用方照旧拉正文，不误判成「已同步」
+          }
+          pageHashes?.set(op.target, hash);
+        }
+      }
     } catch {
       gone = true; // 路径非法也等价于拉不到
     }
-    return gone ? { ...op, missing: true } : op;
+    return gone ? { ...op, hash: '', missing: true } : { ...op, hash };
   }
   if (compact || op.kind !== 'page') return op;
   const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
@@ -611,7 +627,9 @@ export async function syncRoutes(app: FastifyInstance) {
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, Math.trunc(requestedLimit))) : 500;
     const compact = query.compact === '1' || query.compact === 'true';
     const ops = getOpsSince(since, limit) as SyncOp[];
-    const enriched = ops.map(op => enrichReplayOp(op, compact));
+    // 同一批里同一路径可能重复（AIWorks 系统页每轮重写）：正文 hash 只读一次
+    const pageHashes = new Map<string, string>();
+    const enriched = ops.map(op => enrichReplayOp(op, compact, pageHashes));
     if (req.syncPeer) touchPeer(req.syncPeer.id);
     return {
       ops: enriched,

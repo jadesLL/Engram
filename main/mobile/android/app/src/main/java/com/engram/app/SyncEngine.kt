@@ -652,8 +652,13 @@ class SyncEngine(
     }
 
     private fun pushOutbox() {
-        for (item in db.outbox()) {
+        val items = db.outbox()
+        items.forEachIndexed { index, item ->
             checkActive()
+            // 大附件 / 首次补推一多，这一阶段可能持续几分钟：把「第几项、哪一份」写进状态行，
+            // 否则界面一直停在「正在补齐改动」，看起来就是卡住（用户 2026-11-22 报障）。
+            val subject = item.optString("target")
+            syncProgress = "正在推送本机改动（${index + 1}/${items.size}）：${subject.take(48)}"
             try {
                 pushItem(item)
             } catch (e: Cancelled) {
@@ -766,8 +771,11 @@ class SyncEngine(
     private fun pullChanges(): Boolean {
         var any = false
         var gap = false
+        /** 已处理的 op 条数：补积压时界面要能看出在往前走，不能一直停在「正在补齐改动」 */
+        var processed = 0
         while (true) {
             checkActive()
+            syncProgress = "正在补齐改动（已处理 $processed 项）"
             val cursor = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
             val response = try {
                 getJson("/api/sync/changes?since=$cursor&limit=$CHANGE_BATCH&compact=1")
@@ -782,41 +790,76 @@ class SyncEngine(
             val ops = response.optJSONArray("ops") ?: JSONArray()
             val compact = response.optBoolean("compact")
             val batch = (0 until ops.length()).map { ops.getJSONObject(it) }
+            val prefs = SyncPreferences(db)
+            // 同一路径在一批里只应用最后一条（compact 回放取的是当前内容，不是历史版本）：
+            // 补积压时 AIWorks 系统页这类高频改写能占掉大半 op，逐条拉正文纯属重复请求。
+            val replay = batch.map { SyncReplayPolicy.Op(it.optString("kind"), it.optString("target"), it.optString("hash")) }
+            val superseded = SyncReplayPolicy.superseded(replay)
+            var offset = 0
             for (chunk in batch.chunked(MAX_PARALLEL_FETCHES)) {
-                val work = chunk.map { op ->
+                val work = chunk.mapIndexed { localIndex, op ->
+                    val index = offset + localIndex
                     val kind = op.optString("kind")
                     val target = op.optString("target")
+                    val localHash = if (index !in superseded && replay[index].hash.isNotBlank()) localHashOf(kind, target) else ""
                     when {
-                        !SyncPreferences(db).allowed(kind, target, op.optString("old_path")) -> ChangeWork(op = op)
+                        !prefs.allowed(kind, target, op.optString("old_path")) -> ChangeWork(op = op)
+                        // 已被同路径后一条 op 覆盖：内容以最后一条为准，这里只推进水位
+                        index in superseded -> ChangeWork(op = op, superseded = true)
                         // 中枢在 compact 回放里标了 missing：这份路径已经不存在（改名 / 删除后的旧 op），
                         // 不必再打一次注定 404 的请求（补积压时可能有几百条）
                         kind == "page" && compact && op.optBoolean("missing") -> ChangeWork(op = op, missing = true)
-                        kind == "page" && compact -> ChangeWork(
-                            op = op,
-                            page = fetchExecutor.submit<PagePayload?> {
-                                // 中枢已经没有这份（oplog 里的旧 op 滞后于改名/删除）：null，绝不拖死整轮
-                                tolerateMissing {
-                                    val content = getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
-                                    val evidence = getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
-                                    PagePayload(content, evidence)
-                                }
-                            },
-                        )
-                        kind == "file" -> ChangeWork(op = op, file = fetchExecutor.submit<File?> { tolerateMissing { stageFile(target) } })
+                        // 本机内容与中枢一致（op 带 hash）：不必再下载一遍自己刚推上去的文件
+                        SyncReplayPolicy.unchanged(replay[index], localHash) -> ChangeWork(op = op, unchanged = true)
+                        kind == "page" && compact -> {
+                            schedulePull()
+                            ChangeWork(
+                                op = op,
+                                page = fetchExecutor.submit<PagePayload?> {
+                                    // 中枢已经没有这份（oplog 里的旧 op 滞后于改名/删除）：null，绝不拖死整轮
+                                    tolerateMissing {
+                                        val content = getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
+                                        val evidence = getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
+                                        PagePayload(content, evidence)
+                                    }
+                                },
+                            )
+                        }
+                        kind == "file" -> {
+                            schedulePull()
+                            ChangeWork(op = op, file = fetchExecutor.submit<File?> { tolerateMissing { stageFile(target) } })
+                        }
                         else -> ChangeWork(op = op)
                     }
                 }
+                offset += chunk.size
                 try {
                     for (item in work) {
                         checkActive()
                         try {
+                            if (item.superseded) {
+                                advanceCursor(item.op)
+                                continue
+                            }
+                            if (item.unchanged) {
+                                // 正文没变也要把同步基线推上去，避免下一次编辑拿旧 base_revision 推送
+                                if (item.op.optString("kind") == "page") {
+                                    db.setPageRevision(item.op.optString("target"), item.op.optInt("revision"))
+                                }
+                                advanceCursor(item.op)
+                                continue
+                            }
                             if (item.missing) {
                                 skipMissingOp(item.op)
                                 any = true
                                 continue
                             }
-                            val page = item.page?.let(::await)
-                            val file = item.file?.let(::await)
+                            val page = item.page?.let { future ->
+                                try { await(future) } finally { completePull() }
+                            }
+                            val file = item.file?.let { future ->
+                                try { await(future) } finally { completePull() }
+                            }
                             // 取不回来（中枢 404）说明这份已经被改名/删除：跳过它、推进水位，
                             // 否则这条永远取不回的 op 会让每一轮同步都在这里失败（实测卡死过）
                             if ((item.page != null && page == null) || (item.file != null && file == null)) {
@@ -851,6 +894,7 @@ class SyncEngine(
                     }
                 }
             }
+            processed += batch.size
             if (ops.length() < CHANGE_BATCH) break
         }
         if (gap) {
@@ -858,6 +902,27 @@ class SyncEngine(
             markReconciled()
         }
         return any
+    }
+
+    /**
+     * 本机这份路径的内容指纹（空 = 不存在/读不了/还没进索引）：与 op.hash 比对，跳过未变化的下载。
+     *
+     * 页面要求索引里有这一行：文件在但库没索引（修复过数据目录 / 索引损坏）时必须走正常的
+     * 落盘流程重新索引，不能因为指纹相同就把页面留在「磁盘上有、界面里没有」的状态。
+     */
+    private fun localHashOf(kind: String, path: String): String = runCatching {
+        val file = db.file(path)
+        if (!file.exists() || !file.isFile) return@runCatching ""
+        if (kind == "page" && db.pageIdByPath(path) == null) return@runCatching ""
+        sha256(file)
+    }.getOrDefault("")
+
+    /** 已被同批后一条 op 覆盖 / 内容未变：只推进水位，不再应用这一条 */
+    private fun advanceCursor(op: JSONObject) {
+        val seq = op.optLong("seq")
+        if (seq <= 0L) return
+        val current = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
+        if (seq > current) db.setSetting("sync_cursor", seq.toString())
     }
 
     private fun applyOp(op: JSONObject, compact: Boolean = false, page: PagePayload? = null, stagedFile: File? = null) {
@@ -1393,6 +1458,10 @@ class SyncEngine(
         val file: Future<File?>? = null,
         /** 中枢已判定该路径不存在（compact 回放的 missing 标记）：直接跳过，不再发请求 */
         val missing: Boolean = false,
+        /** 同批里已有同路径的后一条 op：这一条只推进水位，内容以最后一条为准 */
+        val superseded: Boolean = false,
+        /** 本机 hash 与 op.hash 一致：内容已经是最新，不必再下载 */
+        val unchanged: Boolean = false,
     )
 
     private fun schedulePull() {

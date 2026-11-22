@@ -426,6 +426,18 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun pageIdByPath(path: String): String? = synchronized(lock) { readableDatabase.rawQuery("SELECT id FROM pages WHERE path=? AND deleted=0", arrayOf(path)).use { if (it.moveToFirst()) it.getString(0) else null } }
     fun pageRevision(path: String): Int = synchronized(lock) { readableDatabase.rawQuery("SELECT sync_revision FROM pages WHERE path=? AND deleted=0", arrayOf(path)).use { if (it.moveToFirst()) it.getInt(0) else 0 } }
 
+    /**
+     * 只把页面同步基线推进到指定版本，不重写文件。
+     *
+     * 补积压时 op 带 hash 且本机内容一致（最常见的是自己刚推上去的页面）：正文没必要再写一遍，
+     * 但 `sync_revision` 必须跟上中枢，否则下次编辑会拿旧基线推送，中枢算不出共同祖先，
+     * 退化成按修改时间裁决并可能多出冲突副本。
+     */
+    fun setPageRevision(path: String, revision: Int) = synchronized(lock) {
+        if (revision <= 0) return@synchronized
+        writableDatabase.execSQL("UPDATE pages SET sync_revision=? WHERE path=? AND deleted=0", arrayOf(revision, path))
+    }
+
     fun movePage(id: String, directory: String?, newTitle: String?, fromSync: Boolean = false): JSONObject = synchronized(lock) {
         val current = pageJson(id) ?: error("页面不存在")
         val old = current.getString("path")
