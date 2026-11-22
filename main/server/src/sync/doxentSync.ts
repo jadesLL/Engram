@@ -2,7 +2,11 @@ import { closeAllRuntimes } from '../assistant/dshRuntime.js';
 import { bundledDshHome } from '../assistant/config.js';
 import { getSetting, setSetting } from '../lib/db.js';
 import type { DoxentLoginInfo } from '../lib/doxent.js';
-import { prepareDoxentAfterCredentialSync, resetDoxentCaches, stopDoxentCliAfterCredentialChange } from '../lib/doxent.js';
+import {
+  prepareDoxentAfterCredentialSync,
+  resetDoxentCaches,
+  stopDoxentCliForCredentialSync,
+} from '../lib/doxent.js';
 import {
   DOXENT_SESSION_KEY,
   clearDoxentSession,
@@ -262,7 +266,7 @@ export function createDoxentSessionSync(deps: DoxentSessionSyncDeps): DoxentSess
 const defaultSync = createDoxentSessionSync({
   home: () => bundledDshHome(),
   prepare: (home) => prepareDoxentAfterCredentialSync({ home }),
-  stopCli: stopDoxentCliAfterCredentialChange,
+  stopCli: stopDoxentCliForCredentialSync,
   resetCaches: resetDoxentCaches,
   closeRuntimes: () => closeAllRuntimes(),
 });
