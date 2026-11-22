@@ -47,6 +47,10 @@ const updateProgress = require('./scripts/lib/update-progress');
 // 自动更新失败暂停的纯逻辑（同版本失败过一次就不再自动重试，记录持久化到 config.json），
 // 单测在 scripts/tests/update-failure.test.js
 const updateFailure = require('./scripts/lib/update-failure');
+// 源码模式更新小窗的卡片页（紧凑深色卡片 + 自绘最小化），单测见 scripts/tests/update-window.test.js
+const updateCard = require('./lib/update-card');
+// 安装包静默安装进度窗的 PowerShell 脚本（同一张深色卡片 + 自绘最小化），单测见 scripts/tests/install-card.test.js
+const installCard = require('./lib/install-card');
 // 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
 const uninstallGuard = require('./scripts/lib/uninstall-guard');
 // 整棵进程树的收尾（Windows taskkill /T + tasklist 轮询），单测见 scripts/tests/process-tree.test.js。
@@ -1736,49 +1740,34 @@ function installerScopeFlag() {
   return '/currentuser';
 }
 
-/** PowerShell 单引号字符串字面量：内部单引号翻倍（进度窗标题拼进 -EncodedCommand 的脚本） */
-function psq(text) {
-  return `'${String(text ?? '').replace(/'/g, "''")}'`;
+/** 把 asar 内的品牌 PNG 落到 userData 的真实文件：PowerShell 窗读不了 app.asar。
+ *  图标缺失只是卡片没图标（不阻断更新）；安装包里 web/dist/brand 在 asar 内，必须走这条路。 */
+function realBrandPng() {
+  const source = iconAsset('png', 'light');
+  if (!PACKAGED) return source; // 源码模式/开发检出本身就是真文件
+  try {
+    const target = path.join(app.getPath('userData'), 'brand-icons', path.basename(source));
+    const bytes = fs.readFileSync(source);
+    if (!fs.existsSync(target) || !fs.readFileSync(target).equals(bytes)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, bytes);
+    }
+    return target;
+  } catch (e) {
+    log('[update] 解出安装卡片图标失败（卡片将无图标）：' + describeError(e));
+    return source;
+  }
 }
 
 /** 生成安装进度窗（powershell WinForms 无边框置顶窗，经 -EncodedCommand 启动，无临时脚本文件）。
  *  窗口纯装饰：按安装包进程名轮询，安装器退出即自动关窗；被安全软件拦截也不影响安装——
  *  安装与重启由下方独立的 cmd 链执行，不依赖任何脚本解释器。 */
-function spawnInstallUiForm(version, scopeFlag) {
-  const v = sanitizeVersion(version);
-  const title = v ? `正在安装更新 Engram v${v}` : '正在安装更新 Engram';
-  const script = [
-    "Add-Type -AssemblyName System.Windows.Forms",
-    "Add-Type -AssemblyName System.Drawing",
-    '$form = New-Object System.Windows.Forms.Form',
-    '$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None',
-    '$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen',
-    '$form.TopMost = $true',
-    '$form.Size = New-Object System.Drawing.Size(420, 150)',
-    '$form.BackColor = [System.Drawing.Color]::White',
-    '$title = New-Object System.Windows.Forms.Label',
-    '$title.Dock = [System.Windows.Forms.DockStyle]::Top',
-    '$title.Height = 64',
-    '$title.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
-    `$title.Text = ${psq(title)}`,
-    "$title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 12)",
-    '$form.Controls.Add($title)',
-    '$sub = New-Object System.Windows.Forms.Label',
-    '$sub.Dock = [System.Windows.Forms.DockStyle]::Fill',
-    '$sub.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
-    "$sub.Text = '安装完成后应用将自动重启，请稍候，请勿关机'",
-    "$sub.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)",
-    '$form.Controls.Add($sub)',
-    '$form.Show()',
-    '$deadline = (Get-Date).AddMinutes(3)',
-    'while ((Get-Date) -lt $deadline) {',
-    '  [System.Windows.Forms.Application]::DoEvents()',
-    "  if (-not (Get-Process -Name 'Engram Setup*' -ErrorAction SilentlyContinue)) { break }",
-    '  Start-Sleep -Milliseconds 500',
-    '}',
-    '$form.Close()',
-    '',
-  ].join('\n');
+function spawnInstallUiForm(version) {
+  const script = installCard.buildScript({
+    version: sanitizeVersion(version),
+    iconPath: realBrandPng(),
+    exePath: installedAppExe(),
+  });
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   const child = spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', encoded], { detached: true, stdio: 'ignore' });
   child.unref();
@@ -2393,55 +2382,22 @@ ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
   return { ...sourceAutoState };
 });
 
-// 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。复用启动页深色主题，
-// 主进程经 executeJavaScript 原地更新步骤文字与日志；页面本身是 data: URL，
+// 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。紧凑深色卡片（应用图标 + Engram + 当前步骤
+// + 细进度线），主进程经 executeJavaScript 原地更新步骤文字与日志；页面本身是 data: URL，
 // 只通过专用 preload（update-preload.js）暴露「最小化」一个能力，不挂主窗的 wikiDesktop 桥。
+function updateIconDataUrl() {
+  try {
+    // 用浅色品牌图：深色卡片上白色圆角图标更清楚（与更新提示截图一致）
+    const file = iconAsset('png', 'light');
+    return 'data:image/png;base64,' + fs.readFileSync(file).toString('base64');
+  } catch (e) {
+    log('[update] 读取更新卡片图标失败（改为无图标卡片）：' + describeError(e));
+    return '';
+  }
+}
+
 function updateProgressPage() {
-  const extra = `
-    body { align-items: flex-start; padding-top: 40px; }
-    .wrap { width: min(500px, 82vw); }
-    .logo { width: 54px; height: 54px; margin-bottom: 16px; }
-    h1 { font-size: 20px; letter-spacing: 1px; margin: 0 0 8px; }
-    .step { font-size: 14px; color: #c6cddc; margin: 0 0 18px; min-height: 20px; text-align: left; }
-    .bar { margin-bottom: 14px; }
-    #log {
-      margin: 0; height: 116px; overflow: hidden; font-size: 11px; line-height: 1.55;
-      color: #566078; font-family: Consolas, monospace; white-space: pre-wrap; word-break: break-all;
-    }
-    .failed .bar i { animation: none; background: #f87171; }
-    .failed .step { color: #f87171; }
-    /* 无边框窗口没有系统标题栏按钮：自绘最小化；整页是拖拽区，按钮必须显式 no-drag 才点得动 */
-    .win-min {
-      position: fixed; top: 10px; right: 12px; width: 30px; height: 26px;
-      display: flex; align-items: center; justify-content: center; padding: 0;
-      border: 0; border-radius: 6px; background: transparent; color: #8a93a6;
-      cursor: pointer; -webkit-app-region: no-drag;
-      transition: background 0.15s ease, color 0.15s ease;
-    }
-    .win-min:hover { background: rgba(255,255,255,0.08); color: #e6e9f0; }
-    .win-min:active { background: rgba(255,255,255,0.14); }
-    .win-min:focus-visible { outline: 1px solid #4d8aff; outline-offset: 1px; }
-  `;
-  return (
-    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
-    SPLASH_STYLE +
-    extra +
-    '</style></head><body>' +
-    '<button class="win-min" id="win-min" type="button" title="最小化" aria-label="最小化">' +
-    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">' +
-    '<path d="M2.5 6h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
-    '</svg></button>' +
-    '<div class="wrap">' +
-    logoSvg('logo') +
-    '<h1>正在更新 Engram</h1>' +
-    '<p class="step" id="step">准备中…</p>' +
-    '<div class="bar"><i></i></div>' +
-    '<pre id="log"></pre>' +
-    '</div>' +
-    '<script>document.getElementById("win-min").addEventListener("click", function () {' +
-    'if (window.engramUpdateWindow) window.engramUpdateWindow.minimize();});</script>' +
-    '</body></html>'
-  );
+  return updateCard.page({ iconDataUrl: updateIconDataUrl() });
 }
 
 let updateWin = null;
@@ -2456,19 +2412,27 @@ function showUpdateProgress() {
   if (updateWin && !updateWin.isDestroyed()) {
     // 上一次更新失败后用户可能把窗口最小化了：重试时先恢复，否则新步骤只在任务栏里更新
     if (updateWin.isMinimized()) updateWin.restore();
+    // 失败态会把卡片加高、步骤文字变红：新一轮更新先恢复默认尺寸与样式
+    updateWin.setSize(updateCard.WINDOW.width, updateCard.WINDOW.height);
+    updateWin.center();
+    updateProgressExec("document.body.classList.remove('failed');");
     updateWin.show();
     return updateWin;
   }
   updateWin = new BrowserWindow({
-    width: 560,
-    height: 430,
+    width: updateCard.WINDOW.width,
+    height: updateCard.WINDOW.height,
+    center: true,
+    // 圆角卡片与投影由页面自己画：窗口保持透明，去掉系统直角底与黑边
+    transparent: true,
+    hasShadow: false,
     resizable: false,
     maximizable: false,
     fullscreenable: false,
     frame: false,
     show: false,
     title: 'Engram 更新',
-    backgroundColor: SPLASH_BG,
+    backgroundColor: '#00000000',
     icon: windowIcon(),
     webPreferences: {
       // 专用 preload：只给页面一个最小化方法，不复用主窗 preload.js 的完整桌面桥
@@ -2508,6 +2472,15 @@ function failUpdateProgress(message) {
     `document.body.classList.add('failed');` +
       `const el=document.getElementById('step'); if (el) el.textContent=${JSON.stringify(message)};`,
   );
+  // 失败原因通常比步骤长：卡片加高到两行，别让错误被省略号吃掉（主窗同时会展示完整错误）
+  try {
+    if (updateWin && !updateWin.isDestroyed()) {
+      updateWin.setSize(updateCard.WINDOW.width, updateCard.WINDOW.failedHeight);
+      updateWin.center();
+    }
+  } catch {
+    /* 窗口已关或正在关闭 */
+  }
 }
 
 // fork 一个 Node 侧构建子进程（tsc/vite/prepare-desktop），输出按行实时回显到进度小窗。
