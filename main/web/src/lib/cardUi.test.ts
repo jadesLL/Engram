@@ -135,3 +135,12 @@ test('卡片 v2：横条左栏共用一条左对齐轴线', () => {
     '横条输入卡的文字没有对齐左轴线',
   );
 });
+
+test('卡片 v2：卡头眉标完整落在卡内，不被裁成顶部残影', () => {
+  const shell = read('components/HomeModuleShell.vue');
+  assert.match(
+    shell,
+    /\.shell-head h3 \{[^}]*margin:\s*0/,
+    '卡头标题没有清掉 h3 默认外边距：34px 卡头装不下眉标 + 标题，眉标会被卡顶裁成一条残影',
+  );
+});
