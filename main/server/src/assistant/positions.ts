@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { db, now } from '../lib/db.js';
 import { readPage } from '../lib/vault.js';
-import { agentWritePage } from '../pipeline/agentWrite.js';
+import { isRawPath } from '../lib/rawSections.js';
+import { agentInsertRawPage, agentWritePage } from '../pipeline/agentWrite.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 
 /**
@@ -11,6 +12,9 @@ import { enqueuePagePipeline } from '../jobQueue.js';
  * 这里在起跑时校验并落一枚短令牌（pos_xxx），把令牌写进 Agent 的任务文本。
  * Agent 用 `engram pages insert pos_xxx --file -` 提交正文；服务端按「锚点原文 + 第几次出现」
  * 重新定位块，再把内容插到该块之后——不按字符偏移硬写，页面被改过就拒绝，绝不写错位置。
+ *
+ * 可引用 Wiki/ 页面与原始资料 Markdown：原始资料对外部 Agent 的整页写入仍是只读区，
+ * 只有用户在本轮明确引用了位置时，内置 Agent 才能凭令牌做局部插入（见 `agentInsertRawPage`）。
  *
  * 令牌一次有效：成功写入后置 used_at；重复调用返回第一次的结果（幂等，避免 Agent 重试写两份）。
  */
@@ -175,11 +179,16 @@ interface ValidatedPosition {
   blocks: Block[];
 }
 
+/** 位置引用可指向的页面：Wiki 树与原始资料（AIWorks 等系统目录仍为只读区） */
+function isPositionTarget(path: string): boolean {
+  return path.startsWith('Wiki/') || isRawPath(path);
+}
+
 /** 校验位置引用并返回可落库的锚点信息（不写库；起跑前与写入时共用） */
 export function validatePositionRef(ref: PositionRefInput): ValidatedPosition {
   const page = resolvePage(ref);
-  if (!page.path.startsWith('Wiki/')) {
-    throw new PositionRefError(`只能引用 Wiki/ 下的页面，${page.path} 是只读区`, 403);
+  if (!isPositionTarget(page.path)) {
+    throw new PositionRefError(`只能引用 Wiki/ 或 原始资料/ 下的页面，${page.path} 是只读区`, 403);
   }
   const anchorText = String(ref.anchorText ?? '').replace(/\r\n/g, '\n').trim();
   if (!anchorText) throw new PositionRefError('位置引用缺少锚点原文，请重新引用位置', 400);
@@ -341,20 +350,28 @@ export function insertAtPosition(token: string, content: string): InsertedPositi
   const head = validated.content.slice(0, picked.end).replace(/\s+$/, '');
   const tail = validated.content.slice(picked.end).replace(/^\s+/, '');
   const next = [head, body, tail].filter((part) => part.length > 0).join('\n\n') + '\n';
-  const result = agentWritePage({
-    path: validated.page.path,
-    title: validated.page.title,
-    content: next,
-  });
+  // 原始资料不走 `agentWritePage`（那是外部 Agent 的整页写入口，只允许 Wiki/）；
+  // 只有这里的位置令牌流程能对原始资料做局部插入。
+  const result = isRawPath(validated.page.path)
+    ? agentInsertRawPage({
+      path: validated.page.path,
+      title: validated.page.title,
+      content: next,
+    })
+    : agentWritePage({
+      path: validated.page.path,
+      title: validated.page.title,
+      content: next,
+    }).meta;
   db.prepare(`UPDATE assistant_positions SET used_at = ?, result_path = ? WHERE token = ?`).run(
     now(),
-    result.meta.path,
+    result.path,
     key,
   );
-  enqueuePagePipeline(result.meta.id);
+  enqueuePagePipeline(result.id);
   return {
-    path: result.meta.path,
-    title: result.meta.title,
+    path: result.path,
+    title: result.title,
     chars: body.length,
     alreadyUsed: false,
   };

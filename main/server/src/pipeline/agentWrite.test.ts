@@ -9,14 +9,16 @@ process.env.DATA_DIR = temp;
 
 let db: any;
 let agentWritePage: (input: any) => any;
+let agentInsertRawPage: (input: any) => any;
 let writePage: (rel: string, content: string, extra?: any) => any;
+let readPage: (rel: string) => { content: string } | null;
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
   db = dbModule.db;
   dbModule.migrate();
-  ({ writePage } = await import('../lib/vault.js'));
-  ({ agentWritePage } = await import('./agentWrite.js'));
+  ({ writePage, readPage } = await import('../lib/vault.js'));
+  ({ agentWritePage, agentInsertRawPage } = await import('./agentWrite.js'));
 });
 
 after(() => {
@@ -98,6 +100,30 @@ test('写页守卫：只允许 Wiki/ 路径，原始资料与 AIWorks 只读区�
       `路径 ${bad} 应被拒绝`,
     );
   }
+});
+
+test('位置插入写入口：只接受原始资料 Markdown，写入后正文更新且不动 Wiki 门禁', () => {
+  writePage('原始资料/文档/未命名.md', '# 未命名\n\n原来的内容。\n', { title: '未命名' });
+  const meta = agentInsertRawPage({
+    path: '原始资料/文档/未命名.md',
+    title: '未命名',
+    content: '# 未命名\n\n原来的内容。\n\n追加的一段。\n',
+  });
+  assert.equal(meta.path, '原始资料/文档/未命名.md');
+  assert.match(readPage(meta.path)!.content, /追加的一段/);
+  // 同一入口不允许被用来整页改写 Wiki / AIWorks / 非 Markdown
+  for (const bad of ['Wiki/概念/未命名.md', 'AIWorks/log/log.md', '原始资料/文档/附件.pdf']) {
+    assert.throws(
+      () => agentInsertRawPage({ path: bad, title: '越权', content: '越权' }),
+      (error: any) => error.status === 403 && /位置插入/.test(error.message),
+      `路径 ${bad} 应被拒绝`,
+    );
+  }
+  // 外部 Agent 的整页写入口对原始资料仍然关闭
+  assert.throws(
+    () => agentWritePage({ path: '原始资料/文档/未命名.md', title: '未命名', content: '越权' }),
+    (error: any) => error.status === 403 && /只读区/.test(error.message),
+  );
 });
 
 test('共享同一来源的多页面证据互不踢出 active（回归：按版本而非按路径退出）', () => {
