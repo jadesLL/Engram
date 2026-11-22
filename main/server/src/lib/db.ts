@@ -704,6 +704,9 @@ export function migrate() {
   ensureColumn('jobs', 'cancel_requested', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('jobs', 'run_token', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('jobs', 'assistant_session_id', 'TEXT');
+  // 失败任务的「已读/忽略」时间：首页「N 项失败」只统计未忽略的近期失败，
+  // 用户认可某条失败不用再管后写这里（不覆盖 updated_at，30 天保留期照旧）。
+  ensureColumn('jobs', 'acknowledged_at', 'TEXT');
   // 多端同步：本端已知的每页 hub 版本号（仅 hub 上必然等于当前版本；节点上是最后已知值）
   ensureColumn('pages', 'sync_revision', 'INTEGER NOT NULL DEFAULT 0');
   // 启动扫描增量指纹（见 lib/vault.ts scanVaultPages）：上次扫到该页面时的文件 mtimeMs + size。

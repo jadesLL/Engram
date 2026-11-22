@@ -81,10 +81,12 @@ export const useAppStore = defineStore('app', {
       pageVersion: 0,
       /** 最近一次页面事件（page-changed/deleted/moved），EditorView 据此判断是否重载当前页 */
       lastPageEvent: null as any,
-      /** 后台处理状态：仅用于把文档提取进度显示在对应文件旁 */
+      /** 后台处理状态：把文档提取进度显示在文件旁；失败/队列详情供后台任务抽屉使用 */
       jobs: {
         active: [] as any[],
         recent: [] as any[],
+        /** 需要处理（未忽略 + 最近 7 天）的失败清单，与 failed 同口径 */
+        failures: [] as any[],
         pending: 0,
         running: 0,
         paused: 0,

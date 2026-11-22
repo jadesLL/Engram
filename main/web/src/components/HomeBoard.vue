@@ -280,6 +280,7 @@ import { useServerUpdateStore } from '../stores/serverUpdate.ts';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { api } from '../api';
 import { syncStatusView } from '../lib/syncStatus.ts';
+import { openJobsDrawer } from '../lib/jobsDrawer';
 import { APP_VERSION } from '../version.ts';
 import { documentTitleParts } from '../lib/documentTitle.ts';
 
@@ -418,7 +419,7 @@ const sync = useSyncStore();
 const serverUpdate = useServerUpdateStore();
 const app = useAppStore();
 const { capabilities } = useRuntimeCapabilities();
-function activateSummary(row: HomeCardRow) { if (row.action === 'chat') onChat(); else if (row.action === 'capture') quickNote(); else if (row.path) go(row.path); }
+function activateSummary(row: HomeCardRow) { if (row.action === 'chat') onChat(); else if (row.action === 'capture') quickNote(); else if (row.action === 'jobs') openJobsDrawer(); else if (row.path) go(row.path); }
 
 /**
  * 摘要记忆：模板对每块模块每帧都要读 summaryOf（拖动时一帧一次），每次重算都是上百个
@@ -495,7 +496,7 @@ function computeSummary(module: HomeModule): HomeCardSummary {
     case 'queue': { const candidates=pendingDistillOf(rawFiles.value,rawFiles.value.length);return {value:queueError.value && !rawFiles.value.length ? '—' : queueLoading.value && !rawFiles.value.length ? '…' : candidates.length,label:queueError.value || '份资料等待提炼',rows:candidates.map(file=>({text:documentTitleParts(file.name).name,meta:String(file.path || '').split('/').slice(0,-1).join(' / '),detail:pendingDistillLabel(file),path:rawMaterialRoute(file)})),empty:queueError.value || (queueLoading.value ? '正在读取待提炼资料…' : '没有等待提炼的资料')}; }
     case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
     case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',presentation:'list',rows:digestLines.value.map(text=>({text,action:'chat'}))};
-    case 'system': { const jobs=app.jobs;const failed=Number(jobs?.failed || 0);const runtime=capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker';return {value:'运行中',label:runtime,status:{tone:failed?'warn':'ok',text:failed?`${failed} 项失败`:'运行中'},rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),path:'/settings'},{text:'排队',detail:Number(jobs?.pending || 0),path:'/settings'},{text:'失败',detail:failed,path:'/settings'}]}; }
+    case 'system': { const jobs=app.jobs;const failed=Number(jobs?.failed || 0);const runtime=capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker';return {value:'运行中',label:runtime,status:{tone:failed?'warn':'ok',text:failed?`${failed} 项失败`:'运行中'},rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),action:'jobs'},{text:'排队',detail:Number(jobs?.pending || 0),action:'jobs'},{text:'失败',detail:failed,action:'jobs'}]}; }
     case 'sync': { const view=syncStatusView(sync.status,{androidLocal:capabilities.value.runtime==='android-local',updating:serverUpdate.updating});return {value:view?.label || '待配置同步',label:view?.detail || '添加成员设备后开始同步',presentation:'sync',status:{tone:view?.tone || 'muted',text:view?.label || '待配置同步'},rows:[...(sync.status?.peers || []).map(p=>({text:p.name,detail:p.online?'在线':'离线',path:'/settings?section=sync'})),{text:'待推送',detail:Number(sync.status?.pending || 0),path:'/settings?section=sync'}]}; }
   }
 }

@@ -252,6 +252,31 @@ export function recoverStaleJobs() {
   }
 }
 
+/**
+ * 忽略（已读）失败任务：首页的「N 项失败」只统计**未忽略且在告警窗口内**的失败，
+ * 用户确认某条失败不用再管后写 acknowledged_at，立刻从徽标与失败清单里消失。
+ *
+ * 只写 acknowledged_at、不动 updated_at：updated_at 决定启动时「30 天前终态清理」的保留期，
+ * 忽略一条旧失败不该让它再多留 30 天。
+ *
+ * ids 不传 = 忽略全部未忽略的失败；传了但全是非法值 = 什么都不做（避免误伤成「全部」）。
+ */
+export function acknowledgeFailedJobs(ids?: number[]): number {
+  if (ids !== undefined) {
+    const unique = [...new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!unique.length) return 0;
+    const info = db.prepare(
+      `UPDATE jobs SET acknowledged_at = ?
+        WHERE status = 'failed' AND acknowledged_at IS NULL
+          AND id IN (${unique.map(() => '?').join(',')})`
+    ).run(now(), ...unique);
+    return info.changes;
+  }
+  return db.prepare(
+    `UPDATE jobs SET acknowledged_at = ? WHERE status = 'failed' AND acknowledged_at IS NULL`
+  ).run(now()).changes;
+}
+
 function activeLaneCount(lane: JobLane): number {
   return [...activeExecutions.values()].filter((execution) => execution.lane === lane).length;
 }

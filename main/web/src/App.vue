@@ -61,6 +61,8 @@
   <AssetDrawer />
   <!-- 同步详情抽屉：与图片资产抽屉同一挂载方式（Teleport 到 body），设置页只留一个入口按钮 -->
   <SyncLogDrawer />
+  <!-- 后台任务抽屉：首页运行状态卡的失败/队列入口，逐条或全部忽略失败 -->
+  <JobsDrawer />
   <ToastHost />
   <ConfirmHost />
   <!-- 记灵感撰写框：正文进、标题由 Engram 拟（左下角「+」/Ctrl+N/欢迎页卡片共用） -->
@@ -86,6 +88,7 @@ import UpdateOverlay from './components/UpdateOverlay.vue';
 import BeautifyTaskPill from './components/BeautifyTaskPill.vue';
 import AssetDrawer from './components/AssetDrawer.vue';
 import SyncLogDrawer from './components/SyncLogDrawer.vue';
+import JobsDrawer from './components/JobsDrawer.vue';
 import BrandMark from './components/BrandMark.vue';
 import Icon from './components/Icon.vue';
 import { loadRuntimeCapabilities } from './lib/capabilities';

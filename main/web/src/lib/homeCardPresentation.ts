@@ -22,7 +22,7 @@ export interface HomeCardRow {
   badge?: { text: string; tone?: 'danger' | 'plain' };
   amount?: number;
   path?: string;
-  action?: 'chat' | 'capture';
+  action?: 'chat' | 'capture' | 'jobs';
   /** 分类色（概念蓝 / 实体紫 / 资料青 / 灵感琥珀）：只给需要区分类型的统计行与徽章 */
   tone?: 'concept' | 'entity' | 'note' | 'idea';
 }
