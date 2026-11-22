@@ -13,11 +13,15 @@
 
 /**
  * 页面横向格数：手机桌面那种「一行 N 个格子」的 N。固定值——它就是「1 格」的定义。
- * 2026-10-08 由 6 列改成 12 列：板宽上限 1120px（内容约 1056px）时一格约 75px（手机图标大小），
+ * 2026-10-08 由 6 列改成 12 列：设计稿板宽 1120px（内容约 1056px）时一格约 75px（手机图标大小），
  * 1×1 才真的只是「一个小格」；6 列时一格约 164px，1×1 画出来像 2×2。
+ * 2026-11 起画布随正文铺满（宽窗格子等比变大），12 列的分格语义不变。
  */
 export const GRID_COLS = 12;
-/** 桌面布局使用固定逻辑画布；仅改变显示比例，不重新排版卡片。 */
+/**
+ * 设计稿画布宽度（窄窗缩放的基准）：可用宽度 ≥ 1056 时画布直接铺满、不再缩放；
+ * 更窄时按 available / 1056 整体等比缩小（文字跟着变小，但不会挤出卡片）。
+ */
 export const GRID_CANVAS_WIDTH = 1056;
 export function canvasScale(availableWidth: number): number {
   return Number.isFinite(availableWidth) ? Math.min(1, Math.max(1, availableWidth) / GRID_CANVAS_WIDTH) : 1;
@@ -28,6 +32,12 @@ export function canvasDelta(screenDelta: number, scale: number): number {
 }
 /** 默认查找范围；密集布局按实际底边扩展，不能截断造成重叠 */
 export const GRID_MAX_ROWS = 96;
+/**
+ * 桌面行高（纵向一格）：固定 75px（设计稿 1056 画布下的正方形格高）。
+ * 宽窗画布铺满后列会变宽，但行不再跟着等比放大——否则宽屏上卡片高度翻倍、内容被拉散，
+ * 首页也会从一屏变成两屏。横向由正文宽度决定，纵向保持设计稿密度。
+ */
+export const GRID_ROW_PITCH = 75;
 /** 旧版行高（兼容旧引用）；正式看板按可用宽度渲染正方形格子 */
 export const GRID_ROW_HEIGHT = 76;
 /** 默认渲染出来的行数（空看板的高度下限：别只剩一条缝） */
