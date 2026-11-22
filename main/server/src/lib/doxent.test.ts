@@ -7,6 +7,7 @@ import JSZip from 'jszip';
 import {
   DOXENT_CLI_LOCK_NAME,
   DOXENT_CLI_LOCK_STALE_MS,
+  DOXENT_API_SCRIPT,
   DOXENT_MARKER_FILE,
   clearDoxentBindJob,
   clearStaleDoxentCliLock,
@@ -19,10 +20,12 @@ import {
   installDoxentSkill,
   parseDoxentLoginBlock,
   parseDoxentLoginState,
+  prepareDoxentAfterCredentialSync,
   readDoxentCliVersion,
   readDoxentSkillVersion,
   removeDoxentSkill,
   startDoxentBind,
+  stopDoxentCliForCredentialSync,
   waitDoxentBindSettled,
 } from './doxent.js';
 
@@ -33,6 +36,28 @@ function tempHome(): string {
 /** 临时官方 CLI 安装目录：测试绝不碰宿主机真实的 %LOCALAPPDATA%\Doxent */
 function tempCliEnv(): NodeJS.ProcessEnv {
   return { DOXENT_CLI_INSTALL_DIR: tempHome() };
+}
+
+/** 轮询等待条件成立（绑定任务是异步推进的，断言阶段前先等它走到预期位置） */
+function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (predicate()) return resolve();
+      if (Date.now() > deadline) return reject(new Error('等待条件超时'));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
+/** 手工放一份官方技能骨架（已安装，不联网） */
+function writeInstalledSkill(home: string): void {
+  const root = doxentSkillRoot(home);
+  fs.mkdirSync(path.join(root, 'shared', 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'SKILL.md'), '---\nname: doxent\n---\n');
+  fs.writeFileSync(path.join(root, DOXENT_API_SCRIPT), 'print(1)\n');
+  fs.writeFileSync(path.join(root, 'meta.json'), JSON.stringify({ version: '1.3.10' }));
 }
 
 /** 真实 CLI 输出的形状：起止标记 + 页面类型 + markdown 链接 + 字符二维码 */
@@ -312,7 +337,7 @@ test('startDoxentBind：启动前自动清理上次安装中断留下的 CLI 安
   clearDoxentBindJob();
 });
 
-test('startDoxentBind：后台任务按 install → login 推进，完成后带回登录链接', async () => {
+test('startDoxentBind：后台任务按 install → login-status → login 推进，完成后带回登录链接', async () => {
   clearDoxentBindJob();
   const home = tempHome();
   const steps: string[] = [];
@@ -331,6 +356,10 @@ test('startDoxentBind：后台任务按 install → login 推进，完成后带�
     },
     runAction: async (action) => {
       steps.push(action);
+      if (action === 'login-status') {
+        // 先走无副作用的纯状态查询；未登录才继续走官方 login 拿链接
+        return { code: 0, stdout: '未登录', stderr: '', timedOut: false };
+      }
       await loginGate;
       return { code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false };
     },
@@ -340,7 +369,7 @@ test('startDoxentBind：后台任务按 install → login 推进，完成后带�
   assert.equal(started.step, 'install', '刚启动时处于装技能阶段');
 
   releaseInstall();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await waitFor(() => steps.includes('login'));
   const mid = doxentBindJob();
   assert.equal(mid?.state, 'running');
   assert.equal(mid?.step, 'login', '技能装好后阶段切到启动官方 CLI');
@@ -356,7 +385,65 @@ test('startDoxentBind：后台任务按 install → login 推进，完成后带�
   assert.equal(job?.page?.url, 'https://cli.iflyink.com/login?sn=nsn_abc&pollKey=deadbeef');
   assert.equal(job?.login?.state, 'logged-out');
   assert.match(job?.detail || '', /登录链接/, '完成后要说明在等浏览器登录');
-  assert.deepEqual(steps, ['install', 'login']);
+  assert.deepEqual(steps, ['install', 'login-status', 'login']);
+  clearDoxentBindJob();
+});
+
+test('startDoxentBind：已登录时直接收尾，不再调用 --login（不弹浏览器）', async () => {
+  clearDoxentBindJob();
+  const home = tempHome();
+  const calls: string[] = [];
+  startDoxentBind({
+    home,
+    env: tempCliEnv(),
+    credentials: { env: {}, home: tempHome() },
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    runAction: async (action) => {
+      calls.push(action);
+      if (action === 'login-status') return { code: 0, stdout: '已登录', stderr: '', timedOut: false };
+      throw new Error('已登录时不应再调用 ' + action);
+    },
+  });
+
+  await waitDoxentBindSettled();
+  const job = doxentBindJob();
+  assert.equal(job?.state, 'done');
+  assert.equal(job?.login?.state, 'logged-in');
+  assert.equal(job?.page, undefined, '已登录不应生成登录页链接');
+  assert.equal(job?.detail, '官方 CLI 已登录');
+  assert.deepEqual(calls, ['login-status'], '只查状态，不能触发会打开浏览器的 --login');
+  clearDoxentBindJob();
+});
+
+test('startDoxentBind：状态查询失败不挡显式绑定，继续走官方 login', async () => {
+  clearDoxentBindJob();
+  const calls: string[] = [];
+  startDoxentBind({
+    home: tempHome(),
+    env: tempCliEnv(),
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    runAction: async (action) => {
+      calls.push(action);
+      if (action === 'login-status') throw new Error('状态查询失败');
+      return { code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false };
+    },
+  });
+
+  await waitDoxentBindSettled();
+  const job = doxentBindJob();
+  assert.equal(job?.state, 'done', '显式绑定不能因为状态查询失败而中断');
+  assert.equal(job?.page?.pageType, '登录');
+  assert.deepEqual(calls, ['login-status', 'login']);
   clearDoxentBindJob();
 });
 
@@ -497,5 +584,85 @@ test('startDoxentBind：切换时退出旧会话失败进入 error，不继续�
   assert.equal(job?.state, 'error');
   assert.match(job?.error || '', /退出旧账号失败/);
   assert.equal(installs, 0, '退出失败时不能继续装技能/生成登录链接');
+  clearDoxentBindJob();
+});
+
+test('prepareDoxentAfterCredentialSync：只查 login-status，未确认登录也不调用 --login', async () => {
+  const home = tempHome();
+  writeInstalledSkill(home);
+  const calls: string[] = [];
+  const login = await prepareDoxentAfterCredentialSync({
+    home,
+    env: tempCliEnv(),
+    credentials: { env: {}, home: tempHome() },
+    install: async () => {
+      throw new Error('技能已装，不应重新安装');
+    },
+    runAction: async (action) => {
+      calls.push(action);
+      return { code: 0, stdout: '未登录', stderr: '', timedOut: false };
+    },
+  });
+  assert.equal(login.state, 'logged-out');
+  assert.deepEqual(calls, ['login-status'], '后台凭据同步不能触发会打开浏览器的 --login');
+});
+
+test('prepareDoxentAfterCredentialSync：技能缺失时只装技能 + 查状态，不生成登录链接', async () => {
+  const home = tempHome();
+  let installs = 0;
+  const calls: string[] = [];
+  const login = await prepareDoxentAfterCredentialSync({
+    home,
+    env: tempCliEnv(),
+    credentials: { env: {}, home: tempHome() },
+    install: async (input) => {
+      installs += 1;
+      return { installed: true, managed: true, root: doxentSkillRoot(input.home), version: '1.3.10' };
+    },
+    runAction: async (action) => {
+      calls.push(action);
+      return { code: 0, stdout: '已登录', stderr: '', timedOut: false };
+    },
+  });
+  assert.equal(installs, 1);
+  assert.equal(login.state, 'logged-in');
+  assert.deepEqual(calls, ['login-status']);
+});
+
+test('stopDoxentCliForCredentialSync：等绑定任务收尾后再停 daemon（不打断登录链接）', async () => {
+  clearDoxentBindJob();
+  let releaseLogin!: () => void;
+  const loginGate = new Promise<void>((resolve) => { releaseLogin = resolve; });
+  const events: string[] = [];
+  startDoxentBind({
+    home: tempHome(),
+    env: tempCliEnv(),
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    runAction: async (action) => {
+      if (action === 'login-status') return { code: 0, stdout: '未登录', stderr: '', timedOut: false };
+      await loginGate;
+      return { code: 0, stdout: LOGIN_OUTPUT, stderr: '', timedOut: false };
+    },
+  });
+  await waitFor(() => doxentBindJob()?.step === 'login');
+
+  let stopped = false;
+  const stopping = stopDoxentCliForCredentialSync(tempHome(), async (action) => {
+    events.push(action);
+    stopped = true;
+    return { code: 0, stdout: '', stderr: '', timedOut: false };
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(stopped, false, '绑定还在生成登录链接时不能 --stop');
+
+  releaseLogin();
+  await stopping;
+  assert.equal(stopped, true);
+  assert.deepEqual(events, ['stop']);
   clearDoxentBindJob();
 });
