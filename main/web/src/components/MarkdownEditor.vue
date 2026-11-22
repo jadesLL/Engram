@@ -227,14 +227,117 @@
       @regenerate="runAi(aiLastInstruction)"
     />
 
-    <!-- 语音输入面板：点工具栏麦克风打开；录音在浏览器侧转 WAV，转写结果先预览再插入 -->
-    <VoiceInputPanel
-      :open="voiceOpen"
-      :top="voicePos.top"
-      :left="voicePos.left"
-      @close="closeVoicePanel"
-      @insert="insertVoiceText"
-    />
+    <!-- 语音输入悬浮入口：编辑区右下角，离光标/手都近；菜单里换麦克风与识别引擎。
+         Ctrl+Shift+Space 直接开始/停止，Esc 取消（见 bindVoiceShortcuts）。 -->
+    <div v-if="editorUiReady" ref="voiceFabEl" class="voice-fab-wrap">
+      <button
+        type="button"
+        class="voice-fab-more"
+        :class="{ open: voiceMenuOpen }"
+        aria-label="语音输入选项（麦克风 / 识别引擎）"
+        v-tooltip="'语音输入选项'"
+        @mousedown.prevent
+        @click.stop="toggleVoiceMenu"
+      >
+        <Icon name="chevron-up" :size="13" />
+      </button>
+      <button
+        type="button"
+        class="voice-fab"
+        :class="{ live: voiceStage === 'recording', busy: voiceStage === 'transcribing' }"
+        :aria-label="voiceStage === 'recording' ? '停止语音输入' : '语音输入（Ctrl+Shift+Space）'"
+        v-tooltip="voiceStage === 'recording' ? '停止（Ctrl+Shift+Space）' : '语音输入（Ctrl+Shift+Space）'"
+        @mousedown.prevent
+        @click.stop="handleVoiceFab"
+      >
+        <Icon :name="voiceStage === 'recording' ? 'square' : 'mic'" :size="19" />
+      </button>
+    </div>
+
+    <!-- 语音输入菜单：识别引擎 + 麦克风 + 快捷键。贴 FAB 向上展开（手机档贴底）。 -->
+    <Teleport to="body">
+      <template v-if="voiceMenuOpen">
+        <div class="voice-menu-mask" @click="closeVoiceMenu" />
+        <div
+          ref="voiceMenuEl"
+          class="voice-menu card"
+          role="dialog"
+          aria-label="语音输入选项"
+          :style="{ top: voiceMenuPos.top + 'px', left: voiceMenuPos.left + 'px' }"
+          @keydown.esc.stop="closeVoiceMenu"
+        >
+          <div class="voice-menu-head">
+            <b>语音输入</b>
+            <span class="voice-menu-sub">{{ voiceStatus?.defaultEngineReason || '正在检查识别引擎…' }}</span>
+          </div>
+          <template v-if="voiceStatus && !voiceStatus.configured">
+            <p class="voice-menu-hint">{{ voiceStatus.hint }}</p>
+            <button type="button" class="voice-btn primary" @click="goSpeechConfig">去配置</button>
+          </template>
+          <template v-else>
+            <div class="voice-field">
+              <span>识别引擎</span>
+              <select v-model="voiceEngine" @change="onVoiceEngineChanged">
+                <option value="auto">自动（{{ defaultEngineLabel }}）</option>
+                <option v-for="engine in voiceStatus?.engines || []" :key="engine.id" :value="engine.id">
+                  {{ engine.label }}
+                </option>
+              </select>
+            </div>
+            <div class="voice-field">
+              <span>麦克风</span>
+              <select v-model="voiceDevice" :disabled="voiceStage !== 'idle'" @change="onVoiceDeviceChanged">
+                <option value="auto">自动（跟随系统）</option>
+                <option v-for="device in voiceDevices" :key="device.deviceId" :value="device.deviceId">
+                  {{ device.label }}
+                </option>
+              </select>
+            </div>
+            <p v-if="voiceDeviceNote" class="voice-menu-note">{{ voiceDeviceNote }}</p>
+            <p v-if="!voiceSupport.supported" class="voice-menu-note">{{ voiceSupport.reason }}</p>
+            <p class="voice-menu-keys">
+              <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> 开始/停止 · <kbd>Esc</kbd> 取消 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销
+            </p>
+          </template>
+        </div>
+      </template>
+    </Teleport>
+
+    <!-- 语音输入 HUD：录音计时/电平/停止/取消；桌面贴光标，手机档贴底（键盘上方）。
+         全程 mousedown.prevent，点它不会把光标从正文里抢走。 -->
+    <Teleport to="body">
+      <div
+        v-if="voiceStage !== 'idle'"
+        class="voice-hud"
+        :class="{ error: voiceStage === 'error', mobile: voiceMobile }"
+        :style="voiceHudStyle"
+        role="status"
+        aria-live="polite"
+        @mousedown.prevent
+      >
+        <span class="voice-hud-mic" :class="{ live: voiceStage === 'recording' }">
+          <Icon :name="voiceStage === 'recording' ? 'mic' : voiceStage === 'error' ? 'alert' : 'activity'" :size="15" />
+        </span>
+        <template v-if="voiceStage === 'recording'">
+          <span class="voice-hud-time">{{ voiceClock }}</span>
+          <span class="voice-hud-level" aria-hidden="true">
+            <i v-for="(bar, index) in VOICE_HUD_BARS" :key="index" :style="{ height: voiceBarHeight(index) }" />
+          </span>
+          <span class="voice-hud-hint">{{ voiceDeviceLabel }}</span>
+          <button type="button" class="voice-btn primary" @click="stopVoiceInput">停止</button>
+          <button type="button" class="voice-btn ghost" @click="cancelVoiceInput">取消</button>
+        </template>
+        <template v-else-if="voiceStage === 'transcribing'">
+          <span class="voice-hud-hint">正在转写…</span>
+          <span class="voice-hud-hint faint">{{ voiceEngineLabel || defaultEngineLabel }}</span>
+        </template>
+        <template v-else>
+          <span class="voice-hud-error">{{ voiceError }}</span>
+          <button type="button" class="voice-btn primary" @click="startVoiceInput">重试</button>
+          <button type="button" class="voice-btn ghost" @click="cancelVoiceInput">关闭</button>
+        </template>
+      </div>
+    </Teleport>
 
     <!-- 手机档工具栏尾部「插入」打开的分组底部面板：遮罩 + 抓柄 + 22px 顶圆角 + 44px 行高。
          动作全部落到 Vditor 自己的插入/面板上（insertValue / 链接面板 / 双链弹窗），不另造编辑器状态。 -->
@@ -342,11 +445,26 @@ import 'vditor/dist/index.css';
 import { api } from '../api';
 import { registerBackHandler } from '../lib/androidBack';
 import { BP_MOBILE } from '../lib/layoutBreakpoints';
-import { notify } from '../lib/notify';
+import { notify, pushToast } from '../lib/notify';
+import { useRouter } from 'vue-router';
+import {
+  VoiceRecorder,
+  fetchSpeechStatus,
+  listVoiceDevices,
+  loadVoiceDevicePreference,
+  loadVoiceEnginePreference,
+  saveVoiceDevicePreference,
+  saveVoiceEnginePreference,
+  transcribeVoice,
+  voiceInputErrorMessage,
+  voiceInputSupport,
+  type SpeechStatus,
+  type VoiceDevicePreference,
+  type VoiceInputDevice,
+} from '../lib/voiceInput';
 import EditorImageResizer from './EditorImageResizer.vue';
 import EditorTableBar from './EditorTableBar.vue';
 import EditorAiDialog from './EditorAiDialog.vue';
-import VoiceInputPanel from './VoiceInputPanel.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
@@ -464,6 +582,8 @@ const tableSheetTarget = ref<TableTarget | null>(null);
 
 let vditor: Vditor | null = null;
 let ready = false;
+/** 模板可见的就绪位（`ready` 是普通变量，不能拿来做 v-if） */
+const editorUiReady = ref(false);
 let composing = false; // IME 组字状态（组字期间 Vditor 活值含未提交拼音：不 emit、不重建、不保存）
 let syncingModelValue = true;
 let lastProgrammaticValue = '';
@@ -735,12 +855,6 @@ const TOOLBAR_ICONS: Record<string, string[]> = {
     'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
     'M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z',
   ],
-  mic: [
-    'M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z',
-    'M19 10v1a7 7 0 0 1-14 0v-1',
-    'M12 18v4',
-    'M8 22h8',
-  ],
 };
 
 function toolbarIconSvg(paths: string[]): string {
@@ -794,15 +908,6 @@ function overrideToolbarIcons() {
     const tip = active ? '收起本页目录' : '本页目录';
     outlineButton.setAttribute('aria-label', tip);
     outlineButton.classList.toggle('vditor-menu--current', active);
-  }
-  // 语音输入：面板开着时按钮保持选中态（与全屏 / 目录同一套写法）
-  const voiceButtons = Array.from(
-    vditorEl.value.querySelectorAll<HTMLElement>('.vditor-toolbar button[data-type="engram-voice"]')
-  );
-  for (const voiceButton of voiceButtons) {
-    const active = Boolean(voiceOpen.value);
-    voiceButton.setAttribute('aria-label', active ? '收起语音输入' : '语音输入（说话转文字）');
-    voiceButton.classList.toggle('vditor-menu--current', active);
   }
 }
 
@@ -861,22 +966,13 @@ const aiToolbarItem = {
   click: () => openAiMenu(),
 };
 /**
- * 语音输入：录音走系统默认麦克风（可在面板里换），转写由中枢的 Omni 模型完成，
- * 结果先落在可编辑预览里，确认后插入光标处。与 AI 写作同属「往正文里写字」的入口。
+ * 语音输入移到编辑区右下角的悬浮麦克风（不占顶栏工具栏），入口由 MarkdownEditor 自己渲染。
  */
-const voiceToolbarItem = {
-  name: 'engram-voice',
-  tip: '语音输入（说话转文字）',
-  icon: toolbarIconSvg(TOOLBAR_ICONS.mic),
-  click: () => toggleVoicePanel(),
-};
 
-// 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变。
-// 语音输入放第 6 位（紧跟列表）：手机工具条是横向滚动容器，放末尾要划一下才看得到，
-// 390px 实测第 8 位起会被右侧渐隐盖住一半。
+// 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变
 const mobileToolbar = [
   'headings', 'bold', 'italic', 'list', 'ordered-list',
-  voiceToolbarItem, wikilinkToolbarItem,
+  wikilinkToolbarItem,
   'link', 'undo', 'edit-mode', readingToolbarItem,
   aiToolbarItem, insertToolbarItem,
 ];
@@ -897,7 +993,7 @@ const desktopToolbar = [
   'headings', 'bold', 'italic', 'strike', '|',
   'quote', 'list', 'ordered-list', 'check', '|',
   'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
-  aiToolbarItem, voiceToolbarItem, '|',
+  aiToolbarItem, '|',
   'undo', 'redo', '|',
   'edit-mode', fullscreenToolbarItem, outlineToolbarItem, readingToolbarItem,
   moreToolbarItem,
@@ -982,6 +1078,7 @@ function init() {
     },
     after: () => {
       ready = true;
+      editorUiReady.value = true;
       lastProgrammaticValue = vditor?.getValue() || initialValue;
       committedMarkdown = lastProgrammaticValue;
       // Vditor 初始化是异步的：这期间切过页，不能继续显示构造时抓到的旧正文。
@@ -1144,7 +1241,7 @@ function scheduleToolbarOverflow() {
 const TOOLBAR_COLLAPSE_ORDER = [
   'strike', 'check', 'ordered-list', 'table', 'code', 'inline-code',
   'undo', 'redo', 'engram-outline', 'reading', 'engram-fullscreen',
-  'edit-mode', 'wikilink', 'engram-ai', 'engram-voice',
+  'edit-mode', 'wikilink', 'engram-ai',
 ];
 let toolbarCollapseMore: HTMLElement | null = null;
 let toolbarCollapsePanel: HTMLElement | null = null;
@@ -1421,9 +1518,6 @@ function bindKeys() {
   observeEditMode();
   // AI 工具栏按钮：mousedown.prevent 保住当前选区，点按钮不会把要改写的那段丢掉
   el.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-ai"]')
-    ?.addEventListener('mousedown', (e) => e.preventDefault());
-  // 语音输入同理：面板打开/关上都不该顺手收掉正文里的光标
-  el.querySelector<HTMLElement>('.vditor-toolbar button[data-type="engram-voice"]')
     ?.addEventListener('mousedown', (e) => e.preventDefault());
   // 菜单跟着视口走：桌面重算落点；手机是贴底面板，宽度变化不影响。编辑器内滚动则收起。
   window.addEventListener('resize', onAiMenuResize);
@@ -2469,6 +2563,8 @@ function handleEditorContextMenu(event: MouseEvent) {
     selection.addRange(point);
   }
   contextPointRange = point ? point.cloneRange() : null;
+  // 语音输入从右键菜单进来时也落在右键处（与 AI 插入同一套落点）
+  if (point) voiceSavedRange = point.cloneRange();
   captureEditorSelection();
   emit('context-menu', {
     x: event.clientX,
@@ -3158,7 +3254,7 @@ function positionAiMenu() {
 
 function openAiMenu() {
   if (!ready || !vditor) return;
-  closeVoicePanel();
+  closeVoiceMenu();
   closeInsertPanel(false);
   closeActionsSheet(false);
   linkPopup.value = false;
@@ -3179,58 +3275,251 @@ function closeAiMenu() {
   aiMenuOpen.value = false;
 }
 
-/* ---------- 语音输入 ----------
- * 与 AI 菜单同一套浮层口径：打开时记下光标 Range（面板抢焦点后 Vditor 选区会丢），
- * 确认插入时先恢复 Range 再走 insertText；关闭面板时面板自己释放麦克风。 */
-const voiceOpen = ref(false);
-const voicePos = ref({ top: 0, left: 0 });
-/** 与 VoiceInputPanel 的宽度/最大高度一致（手机档走贴底面板，不参与这套落点） */
-const VOICE_PANEL_WIDTH = 320;
-const VOICE_PANEL_HEIGHT = 420;
+/* ---------- 语音输入（悬浮麦克风 + 光标 HUD + 快捷键） ----------
+ * 入口不再放顶栏：编辑区右下角悬浮麦克风，Ctrl+Shift+Space 在光标处直接启停；
+ * 录音仍按用户选中的麦克风采（WAV 16k），转写由服务端自动选「默认模型 → 本机离线 → 已配音频模型」。 */
+const router = useRouter();
+const voiceSupport = voiceInputSupport();
+const voiceMobile = ref(false);
+const voiceStage = ref<'idle' | 'recording' | 'transcribing' | 'error'>('idle');
+const voiceSeconds = ref(0);
+const voiceLevel = ref(0);
+const voiceError = ref('');
+const voiceStatus = ref<SpeechStatus | null>(null);
+const voiceMenuOpen = ref(false);
+const voiceMenuPos = ref({ top: 0, left: 0 });
+const voiceMenuEl = ref<HTMLElement | null>(null);
+const voiceFabEl = ref<HTMLElement | null>(null);
+const voiceDevices = ref<VoiceInputDevice[]>([]);
+const voiceDevice = ref<VoiceDevicePreference>('auto');
+const voiceDeviceNote = ref('');
+const voiceEngine = ref('auto');
+const voiceEngineLabel = ref('');
+const voiceDeviceLabel = ref('自动（跟随系统）');
+const voiceHudPos = ref({ top: 0, left: 0 });
+const VOICE_HUD_BARS = 10;
+const voiceRecorder = new VoiceRecorder();
+let voiceSavedRange: Range | null = null;
+let voiceStopping = false;
 
-function positionVoicePanel() {
-  const rect = toolbarButtonRect('engram-voice');
-  if (!rect) return;
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - VOICE_PANEL_WIDTH - 8));
-  let top = rect.bottom + 6;
-  if (top + VOICE_PANEL_HEIGHT > window.innerHeight - 8) {
-    top = Math.max(8, rect.top - VOICE_PANEL_HEIGHT - 6);
+const defaultEngineLabel = computed(() => {
+  const status = voiceStatus.value;
+  if (!status) return '自动';
+  if (status.defaultEngine === 'local') return '本机离线识别';
+  return status.engines.find((engine) => engine.id === status.defaultEngine)?.label || '未配置';
+});
+const voiceClock = computed(() => {
+  const total = Math.max(0, Math.floor(voiceSeconds.value));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+});
+const voiceHudStyle = computed(() => {
+  if (voiceMobile.value) return {};
+  return { top: `${voiceHudPos.value.top}px`, left: `${voiceHudPos.value.left}px` };
+});
+
+function voiceBarHeight(index: number): string {
+  const center = (VOICE_HUD_BARS - 1) / 2;
+  const weight = 1 - Math.abs(index - center) / (center + 1);
+  const active = voiceStage.value === 'recording' ? voiceLevel.value : 0;
+  return `${Math.max(2, Math.round(2 + active * weight * 14))}px`;
+}
+
+/** 光标矩形：折叠 Range 的 getClientRects 在 Chromium 里常为空，退回量前一个字符的盒子 */
+function caretRect(range: Range): DOMRect | null {
+  const direct = Array.from(range.getClientRects());
+  if (direct.length) return direct[direct.length - 1];
+  const box = range.getBoundingClientRect();
+  if (box && (box.width || box.height || box.top || box.left)) return box;
+  const node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE) {
+    const length = node.textContent?.length || 0;
+    const probe = range.cloneRange();
+    if (range.startOffset > 0) {
+      probe.setStart(node, range.startOffset - 1);
+      probe.setEnd(node, range.startOffset);
+    } else if (length > 0) {
+      probe.setStart(node, 0);
+      probe.setEnd(node, 1);
+    }
+    const rects = Array.from(probe.getClientRects());
+    if (rects.length) return rects[rects.length - 1];
   }
-  voicePos.value = { top: Math.round(top), left: Math.round(left) };
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return element?.getBoundingClientRect() ?? null;
 }
 
-function openVoicePanel() {
-  if (!ready || !vditor) return;
-  closeAiMenu();
-  closeInsertPanel(false);
-  closeActionsSheet(false);
-  linkPopup.value = false;
-  hideSelectionBar();
-  hideTableBar();
+/** 把 HUD 贴到光标下方；取不到光标矩形就贴编辑区底部（手机档由 CSS 贴底） */
+function positionVoiceHud(range: Range | null): void {
+  voiceMobile.value = window.matchMedia('(max-width: ' + BP_MOBILE + 'px)').matches;
+  if (voiceMobile.value || !range) return;
+  const rect = caretRect(range);
+  if (!rect) return;
+  const width = 360;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+  const top = rect.bottom + 8 <= window.innerHeight - 56 ? rect.bottom + 8 : Math.max(8, rect.top - 48);
+  voiceHudPos.value = { top: Math.round(top), left: Math.round(left) };
+}
+
+function onVoiceViewportChange(): void {
+  voiceMobile.value = window.matchMedia('(max-width: ' + BP_MOBILE + 'px)').matches;
+  if (voiceMenuOpen.value) positionVoiceMenu();
+}
+
+/** 语音状态（可用引擎 / 自动选择理由 / 最大时长） */
+async function loadVoiceStatus(): Promise<SpeechStatus | null> {
+  try {
+    voiceStatus.value = await fetchSpeechStatus();
+  } catch (error: any) {
+    voiceStatus.value = null;
+    voiceError.value = error?.response?.data?.error || error?.message || '语音识别状态读取失败';
+  }
+  return voiceStatus.value;
+}
+
+async function refreshVoiceDevices(): Promise<void> {
+  try {
+    const listed = await listVoiceDevices();
+    voiceDevices.value = listed.devices;
+    if (voiceDevice.value !== 'auto' && !listed.devices.some((device) => device.deviceId === voiceDevice.value)) {
+      voiceDevice.value = 'auto';
+      saveVoiceDevicePreference('auto');
+      voiceDeviceNote.value = '上次选的麦克风不在了，已切回「自动（跟随系统）」';
+    } else if (!listed.labelsAvailable) {
+      voiceDeviceNote.value = '授权麦克风后这里会显示设备名称';
+    } else if (!voiceDeviceNote.value) {
+      voiceDeviceNote.value = '';
+    }
+  } catch {
+    voiceDevices.value = [];
+  }
+}
+
+function onVoiceDeviceChanged(): void {
+  saveVoiceDevicePreference(voiceDevice.value);
+  const found =
+    voiceDevice.value === 'auto' || voiceDevices.value.some((device) => device.deviceId === voiceDevice.value);
+  if (!found) {
+    voiceDevice.value = 'auto';
+    saveVoiceDevicePreference('auto');
+    voiceDeviceNote.value = '选中的麦克风不在了，已切回「自动（跟随系统）」';
+  } else {
+    voiceDeviceNote.value = '';
+  }
+}
+
+function onVoiceEngineChanged(): void {
+  saveVoiceEnginePreference(voiceEngine.value);
+}
+
+function positionVoiceMenu(): void {
+  const rect = voiceFabEl.value?.getBoundingClientRect();
+  if (!rect) return;
+  const width = 300;
+  const height = 300;
+  let left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+  let top = rect.top - height - 10;
+  if (top < 8) top = Math.min(window.innerHeight - height - 8, rect.bottom + 10);
+  voiceMenuPos.value = { top: Math.round(top), left: Math.round(left) };
+}
+
+async function openVoiceMenu(): Promise<void> {
+  // 菜单会抢焦点（下拉/按钮），先把当前光标记下来，选完引擎/麦克风再点麦克风时落点不丢
   const range = selectionRangeInEditor();
-  savedSelectionRange = range ? range.cloneRange() : null;
-  savedSelectionText = range && !range.collapsed ? (window.getSelection()?.toString() || '') : '';
-  positionVoicePanel();
-  voiceOpen.value = true;
-  overrideToolbarIcons();
+  if (range) voiceSavedRange = range.cloneRange();
+  voiceMenuOpen.value = true;
+  positionVoiceMenu();
+  voiceDevice.value = loadVoiceDevicePreference();
+  voiceEngine.value = loadVoiceEnginePreference();
+  // 每次打开菜单都刷新：用户可能刚在控制台改了默认模型 / 勾了音频能力
+  await Promise.all([refreshVoiceDevices(), loadVoiceStatus()]);
+  await nextTick();
+  voiceMenuEl.value?.querySelector<HTMLElement>('select')?.focus({ preventScroll: true });
 }
 
-function closeVoicePanel() {
-  if (!voiceOpen.value) return;
-  voiceOpen.value = false;
-  overrideToolbarIcons();
+function closeVoiceMenu(): void {
+  voiceMenuOpen.value = false;
 }
 
-function toggleVoicePanel() {
-  if (voiceOpen.value) closeVoicePanel();
-  else openVoicePanel();
+function toggleVoiceMenu(): void {
+  if (voiceMenuOpen.value) closeVoiceMenu();
+  else void openVoiceMenu();
 }
 
-/** 面板里点「插入到光标处」：恢复打开面板时的落点，再走与 AI 插入同一条写回链路 */
-function insertVoiceText(text: string) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed || !vditor) return;
-  if (!restoreAiRange(savedSelectionRange)) {
+function goSpeechConfig(): void {
+  closeVoiceMenu();
+  void router.push({ path: '/settings', query: { section: 'agent', anchor: 'agent-console' } });
+}
+
+async function startVoiceInput(): Promise<void> {
+  if (voiceStage.value === 'recording' || voiceStage.value === 'transcribing') return;
+  if (!voiceSupport.supported) {
+    voiceError.value = voiceSupport.reason;
+    voiceStage.value = 'error';
+    return;
+  }
+  const status = voiceStatus.value ?? (await loadVoiceStatus());
+  if (!status?.configured) {
+    voiceError.value = status?.hint || '语音识别还没有可用的引擎';
+    voiceStage.value = 'error';
+    if (!voiceMenuOpen.value) await openVoiceMenu();
+    return;
+  }
+  // 落点：当前光标 → 上次记下的光标 → 文末（快捷键在别处按下时也不丢）
+  let range = selectionRangeInEditor();
+  if (!range && rangeIsConnected(voiceSavedRange)) range = voiceSavedRange!.cloneRange();
+  if (!range && rangeIsConnected(savedSelectionRange)) range = savedSelectionRange!.cloneRange();
+  if (!range) range = endOfEditorRange();
+  if (!range) {
+    notify.info('先把光标放到正文里再说');
+    return;
+  }
+  range = range.cloneRange();
+  if (!range.collapsed) range.collapse(false);
+  voiceSavedRange = range;
+  positionVoiceHud(range);
+  voiceStage.value = 'recording';
+  voiceSeconds.value = 0;
+  voiceLevel.value = 0;
+  voiceError.value = '';
+  voiceEngineLabel.value = '';
+  voiceDeviceLabel.value =
+    voiceDevice.value === 'auto'
+      ? '自动（跟随系统）'
+      : voiceDevices.value.find((device) => device.deviceId === voiceDevice.value)?.label || '指定麦克风';
+  try {
+    const started = await voiceRecorder.start(
+      voiceDevice.value,
+      {
+        onLevel: (value) => {
+          voiceLevel.value = value;
+        },
+        onTick: (value) => {
+          voiceSeconds.value = value;
+        },
+        onMaxDuration: () => {
+          void stopVoiceInput();
+        },
+      },
+      status.maxDurationSec || 120
+    );
+    if (started.fellBackToAuto) {
+      voiceDevice.value = 'auto';
+      saveVoiceDevicePreference('auto');
+      voiceDeviceNote.value = '选中的麦克风用不了，已切回「自动（跟随系统）」';
+      voiceDeviceLabel.value = '自动（跟随系统）';
+    }
+    // 授权后浏览器才给设备名称：录起来的同时补一次枚举
+    void refreshVoiceDevices();
+  } catch (error) {
+    voiceStage.value = 'error';
+    voiceError.value = voiceInputErrorMessage(error);
+    voiceRecorder.cancel();
+  }
+}
+
+function commitVoiceText(text: string, engineLabel: string): void {
+  if (!vditor) return;
+  if (!restoreAiRange(voiceSavedRange)) {
     const fallback = endOfEditorRange();
     if (!fallback || !restoreAiRange(fallback)) {
       notify.info('没有找到插入位置，请先把光标放到正文里再试');
@@ -3242,14 +3531,88 @@ function insertVoiceText(text: string) {
   // 与 AI 插入同一套：连续 input 先压住，落定后统一 emit 一次（撤销栈仍在 Vditor 里）
   syncingModelValue = true;
   try {
-    vditor.insertValue(wikiLinksToMarkdown(trimmed));
+    vditor.insertValue(wikiLinksToMarkdown(text));
   } finally {
     beginUserEditing();
   }
   vditor.focus();
   void nextTick(() => emitEditorValue());
-  closeVoicePanel();
+  pushToast({
+    kind: 'success',
+    text: `已插入 ${text.length} 字${engineLabel ? `（${engineLabel}）` : ''}`,
+    actions: [{ label: '撤销', onClick: () => executeHistoryCommand('undo') }],
+  });
 }
+
+async function stopVoiceInput(): Promise<void> {
+  if (voiceStage.value !== 'recording' || voiceStopping) return;
+  voiceStopping = true;
+  voiceStage.value = 'transcribing';
+  try {
+    const recording = await voiceRecorder.stop();
+    const result = await transcribeVoice(recording.blob, voiceEngine.value);
+    if (!result.text) throw new Error('没有识别到语音，请靠近麦克风再说一次');
+    voiceEngineLabel.value = result.engineLabel;
+    stageIdleSoon();
+    commitVoiceText(result.text, result.engineLabel);
+  } catch (error: any) {
+    voiceStage.value = 'error';
+    voiceError.value = error?.message || '语音识别失败，请重试';
+  } finally {
+    voiceStopping = false;
+  }
+}
+
+function stageIdleSoon(): void {
+  voiceStage.value = 'idle';
+  voiceLevel.value = 0;
+  voiceSeconds.value = 0;
+}
+
+function cancelVoiceInput(): void {
+  voiceRecorder.cancel();
+  stageIdleSoon();
+  voiceError.value = '';
+}
+
+function handleVoiceFab(): void {
+  if (voiceStage.value === 'recording') void stopVoiceInput();
+  else if (voiceStage.value === 'transcribing') return;
+  else void startVoiceInput();
+}
+
+/** 全局快捷键：Ctrl/⌘+Shift+Space 启停、Esc 取消（输入框/下拉里让位，不抢全站快捷键） */
+function bindVoiceShortcuts(): void {
+  window.addEventListener('keydown', onVoiceKeydown, true);
+  window.addEventListener('resize', onVoiceViewportChange);
+  onVoiceViewportChange();
+}
+
+function unbindVoiceShortcuts(): void {
+  window.removeEventListener('keydown', onVoiceKeydown, true);
+  window.removeEventListener('resize', onVoiceViewportChange);
+}
+
+function onVoiceKeydown(event: KeyboardEvent): void {
+  if (event.defaultPrevented) return;
+  const target = event.target as HTMLElement | null;
+  // 标题输入框、双链弹窗等非编辑器输入面不接管
+  if (target && target.closest('input, textarea, select, [role="textbox"]')) return;
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.code === 'Space' || event.key === ' ')) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (voiceStage.value === 'recording') void stopVoiceInput();
+    else if (voiceStage.value === 'idle' || voiceStage.value === 'error') void startVoiceInput();
+    return;
+  }
+  if (event.key === 'Escape' && (voiceStage.value !== 'idle' || voiceMenuOpen.value)) {
+    event.preventDefault();
+    event.stopPropagation();
+    cancelVoiceInput();
+    closeVoiceMenu();
+  }
+}
+
 
 function startAiFromMenu(mode: EditorAiTask) {
   const selection = aiMenuSelection.value;
@@ -4041,8 +4404,9 @@ watch(
   () => {
     if (aiMenuOpen.value) closeAiMenu();
     if (aiOpen.value) closeAiDialog();
-    // 换页时语音面板必须收起：录音/插入都不能落到上一页，麦克风也要释放
-    if (voiceOpen.value) closeVoicePanel();
+    // 换页时语音输入必须收尾：录音/插入都不能落到上一页，麦克风也要释放
+    cancelVoiceInput();
+    closeVoiceMenu();
   }
 );
 
@@ -4107,6 +4471,8 @@ onUnmounted(() => {
   floatingHintCleanup?.();
   unregisterInsertBack?.();
   unregisterInsertBack = null;
+  unbindVoiceShortcuts();
+  voiceRecorder.cancel();
   window.removeEventListener('resize', onAiMenuResize);
   closeInlineInsert();
   if (aiAbort) aiAbort.abort();
@@ -4118,6 +4484,8 @@ onUnmounted(() => {
 defineExpose({
   getSelectionText,
   insertText,
+  /** 右键菜单「语音输入」：在光标处直接开始录音 */
+  startVoiceInput,
   getValue,
   /** 输入法组字中：父级保存/重载/切阅读态都要避开这个窗口（见 EditorView 的守卫） */
   isComposing: () => composing,
@@ -4146,8 +4514,16 @@ defineExpose({
 });
 onMounted(() => {
   init();
-  // 安卓返回键：就地 AI 指令行 → 插入面板 → 更多面板（只认领本组件的这几层）
+  // 安卓返回键：语音录音/菜单 → 就地 AI 指令行 → 插入面板 → 更多面板（只认领本组件的这几层）
   unregisterInsertBack = registerBackHandler(() => {
+    if (voiceMenuOpen.value) {
+      closeVoiceMenu();
+      return true;
+    }
+    if (voiceStage.value !== 'idle') {
+      cancelVoiceInput();
+      return true;
+    }
     if (inlineInsertOpen.value) {
       closeInlineInsert(true);
       return true;
@@ -4166,6 +4542,7 @@ onMounted(() => {
     }
     return false;
   });
+  bindVoiceShortcuts();
   // 从手机档放大到桌面档（折叠屏展开 / 旋屏）：这些手机档浮层直接收起
   mobileViewport.addEventListener('change', onMobileViewportChange);
 });
@@ -4844,5 +5221,200 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
     min-height: 44px;
     align-items: center;
   }
+}
+
+/* ---------- 语音输入：右下角悬浮麦克风 + 光标 HUD + 选项菜单 ----------
+   入口不再占顶栏：编辑区右下角是鼠标行程最短的位置，手机上也在拇指区；
+   键盘用户用 Ctrl+Shift+Space 在光标处直接启停，HUD 就贴在光标下方。 */
+.voice-fab-wrap {
+  position: absolute;
+  right: 18px;
+  bottom: 46px;
+  z-index: 4;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+.voice-fab,
+.voice-fab-more {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow);
+}
+.voice-fab {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--action-solid);
+}
+.voice-fab:hover { background: var(--bg-hover); }
+.voice-fab.live { background: var(--danger); border-color: transparent; color: var(--on-action-solid); }
+.voice-fab.busy { opacity: 0.7; }
+.voice-fab-more {
+  width: 22px;
+  height: 22px;
+  margin-bottom: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.voice-fab-more:hover,
+.voice-fab-more.open { background: var(--bg-hover); color: var(--text); }
+
+.voice-menu-mask { position: fixed; inset: 0; z-index: calc(var(--z-popup) - 1); background: transparent; }
+.voice-menu {
+  position: fixed;
+  z-index: var(--z-popup);
+  width: 300px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-dialog);
+}
+.voice-menu-head b { display: block; font-size: var(--font-md); font-weight: 650; color: var(--text); }
+.voice-menu-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.voice-menu-hint {
+  margin: 9px 0;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.voice-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  font-size: var(--fs-small);
+  color: var(--text-secondary);
+}
+.voice-field > span { flex: none; }
+.voice-field select {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text);
+  font-size: var(--fs-small);
+}
+.voice-field select:disabled { opacity: 0.55; }
+.voice-menu-note { margin: 5px 0 0; font-size: var(--fs-caption); line-height: 1.45; color: var(--text-faint); }
+.voice-menu-keys { margin: 10px 0 0; font-size: var(--fs-caption); line-height: 1.6; color: var(--text-faint); }
+.voice-menu-keys kbd {
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  font-family: inherit;
+  font-size: var(--fs-caption);
+}
+
+.voice-hud {
+  position: fixed;
+  z-index: var(--z-popup);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  max-width: min(540px, calc(100vw - 16px));
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-dialog);
+  font-size: var(--fs-small);
+}
+.voice-hud.error { border-color: var(--danger); }
+.voice-hud-mic {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.voice-hud-mic.live { background: var(--danger-soft); color: var(--danger); animation: voice-pulse 1.4s ease-out infinite; }
+.voice-hud-time { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--text); }
+.voice-hud-level { display: flex; align-items: center; gap: 2px; height: 18px; }
+.voice-hud-level i {
+  width: 3px;
+  min-height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: height 0.08s linear;
+}
+.voice-hud-hint {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.voice-hud-hint.faint { color: var(--text-faint); }
+.voice-hud-error { max-width: 280px; line-height: 1.4; color: var(--danger); }
+.voice-btn {
+  flex: none;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+.voice-btn.primary { background: var(--action-solid); color: var(--on-action-solid); }
+.voice-btn.primary:hover { background: var(--action-solid-hover); }
+.voice-btn.ghost { border-color: var(--border); background: transparent; color: var(--text-secondary); }
+.voice-btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
+@keyframes voice-pulse {
+  0% { box-shadow: 0 0 0 0 var(--danger-soft); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (max-width: 768px) {
+  .voice-fab-wrap { right: 14px; bottom: calc(56px + var(--safe-bottom)); }
+  .voice-fab { width: 48px; height: 48px; }
+  .voice-fab-more { width: 26px; height: 26px; }
+  .voice-menu {
+    left: 0 !important;
+    right: 0;
+    top: auto !important;
+    bottom: 0;
+    width: 100%;
+    padding: 12px 16px calc(16px + var(--safe-bottom));
+    border-radius: 22px 22px 0 0;
+    border-bottom: 0;
+  }
+  .voice-menu-head b { font-size: var(--fs-h3); }
+  .voice-field select { height: 44px; font-size: var(--fs-h2); }
+  .voice-hud.mobile {
+    left: 8px;
+    right: 8px;
+    top: auto !important;
+    bottom: calc(10px + var(--safe-bottom));
+    max-width: none;
+  }
+  .voice-hud.mobile .voice-hud-hint { max-width: none; }
+  .voice-hud .voice-btn { min-height: 44px; padding: 0 14px; }
 }
 </style>
