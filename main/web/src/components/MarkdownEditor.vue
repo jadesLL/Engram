@@ -147,6 +147,65 @@
       </template>
     </Teleport>
 
+    <!-- 就地 AI 插入（终端指令行）：不弹模态、不压暗页面，输入就在光标处；
+         手机档贴底（底部导航 / 键盘上方），结果 ⏎ 后直接落回正文。
+         点空白 / 滚动 / Esc / 安卓返回键都收起，生成中可以「停止」。 -->
+    <Teleport to="body">
+      <section
+        v-if="inlineInsertOpen"
+        ref="inlineInsertEl"
+        class="ai-inline"
+        :class="{ 'is-busy': inlineInsertBusy }"
+        :style="inlineInsertStyle"
+        role="dialog"
+        aria-label="让 AI 写在这里"
+        @keydown.esc.stop.prevent="closeInlineInsert(true)"
+      >
+        <div class="ai-inline-line">
+          <span class="ai-inline-caret" aria-hidden="true">&gt;</span>
+          <input
+            ref="inlineInsertInput"
+            v-model="inlineInsertInstruction"
+            class="ai-inline-input"
+            type="text"
+            :disabled="inlineInsertBusy"
+            placeholder="直接说要求，⏎ 让 AI 写…"
+            aria-label="给 AI 的要求"
+            autocomplete="off"
+            spellcheck="false"
+            @keydown.enter.prevent="submitInlineInsert"
+          />
+          <span v-if="inlineInsertBusy" class="ai-inline-busy" role="status" aria-live="polite">
+            <AppSpinner :size="12" />
+            <span>正在写</span>
+            <span class="ai-inline-elapsed" aria-hidden="true">· {{ inlineInsertElapsed }}s</span>
+            <button type="button" class="ai-inline-stop" @click="cancelInlineInsert">停止</button>
+          </span>
+          <button
+            v-else
+            type="button"
+            class="ai-inline-go"
+            :disabled="!inlineInsertInstruction.trim()"
+            @click="submitInlineInsert"
+          >
+            生成 <kbd>⏎</kbd>
+          </button>
+        </div>
+        <p v-if="inlineInsertError" class="ai-inline-error" role="alert">{{ inlineInsertError }}</p>
+        <div v-if="!inlineInsertBusy" class="ai-inline-foot">
+          <span class="ai-inline-label">AI 指令</span>
+          <button
+            v-for="preset in INLINE_INSERT_PRESETS"
+            :key="preset.label"
+            type="button"
+            class="ai-inline-preset"
+            @click="useInlinePreset(preset.instruction)"
+          >{{ preset.label }}</button>
+          <span class="ai-inline-kbd">⏎ 生成 · Esc 取消</span>
+        </div>
+      </section>
+    </Teleport>
+
     <!-- 就地 AI 对话框：生成 / 预览 / 应用都在这里；正文落点由编辑器记下的 Range 决定 -->
     <EditorAiDialog
       :open="aiOpen"
@@ -288,6 +347,7 @@ import EditorImageResizer from './EditorImageResizer.vue';
 import EditorTableBar from './EditorTableBar.vue';
 import EditorAiDialog from './EditorAiDialog.vue';
 import VoiceInputPanel from './VoiceInputPanel.vue';
+import AppSpinner from './ui/AppSpinner.vue';
 import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
@@ -443,6 +503,43 @@ let aiRequestSeq = 0;
 let contextPointRange: Range | null = null;
 const AI_CONTEXT_BEFORE = 6000;
 const AI_CONTEXT_AFTER = 3000;
+
+/* ---------- 就地 AI 插入：终端指令行（2026-11） ----------
+ * 插入不再打开居中对话框：在光标所在块下方长出一行「> 要求」，⏎ 后请求 /api/editor/ai，
+ * 结果仍走 applyAiResult('insert') 落回原 Range。手机档贴底（底栏 / 键盘上方），
+ * 桌面档 fixed 到块下方；点空白、滚动、Esc、安卓返回键都会收起。 */
+const inlineInsertOpen = ref(false);
+const inlineInsertInstruction = ref('');
+const inlineInsertBusy = ref(false);
+const inlineInsertError = ref('');
+const inlineInsertElapsed = ref(0);
+const inlineInsertEl = ref<HTMLElement>();
+const inlineInsertInput = ref<HTMLInputElement>();
+const inlineInsertPos = ref({ top: 0, left: 0, width: 0 });
+const inlineInsertMobile = ref(mobileViewport.matches);
+const INLINE_INSERT_PRESETS = [
+  { label: '接着写一段', instruction: '顺着上文接着写一段，保持同样的语气与信息密度。' },
+  { label: '列成要点', instruction: '在这里补一段要点列表，整理这个位置该补充的信息。' },
+  { label: '补个例子', instruction: '在这里补一个具体例子或场景。' },
+] as const;
+const inlineInsertStyle = computed(() => {
+  if (inlineInsertMobile.value) return undefined;
+  return {
+    top: inlineInsertPos.value.top + 'px',
+    left: inlineInsertPos.value.left + 'px',
+    width: inlineInsertPos.value.width + 'px',
+  };
+});
+let inlineInsertRange: Range | null = null;
+let inlineInsertAbort: AbortController | null = null;
+let inlineInsertSeq = 0;
+let inlineInsertTimer: ReturnType<typeof setInterval> | null = null;
+let inlineInsertStartedAt = 0;
+let inlineInsertFrame = 0;
+let inlineInsertDismissBound = false;
+let inlineInsertAnchor: HTMLElement | null = null;
+let inlineInsertAnchorMargin = '';
+let inlineInsertBaseMargin = 0;
 
 /** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
 const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g;
@@ -3228,11 +3325,259 @@ function openAiInsert() {
     notify.info('编辑器还没准备好，稍后再试');
     return;
   }
-  aiRange = range;
-  aiSelectionText.value = '';
-  aiAnchorHint.value = '内容会插入到当前光标位置';
-  openAiDialog('insert');
+  openInlineInsert(range);
 }
+
+/** 打开终端指令行：输入就在光标（手机档贴底），不再走 EditorAiDialog 的 insert 模式 */
+function openInlineInsert(range: Range) {
+  if (!vditor || inlineInsertBusy.value) return;
+  inlineInsertRange = range.cloneRange();
+  if (!inlineInsertRange.collapsed) inlineInsertRange.collapse(true);
+  closeInsertPanel(false);
+  closeActionsSheet(false);
+  linkPopup.value = false;
+  hideSelectionBar();
+  hideTableBar();
+  closeAiMenu();
+  if (aiOpen.value) closeAiDialog();
+  inlineInsertInstruction.value = '';
+  inlineInsertError.value = '';
+  inlineInsertElapsed.value = 0;
+  inlineInsertMobile.value = mobileViewport.matches;
+  inlineInsertOpen.value = true;
+  void nextTick(() => {
+    if (!inlineInsertOpen.value) return;
+    positionInlineInsert();
+    inlineInsertInput.value?.focus({ preventScroll: true });
+    bindInlineInsertDismiss();
+  });
+}
+
+/** 还原打开指令行时为锚点块加的下边距 */
+function releaseInlineInsertSpace() {
+  if (!inlineInsertAnchor) return;
+  inlineInsertAnchor.style.marginBottom = inlineInsertAnchorMargin;
+  inlineInsertAnchor = null;
+  inlineInsertAnchorMargin = '';
+  inlineInsertBaseMargin = 0;
+}
+
+/** 桌面档在锚点块下方预留指令行的高度：行内插入不该盖住下一段（手机贴底，不需要） */
+function reserveInlineInsertSpace(block: HTMLElement | null, height: number) {
+  if (!block) return;
+  if (inlineInsertAnchor && inlineInsertAnchor !== block) releaseInlineInsertSpace();
+  if (!inlineInsertAnchor) {
+    inlineInsertAnchor = block;
+    inlineInsertAnchorMargin = block.style.marginBottom;
+    inlineInsertBaseMargin = parseFloat(window.getComputedStyle(block).marginBottom) || 0;
+  }
+  const next = inlineInsertBaseMargin + Math.max(0, height) + 10;
+  if (Math.abs((parseFloat(inlineInsertAnchor.style.marginBottom) || 0) - next) > 0.5) {
+    inlineInsertAnchor.style.marginBottom = next + 'px';
+  }
+}
+
+/** 桌面档把指令行钉在光标所在块下方；放不下就翻到块上方，手机档交给 CSS 贴底 */
+function positionInlineInsert() {
+  if (!inlineInsertOpen.value) return;
+  if (inlineInsertMobile.value) {
+    releaseInlineInsertSpace();
+    return;
+  }
+  const range = inlineInsertRange;
+  if (!range || !rangeIsConnected(range)) {
+    closeInlineInsert();
+    return;
+  }
+  const node = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer as Element
+    : range.startContainer.parentElement;
+  const block = (node?.closest('p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th') as HTMLElement | null) ?? null;
+  let rect = block?.getBoundingClientRect() ?? null;
+  if (!rect || (!rect.width && !rect.height)) rect = range.getBoundingClientRect();
+  // 源码模式 / 选区落在隐藏的预览副本里时拿不到块矩形：退到编辑表面，
+  // 宁可让指令行贴在编辑区底部，也不要停在 0px 宽、跑出屏幕。
+  if (!rect || (!rect.width && !rect.height)) {
+    rect = editorSurface()?.getBoundingClientRect() ?? wrapEl.value?.getBoundingClientRect() ?? null;
+  }
+  if (!rect || (!rect.width && !rect.height)) return;
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    closeInlineInsert();
+    return;
+  }
+  const maxWidth = Math.min(640, window.innerWidth - 16);
+  const width = Math.max(280, Math.min(maxWidth, rect.width));
+  // 先按目标宽度落一次，再量高度：否则第一次量到的是未定位时的竖条高度，
+  // 预留空间会多出一大截，正文被推得过远。
+  const el = inlineInsertEl.value;
+  if (el) el.style.width = width + 'px';
+  const height = el?.offsetHeight || 82;
+  let left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - 8) {
+    releaseInlineInsertSpace();
+    top = Math.max(8, rect.top - height - 6);
+  } else {
+    reserveInlineInsertSpace(block, height);
+  }
+  inlineInsertPos.value = {
+    top: Math.round(top),
+    left: Math.round(left),
+    width: Math.round(width),
+  };
+}
+
+function scheduleInlineInsertPosition() {
+  if (inlineInsertFrame) return;
+  inlineInsertFrame = requestAnimationFrame(() => {
+    inlineInsertFrame = 0;
+    positionInlineInsert();
+  });
+}
+
+function onInlineInsertPointerDown(event: PointerEvent) {
+  if (!inlineInsertOpen.value) return;
+  const target = event.target as Node | null;
+  if (target && inlineInsertEl.value?.contains(target)) return;
+  closeInlineInsert();
+}
+
+function onInlineInsertViewportChange() {
+  if (!inlineInsertOpen.value || inlineInsertMobile.value) return;
+  scheduleInlineInsertPosition();
+}
+
+function bindInlineInsertDismiss() {
+  if (inlineInsertDismissBound) return;
+  inlineInsertDismissBound = true;
+  document.addEventListener('pointerdown', onInlineInsertPointerDown, true);
+  window.addEventListener('resize', onInlineInsertViewportChange);
+  window.addEventListener('scroll', onInlineInsertViewportChange, true);
+  vditorEl.value?.addEventListener('scroll', onInlineInsertViewportChange, true);
+}
+
+function unbindInlineInsertDismiss() {
+  if (!inlineInsertDismissBound) return;
+  inlineInsertDismissBound = false;
+  document.removeEventListener('pointerdown', onInlineInsertPointerDown, true);
+  window.removeEventListener('resize', onInlineInsertViewportChange);
+  window.removeEventListener('scroll', onInlineInsertViewportChange, true);
+  vditorEl.value?.removeEventListener('scroll', onInlineInsertViewportChange, true);
+  if (inlineInsertFrame) {
+    cancelAnimationFrame(inlineInsertFrame);
+    inlineInsertFrame = 0;
+  }
+}
+
+function useInlinePreset(instruction: string) {
+  inlineInsertInstruction.value = instruction;
+  void nextTick(() => inlineInsertInput.value?.focus({ preventScroll: true }));
+}
+
+async function submitInlineInsert() {
+  if (!vditor || !inlineInsertOpen.value || inlineInsertBusy.value) return;
+  const instruction = inlineInsertInstruction.value.trim();
+  if (!instruction) {
+    inlineInsertInput.value?.focus({ preventScroll: true });
+    return;
+  }
+  const range = inlineInsertRange;
+  if (!range || !rangeIsConnected(range)) {
+    inlineInsertError.value = '找不到原来的写入位置，请重新选择位置再试';
+    return;
+  }
+  const seq = ++inlineInsertSeq;
+  inlineInsertBusy.value = true;
+  inlineInsertError.value = '';
+  inlineInsertStartedAt = Date.now();
+  inlineInsertElapsed.value = 0;
+  if (inlineInsertTimer) clearInterval(inlineInsertTimer);
+  inlineInsertTimer = setInterval(() => {
+    inlineInsertElapsed.value = Math.max(0, Math.round((Date.now() - inlineInsertStartedAt) / 1000));
+  }, 1000);
+  const controller = new AbortController();
+  inlineInsertAbort = controller;
+  try {
+    const context = contextAroundRange(range);
+    const result = await requestEditorAi({
+      task: 'insert',
+      instruction,
+      title: props.title || '',
+      selection: '',
+      before: context.before,
+      after: context.after,
+    }, controller.signal);
+    if (seq !== inlineInsertSeq) return;
+    if (!applyAiResult('insert', result.text, range)) {
+      inlineInsertError.value = '找不到原来的写入位置（页面可能已被改动），请重新选择位置再试';
+      return;
+    }
+    closeInlineInsert();
+    notify.success('已插入 AI 内容');
+  } catch (error) {
+    if (seq !== inlineInsertSeq) return;
+    if (isEditorAiAbort(error)) return;
+    inlineInsertError.value = editorAiErrorMessage(error);
+  } finally {
+    if (seq === inlineInsertSeq) {
+      inlineInsertBusy.value = false;
+      inlineInsertAbort = null;
+      if (inlineInsertTimer) {
+        clearInterval(inlineInsertTimer);
+        inlineInsertTimer = null;
+      }
+      void nextTick(() => inlineInsertInput.value?.focus({ preventScroll: true }));
+    }
+  }
+}
+
+function cancelInlineInsert() {
+  if (!inlineInsertBusy.value) return;
+  inlineInsertSeq += 1;
+  if (inlineInsertAbort) {
+    inlineInsertAbort.abort();
+    inlineInsertAbort = null;
+  }
+  if (inlineInsertTimer) {
+    clearInterval(inlineInsertTimer);
+    inlineInsertTimer = null;
+  }
+  inlineInsertBusy.value = false;
+  inlineInsertError.value = '';
+  inlineInsertElapsed.value = 0;
+  void nextTick(() => inlineInsertInput.value?.focus({ preventScroll: true }));
+}
+
+function closeInlineInsert(focusEditor = false) {
+  if (!inlineInsertOpen.value) return;
+  inlineInsertSeq += 1;
+  if (inlineInsertAbort) {
+    inlineInsertAbort.abort();
+    inlineInsertAbort = null;
+  }
+  if (inlineInsertTimer) {
+    clearInterval(inlineInsertTimer);
+    inlineInsertTimer = null;
+  }
+  inlineInsertOpen.value = false;
+  inlineInsertBusy.value = false;
+  inlineInsertError.value = '';
+  inlineInsertElapsed.value = 0;
+  inlineInsertRange = null;
+  inlineInsertInstruction.value = '';
+  releaseInlineInsertSpace();
+  unbindInlineInsertDismiss();
+  if (inlineInsertFrame) {
+    cancelAnimationFrame(inlineInsertFrame);
+    inlineInsertFrame = 0;
+  }
+  if (focusEditor) void nextTick(() => vditor?.focus());
+  else if (mobileViewport.matches) inlineInsertInput.value?.blur();
+}
+
+watch([inlineInsertBusy, inlineInsertError], () => {
+  if (inlineInsertOpen.value) void nextTick(positionInlineInsert);
+});
 
 /** 右键菜单「AI 改写选中文字」：落点 = 选区 */
 function openAiRewrite() {
@@ -3763,6 +4108,7 @@ onUnmounted(() => {
   unregisterInsertBack?.();
   unregisterInsertBack = null;
   window.removeEventListener('resize', onAiMenuResize);
+  closeInlineInsert();
   if (aiAbort) aiAbort.abort();
   aiAbort = null;
   mobileViewport.removeEventListener('change', onMobileViewportChange);
@@ -3800,8 +4146,12 @@ defineExpose({
 });
 onMounted(() => {
   init();
-  // 安卓返回键：插入面板开着时先关面板（只认领本组件的这一层）
+  // 安卓返回键：就地 AI 指令行 → 插入面板 → 更多面板（只认领本组件的这几层）
   unregisterInsertBack = registerBackHandler(() => {
+    if (inlineInsertOpen.value) {
+      closeInlineInsert(true);
+      return true;
+    }
     if (aiMenuOpen.value) {
       closeAiMenu();
       return true;
@@ -3821,6 +4171,11 @@ onMounted(() => {
 });
 
 function onMobileViewportChange(event: MediaQueryListEvent): void {
+  inlineInsertMobile.value = event.matches;
+  if (inlineInsertOpen.value) {
+    if (event.matches) releaseInlineInsertSpace();
+    else scheduleInlineInsertPosition();
+  }
   if (event.matches) return;
   closeInsertPanel();
   closeActionsSheet(false);
@@ -4181,6 +4536,113 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   .ai-menu-text b { font-size: var(--fs-h3); }
   .ai-menu-text small { font-size: var(--fs-small); }
   .ai-menu-mask { background: rgba(20, 18, 15, 0.42); }
+}
+/* ---------- 就地 AI 插入：终端指令行 ----------
+   fixed 视口坐标、无遮罩：输入就在光标块下方；手机档贴底（底栏 / 键盘上方）。
+   陶土色 > 只做记号，主操作仍走 --action-solid 墨色。 */
+.ai-inline {
+  position: fixed;
+  z-index: calc(var(--z-popup) + 1);
+  max-width: calc(100vw - 16px);
+  padding: 9px 11px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-dialog);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  animation: ai-inline-in .14s ease both;
+}
+.ai-inline:focus-within { border-color: var(--border-strong, var(--border)); }
+.ai-inline-line {
+  display: flex; align-items: center; gap: 9px; min-height: 26px;
+  padding-bottom: 7px; border-bottom: 1px solid var(--border);
+  transition: border-color .15s ease;
+}
+.ai-inline-line:focus-within { border-bottom-color: var(--accent); }
+.ai-inline-caret {
+  flex: none; color: var(--accent);
+  font-size: 1.3em; font-weight: 600; line-height: 1;
+  transform: translateY(1px);
+}
+.ai-inline-input {
+  flex: 1; min-width: 0;
+  border: 0; background: none; outline: none;
+  padding: 2px 0;
+  font: inherit; font-size: var(--fs-h3); line-height: 1.6;
+  color: var(--text); caret-color: var(--accent);
+}
+.ai-inline-input:hover,
+.ai-inline-input:focus,
+.ai-inline-input:focus-visible {
+  outline: none;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.ai-inline-input::placeholder { color: var(--text-faint); }
+.ai-inline-go {
+  height: 27px; padding: 0 9px; flex: none;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid transparent; border-radius: var(--radius-control, 9px);
+  background: var(--action-solid); color: var(--on-action-solid);
+  font: inherit; font-size: var(--fs-caption); font-weight: 600;
+}
+.ai-inline-go:hover { background: var(--action-solid-hover); }
+.ai-inline-go:active { background: var(--action-solid-pressed); }
+.ai-inline-go:disabled { opacity: .45; cursor: default; }
+.ai-inline-go kbd { font: inherit; font-size: .9em; opacity: .6; border: 0; background: none; padding: 0; box-shadow: none; }
+.ai-inline-busy {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: var(--fs-caption); color: var(--text-secondary); white-space: nowrap;
+}
+.ai-inline-stop {
+  border: 0; background: none; padding: 0;
+  color: var(--text-faint); font: inherit; font-size: var(--fs-caption);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.ai-inline-stop:hover { color: var(--text); }
+.ai-inline-error {
+  margin: 7px 0 0; font-size: var(--fs-small); line-height: 1.5;
+  color: var(--danger);
+}
+.ai-inline-foot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+  margin-top: 6px; font-size: var(--fs-caption); color: var(--text-faint);
+}
+.ai-inline-label { letter-spacing: .04em; }
+.ai-inline-preset {
+  height: 23px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: none; color: var(--text-secondary);
+  font: inherit; font-size: var(--fs-caption);
+}
+.ai-inline-preset:hover { border-color: var(--accent); color: var(--accent); }
+.ai-inline-kbd { margin-left: auto; white-space: nowrap; }
+@keyframes ai-inline-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+@media (max-width: 768px) {
+  .ai-inline {
+    left: 12px !important;
+    right: 12px;
+    top: auto !important;
+    bottom: calc(64px + var(--safe-bottom));
+    width: auto !important;
+    padding: 8px 10px;
+    border-radius: 12px;
+  }
+  /* 键盘弹起时底栏已收起，指令行跟着落到键盘上方 */
+  html.kb-open .ai-inline { bottom: calc(10px + var(--safe-bottom)); }
+  .ai-inline-input { font-size: var(--fs-h2); min-height: 30px; }
+  .ai-inline-go { height: 36px; min-height: 36px; padding: 0 12px; font-size: var(--fs-small); }
+  .ai-inline-busy { font-size: var(--fs-small); }
+  .ai-inline-stop { min-height: 32px; padding: 0 4px; font-size: var(--fs-small); }
+  .ai-inline-preset { height: 32px; padding: 0 10px; font-size: var(--fs-small); }
+  .ai-inline-label { font-size: var(--fs-caption); }
+  .ai-inline-kbd { display: none; }
+  .ai-inline-error { font-size: var(--fs-small); }
+  .ai-inline-foot { font-size: var(--fs-caption); }
 }
 .link-popup input { width: 100%; }
 .link-list { margin-top: 6px; max-height: 220px; overflow-y: auto; }
