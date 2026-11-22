@@ -2158,7 +2158,7 @@ onUnmounted(() => {
 
 /*
  * 满窗：铺满正文区（.content 的可视范围），不占用左侧图标栏与文件树——侧栏保持可见可用。
- * 用 absolute 而不是 fixed：fixed 会盖住顶部 36px 拖拽条，窗口就拖不动了。
+ * 用 absolute 而不是 fixed：fixed 会盖住顶部融合标题栏（--win-titlebar-h），窗口就拖不动了。
  * z-index 取 --z-subpanel：低于遮罩(32)与侧栏(35)，紧凑档/手机端文件树浮层打开时能压在满窗之上。
  */
 .chat-drawer.full {

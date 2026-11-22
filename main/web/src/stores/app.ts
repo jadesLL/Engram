@@ -72,6 +72,11 @@ export const useAppStore = defineStore('app', {
       pageTrailTarget: null as string | null,
       /** 侧栏数据版本号：页面增删改/移动后自增，侧栏监听并刷新 */
       sidebarVersion: 0,
+      /**
+       * 知识库页面总数：桌面标题栏品牌块的副行用。
+       * 由侧栏同一次 `/api/pages/list` 加载回填，标题栏不再单独请求一遍列表。
+       */
+      libraryPages: null as number | null,
       /** 页面内容版本号：服务端 SSE 推送页面变更后自增，EditorView 监听并重载当前页 */
       pageVersion: 0,
       /** 最近一次页面事件（page-changed/deleted/moved），EditorView 据此判断是否重载当前页 */
@@ -120,12 +125,14 @@ export const useAppStore = defineStore('app', {
       document.documentElement.classList.toggle('dark', this.dark);
       localStorage.setItem('theme', this.theme);
       void Promise.resolve(this.applyIconAppearance()).catch(() => {});
-      // 桌面端：窗口控制按钮（标题栏融合条 WCO）配色跟随主题，取值直接来自 CSS 变量
+      // 桌面端：窗口控制按钮（标题栏融合条 WCO）配色跟随主题，取值直接来自 CSS 变量。
+      // 底色用 --win-titlebar-bg 而不是 --bg：46px 页眉本身是卡片色，原生按钮区必须同色，
+      // 否则按钮背后的矩形会和标头差一档色（深浅主题都成立）。
       const wd = (window as any).wikiDesktop;
       if (wd?.setTitleBarOverlay) {
         const cs = getComputedStyle(document.documentElement);
         wd.setTitleBarOverlay({
-          color: cs.getPropertyValue('--bg').trim(),
+          color: cs.getPropertyValue('--win-titlebar-bg').trim() || cs.getPropertyValue('--bg').trim(),
           symbolColor: cs.getPropertyValue('--text').trim(),
         });
       }
@@ -250,6 +257,10 @@ export const useAppStore = defineStore('app', {
     },
     bumpSidebar() {
       this.sidebarVersion++;
+    },
+    /** 侧栏列表加载完成后回填页面总数（桌面标题栏「知识库 · N 页」） */
+    setLibraryPages(count: number | null) {
+      this.libraryPages = count;
     },
     /**
      * 切换侧栏满窗。开之前把侧栏本身打开（满窗的前提是它本来就是展开的），

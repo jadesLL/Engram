@@ -1592,6 +1592,8 @@ async function load(retry = 0) {
   const [{ data: pl }, { data: doc }, { data: cf }, { data: idea }] = loaded;
   if (!loadSeq.isCurrent(seq)) return; // 期间有更新的一次加载：这次结果作废
   allPages.value = pl.pages;
+  // 桌面标题栏品牌块副行「知识库 · N 页」复用这次列表结果，不另发一份请求
+  app.setLibraryPages(Array.isArray(pl.pages) ? pl.pages.length : null);
   files.value = doc.files;
   chatFiles.value = cf.files;
   ideaFiles.value = idea.files;

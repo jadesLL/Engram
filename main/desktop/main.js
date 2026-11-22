@@ -398,10 +398,10 @@ function createWindow({ silent = false } = {}) {
     // 源码模式窗口/任务栏图标（electron.exe 自带的是 Electron 默认图标）；打包版 exe 已内嵌图标
     icon: windowIcon(),
     // 标题栏融合进应用：系统标题栏隐藏，右上角最小化/最大化/关闭由 Windows WCO 原生绘制，
-    // 颜色初值匹配启动页，进入应用后由渲染进程按主题经 set-title-bar-overlay 同步。
-    // height 36 须与 web 端 main.css 的 --win-titlebar-h 一致。
+    // 颜色初值匹配 46px 铭牌页眉，进入应用后由渲染进程按主题经 set-title-bar-overlay 同步。
+    // height 46 须与 web 端 main.css 的 --win-titlebar-h 一致。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#f7f7f5', symbolColor: '#37352f', height: 36 },
+    titleBarOverlay: { color: '#fbfaf6', symbolColor: '#1f1e1b', height: 46 },
     backgroundColor: '#f7f7f5',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
