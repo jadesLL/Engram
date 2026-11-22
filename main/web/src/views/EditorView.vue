@@ -2002,13 +2002,22 @@ function editorBaseItems(selection: string): ContextMenuItem[] {
 
 /** 编辑页右键的 AI 入口：直接改正文（结果落到编辑器，不转去聊天抽屉） */
 function editorAiItems(selection: string): ContextMenuItem[] {
+  // 语音输入与「AI 在此处插入」同类：都在光标处往正文里写字，放同一段最前面
+  const voiceItem: ContextMenuItem = {
+    id: 'voice-input-here',
+    label: '语音输入',
+    icon: 'mic',
+    shortcut: 'Ctrl+Shift+Space',
+    separatorBefore: true,
+    action: () => editorRef.value?.startVoiceInput(),
+  };
   if (selection) {
     return [
+      voiceItem,
       {
         id: 'ai-rewrite-selection',
         label: 'AI 改写选中文字',
         icon: 'pencil',
-        separatorBefore: true,
         action: () => editorRef.value?.openAiRewrite(),
       },
       {
@@ -2026,6 +2035,7 @@ function editorAiItems(selection: string): ContextMenuItem[] {
     ];
   }
   return [
+    voiceItem,
     {
       id: 'ai-insert-here',
       label: 'AI 在此处插入…',

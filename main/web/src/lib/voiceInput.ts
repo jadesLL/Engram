@@ -32,17 +32,37 @@ export interface VoiceDeviceList {
   labelsAvailable: boolean;
 }
 
-export interface SpeechStatus {
-  configured: boolean;
+export interface SpeechEngineOption {
+  /** `local` 或 `model:<provider>:<model>` */
+  id: string;
+  kind: 'local' | 'model';
+  label: string;
+  detail: string;
+  available: boolean;
+}
+
+export interface SpeechModelInfo {
   provider: string;
   providerName: string;
   model: string;
-  hasKey: boolean;
-  keySource: 'local' | 'synced' | 'none';
-  missing: string[];
+  modelName: string;
+  supportsAudio: boolean;
+  inputs: string[];
+}
+
+export interface SpeechStatus {
+  configured: boolean;
+  engines: SpeechEngineOption[];
+  /** 自动选择结果（空串 = 没有可用引擎） */
+  defaultEngine: string;
+  /** 为什么自动选了它 */
+  defaultEngineReason: string;
+  defaultModel: SpeechModelInfo | null;
+  localAvailable: boolean;
+  localDetail: string;
+  hint: string;
   maxDurationSec: number;
   maxBytes: number;
-  hint: string;
 }
 
 /** 这台设备/这个页面能不能录音；不能时给一句可读原因，而不是点下去没反应 */
@@ -425,13 +445,36 @@ export async function fetchSpeechStatus(): Promise<SpeechStatus> {
   return data;
 }
 
-/** 把 WAV 上送转写；失败时把服务端的中文原因原样抛出（面板直接展示） */
-export async function transcribeVoice(blob: Blob): Promise<string> {
+/** 识别引擎偏好（本机）：'auto' 跟随服务端自动选择，其余是引擎 id（local / model:…） */
+export const VOICE_ENGINE_STORAGE_KEY = 'engram.voiceInput.engine';
+
+export function loadVoiceEnginePreference(): string {
+  try {
+    return localStorage.getItem(VOICE_ENGINE_STORAGE_KEY) || 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export function saveVoiceEnginePreference(engine: string): void {
+  try {
+    if (!engine || engine === 'auto') localStorage.removeItem(VOICE_ENGINE_STORAGE_KEY);
+    else localStorage.setItem(VOICE_ENGINE_STORAGE_KEY, engine);
+  } catch {
+    /* 存不住不影响本次 */
+  }
+}
+
+/** 把 WAV 上送转写；失败时把服务端的中文原因原样抛出（HUD 直接展示） */
+export async function transcribeVoice(blob: Blob, engine = 'auto'): Promise<{ text: string; engineLabel: string }> {
   const form = new FormData();
   form.append('audio', blob, 'voice.wav');
+  if (engine && engine !== 'auto') form.append('engine', engine);
   try {
-    const { data } = await api.post<{ text: string }>('/api/speech/transcribe', form, { timeout: 180_000 });
-    return String(data?.text || '').trim();
+    const { data } = await api.post<{ text: string; engineLabel?: string }>('/api/speech/transcribe', form, {
+      timeout: 180_000,
+    });
+    return { text: String(data?.text || '').trim(), engineLabel: String(data?.engineLabel || '') };
   } catch (error: any) {
     const detail = error?.response?.data?.error || error?.message;
     throw new Error(detail || '语音识别失败，请重试');
