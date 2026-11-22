@@ -366,26 +366,34 @@
             </div>
           </div>
 
-          <div v-else class="tool" :class="item.call.status">
+          <div v-else class="tool" :class="[item.call.status, { open: isToolOpen(item.call) }]">
             <button
               class="tool-head"
               type="button"
               :aria-expanded="isToolOpen(item.call)"
               @click="toggleTool(item.call)"
             >
-              <span class="tool-icon"><Icon :name="toolIcon(item.call.name)" :size="11" /></span>
-              <b>{{ toolLabel(item.call.name) }}</b>
+              <span class="tool-mark"><Icon :name="toolIcon(item.call.name)" :size="12" /></span>
+              <b class="tool-name">{{ toolLabel(item.call.name) }}</b>
               <span class="tool-summary">{{ toolCallSummary(item.call.args) }}</span>
               <span class="tool-state">{{ toolState(item.call.status) }}</span>
-              <Icon :name="isToolOpen(item.call) ? 'chevron-up' : 'chevron-down'" :size="13" />
+              <span class="tool-chevron"><Icon :name="isToolOpen(item.call) ? 'chevron-up' : 'chevron-down'" :size="12" /></span>
             </button>
-            <div v-if="isToolOpen(item.call)" class="tool-body">
-              <pre v-if="item.call.args && item.call.args !== '{}'" class="tool-args">{{ item.call.args }}</pre>
-              <pre v-if="item.call.text" class="tool-result">{{ item.call.text }}</pre>
-              <p v-else-if="item.call.status === 'running'" class="tool-pending">执行中…</p>
-              <!-- 兜底：展开后不能是空白（无参数又无输出时给出明确说明，用户才知道是「没输出」而非「没展开」） -->
-              <p v-else-if="!item.call.args || item.call.args === '{}'" class="tool-pending">这次调用没有输出内容</p>
-            </div>
+            <div class="tool-body-wrap"><div class="tool-body-clip">
+              <div v-if="isToolOpen(item.call)" class="tool-body">
+                <div v-if="item.call.args && item.call.args !== '{}'" class="tool-section">
+                  <span class="tool-section-label">参数</span>
+                  <pre class="tool-args">{{ item.call.args }}</pre>
+                </div>
+                <div v-if="item.call.text" class="tool-section">
+                  <span class="tool-section-label">输出</span>
+                  <pre class="tool-result">{{ item.call.text }}</pre>
+                </div>
+                <p v-else-if="item.call.status === 'running'" class="tool-pending">执行中…</p>
+                <!-- 兜底：展开后不能是空白（无参数又无输出时给出明确说明，用户才知道是「没输出」而非「没展开」） -->
+                <p v-else-if="!item.call.args || item.call.args === '{}'" class="tool-pending">这次调用没有输出内容</p>
+              </div>
+            </div></div>
           </div>
         </template>
       </div>
@@ -3102,134 +3110,167 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .think.live .think-mark,
   .think.live .think-title,
+  .tool.running .tool-mark,
   .cursor {
     animation: none;
   }
 
   .think-body-wrap,
-  .think-chevron {
+  .think-chevron,
+  .tool-body-wrap,
+  .tool-chevron {
     transition: none;
   }
 }
 
-/* ===== 执行记录：图标徽章 + 一行摘要 + 状态胶囊，点开看完整参数与完整结果（靠滚动，不截断） ===== */
+/* 触屏：思考段与执行记录的折叠头是整行按钮，矮行在手指上点不准，热区补到 44px */
+@media (hover: none) and (pointer: coarse) {
+  .think-head,
+  .tool-head {
+    min-height: 44px;
+  }
+}
+
+/* ===== 执行记录：沿用思考段的终端语言——无框、无底、无图标徽章；
+ * 一行「图标 + 工具名 + 摘要 + 状态」，展开在导轨下列参数与输出；状态直接写字，不用胶囊 ===== */
 .tool {
   margin-left: 29px;
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  box-shadow: var(--shadow-raised);
-  overflow: hidden;
-  transition: border-color 0.15s ease;
-}
-
-.tool:hover {
-  border-color: var(--border-strong);
-}
-
-.tool.running {
-  border-left-color: var(--accent);
-}
-
-.tool.failed {
-  border-left: 3px solid var(--danger);
+  min-width: 0;
 }
 
 .tool-head {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 11px;
-  color: var(--text-secondary);
-  font-size: var(--fs-small);
+  gap: 7px;
+  padding: 2px 0;
+  color: var(--text-faint);
+  font-size: var(--fs-caption);
   text-align: left;
+  cursor: pointer;
 }
 
-/* 工具图标徽章：accent 浅底圆角块，失败时换红色 */
-.tool-icon {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+.tool-mark {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
   flex-shrink: 0;
-  background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--text-faint);
 }
 
-.tool.failed .tool-icon {
-  background: var(--danger-soft);
+.tool.running .tool-mark {
+  color: var(--accent);
+  animation: think-breathe 1.6s ease-in-out infinite;
+}
+
+.tool.failed .tool-mark {
   color: var(--danger);
 }
 
-.tool-head b {
+.tool-name {
   flex-shrink: 0;
-  color: var(--text);
+  color: var(--text-secondary);
   font-weight: 600;
+}
+
+.tool.failed .tool-name {
+  color: var(--danger);
 }
 
 .tool-summary {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-faint);
-  font-family: var(--font-mono, monospace);
-  font-size: var(--fs-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
+  color: var(--text-faint);
 }
 
-/* 状态胶囊：完成绿 / 执行中蓝 / 失败红，一眼扫得出结果 */
+/* 状态直接写字：完成松针绿 / 执行中陶土 / 失败红 */
 .tool-state {
   flex-shrink: 0;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--bg);
   color: var(--text-faint);
-  font-size: var(--fs-caption);
-  font-weight: 550;
 }
 
 .tool.completed .tool-state {
-  background: var(--success-soft);
   color: var(--success);
 }
 
 .tool.running .tool-state {
-  background: var(--accent-soft);
   color: var(--accent);
 }
 
 .tool.failed .tool-state {
-  background: var(--danger-soft);
   color: var(--danger);
 }
 
+.tool-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  transition: transform 0.18s ease;
+}
+
+.tool.open .tool-chevron {
+  transform: rotate(180deg);
+}
+
+/* 展开正文：grid 0fr→1fr 撑开，与思考段同一条中性导轨 */
+.tool-body-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s ease;
+}
+
+.tool.open .tool-body-wrap {
+  grid-template-rows: 1fr;
+}
+
+.tool-body-clip {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .tool-body {
-  padding: 0 10px 8px;
-  border-top: 1px solid var(--border);
+  margin: 4px 0 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+}
+
+.tool-section + .tool-section {
+  margin-top: 8px;
+}
+
+/* 参数 / 输出的小标签：没有卡片之后给展开内容一个锚点 */
+.tool-section-label {
+  display: block;
+  color: var(--text-faint);
+  font-size: var(--fs-caption);
 }
 
 .tool-args,
 .tool-result {
-  margin: 8px 0 0;
+  margin: 2px 0 0;
   max-height: 320px;
   overflow: auto;
-  color: var(--text-secondary);
-  font-family: var(--font-mono, monospace);
+  font-family: inherit;
   font-size: var(--fs-caption);
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+.tool-args {
+  color: var(--text-faint);
+}
+
+.tool-result {
+  color: var(--text-secondary);
+}
+
 .tool-pending {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--text-faint);
   font-size: var(--fs-caption);
+  font-style: italic;
 }
 
 /* ===== 常驻运行状态条：还在跑就一直贴在转录区底部（sticky），收口即消失。
