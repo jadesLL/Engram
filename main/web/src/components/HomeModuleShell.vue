@@ -214,6 +214,10 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   gap:7px;
   flex:1;
   min-width:0;
+  /* h3 的浏览器默认上下外边距（1em）会把「眉标 + 标题」撑高到卡头之外：Claude 主题
+     的卡头固定 34px，flex 居中后多出的部分顶出卡顶，被 .shell 的 overflow:hidden
+     裁成一条字符残影（2026-11-22 用户报「顶上好像有文字」）。 */
+  margin:0;
   overflow:hidden;
   white-space:nowrap;
   text-overflow:ellipsis;
