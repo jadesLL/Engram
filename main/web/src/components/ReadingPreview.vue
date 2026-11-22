@@ -4,6 +4,7 @@
     class="reading-preview"
     :class="{
       'outline-hidden': !outlineVisible,
+      'outline-panel': outlineIsPanel,
       'numbered-headings': preferences.numberedHeadings,
     }"
     :style="readingStyle"
@@ -404,8 +405,10 @@ import {
 } from '../lib/readingPreview';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
-  contentColumnWidth,
+  READING_OUTLINE_RAIL_MIN_WIDTH,
   formatContentWidthRatio,
+  readingColumnWidth,
+  readingTitleSize,
   type ContentWidthRatio,
 } from '../lib/contentWidth';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
@@ -551,10 +554,18 @@ const fontSizeOptions: number[] = Array.from(
 );
 
 const preferences = computed(() => app.readingPreferences);
-/* > 1024px：右侧常驻目录列，跟随持久偏好；≤ 1024px：目录是贴底浮层面板，开合只属于本次阅读。
- * 断点状态必须存成 ref：直接读 media.matches 不是响应式依赖，跨断点缩放后计算属性不会重算，
- * 会出现「偏好里关过目录，手机上按钮点了也不出目录」的死局 */
-const outlineIsPanel = ref(wideMedia.matches);
+/* 目录是常驻列还是浮层，看的是「阅读容器自己有多宽」而不是视口：
+ * Agent 抽屉一开，视口没变、正文可用区却只剩三百多像素，目录再常驻就会把正文压成一条缝，
+ * 标题随之变成一列一个字。容器宽度由 measureLayout 实测；首帧还没量到时沿用视口断点兜底。 */
+const containerWidth = ref(0);
+const outlineIsPanel = computed(() => (
+  containerWidth.value > 0
+    ? containerWidth.value < READING_OUTLINE_RAIL_MIN_WIDTH
+    : wideMedia.matches
+));
+/* 常驻列 ↔ 浮层换形态时收起浮层临时状态：否则「上次读过目录」会被带到另一侧，
+ * 回到窄容器时目录自己弹出来 */
+watch(outlineIsPanel, () => { mobileOutlineOpen.value = false; });
 /* 手机档（≤640px）顶栏最多两行：低频设置整组进「更多」浮层，不再挤成三行吃掉正文 */
 const compactToolbar = ref(compactMedia.matches);
 /* 窄屏档（≤768px）：正文列一律占满可用宽度，不再按持久偏好（默认 70%）压窄。
@@ -586,7 +597,7 @@ const outlineVisible = computed(() =>
 );
 /* 手机档（≤768px）目录面板：按设计稿「本篇导航」只到三级标题。正文里的同名 H1 已在
  * prepareHeadings 移除（文档标题单独渲染在页头），面板用文档标题补一条 H1；
- * 桌面常驻目录列与 769–1024px 的浮层维持原来的 h2–h4 全量，行为不变 */
+ * 常驻目录列与容器不够宽时的浮层维持原来的 h2–h4 全量，行为不变 */
 const MOBILE_OUTLINE_MAX_LEVEL = 3;
 const outlineItems = computed<OutlineItem[]>(() => {
   if (!narrowReader.value) return outline.value;
@@ -596,12 +607,18 @@ const outlineItems = computed<OutlineItem[]>(() => {
 });
 /* H1/H2/H3 级别标记只在手机面板里画（桌面常驻列保持原排版，不加标记） */
 const outlineLevelLabels = computed(() => narrowReader.value && outlineIsPanel.value);
+/* 正文列：窄屏档恒取 100%；其余档按比例，但不下探到 460px 以下（容器不够就让正文取满） */
+const articleColumn = computed(() => (
+  availableWidth.value > 0
+    ? readingColumnWidth(narrowReader.value ? 1 : preferences.value.widthRatio, availableWidth.value)
+    : 0
+));
 const readingStyle = computed(() => ({
   /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0）；
-     窄屏档恒取 100%：手机上一行能放几个字本来就紧张，再乘 70% 就是「正文显示不全」 */
-  '--reading-width': availableWidth.value > 0
-    ? `${contentColumnWidth(narrowReader.value ? 1 : preferences.value.widthRatio, availableWidth.value)}px`
-    : '100%',
+     窄屏档恒取 100%，宽档也有 460px 下限——容器不够时不再按比例压成一条缝 */
+  '--reading-width': articleColumn.value > 0 ? `${articleColumn.value}px` : '100%',
+  /* 标题字号跟正文列走（不是 vw）：列宽没量到时不写，CSS 兜底 clamp(28px, 4vw, 38px) */
+  '--reading-title-size': articleColumn.value > 0 ? `${readingTitleSize(articleColumn.value)}px` : undefined,
   '--reading-font-size': `${preferences.value.fontSize}px`,
   '--reading-line-height': String(preferences.value.lineHeight),
   '--reading-toolbar-height': `${toolbarHeight.value}px`,
@@ -829,8 +846,8 @@ function closeTransientPanels(): boolean {
 }
 
 function toggleOutline() {
-  /* ≤1024px 目录是浮层面板：开合是本次阅读的临时状态，不写 localStorage
-     （桌面常驻列才跟随持久偏好，桌面行为保持原样） */
+  /* 容器不够宽时目录是浮层面板：开合是本次阅读的临时状态，不写 localStorage
+     （常驻列才跟随持久偏好，宽容器里的桌面行为保持原样） */
   if (outlineIsPanel.value) {
     if (mobileOutlineOpen.value) {
       closeOutlinePanel();
@@ -1292,6 +1309,9 @@ function measureLayout() {
    * --reading-width 取它的百分比；量不到（首帧）时保持 0，样式回落 100% */
   const main = mainEl.value;
   if (main) availableWidth.value = Math.round(main.clientWidth);
+  /* 阅读容器自身的宽度决定目录形态（常驻列 / 顶栏浮层）：Agent 抽屉、侧栏或窗口
+     都会改变它，而视口可能完全没动。先量容器，再让正文列与标题字号跟着算 */
+  containerWidth.value = Math.round(readerEl.value?.clientWidth || 0);
   /* 正文列宽刚变过（跨断点、旋屏、侧栏让位）就要重算一次宽块缩放：
      列窄了表要跟着缩，列宽了要把它放回去 */
   const host = contentEl.value;
@@ -1325,13 +1345,8 @@ function handleLayoutChange() {
   updateReadProgress();
 }
 
-/* 跨断点换形态：目录从常驻列变浮层（或反过来）时收起面板状态，
-   否则「桌面档偏好里关过目录」的浮层状态会带到另一边，按钮看着还是死的 */
-function onWideChange(event: MediaQueryListEvent) {
-  outlineIsPanel.value = event.matches;
-  mobileOutlineOpen.value = false;
-  handleLayoutChange();
-}
+/* 跨断点换形态：形态本身已由 outlineIsPanel（按容器宽度）驱动，这里不再有媒体查询监听；
+   面板开合状态在 outlineIsPanel 的 watch 里统一收起，避免「上次读过目录」被带到另一侧 */
 
 function onCompactChange(event: MediaQueryListEvent) {
   compactToolbar.value = event.matches;
@@ -1378,8 +1393,9 @@ onMounted(() => {
   layoutObserver = new ResizeObserver(handleLayoutChange);
   if (readerEl.value) layoutObserver.observe(readerEl.value);
   if (toolbarEl.value) layoutObserver.observe(toolbarEl.value);
+  /* 目录形态切换会改变正文列宽，但阅读容器本身宽度不变：不观察 mainEl 就会少一次重算 */
+  if (mainEl.value) layoutObserver.observe(mainEl.value);
   measureLayout();
-  wideMedia.addEventListener('change', onWideChange);
   compactMedia.addEventListener('change', onCompactChange);
   mobileMedia.addEventListener('change', onMobileChange);
   /* 安卓返回键：面板开着就吃掉这一层（关面板、返回 true），都没开就交回上层。
@@ -1403,7 +1419,6 @@ onBeforeUnmount(() => {
   readerEl.value?.removeEventListener('scroll', updateCurrentHeading);
   readerEl.value?.removeEventListener('scroll', onReaderScrollForFab);
   if (readingFabTimer) { clearTimeout(readingFabTimer); readingFabTimer = null; }
-  wideMedia.removeEventListener('change', onWideChange);
   compactMedia.removeEventListener('change', onCompactChange);
   mobileMedia.removeEventListener('change', onMobileChange);
   unregisterBack?.();
@@ -1438,6 +1453,8 @@ onBeforeUnmount(() => {
   z-index: 5;
   min-height: 56px;
   display: flex;
+  /* 容器窄时换行，不要把「返回编辑」压成一列字：视口可能没变（Agent 抽屉只挤正文列） */
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 9px 18px;
@@ -1478,6 +1495,8 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
 }
 .reading-tool {
+  /* 折行时按钮保持原宽：被压缩会先折自己的标签，看起来比折行更糟 */
+  flex: none;
   padding: 0 10px;
 }
 .reading-tool:hover,
@@ -1868,12 +1887,15 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) 220px;
   gap: 34px;
   align-items: start;
-  padding: 34px 38px 70px;
+  /* 左右留白随容器收放：固定 38px 在 350px 容器里要吃掉近 20% 宽度 */
+  padding: 34px clamp(16px, 4%, 38px) 70px;
 }
 .reading-tail-space {
   min-height: 0;
   pointer-events: none;
 }
+/* 目录收进顶栏浮层（容器不够宽）或没有目录时，栅格只剩正文一列 */
+.outline-panel .reading-grid,
 .outline-hidden .reading-grid { grid-template-columns: minmax(0, 1fr); }
 .outline-hidden .reading-outline { display: none; }
 .reading-main { min-width: 0; }
@@ -1893,9 +1915,12 @@ onBeforeUnmount(() => {
 }
 .reading-document-head h1 {
   margin: 0 0 12px;
-  font-size: clamp(28px, 4vw, 38px);
+  /* 字号由脚本按「正文列宽」写成 --reading-title-size（22–38px）；还没量到时用视口兜底 */
+  font-size: var(--reading-title-size, clamp(28px, 4vw, 38px));
   line-height: 1.28;
   letter-spacing: 0;
+  /* 两行时均分，避免第二行只剩一个字 */
+  text-wrap: balance;
 }
 .reading-document-date { display: block; margin-bottom: 10px; color: var(--text-secondary); font-size: var(--font-md); font-variant-numeric: tabular-nums; }
 .reading-meta {
@@ -2545,9 +2570,9 @@ onBeforeUnmount(() => {
 .reading-export-actions button:disabled { opacity: 0.55; cursor: default; }
 
 @media (max-width: 1024px) {
+  /* 工具栏折行现在由容器宽度驱动（基样式），这里保留窄视口这一档的同一行为，
+     与 layoutBreakpoints 的 BP_WIDE 字面量对齐 */
   .reading-toolbar { flex-wrap: wrap; }
-  /* 目录已经 Teleport 进浮层：阅读栅格只剩正文一列 */
-  .reading-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 768px) {
   .reading-grid { padding: 24px 20px 54px; }

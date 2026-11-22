@@ -246,3 +246,46 @@ test('手机档目录面板只到三级标题：H1 用文档标题补齐，H4 �
   const topAt = body.indexOf('top: 0');
   assert.ok(topAt > closeAt, 'H1 条目没有在收面板之后滚回正文开头');
 });
+
+test('目录形态看阅读容器宽度：Agent 抽屉把正文挤窄时先让目录，标题不再竖排', () => {
+  const script = scriptBlock();
+  assert.match(script, /const containerWidth = ref\(0\)/, '没有实测阅读容器的宽度');
+  assert.match(
+    script,
+    /containerWidth\.value > 0\s*\? containerWidth\.value < READING_OUTLINE_RAIL_MIN_WIDTH/,
+    '目录形态没有按阅读容器判断：视口没变、正文列被 Agent 抽屉挤窄时目录仍会常驻',
+  );
+  assert.match(script, /READING_OUTLINE_RAIL_MIN_WIDTH/, '目录阈值没有走 lib/contentWidth 的共享常量');
+  // 容器窄时栅格只剩正文一列；这个类必须由容器的判断驱动，而不是 ≤1024 的视口媒体查询
+  assert.match(
+    source,
+    /\.outline-panel \.reading-grid,\s*\.outline-hidden \.reading-grid \{ grid-template-columns: minmax\(0, 1fr\); \}/,
+    '目录收进浮层时栅格还是两列：会白留 220px 空列，正文继续被挤',
+  );
+  assert.doesNotMatch(
+    mediaBody(source, `(max-width: ${BP_WIDE}px)`),
+    /\.reading-grid/,
+    '≤1024px 档又用视口媒体查询定目录形态：容器够宽时会被强制单列，和容器判断打架',
+  );
+  // 标题字号跟正文列走：--reading-title-size 由脚本写，CSS 只留视口兜底
+  assert.match(
+    source,
+    /font-size: var\(--reading-title-size, clamp\(28px, 4vw, 38px\)\)/,
+    '标题字号没有跟随正文列：窄容器里仍会停在 38px',
+  );
+  assert.match(source, /text-wrap: balance/, '两行标题没有均分：第二行会只剩一个字');
+  assert.match(script, /readingTitleSize\(articleColumn\.value\)/, '没有按正文列计算标题字号');
+  // 正文列有下限；工具栏在任何宽度都允许折行
+  assert.match(script, /readingColumnWidth\(/, '正文列没有走带下限的换算');
+  assert.match(
+    source,
+    /\.reading-grid \{[^}]*padding: 34px clamp\(16px, 4%, 38px\) 70px/,
+    '栅格左右留白没有随容器收放：窄容器里固定 38px 会吃掉近 20% 宽度',
+  );
+  assert.match(
+    source,
+    /\.reading-toolbar \{[^}]*flex-wrap: wrap/,
+    '工具栏只在 ≤1024 视口折行：容器被 Agent 抽屉挤窄时按钮会压成竖排',
+  );
+});
+

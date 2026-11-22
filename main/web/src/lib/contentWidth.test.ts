@@ -5,9 +5,13 @@ import {
   CONTENT_WIDTH_RATIO_MIN,
   CONTENT_WIDTH_RATIO_STEPS,
   DEFAULT_CONTENT_WIDTH_RATIO,
+  READING_ARTICLE_MIN_WIDTH,
+  READING_OUTLINE_RAIL_MIN_WIDTH,
   clampContentWidthRatio,
   contentColumnWidth,
   formatContentWidthRatio,
+  readingColumnWidth,
+  readingTitleSize,
 } from './contentWidth.ts';
 
 test('默认列宽比例是 70%', () => {
@@ -45,4 +49,37 @@ test('contentColumnWidth 按可用区换算，可用区非法时返回 0', () =>
   assert.equal(contentColumnWidth(0.7, 0), 0);
   assert.equal(contentColumnWidth(0.7, -100), 0);
   assert.equal(contentColumnWidth(0.7, Number.NaN), 0);
+});
+
+test('阅读正文列有 460px 下限：容器不够时取满，够宽才按偏好收窄', () => {
+  assert.equal(READING_ARTICLE_MIN_WIDTH, 460);
+  // 318px 主列：70% 只有 223px，必须取满，否则标题一行放不下几个字
+  assert.equal(readingColumnWidth(0.7, 318), 318);
+  // 460px 主列：70% 的 322px 与下限取大后再和主列取小，仍是取满
+  assert.equal(readingColumnWidth(0.7, 460), 460);
+  // 657px 主列：70% = 460px，正好踩到下限
+  assert.equal(readingColumnWidth(0.7, 657), 460);
+  // 756px 主列：70% = 529px，高于下限后按偏好收窄
+  assert.equal(readingColumnWidth(0.7, 756), 529);
+  // 100% 偏好始终取满
+  assert.equal(readingColumnWidth(1, 900), 900);
+  // 可用区非法时与 contentColumnWidth 同样回落 0
+  assert.equal(readingColumnWidth(0.7, 0), 0);
+  assert.equal(readingColumnWidth(0.7, Number.NaN), 0);
+});
+
+test('阅读目录列阈值是 700px：正文下限 + 220px 目录 + 栅格留白', () => {
+  assert.equal(READING_OUTLINE_RAIL_MIN_WIDTH, 700);
+});
+
+test('文档标题字号跟正文列收敛在 22–38px，改窄不会把标题挤成竖排', () => {
+  assert.equal(readingTitleSize(1000), 38);
+  assert.equal(readingTitleSize(500), 38);
+  assert.equal(readingTitleSize(460), 35);
+  assert.equal(readingTitleSize(318), 24);
+  assert.equal(readingTitleSize(240), 22);
+  assert.equal(readingTitleSize(120), 22);
+  // 量不到列宽时回落到桌面最大值，等首帧量到再收敛
+  assert.equal(readingTitleSize(0), 38);
+  assert.equal(readingTitleSize(Number.NaN), 38);
 });

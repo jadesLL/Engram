@@ -109,7 +109,7 @@ test('窄屏正文列取满宽：不再按 70% 偏好把手机上的正文压成
   assert.match(reading, /const narrowReader = ref\(mobileMedia\.matches\)/, '阅读页没有窄屏档状态：正文列还会按偏好压窄');
   assert.match(
     reading,
-    /contentColumnWidth\(narrowReader\.value \? 1 : preferences\.value\.widthRatio/,
+    /readingColumnWidth\(narrowReader\.value \? 1 : preferences\.value\.widthRatio/,
     '阅读页窄屏档没有取 100%：一行放不下十来个字，正文显示不全',
   );
   assert.match(reading, /function onMobileChange\(event: MediaQueryListEvent\) \{\s*narrowReader\.value = event\.matches;/, '跨断点缩放后窄屏档状态不更新');

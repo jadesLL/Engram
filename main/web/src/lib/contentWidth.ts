@@ -40,3 +40,46 @@ export function contentColumnWidth(ratio: ContentWidthRatio, available: number):
   if (!Number.isFinite(available) || available <= 0) return 0;
   return Math.round(available * clampContentWidthRatio(ratio));
 }
+
+/**
+ * 阅读视图的正文列下限。
+ *
+ * 比例偏好解决的是「宽屏别把正文拉太长」，不是「窄容器也要按比例留白」：
+ * 主列不足这个宽度时再乘 70%，一行只剩十来个字，标题与表格都会被压成竖排。
+ * 容器不够就让正文取满——与手机档「412px 上 70% 只剩 258px → 一律 100%」同一条道理，
+ * 只是判据从视口换成了阅读容器（2026-11-22 修标题竖排）。
+ */
+export const READING_ARTICLE_MIN_WIDTH = 460;
+
+/**
+ * 阅读视图目录列（220px 纸卡 + 34px 间距）能常驻所需的最小阅读容器宽度。
+ *
+ * 低于它就把目录收进顶栏「目录」浮层：再常驻下去正文列会被压到 390px 以下，
+ * 标题、表格与代码块都开始折得难看。700px 是实测边界——1120px 窗口（左栏 322px）
+ * 里关掉 Agent 抽屉时阅读容器约 768px，目录与本条固定 460px 正文仍能共存；
+ * 打开 Agent 抽屉后容器掉到三百多像素，才必须让目录先走。
+ * 与编辑视图的 1020 分开取值：阅读视图没有工具栏与页头元信息。
+ */
+export const READING_OUTLINE_RAIL_MIN_WIDTH = 700;
+
+/**
+ * 阅读视图正文列宽：`min(可用区, max(下限, 可用区 × 比例))`。
+ * 可用区非法时返回 0，调用方照旧回落到 100%。
+ */
+export function readingColumnWidth(ratio: ContentWidthRatio, available: number): number {
+  const column = contentColumnWidth(ratio, available);
+  if (column <= 0) return 0;
+  return Math.min(Math.round(available), Math.max(READING_ARTICLE_MIN_WIDTH, column));
+}
+
+/**
+ * 文档标题字号：跟正文列宽走，22–38px。
+ *
+ * 旧写法 `clamp(28px, 4vw, 38px)` 用的是视口单位：Agent 抽屉把正文列压窄时视口没变，
+ * 字号仍停在 38px，标题就变成一列一个字。按列宽的 7.6% 收敛后，宽屏仍是 38px，
+ * 460px 列约 35px，318px 列约 24px，240px 列落到 22px 下限。
+ */
+export function readingTitleSize(column: number): number {
+  if (!Number.isFinite(column) || column <= 0) return 38;
+  return Math.round(Math.min(38, Math.max(22, column * 0.076)));
+}
