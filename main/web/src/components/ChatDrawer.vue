@@ -269,20 +269,27 @@
             <span v-if="streamingKey === item.key" class="cursor">▍</span>
           </div>
 
-          <!-- 思考过程：默认展开随生成长出来，本轮结束后自动收起（手动点过就以手动为准） -->
-          <div v-else-if="item.kind === 'reasoning'" class="think" :class="{ live: isThinking(item.message) }">
+          <!-- 思考过程：无框斜体（Claude Code 终端语言）——一行头部 + 弱化正文，收起态带首句预览；
+               默认展开随生成长出来，本轮结束后自动收起（手动点过就以手动为准） -->
+          <div
+            v-else-if="item.kind === 'reasoning'"
+            class="think"
+            :class="{ live: isThinking(item.message), open: isThinkOpen(item.message) }"
+          >
             <button
               class="think-head"
               type="button"
               :aria-expanded="isThinkOpen(item.message)"
               @click="toggleThink(item.message)"
             >
-              <Icon name="lightbulb" :size="13" />
-              <b>思考过程</b>
-              <span class="think-meta">{{ thinkMeta(item.message) }}</span>
-              <Icon :name="isThinkOpen(item.message) ? 'chevron-up' : 'chevron-down'" :size="13" />
+              <span class="think-mark"><Icon name="sparkles" :size="12" /></span>
+              <b class="think-title">{{ thinkMeta(item.message) }}</b>
+              <span v-if="!isThinkOpen(item.message)" class="think-preview">{{ thinkPreview(item.message) }}</span>
+              <span class="think-chevron"><Icon :name="isThinkOpen(item.message) ? 'chevron-up' : 'chevron-down'" :size="12" /></span>
             </button>
-            <pre v-if="isThinkOpen(item.message)" class="think-body">{{ item.message.content }}<span v-if="isThinking(item.message)" class="cursor">▍</span></pre>
+            <div class="think-body-wrap"><div class="think-body-clip">
+              <pre v-if="isThinkOpen(item.message)" class="think-body">{{ item.message.content }}<span v-if="isThinking(item.message)" class="cursor">▍</span></pre>
+            </div></div>
           </div>
 
           <!-- 子代理：内置 Agent 派出去的子会话。收起态就是一颗胶囊（一行装下标签、动态、状态与用时），
@@ -1283,11 +1290,17 @@ function toggleThink(message: ChatMessage) {
   thinkOverride.value = { ...thinkOverride.value, [message.id]: !isThinkOpen(message) };
 }
 
-/** 思考段标题右侧的状态：正在思考 / 思考用时 */
+/** 思考段头部状态：思考中 / 思考了 X 秒（Claude Code 的 "Thought for Xs" 口径） */
 function thinkMeta(message: ChatMessage): string {
-  if (isThinking(message)) return '思考中…';
+  if (isThinking(message)) return '思考中';
   const ms = reasoningDurationMs(message);
-  return ms ? `用时 ${formatDuration(ms)}` : '已完成';
+  return ms ? `思考了 ${formatDuration(ms)}` : '已完成';
+}
+
+/** 收起态首句预览：压平空白后取前 28 字，避免盒子没了之后收起态只剩状态 */
+function thinkPreview(message: ChatMessage): string {
+  const text = message.content.replace(/\s+/g, ' ').trim();
+  return text.length > 28 ? `${text.slice(0, 28)}…` : text;
 }
 
 /* ===== 工具卡折叠：默认收起，失败默认展开，用户点过就以用户为准 ===== */
@@ -2975,64 +2988,128 @@ onUnmounted(() => {
   to { visibility: hidden; }
 }
 
-/* ===== 思考过程：弱化的过程块，琥珀色左缘（进行中换强调蓝），与正文流对齐缩进 ===== */
+/* ===== 思考过程：无框斜体（Claude Code 终端语言）
+ * 一行头部（微光记号 + 状态 + 首句预览 + 折叠箭头）+ 弱化斜体正文；
+ * 展开态用中性细导轨标层级——不铺底、不描边、不用色条 ===== */
 .think {
   margin-left: 29px;
-  border: 1px solid var(--border);
-  border-left: 3px solid color-mix(in srgb, var(--warning) 70%, var(--border));
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  overflow: hidden;
-}
-
-.think.live {
-  border-left-color: var(--accent);
+  min-width: 0;
 }
 
 .think-head {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 7px;
+  padding: 2px 0;
   color: var(--text-faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-caption);
   text-align: left;
   cursor: pointer;
 }
 
-.think-head b {
+.think-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/* 进行中：记号呼吸、标题微光扫过；结束后都恢复静态 */
+.think.live .think-mark {
+  animation: think-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes think-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+.think-title {
   flex-shrink: 0;
   color: var(--text-secondary);
   font-weight: 600;
 }
 
-.think.live .think-head b {
-  color: var(--accent);
+.think.live .think-title {
+  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text) 50%, var(--text-faint) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: think-shimmer 2.1s linear infinite;
 }
 
-.think-meta {
+@keyframes think-shimmer {
+  from { background-position: 180% 0; }
+  to { background-position: -180% 0; }
+}
+
+/* 收起态：首句预览（信息量靠它，不再需要盒子） */
+.think-preview {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.think-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  transition: transform 0.18s ease;
+}
+
+.think.open .think-chevron {
+  transform: rotate(180deg);
+}
+
+/* 展开正文：grid 0fr→1fr 撑开；左侧 2px 中性导轨只标层级 */
+.think-body-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s ease;
+}
+
+.think.open .think-body-wrap {
+  grid-template-rows: 1fr;
+}
+
+.think-body-clip {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .think-body {
-  margin: 0;
+  margin: 4px 0 2px;
   max-height: 320px;
   overflow: auto;
-  padding: 0 10px 8px;
-  border-top: 1px dashed var(--border);
-  padding-top: 6px;
-  color: var(--text-secondary);
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-faint);
   font-family: inherit;
   font-size: var(--fs-small);
-  line-height: 1.65;
+  line-height: 1.78;
+  font-style: italic;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .think.live .think-mark,
+  .think.live .think-title,
+  .cursor {
+    animation: none;
+  }
+
+  .think-body-wrap,
+  .think-chevron {
+    transition: none;
+  }
 }
 
 /* ===== 执行记录：图标徽章 + 一行摘要 + 状态胶囊，点开看完整参数与完整结果（靠滚动，不截断） ===== */
