@@ -22,7 +22,7 @@
       v-if="isDock"
       class="drawer-resizer"
       :class="{ dragging: dragWidth !== null }"
-      v-tooltip="'拖动调整宽度，双击还原；拖过窗口 70% 自动满窗'"
+      v-tooltip="'拖动调整宽度，双击还原；拖到上限自动满窗'"
       role="separator"
       :aria-label="`调整${agentName}宽度`"
       aria-orientation="vertical"
@@ -796,7 +796,16 @@ import { normalizeAgentApiKey, shouldShowAgentSetup } from '../lib/agentSetup';
  * embedded：它不再是抽屉，而是某个全屏页（views/AgentView.vue 的 /agent）的正文区——
  *   几何交给 embed 样式块、头部交给宿主页画，dock 的拖宽与正文让位逻辑一律不参与。
  */
-const props = defineProps<{ overlay?: boolean; embedded?: boolean }>();
+const props = defineProps<{
+  overlay?: boolean;
+  embedded?: boolean;
+  /**
+   * 正文左侧被图标栏 / 知识库栏占掉的宽度（px）。悬浮卡片自己的宽度上限要把它与
+   * 「正文至少留 MIN_CONTENT_WITH_DOCK」一起算——否则窄窗口里卡片一拖就把正文挤没。
+   * 由 Home.vue 传入（它才知道侧栏的实际宽度与开合）。
+   */
+  dockReservedLeft?: number;
+}>();
 
 const router = useRouter();
 const app = useAppStore();
@@ -1019,16 +1028,20 @@ const isDock = computed(() => !props.embedded && !props.overlay && !isFull.value
 /* ===== 左缘拖拽调宽：只在「右侧悬浮」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
 const viewportWidth = ref(window.innerWidth);
 
-/** 悬浮宽度上限 = 窗口宽度的 70%：越过即交棒给满窗 */
-const dockMaxWidth = computed(() => chatDockMaxWidth(viewportWidth.value));
+/**
+ * 悬浮宽度上限 = min(窗口 70%, 给正文留下最小可读宽度后的余量)。
+ * 上限之外即交棒给满窗；reservedLeft 把 Home 的图标栏 / 知识库栏占位算进来。
+ */
+const dockMaxWidth = computed(() =>
+  chatDockMaxWidth(viewportWidth.value, props.dockReservedLeft || 0));
 
 function clampDrawerWidth(width: number) {
-  return clampChatDockWidth(width, viewportWidth.value);
+  return clampChatDockWidth(width, viewportWidth.value, props.dockReservedLeft || 0);
 }
 
 /** 用户没拖过时沿用响应式默认宽度（与拖拽上线前的观感一致），同样受上限约束 */
 function defaultDrawerWidth() {
-  return defaultChatDockWidth(viewportWidth.value);
+  return defaultChatDockWidth(viewportWidth.value, props.dockReservedLeft || 0);
 }
 
 /** 本地是否已有用户调过的宽度偏好；没有就跟随窗口宽度 */
