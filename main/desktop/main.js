@@ -12,6 +12,8 @@ const localAccess = require('./lib/local-access');
 const { resolveBrainPath } = require('./lib/brain-path');
 const inboxRender = require('./lib/inbox-render');
 const { joinLinkFromArgs, protocolRegistration } = require('./lib/join-link');
+// 源码模式更新说明：从远端 CHANGELOG 增量条目提取「更新 / 优化 / 修复」分类（见 scripts/lib/source-changelog.js）
+const sourceChangelog = require('./scripts/lib/source-changelog');
 // 启动分段计时与 app.log 轮转（纯本地小工具，单测见 desktop/scripts/tests/startup-log.test.js）：
 // 前者给「首次打开很慢」留可对照的分段数据，后者避免 737MB 级 app.log 拖慢启动（见 lib/app-log.js 头注释）。
 const startupTiming = require('./lib/startup-timing');
@@ -1406,7 +1408,8 @@ async function giteaLatestRelease(cfg) {
   const assets = (data.assets || [])
     .filter((a) => a.browser_download_url)
     .map((a) => ({ name: a.name || '', url: a.browser_download_url, size: a.size || 0 }));
-  return { tag, version, assets };
+  // Release 正文 = CHANGELOG 版本段落（含「更新 / 优化 / 修复」分类），设置页更新说明直接用它
+  return { tag, version, assets, notes: typeof data.body === 'string' ? data.body : '' };
 }
 
 /**
@@ -1444,6 +1447,7 @@ async function checkForUpdate(passedCfg) {
       latestVersion: release.version,
       hasUpdate: Boolean(release.version && cmpVersions(current, release.version) < 0),
       exe,
+      notes: release.notes || '',
       releaseUrl: `${cfg.giteaUrl}/${cfg.giteaRepo}/releases/tag/${release.tag}`,
     };
   } catch (e) {
@@ -2220,6 +2224,8 @@ const sourceAutoState = {
   localCommit: '',
   remoteCommit: '',
   changes: [],
+  // 远端 CHANGELOG 增量条目的迷你 Markdown（web 侧按更新 / 优化 / 修复解析；旧版壳没有这个字段）
+  changeNotes: '',
   error: '',
   checkedAt: null,
 };
@@ -2247,6 +2253,48 @@ function scheduleNextSourceCheck(hasUpdate) {
 function setSourceAutoState(patch) {
   Object.assign(sourceAutoState, patch);
   broadcast('desktop-source-state', { ...sourceAutoState });
+}
+
+/** 读某个 ref 上的 CHANGELOG（仓库根优先；部分检出把 CHANGELOG 放在 main/ 下，两处都试）。 */
+async function changelogAt(ref) {
+  for (const changelogPath of sourceChangelog.CHANGELOG_PATHS) {
+    try {
+      const text = await runGit(['show', `${ref}:${changelogPath}`], 15_000);
+      if (text) return text;
+    } catch {
+      /* 该路径不存在：试下一个 */
+    }
+  }
+  return '';
+}
+
+/**
+ * 源码模式的「这次更新改了什么」：
+ *  1) 优先取远端 CHANGELOG 中本次新增的条目（含分类小标题），用户看到的是「更新 / 优化 / 修复」；
+ *  2) 增量条目为空（改的是纯代码/内部事项）时退回提交标题，但仍过滤 Merge / docs / chore 等内部提交。
+ * 返回迷你 Markdown，web 侧与 Release 正文共用同一份解析（lib/releaseNotes.ts）。
+ */
+async function sourceChangeNotes(branch, subjects) {
+  try {
+    const remoteText = await changelogAt(`origin/${branch}`);
+    if (remoteText) {
+      const localText = await changelogAt('HEAD');
+      let diff = '';
+      try {
+        diff = await runGit(
+          ['diff', '--unified=0', '--no-color', `HEAD..origin/${branch}`, '--', ...sourceChangelog.CHANGELOG_PATHS],
+          20_000,
+        );
+      } catch {
+        /* 无 CHANGELOG 变更或 diff 失败：交给提交标题兜底 */
+      }
+      const notes = sourceChangelog.extractNewEntries(remoteText, sourceChangelog.addedLinesFromDiff(diff), localText);
+      if (notes) return notes;
+    }
+  } catch {
+    /* 远端不可读/CHANGELOG 不存在：继续用提交标题兜底 */
+  }
+  return sourceChangelog.fallbackFromSubjects(subjects);
 }
 
 /** 比对远端与本地（手动「检查更新」与自动检查共用）。两级探测，日常只花一次网络往返：
@@ -2279,12 +2327,16 @@ async function sourceCheckCore() {
     let remoteCommit = remoteSha.slice(0, 7);
     let remoteDate = '';
     let changes = [];
+    let changeNotes = '';
     try {
       remoteCommit = await runGit(['rev-parse', '--short=7', `origin/${branch}`], 15_000);
       remoteDate = await runGit(['log', '-1', '--format=%cs', `origin/${branch}`], 15_000);
       if (behind > 0) {
-        changes = (await runGit(['log', '-5', '--format=%s', `HEAD..origin/${branch}`], 15_000))
+        const subjects = (await runGit(['log', '-30', '--format=%s', `HEAD..origin/${branch}`], 15_000))
           .split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        // 旧版前端只认 changes：给过滤后的用户可读标题，至少不会再出现 Merge/docs 提交
+        changes = sourceChangelog.visibleSubjects(subjects);
+        changeNotes = await sourceChangeNotes(branch, subjects);
       }
     } catch {
       /* 远端分支刚建或无引用时留空，前端退回分支文案 */
@@ -2300,6 +2352,7 @@ async function sourceCheckCore() {
       remoteCommit,
       remoteDate,
       changes,
+      changeNotes,
       fetched, // 这一轮是否真的做过 fetch（否则只花了一次 ls-remote）
     };
   } catch (e) {
@@ -2319,6 +2372,7 @@ function applySourceCheckResult(r) {
     localCommit: r.localCommit,
     remoteCommit: r.remoteCommit,
     changes: r.changes,
+    changeNotes: r.changeNotes || '',
     error: '',
     checkedAt: Date.now(),
   });

@@ -9,6 +9,8 @@
  * 状态来源：App 内 Kotlin 本地服务的 `/api/app-update/state`（见 mobile/.../AppUpdater.kt）。
  */
 
+import { parseReleaseNotes } from './releaseNotes.ts';
+
 export type AppUpdatePhase = 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
 
 /** 私有库凭据方式：访问令牌 / 用户名密码（与服务器/桌面端「更新源配置」同一套口径） */
@@ -261,14 +263,10 @@ export function appUpdateCheckedLabel(iso: string, now = Date.now()): string {
   return `${new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 检查过`;
 }
 
-/** Release 正文只作为纯文本取前几条（与 UpdateNotice 同一口径，不渲染远端 Markdown） */
+/**
+ * Release 正文只作为纯文本取前几条（与 UpdateNotice 同一口径，不渲染远端 Markdown）：
+ * 按「更新 / 优化 / 修复」分类后展平，剥离平台影响标记与内部改动（解析见 lib/releaseNotes.ts）。
+ */
 export function releaseHighlights(notes: string, limit = 5): string[] {
-  return notes
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^(?:#{1,6}\s|```|---+$|\|\s*[-:]+|<)/.test(line))
-    .map((line) => line.replace(/^[-*+]\s+|^\d+[.)]\s+/, '').replace(/!?\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*_`]/g, '').trim())
-    .filter(Boolean)
-    .slice(0, limit)
-    .map((line) => line.slice(0, 160));
+  return parseReleaseNotes(notes, limit).highlights.slice(0, limit);
 }

@@ -104,12 +104,15 @@
     </div>
     <p v-if="autoPausedHint" class="setting-note">{{ autoPausedHint }}</p>
 
-    <!-- 更新内容（Release 正文，纯文本取前几条）：列表本身用细线分隔，不套外框 -->
-    <div v-if="highlights.length" class="update-notes">
+    <!-- 更新内容（Release 正文，按「更新 / 优化 / 修复」分组，纯文本不渲染 Markdown）：列表用细线分隔，不套外框 -->
+    <div v-if="noteSections.length" class="update-notes">
       <p class="update-notes-caption">本次更新内容</p>
-      <ul>
-        <li v-for="(line, index) in highlights" :key="index">{{ line }}</li>
-      </ul>
+      <div v-for="section in noteSections" :key="section.title" class="update-notes-group">
+        <p class="update-notes-group-label">{{ section.title }}</p>
+        <ul>
+          <li v-for="(line, index) in section.items" :key="index">{{ line }}</li>
+        </ul>
+      </div>
     </div>
 
     <!-- 更新源配置 -->
@@ -231,9 +234,9 @@ import {
   appUpdateCredentialSaved,
   appUpdateStatusText,
   needsNotificationPermission,
-  releaseHighlights,
   type AppUpdateAuthType,
 } from '../../lib/appUpdate';
+import { releaseNoteSections } from '../../lib/releaseNotes';
 
 /**
  * 「版本与更新 → 安卓端更新」分组（只出现在 Android App 里，能力位 features.apkUpdate）。
@@ -275,7 +278,7 @@ const blockedHint = computed(() => {
 /** 主按钮加粗的时机：有可执行动作（下载/安装），「检查更新」是常规按钮 */
 const primaryAction = computed(() => info.value.hasUpdate || info.value.ready || info.value.phase === 'error');
 const checkedLabel = computed(() => (info.value.checkedAt ? appUpdateCheckedLabel(info.value.checkedAt) : ''));
-const highlights = computed(() => (info.value.hasUpdate || info.value.ready ? releaseHighlights(info.value.releaseNotes) : []));
+const noteSections = computed(() => (info.value.hasUpdate || info.value.ready ? releaseNoteSections(info.value.releaseNotes, 12) : []));
 const showNotificationRow = computed(() => info.value.ready && needsNotificationPermission(info.value));
 /** 自动更新失败暂停提示（本地服务记录 autoPausedVersion 才显示整行） */
 const autoPausedHint = computed(() => appUpdateAutoPausedHint(info.value));
@@ -521,6 +524,15 @@ watch(() => [info.value.repoUrl, info.value.authType, info.value.username], sync
   padding-left: 18px;
   display: grid;
   gap: 4px;
+}
+.update-notes-group + .update-notes-group {
+  margin-top: 8px;
+}
+.update-notes-group-label {
+  margin: 0 0 3px;
+  color: var(--text-faint);
+  font-size: var(--fs-caption);
+  font-weight: 600;
 }
 .update-notes li {
   color: var(--text-secondary);

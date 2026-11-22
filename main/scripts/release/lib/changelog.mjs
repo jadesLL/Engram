@@ -9,6 +9,38 @@ export const ANDROID_PLATFORMS = ['A', 'C', 'D', 'F'];
 /** 平台影响合法取值（PLATFORM-PARALLEL-DEV §4.1）。 */
 export const PLATFORM_TOKENS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
+/**
+ * 用户可见更新分类：应用内更新提示只展示这三类，内部改动单独归类、不进提示。
+ * 新条目统一写「更新 / 优化 / 修复 / 内部」；历史标题（新增、体验优化等）渲染时自动归并。
+ */
+export const ENTRY_CATEGORIES = ['更新', '优化', '修复', '内部'];
+export const CATEGORY_ORDER = ['更新', '优化', '修复', '内部'];
+const CATEGORY_ALIASES = {
+  更新: '更新',
+  新增: '更新',
+  新功能: '更新',
+  功能: '更新',
+  优化: '优化',
+  体验优化: '优化',
+  性能优化: '优化',
+  改进: '优化',
+  修复: '修复',
+  问题修复: '修复',
+  'Bug 修复': '修复',
+  Bug修复: '修复',
+  内部: '内部',
+  文档: '内部',
+  构建: '内部',
+  测试: '内部',
+  CI: '内部',
+};
+
+/** 分类标题 → 规范分类；未知标题原样返回（渲染时保留，校验时告警）。 */
+export function normalizeCategory(category) {
+  const name = String(category || '').trim();
+  return CATEGORY_ALIASES[name] || name;
+}
+
 const UNRELEASED_RE = /^## 未发布\s*$/;
 const RELEASED_RE = /^## v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)[（(](\d{4}-\d{2}-\d{2})[）)]\s*$/;
 const SECTION_RE = /^## /;
@@ -138,6 +170,18 @@ export function validateEntries(entries) {
   const warnings = [];
   for (const entry of Array.isArray(entries) ? entries : []) {
     const where = `第 ${entry.line} 行`;
+    const category = normalizeCategory(entry.category);
+    if (!category || category === '其他') {
+      errors.push({
+        line: entry.line,
+        message: `${where}：条目未归入分类，请放到 ### 更新 / ### 优化 / ### 修复 下（内部改动放 ### 内部）`,
+      });
+    } else if (!ENTRY_CATEGORIES.includes(category)) {
+      warnings.push({
+        line: entry.line,
+        message: `${where}：分类「${entry.category}」不在更新/优化/修复/内部之内，应用内更新提示会按原小标题展示`,
+      });
+    }
     const platforms = Array.isArray(entry.platforms) ? entry.platforms : [];
     if (platforms.length === 0) {
       errors.push({ line: entry.line, message: `${where}：缺少平台影响标记（格式 [平台影响: A|B|C|D|E|F|none]）` });
@@ -182,7 +226,7 @@ export function renderVersionSection({ version, date, summary, groups, android }
     out.push('', '### 其他');
   } else {
     for (const group of groupList) {
-      out.push('', `### ${group.category || '其他'}`);
+      out.push('', `### ${normalizeCategory(group.category || '其他') || '其他'}`);
       const items = [];
       for (const entry of group.entries || []) {
         const line = normalizeEntryLine(entry);
@@ -277,15 +321,23 @@ export function renderChangelog({ text, version, date, summary, androidBase }) {
     throw new Error(`未发布区条目格式有误：\n${errors.map((error) => `  - ${error.message}`).join('\n')}`);
   }
 
+  // 分类先归一（新增→更新、体验优化→优化…）再分组，历史标题与规范标题不会拆成两段；
+  // 输出顺序固定为更新 → 优化 → 修复 → 内部，应用内更新提示据此稳定展示。
   const groups = [];
   for (const entry of entries) {
-    let group = groups.find((item) => item.category === entry.category);
+    const category = normalizeCategory(entry.category);
+    let group = groups.find((item) => item.category === category);
     if (!group) {
-      group = { category: entry.category, entries: [] };
+      group = { category, entries: [] };
       groups.push(group);
     }
     group.entries.push(entry);
   }
+  groups.sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a.category);
+    const bi = CATEGORY_ORDER.indexOf(b.category);
+    return (ai === -1 ? CATEGORY_ORDER.length : ai) - (bi === -1 ? CATEGORY_ORDER.length : bi);
+  });
 
   const baseVersion = androidBase ? String(androidBase).replace(/^v/, '') : parsed.released.length > 0 ? parsed.released[0].version : null;
   const android = baseVersion ? androidCumulative({ text, baseVersion, currentVersion: versionText }) : null;

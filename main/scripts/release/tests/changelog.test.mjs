@@ -98,6 +98,8 @@ test('validateEntries：无标记/非法标记/空描述报错，none 与其他�
     [
       '## 未发布',
       '',
+      '### 更新',
+      '',
       '- 没有平台标记的条目',
       '- [平台影响: Z] 非法分类',
       '- [平台影响: A F] 空格分隔多标记',
@@ -115,7 +117,7 @@ test('validateEntries：无标记/非法标记/空描述报错，none 与其他�
   assert.match(messages, /多个平台标记必须用英文逗号分隔/);
   assert.match(messages, /条目描述为空/);
   assert.equal(validation.errors.length, 4);
-  assert.deepEqual(validation.warnings.map((warning) => warning.line), [7]);
+  assert.deepEqual(validation.warnings.map((warning) => warning.line), [9]);
 });
 
 test('validateEntries：合法条目无错误无警告', () => {
@@ -123,6 +125,53 @@ test('validateEntries：合法条目无错误无警告', () => {
   const validation = validateEntries(parsed.unreleased.entries);
   assert.deepEqual(validation.errors, []);
   assert.deepEqual(validation.warnings, []);
+});
+
+test('validateEntries：未分类条目报错，历史分类名自动归并到更新/优化/修复', () => {
+  const unclassified = parseChangelog(
+    ['## 未发布', '', '- [平台影响: B] 没有分类的条目', '', '## v1.0.0（2026-01-01）', ''].join('\n'),
+  );
+  const bad = validateEntries(unclassified.unreleased.entries);
+  assert.ok(bad.errors.some((error) => /未归入分类/.test(error.message)));
+
+  const legacy = parseChangelog(
+    ['## 未发布', '', '### 体验优化', '', '- [平台影响: B] 表格去斑马纹', '', '## v1.0.0（2026-01-01）', ''].join('\n'),
+  );
+  const good = validateEntries(legacy.unreleased.entries);
+  assert.deepEqual(good.errors, []);
+  assert.deepEqual(good.warnings, []);
+});
+
+test('renderChangelog：版本段落按更新 → 优化 → 修复 → 内部排序，历史分类名归一', () => {
+  const text = [
+    '# 更新日志',
+    '',
+    '## 未发布',
+    '',
+    '### 修复',
+    '',
+    '- [平台影响: B] 修复窄窗溢出',
+    '',
+    '### 新增',
+    '',
+    '- [平台影响: B] 首页看板铺满',
+    '',
+    '### 体验优化',
+    '',
+    '- [平台影响: B] 图谱打开提速',
+    '',
+    '### 内部',
+    '',
+    '- [平台影响: none] 清理构建脚本',
+    '',
+    '## v1.0.0（2026-01-01）',
+    '',
+    '- [平台影响: B] 旧版本',
+    '',
+  ].join('\n');
+  const result = renderChangelog({ text, version: '1.1.0', date: '2026-11-22' });
+  const headings = result.section.split('\n').filter((line) => line.startsWith('### '));
+  assert.deepEqual(headings, ['### 更新', '### 优化', '### 修复', '### 内部']);
 });
 
 test('renderVersionSection：分组、摘要与安卓累积小标题', () => {
@@ -137,7 +186,7 @@ test('renderVersionSection：分组、摘要与安卓累积小标题', () => {
   const lines = section.split('\n');
   assert.equal(lines[0], '## v1.5.11（2026-11-09）');
   assert.equal(lines[2], '**本版主线**');
-  assert.ok(lines.includes('### 新增'));
+  assert.ok(lines.includes('### 更新'));
   assert.ok(lines.includes('- [平台影响: B] 设置页支持导出诊断包'));
   assert.ok(lines.includes('**安卓端：自 v1.5.10 以来的累计更新**'));
   assert.ok(lines.includes('- 本版本包含自 v1.5.10 以来全部安卓相关更新（见上）。'));
@@ -167,7 +216,7 @@ test('renderChangelog：新段落放在未发布区之后、旧版本之前，�
   assert.ok(!reparsed.unreleased.rawLines.some((line) => line.includes('设置页支持导出诊断包')));
   assert.equal(result.movedEntries.length, 3);
   assert.equal(reparsed.released[0].version, '1.5.11');
-  assert.match(result.section, /### 新增/);
+  assert.match(result.section, /### 更新/);
   assert.match(result.section, /### 修复/);
   assert.match(result.section, /本版本包含自 v1\.5\.10 以来全部安卓相关更新（见上）。/);
 });

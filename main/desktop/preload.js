@@ -87,7 +87,8 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // prebuilt=安装器预构建环境包安装（没有 .git / Git，更新方式是用新版安装器覆盖安装）
   getDesktopEnv: () => ipcRenderer.invoke('desktop-get-env'),
   // 检查源码更新：fetch 远端并比对当前分支落后多少提交
-  // { ok, branch, behind, upToDate, localCommit, localDate, dirty, remoteCommit, remoteDate, changes }
+  // { ok, branch, behind, upToDate, localCommit, localDate, dirty, remoteCommit, remoteDate,
+  //   changes, changeNotes }（changeNotes = 远端 CHANGELOG 增量条目的迷你 Markdown，按更新/优化/修复分组）
   desktopSourceUpdateCheck: () => ipcRenderer.invoke('desktop-source-update-check'),
   // 增量拉取源码并重建：主进程 pull 后拉起构建脚本，应用自动退出并由新实例接管
   // （依赖清单真变化时自动装依赖，不再要求去终端跑脚本）
@@ -100,7 +101,7 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   desktopSourceUninstall: (deleteData) => ipcRenderer.invoke('desktop-source-uninstall', deleteData),
   // ---------- 源码模式自动检查（启动延迟首查 + 每 8 小时复查；只提示，不自动升级） ----------
   // 查询状态：{ enabled, phase: idle|checking|up-to-date|behind|failed, behind,
-  //             localCommit, remoteCommit, changes, error, checkedAt }
+  //             localCommit, remoteCommit, changes, changeNotes, error, checkedAt }
   desktopSourceAutoState: () => ipcRenderer.invoke('desktop-source-auto-state'),
   // 开关自动检查（持久化到 config.json；开启后立即触发一次检查）
   desktopSourceSetAuto: (enabled) => ipcRenderer.invoke('desktop-source-set-auto', enabled),
