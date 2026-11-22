@@ -268,7 +268,7 @@ import { createGraphFrame } from '../lib/graphFrame';
 import { createRequestSeq } from '../lib/requestSeq';
 import { createGraphClock, stepGraphForces, type ForceLink } from '../lib/graphPhysics';
 import { acceptGraphLabel, createLabelGrid, type GraphLabelBox } from '../lib/graphLabels';
-import { clearGraphPositions, getGraphPosition, hasGraphPosition, rememberGraphPosition } from '../lib/graphPositions';
+import { clearGraphPositions, getGraphPosition, rememberGraphPosition } from '../lib/graphPositions';
 
 /* ────────────────────────── 常量 ────────────────────────── */
 

@@ -36,7 +36,7 @@ after(async () => {
 });
 
 test('重放历史 move：目标已占用时不得覆盖目标正文，也不得留下幽灵行', async () => {
-  const { createPage, writePage, readPage, movePage, safeJoin } = await import('../lib/vault.js');
+  const { createPage, writePage, readPage, movePage } = await import('../lib/vault.js');
 
   const source = createPage('Wiki/概念', '重放源页');
   writePage(source.path, '# 重放源页\n\n旧路径的历史正文', {});

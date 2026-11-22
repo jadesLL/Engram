@@ -38,10 +38,6 @@ export const GRID_MAX_ROWS = 96;
  * 首页也会从一屏变成两屏。横向由正文宽度决定，纵向保持设计稿密度。
  */
 export const GRID_ROW_PITCH = 75;
-/** 旧版行高（兼容旧引用）；正式看板按可用宽度渲染正方形格子 */
-export const GRID_ROW_HEIGHT = 76;
-/** 默认渲染出来的行数（空看板的高度下限：别只剩一条缝） */
-export const GRID_ROWS_VISIBLE = 6;
 
 /** 卡片最小 / 最大格数（宽与高各自夹在这个区间） */
 export const GRID_MIN_W = 1;

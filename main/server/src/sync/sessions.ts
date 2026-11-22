@@ -9,7 +9,7 @@ import {
   type SyncedBoardPayload,
 } from '../assistant/boardCore.js';
 import { currentNodeId } from './store.js';
-import { deviceLabel, resolveOriginLabel, stampSessionOrigin } from './deviceLabel.js';
+import { deviceLabel, resolveOriginLabel } from './deviceLabel.js';
 
 // 设备名与来源名的实现在 deviceLabel.ts（叶子模块：assistant/repository 也要用它，
 // 反向依赖这里会成环）。这里转出，保持同步层既有调用方的导入路径不变。
@@ -543,10 +543,4 @@ export function mergeBoardPayload(payload: BoardPayload): boolean {
     str(payload.updatedAt) || now()
   );
   return true;
-}
-
-/** 本端这份看板是不是本机生成的（界面按 boardState().local 展示，这里留给排障/后续调用） */
-export function boardIsLocal(payload: BoardPayload | null): boolean {
-  if (!payload) return false;
-  return !payload.nodeId || payload.nodeId === currentNodeId();
 }

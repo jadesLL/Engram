@@ -235,7 +235,6 @@ import { useInboxStore } from '../stores/inbox';
 import { useSyncStore } from '../stores/sync';
 import {
   DEFAULT_LIMIT,
-  HOME_BOARD_COLUMNS,
   MAX_MODULES,
   MODULE_META,
   freshPagesOf,
@@ -265,7 +264,6 @@ import {
   canvasScale,
   canvasDelta,
   normalizePlace,
-  placeItem,
   usedRows,
   viewportColumns,
   viewportPlaces,

@@ -14,13 +14,6 @@ export interface EntitySections {
   timeline: string;
 }
 
-export interface EntitySynthesisSections {
-  id: string;
-  current: string;
-  related: string;
-  timeline: string;
-}
-
 function clean(value: string): string {
   return value.replace(/\r\n/g, '\n').trim();
 }

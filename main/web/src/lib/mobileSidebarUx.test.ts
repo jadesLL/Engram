@@ -19,7 +19,6 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const srcRoot = path.resolve(here, '..');
 const readSrc = (rel: string) => fs.readFileSync(path.resolve(srcRoot, rel), 'utf8');
-const read = (rel: string) => fs.readFileSync(path.resolve(srcRoot, '..', rel), 'utf8');
 
 /** 取媒体查询块（同文件其它测试的简易写法：本文件里都只有一层花括号） */
 function mediaBody(source: string, query: string): string {
@@ -72,7 +71,7 @@ test('分区 ⋯ 动作面板复用桌面同一批动作：排序 / 导出 / 新
   const sidebar = readSrc('components/Sidebar.vue');
   assert.match(sidebar, /function openGroupMenu\(event: MouseEvent, g: any\)/, '缺概念/实体/归档的触屏动作面板');
   assert.match(sidebar, /function openRawSectionMenu\(event: MouseEvent\)/, '缺原始资料的触屏动作面板');
-  assert.match(sidebar, /function sortMenuItemsFor\(target: string, label: string\)/, '动作面板没有复用排序选项');
+  assert.match(sidebar, /function sortMenuItemsFor\(target: string\)/, '动作面板没有复用排序选项');
   // 动作面板是 grid（图标 | 文字 | 附加）：排序项必须带 icon，否则文字落进 20px 图标列被裁成「按..」
   assert.match(sidebar, /icon: option\.value === current \? 'check' : 'sort'/, '排序项没有图标：动作面板里文字会被裁成「按..」');
   assert.match(sidebar, /exportAllPages\(g\)/, '动作面板没有「导出全部页面」');

@@ -52,8 +52,3 @@ export function isAppWrite(absPath: string): boolean {
     return false;
   }
 }
-
-/** 测试用：清空登记表 */
-export function resetAppWrites(): void {
-  writes.clear();
-}

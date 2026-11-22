@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url';
 // 这些约定光靠单测测不出来，所以直接盯源码结构。
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const webSrc = path.resolve(here, '..');
 const mainRoot = path.resolve(here, '..', '..', '..');
 const read = (rel: string) => fs.readFileSync(path.join(mainRoot, rel), 'utf8');
 

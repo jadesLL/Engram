@@ -321,7 +321,7 @@
         <template v-if="voiceStage === 'recording'">
           <span class="voice-hud-time">{{ voiceClock }}</span>
           <span class="voice-hud-level" aria-hidden="true">
-            <i v-for="(bar, index) in VOICE_HUD_BARS" :key="index" :style="{ height: voiceBarHeight(index) }" />
+            <i v-for="(_bar, index) in VOICE_HUD_BARS" :key="index" :style="{ height: voiceBarHeight(index) }" />
           </span>
           <span class="voice-hud-hint">{{ voiceDeviceLabel }}</span>
           <button type="button" class="voice-btn primary" @click="stopVoiceInput">停止</button>
@@ -470,7 +470,6 @@ import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
   applyImageWidths,
-  imageWidthFromSrc,
   isLocalMediaImageSrc,
   withImageWidth,
 } from '../lib/imageWidth';
@@ -1780,14 +1779,6 @@ function imageCanResize(image: HTMLImageElement | null): image is HTMLImageEleme
 function imageColumnWidth(image: HTMLImageElement): number {
   const block = image.closest<HTMLElement>('p, li, blockquote, td, th') || editorContentRoot();
   return Math.round(block?.clientWidth || 0);
-}
-
-/** 不写宽度时的展示宽度：原图与正文列宽取小（和 CSS max-width:100% 同一口径） */
-function imageAutoWidth(image: HTMLImageElement): number {
-  const column = imageColumnWidth(image);
-  const natural = image.naturalWidth || 0;
-  if (!column) return natural || Math.round(image.getBoundingClientRect().width) || 1;
-  return Math.min(natural || column, column);
 }
 
 function imageResizeBounds(image: HTMLImageElement) {

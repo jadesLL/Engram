@@ -394,8 +394,3 @@ export function stopVaultWatch(): void {
   watcher?.close();
   watcher = null;
 }
-
-/** 监听是否在跑（自检用） */
-export function vaultWatchActive(): boolean {
-  return watcher !== null;
-}

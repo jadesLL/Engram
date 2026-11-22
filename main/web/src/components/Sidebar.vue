@@ -1749,7 +1749,7 @@ function onRowDragOver(e: DragEvent, item: any) {
   assetDropTarget.value = parent;
 }
 
-function onRowDragLeave(e: DragEvent, item: any) {
+function onRowDragLeave(_e: DragEvent, item: any) {
   const parent = assetDropParent(item);
   if (parent && assetDropTarget.value === parent) assetDropTarget.value = '';
 }
@@ -1868,7 +1868,7 @@ function fullItemTitle(col: any, item: any) {
 }
 
 /** 排序项（触屏动作面板）：当前项用「✓ 」标出来，点一下立即生效 */
-function sortMenuItemsFor(target: string, label: string): ContextMenuItem[] {
+function sortMenuItemsFor(target: string): ContextMenuItem[] {
   const current = target === 'files' ? sortFiles.value : groupSort.value[target] || 'name-asc';
   return SORT_OPTIONS.map((option) => ({
     id: `sort:${target}:${option.value}`,
@@ -1893,7 +1893,7 @@ function openGroupMenu(event: MouseEvent, g: any) {
   openContextMenu({
     ...anchor,
     items: [
-      ...sortMenuItemsFor(g.key, g.label),
+      ...sortMenuItemsFor(g.key),
       {
         id: 'export',
         label: `导出全部${g.label}`,
@@ -1912,7 +1912,7 @@ function openRawSectionMenu(event: MouseEvent) {
   openContextMenu({
     ...anchor,
     items: [
-      ...sortMenuItemsFor('files', '原始资料'),
+      ...sortMenuItemsFor('files'),
       {
         id: 'new-md',
         label: '新建 Markdown 文件',

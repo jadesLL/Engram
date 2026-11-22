@@ -22,10 +22,8 @@ import { isInboxPath } from '../lib/brainPaths.js';
 import {
   DEFAULT_RAW_DIR,
   isRawPath,
-  isRawSectionDir,
   RAW_SECTIONS,
   rawSectionByKey,
-  type RawSectionKey,
 } from '../lib/rawSections.js';
 
 /** 可提取文本入索引的 Office 格式 */

@@ -863,23 +863,3 @@ export function describeProposal(check: EntityNameCheck): string {
     + '同意后跑 `engram names answer ' + check.id + ' --allow`，由服务端执行改名'
     + '（保持页面 ID、双链重定向、自动记日志）；不同意就跑 `engram names answer ' + check.id + ' --deny`，标题保持材料写法。';
 }
-
-/** `engram names answer` 的返回文本（CLI 共用） */
-export function describeEntityNameAnswer(check: EntityNameCheck): string {
-  const head = `已按用户答复登记 #${check.id}：「${check.entity}」`;
-  switch (check.outcome) {
-    case 'query_denied':
-      return `${head}——用户不允许联网查询。标题保持材料写法，名称口径标注「全称待确认」与候选依据，`
-        + '继续下一份资料，不要再为这个名称问用户；收尾用 `engram names list --status unresolved` 列出它。';
-    case 'kept_material':
-      return `${head}——用户不同意改用全名。标题保持材料写法，并在名称口径记录候选全名`
-        + `（${check.fullName || '未记录'}）与出处，继续作业，不要反复请示。`;
-    case 'renamed':
-      return `${head}——用户同意改名，服务端已把页面标题改为「${check.fullName}」`
-        + '（保持页面 ID、引用双链已重定向、操作日志已记录）。'
-        + '接着把该页「名称口径」章节补全（全称 / 英文名 / 简称别名 / 易混淆的同名公司），再继续下一份。';
-    default:
-      return `${head}——用户允许联网查询（#${check.id}）。现在用你自己的联网检索查企查查/天眼查拿工商登记全名，`
-        + '查到后跑 `engram names propose <id> --full-name <全名> --source <出处>` 回填；查不到就不传 --full-name，按「未找到全名」办结。';
-  }
-}

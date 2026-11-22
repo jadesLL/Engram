@@ -3,7 +3,6 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from './auth.js';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { ensureVideoProviderSeeded } from '../assistant/videoModelDefaults.js';
 import { safeJoin, notifySyncChange } from '../lib/vault.js';

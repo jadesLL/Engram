@@ -194,11 +194,6 @@ export function isModuleKind(value: unknown): value is ModuleKind {
   return typeof value === 'string' && (MODULE_KINDS as readonly string[]).includes(value);
 }
 
-/** 是不是合法的整页列数（v3 起固定 GRID_COLS 列，旧值一律读成它） */
-export function isBoardColumns(value: unknown): value is BoardColumns {
-  return Number(value) === GRID_COLS;
-}
-
 /** 任意输入 → 合法列数（旧数据的 2/3/4/5/6 也会归一到当前列数） */
 export function normalizeColumns(_value?: unknown): BoardColumns {
   return DEFAULT_BOARD_COLUMNS;

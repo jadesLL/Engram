@@ -98,13 +98,6 @@ const BASELINE: ReadonlyArray<readonly [string, number, number]> = [
   ['views/TasksView.vue', 3, 0],
 ];
 
-/** 基线外仍保留的字面值及原因（评审提示，不参与断言） */
-const ALLOWED_NOTES: ReadonlyArray<readonly [string, string]> = [
-  ['views/GraphView.vue', 'TYPE_COLOR 分组色板是功能性数据色（JS 常量，不进 <style>），有注释约定'],
-  ['styles/claude-code.css', '全站令牌定义文件本体（--cc-*），hex 是唯一定义源'],
-  ['styles/main.css', '语义令牌定义文件本体，hex 是唯一定义源'],
-];
-
 function walkVueFiles(dir: string): string[] {
   const out: string[] = [];
   for (const name of fs.readdirSync(dir)) {

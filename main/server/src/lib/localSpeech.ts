@@ -184,8 +184,3 @@ export async function transcribeLocalWav(wav: Buffer): Promise<{ text: string; c
     removeTempDir(dir);
   }
 }
-
-/** 测试用：清掉探测缓存 */
-export function resetLocalSpeechProbe(): void {
-  probeCache = null;
-}

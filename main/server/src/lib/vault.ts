@@ -155,17 +155,6 @@ export function normalizeFrontmatter(data: Record<string, any>): Record<string, 
   return normalized;
 }
 
-/** 读取页面 frontmatter，并返回规范化字段。 */
-export function readPageMeta(relPath: string): Record<string, any> {
-  try {
-    const abs = safeJoin(relPath);
-    if (!fs.existsSync(abs)) return {};
-    return normalizeFrontmatter(matter(fs.readFileSync(abs, 'utf8')).data as Record<string, any>);
-  } catch {
-    return {};
-  }
-}
-
 /** 标题提取：frontmatter 标题 > 文件名（不用 H1，H1 属于正文内容） */
 function extractTitle(data: Record<string, any>, _content: string, fallback: string): string {
   const fmTitle = data['标题'] ?? data.title;

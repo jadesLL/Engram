@@ -127,8 +127,3 @@ export function useDismissOnOutside(options: DismissOnOutsideOptions): void {
     unregister(id);
   });
 }
-
-/** 供测试与调试：当前登记的浮层层数 */
-export function overlayLayerCount(): number {
-  return layers.length;
-}

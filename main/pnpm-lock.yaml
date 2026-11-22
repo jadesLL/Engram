@@ -43,9 +43,6 @@ importers:
       '@fastify/multipart':
         specifier: ^9.0.1
         version: 9.4.0
-      '@fastify/static':
-        specifier: ^8.0.4
-        version: 8.3.0
       acme-client:
         specifier: ^5.4.0
         version: 5.4.0
@@ -83,15 +80,9 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
-      '@types/bcryptjs':
-        specifier: ^2.4.6
-        version: 2.4.6
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
-      '@types/jszip':
-        specifier: ^3.4.1
-        version: 3.4.1
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
@@ -125,12 +116,6 @@ importers:
       vditor:
         specifier: ^3.10.8
         version: 3.11.2
-      vis-data:
-        specifier: ^7.1.9
-        version: 7.1.10(uuid@10.0.0)(vis-util@5.0.7(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0))
-      vis-network:
-        specifier: ^9.1.9
-        version: 9.1.13(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0)(keycharm@0.4.0)(uuid@10.0.0)(vis-data@7.1.10(uuid@10.0.0)(vis-util@5.0.7(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0)))(vis-util@5.0.7(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0))
       vue:
         specifier: ^3.5.13
         version: 3.5.40(typescript@5.7.3)

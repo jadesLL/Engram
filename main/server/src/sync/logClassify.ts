@@ -27,12 +27,6 @@ export const OUTCOME_LABELS: Record<SyncLogOutcome, string> = {
   failed: '失败',
 };
 
-export const OUTCOME_HINTS: Record<SyncLogOutcome, string> = {
-  changed: '同步成功，而且内容真的变了',
-  none: '对账 / 检查 / 连接这类，跑完了两边一致，什么都没动',
-  failed: '警告与错误，需要处理',
-};
-
 /**
  * 「会带来内容变化」的事件。
  *

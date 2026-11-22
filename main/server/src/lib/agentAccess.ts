@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { zcodeEngineCandidates } from './zcodeConfig.js';
-import { builtinAgentSkillRoot, resolveCliRuntime, writeCliShim, type CliRuntime } from './cliShim.js';
+import { resolveCliRuntime, writeCliShim, type CliRuntime } from './cliShim.js';
 import { CUSTOMER_RESEARCH_SKILL_NAME, ENGRAM_SKILL_NAME } from '../content/agentSkill.js';
 import {
   agentSkillInstalled,
@@ -348,12 +348,4 @@ export function unregisterAgentAccess(
   const removed = roots.flatMap((root) => removeAgentSkills(root));
   const cleaned = cleanupLegacyAgentConfig(def.id, home, env);
   return { client: agentClientStatus(def.id, home, options), removed, cleaned };
-}
-
-/**
- * 内置 Agent（dsh）的 skill 根：ensureLocalAgentCli 与设置页检测共用同一约定。
- * 单独导出便于测试与文档引用。
- */
-export function dshSkillRoot(home = os.homedir(), env: NodeJS.ProcessEnv = process.env): string {
-  return builtinAgentSkillRoot(home, env);
 }

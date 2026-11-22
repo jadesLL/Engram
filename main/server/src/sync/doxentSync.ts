@@ -275,10 +275,6 @@ export function mirrorDoxentSession(force = false): boolean {
   return defaultSync.mirror(force);
 }
 
-export function applyDoxentSessionPreference(): void {
-  defaultSync.apply();
-}
-
 export function clearDoxentSessionPreference(): void {
   defaultSync.clearPreference();
 }
@@ -323,16 +319,4 @@ export function initializeDoxentSync(): void {
     intervalTimer.unref?.();
   }, START_DELAY_MS);
   startTimer.unref?.();
-}
-
-/** 停掉定时器（测试收尾 / 进程退出用） */
-export function stopDoxentSync(): void {
-  if (startTimer) {
-    clearTimeout(startTimer);
-    startTimer = null;
-  }
-  if (intervalTimer) {
-    clearInterval(intervalTimer);
-    intervalTimer = null;
-  }
 }

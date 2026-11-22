@@ -11,8 +11,6 @@
 
 export const MODEL_INPUT_MODALITIES = ['text', 'image'] as const;
 
-export type ModelInputModality = (typeof MODEL_INPUT_MODALITIES)[number];
-
 /** 官方 DeepSeek 模型目录的默认输入能力：文本 + 图片 */
 export const DEFAULT_OFFICIAL_INPUT_MODALITIES: string[] = ['text', 'image'];
 
