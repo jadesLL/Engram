@@ -78,14 +78,14 @@ test('提示与重置：右上角提示有百分比与重置按钮，1.5 秒后�
   assert.match(source, /export function resetUiZoom\(\) \{\s*applyUiZoom\(1\);/, '重置必须回到 100%');
 });
 
-test('桌面标题栏跟随缩放反缩放（原生窗口按钮是固定 36 物理像素）', () => {
+test('桌面标题栏跟随缩放反缩放（原生窗口按钮是固定 46 物理像素）', () => {
   const source = read('lib/uiZoom.ts');
   assert.match(source, /--ui-zoom-inverse/, '没有写入标题栏反缩放变量');
   assert.match(source, /classList\.add\('ui-zoomed'\)/, '没有给 desktop-frame 加 ui-zoomed');
   assert.match(source, /classList\.remove\('ui-zoomed'\)/, '回到 100% 没有移除 ui-zoomed');
 
   const css = read('styles/main.css');
-  assert.match(css, /html\.desktop-frame\.ui-zoomed\s*\{[^}]*--win-titlebar-h:\s*calc\(36px \* var\(--ui-zoom-inverse/, '内容留白没有跟着反缩放');
+  assert.match(css, /html\.desktop-frame\.ui-zoomed\s*\{[^}]*--win-titlebar-h:\s*calc\(46px \* var\(--ui-zoom-inverse/, '内容留白没有跟着反缩放');
   assert.match(css, /html\.desktop-frame\.ui-zoomed \.win-titlebar\s*\{[^}]*zoom:\s*var\(--ui-zoom-inverse/, '融合标题栏没有反缩放，会和原生按钮错位');
 });
 
