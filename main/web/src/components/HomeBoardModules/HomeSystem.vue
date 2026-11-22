@@ -18,7 +18,7 @@
         type="button"
         class="system-row"
         :class="{ danger: jobs.tone === 'danger' }"
-        @click="$emit('go', '/settings?section=agent')"
+        @click="openJobsDrawer()"
       >
         <span class="system-k">后台任务</span>
         <span class="system-v">{{ jobs.value }}</span>
@@ -61,6 +61,7 @@
 import { computed, onMounted, onUnmounted } from 'vue';
 import { APP_VERSION } from '../../version.ts';
 import { useAppStore } from '../../stores/app';
+import { openJobsDrawer } from '../../lib/jobsDrawer';
 import { useSyncStore } from '../../stores/sync';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { formatCount } from '../../lib/homeBoardData.ts';
