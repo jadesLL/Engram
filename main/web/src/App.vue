@@ -24,10 +24,10 @@
       <span class="win-titlebar-date">{{ dateLabel }}</span>
       <span class="win-titlebar-spacer"></span>
       <span class="win-titlebar-actions">
-        <button class="win-titlebar-action" type="button" title="搜索 (Ctrl+K)" aria-label="搜索 (Ctrl+K)" @click="openSearch">
+        <button class="win-titlebar-action" type="button" v-tooltip.bottom="'搜索 (Ctrl+K)'" aria-label="搜索 (Ctrl+K)" @click="openSearch">
           <Icon name="search" :size="15" />
         </button>
-        <button class="win-titlebar-action" type="button" title="记一条灵感 (Ctrl+N)" aria-label="记一条灵感 (Ctrl+N)" @click="quickNote">
+        <button class="win-titlebar-action" type="button" v-tooltip.bottom="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感 (Ctrl+N)" @click="quickNote">
           <Icon name="plus" :size="15" />
         </button>
       </span>
@@ -36,7 +36,7 @@
         class="win-titlebar-sync"
         :class="`tone-${syncChip.tone}`"
         type="button"
-        :title="syncChip.tip"
+        v-tooltip.bottom="syncChip.tip"
         :aria-label="syncChip.aria"
         @click="openSyncSettings"
       >

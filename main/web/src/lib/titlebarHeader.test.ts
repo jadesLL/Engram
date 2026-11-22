@@ -99,3 +99,21 @@ test('App 标题栏接线：品牌副行、当前页、同步胶囊、原生按�
   assert.match(css, /padding: 0 152px 0 14px;/, '没有给右侧原生窗口按钮留出安全区');
   assert.match(read('stores/app.ts'), /--win-titlebar-bg/, '原生按钮区底色没有跟标头同色');
 });
+
+test('更新面板贴标题栏右缘展开，不越过窗口右边', () => {
+  // 图标右侧是 152px 原生窗口按钮区：面板若左对齐，364px 宽会伸出窗口右缘，「立即更新」被裁掉。
+  const notice = read('components/UpdateNotice.vue');
+  const rule = notice.match(/\.update-notice-titlebar \.update-notice-panel \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rule, /right:\s*0;/, '标题栏更新面板没有右对齐，会越过窗口右缘被裁掉');
+  assert.match(rule, /left:\s*auto;/, '标题栏更新面板仍带 left 定位，右对齐不生效');
+});
+
+test('标题栏悬停提示走应用内气泡，不用系统原生 title', () => {
+  // 原生 title 是系统画的气泡：样式不受应用主题控制，也不参与视口避让（贴右缘/顶部时会被窗口裁）。
+  const app = read('App.vue');
+  const titlebar = app.slice(app.indexOf('class="win-titlebar"'), app.indexOf('<router-view'));
+  assert.match(titlebar, /class="win-titlebar-action"[^>]*v-tooltip\.bottom=/, '搜索 / 记灵感按钮没有接应用内提示');
+  assert.match(titlebar, /class="win-titlebar-sync"[\s\S]{0,260}v-tooltip\.bottom="syncChip\.tip"/, '同步胶囊没有接应用内提示');
+  assert.equal((titlebar.match(/v-tooltip\.bottom/g) || []).length, 3, '标题栏应有三处应用内提示（搜索 / 记灵感 / 同步胶囊）');
+  assert.doesNotMatch(titlebar, /\stitle="/, '标题栏又出现原生 title 提示（不受主题控制、不做避让）');
+});
