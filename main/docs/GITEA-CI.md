@@ -7,7 +7,7 @@
 ## 日常工作流（总纲）
 
 ```text
-开发（worktree）→ verify → **自动合并进 main** → 弹窗问用户：仅本地保留 / 推送 gitea / 推送并发版
+开发（worktree）→ verify → 提交后**自动推送功能分支** → **自动合并进 main** → 自动清理 → **自动推送 main**（推送全程不再询问；发版/部署才需要批准）
 →（合并时）新功能同步整合进根 README.md
 →（推送）git push gitea main：CI verify（build+typecheck+test）+ 构建推送主分支滚动镜像 :main
 →（发版准备，操作手册见 docs/RELEASE.md）node main/scripts/release/bump-version.mjs <版本> 一次改三处版本号
@@ -25,7 +25,7 @@
 **两条镜像通道**：`:latest`（+ 版本 tag）只在发版时由 release.yml 产出，是正式发版线；`:main` 由 ci.yml 在每次 main 推送后产出，是发版前的滚动测试通道（合 main 即更新，无需发版本号）。选择哪条由部署机在应用内「更新通道」配置决定，详见「应用内自更新」章节。
 
 **铁律**：
-- 功能验收通过后**自动合并进 main**（不再问是否合并，见根 [`AGENTS.md`](../../AGENTS.md) 规则 4/10）；**推送 gitea 与发版必须弹窗问用户**并拿到明确批准，未批准不推送、不 bump 版本号、不打 tag；用户选择暂不推送时允许本地暂时领先远端，下次任务前再确认补推。
+- 功能验收通过后**自动合并进 main**（不再问是否合并，见根 [`AGENTS.md`](../../AGENTS.md) 规则 4/10）；**推送 gitea 自动执行、不再弹窗询问**（2026-11-22 起：功能分支改完提交后即推分支，合并清理后即推 main）；发版才需要用户明确批准，未批准不 bump 版本号、不打 tag；推送失败时允许本地暂时领先远端，下次任务前补推。
 - **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
 - **版本 tag 与 :latest 只在发版时构建**（2026-08-20 起生效）：Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
 - **`:main` 滚动镜像由 ci.yml 在 main 推送时构建推送**（2026-09-11 起生效，与 verify 同一 job、verify 通过后执行）：供测试部署跟踪主分支最新代码，不带版本语义（身份看烤入的 `/app/GIT_SHA`）。它是独立 tag，不触碰版本 tag 与 `:latest`，故不与「版本 tag 只在发版构建」冲突。
@@ -37,6 +37,7 @@
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
+| 功能分支推送 | `git push gitea feat/<feature>` | ci.yml：verify（build+typecheck+test），不产镜像 |
 | 日常推送 | `git push gitea main` | ci.yml：verify（build+typecheck+test）+ 构建推送滚动镜像 `:main` |
 | 发版（tag 一步到位） | `bump-version.mjs <版本>` → 写 `## 未发布` 区 → `release-notes.mjs --render --write` → `verify-release.mjs --rehearse --strict` → `git push gitea main` → `git tag v<版本> && git push gitea v<版本>` | ci.yml 同时跑发版彩排；release.yml：版本/标签校验 → verify 门禁 + 脚本层门禁（宿主 node）→ 构建镜像并 smoke 后推 `:<版本>` + `:latest` → 自动构建 exe + APK → 组装 release-out + sha256 → 创建带附件的 Release（正文=CHANGELOG 段落 + 产物清单）→ 同步公开仓库 GitHub 同名 Release。三件套同一次运行产出 |
 | 补充修复（按需 dispatch） | Actions → Release → Run workflow：输入标签并勾选 `image`（补镜像）/ `binaries`（补 exe+APK）/ `offline_image`（离线 tar.gz）/ 填 `github_backfill`（公开仓库回填） | 只做对应一项：image 与 tag 路径同一套 build→smoke→push；binaries 重建并补挂 Release（Release 不存在时一并创建）；产物同时上传 Artifact（保留 7 天）。**不重推标签**；提前验证 main 最新代码用 `:main` 通道（应用内一键更新）或 BUILDING.md 本地构建 |

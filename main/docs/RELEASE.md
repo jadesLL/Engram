@@ -1,7 +1,7 @@
 # Engram 发版手册（RELEASE）
 
 > 本文是发版操作的唯一操作手册；流程设计背景与 DSH 对照见 [DSH 发版逻辑调研](.tmp-release-research/REPORT.md)（仓库外临时目录）与 [GITEA-CI](./GITEA-CI.md)。
-> 约定：所有命令在**仓库根**或 `main/` 下执行；脚本路径相对 `main/`。发版是显式动作，推送 gitea 与打 `v*` 标签都必须先拿到用户明确批准（见根 [`AGENTS.md`](../AGENTS.md) 规则 4/8/9）。
+> 约定：所有命令在**仓库根**或 `main/` 下执行；脚本路径相对 `main/`。发版是显式动作：日常推送 gitea 已自动化（见根 [`AGENTS.md`](../AGENTS.md) 规则 4，2026-11-22 起），但打 `v*` 标签发版仍必须先拿到用户明确批准（见根 [`AGENTS.md`](../AGENTS.md) 规则 4/8/9）。
 
 ## 0. 一页纸
 
