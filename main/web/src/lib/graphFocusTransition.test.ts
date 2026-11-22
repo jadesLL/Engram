@@ -40,7 +40,7 @@ test('图谱焦点：单击等待选中期间保留焦点，并尊重减少动�
   );
   assert.match(
     graph,
-    /const reducedMotion = \(\) => window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/,
+    /const motionQuery = window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\);[\s\S]{0,80}const reducedMotion = \(\) => motionQuery\.matches/,
     '没有尊重系统减少动态效果设置',
   );
 });
