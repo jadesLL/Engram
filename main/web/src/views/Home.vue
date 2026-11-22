@@ -188,7 +188,11 @@
     <!-- 内置 Agent 聊天抽屉：桌面端是右侧悬浮卡片（正文让出它的宽度，不遮内容），<840px 覆盖正文；
          开合动画 drawer-slide 与左侧栏同一套节奏，具体样式在 ChatDrawer 里 -->
     <transition name="drawer-slide">
-      <ChatDrawer v-if="app.chatDrawerOpen" :overlay="sidebarOverlay" />
+      <ChatDrawer
+        v-if="app.chatDrawerOpen"
+        :overlay="sidebarOverlay"
+        :dock-reserved-left="dockReservedLeft"
+      />
     </transition>
 
     <!-- 内置 Agent 最小化后的常驻状态：有轮次在跑时任何视图都看得到，点它回到对话 -->
@@ -382,6 +386,13 @@ import { syncStatusView } from '../lib/syncStatus';
 import { syncChannelView } from '../lib/syncChannel';
 import { windowSizeClassFor } from '../lib/windowSizeClass';
 import { registerBackHandler } from '../lib/androidBack';
+import {
+  CONTENT_RAIL_INSET,
+  CONTENT_SIDEBAR_INSET,
+  MIN_CONTENT_WITH_DOCK,
+  dockContentRoom,
+  preferredDrawerWidth,
+} from '../lib/chatDrawer';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
 import AgentStatusPill from '../components/AgentStatusPill.vue';
@@ -591,6 +602,59 @@ const sidebarWidth = ref(
 if (isTouchPointer() && sidebarWidth.value < DEFAULT_SIDEBAR) {
   sidebarWidth.value = DEFAULT_SIDEBAR;
 }
+
+/*
+ * 窄窗口三栏让位（2026-11-22）：图标栏 + 知识库栏 + 正文 + Agent 卡片放不下时，
+ * 正文保底 MIN_CONTENT_WITH_DOCK，由知识库栏临时收起；关掉 / 最小化 Agent（或窗口变宽）
+ * 后再自动放回。用户主动重开知识库栏时反过来收起 Agent——后打开的一方优先。
+ *
+ * 判据用「用户习惯的卡片宽度」（preferredDrawerWidth，不含正文保护上限）：否则卡片先
+ * 被上限压窄，会算出「三栏放得下」的假结论，侧栏永远不让位。
+ */
+const sidebarYieldedToDock = ref(false);
+const dockPreferredWidth = computed(() =>
+  preferredDrawerWidth(viewportWidth.value, app.chatDrawerWidth));
+/** 侧栏留着时正文还剩多宽 */
+const dockSidebarRoom = computed(() =>
+  dockContentRoom(
+    viewportWidth.value,
+    sidebarWidth.value + CONTENT_SIDEBAR_INSET,
+    dockPreferredWidth.value,
+  ));
+const sidebarFitsWithDock = computed(() => dockSidebarRoom.value >= MIN_CONTENT_WITH_DOCK);
+/**
+ * 这一帧侧栏是否必须让位。先用计算值给卡片算宽度（dockReservedLeft），状态在 post 阶段
+ * 落下——收起与正文让位落在同一帧，不会先闪一帧「正文被压扁」。
+ */
+const dockSqueezesSidebar = computed(() =>
+  chatDockOpen.value
+  && app.sidebarOpen
+  && !app.sidebarFull
+  && !sidebarFitsWithDock.value);
+/** 卡片宽度上限要扣掉的左侧占位：侧栏让位后只剩图标栏 */
+const dockReservedLeft = computed(() =>
+  app.sidebarOpen && !app.sidebarFull && !sidebarOverlay.value && !dockSqueezesSidebar.value
+    ? sidebarWidth.value + CONTENT_SIDEBAR_INSET
+    : CONTENT_RAIL_INSET);
+
+watch(
+  [dockSqueezesSidebar, chatDockOpen, () => app.sidebarOpen],
+  () => {
+    if (dockSqueezesSidebar.value) {
+      sidebarYieldedToDock.value = true;
+      app.sidebarOpen = false;
+      return;
+    }
+    if (!sidebarYieldedToDock.value || sidebarOverlay.value) return;
+    // 空间回来了（窗口变宽 / 卡片拖窄），或 Agent 已收起 / 转满窗：把原本开着的侧栏放回去
+    if (sidebarFitsWithDock.value || !app.chatDrawerOpen || app.chatDrawerMode === 'full') {
+      sidebarYieldedToDock.value = false;
+      app.sidebarOpen = true;
+    }
+  },
+  { flush: 'post' },
+);
+
 /** 是否正在拖侧栏宽度：拖动中不做几何过渡，见 startResize */
 const sidebarResizing = ref(false);
 
@@ -660,14 +724,27 @@ const isActive = (p: string) => route.path.startsWith(p);
  * 而 `.layout.sidebar-full .content { pointer-events: none }` 会让正文整块点不动。
  */
 function closeSidebar() {
+  // 用户主动收起：之后关掉 Agent 不要再把侧栏弹回来
+  sidebarYieldedToDock.value = false;
   if (app.sidebarFull) app.setSidebarFull(false);
   app.sidebarOpen = false;
 }
 
 /** rail 的侧栏开关：开着就关（连同满窗），关着就开 */
 function toggleSidebar() {
-  if (app.sidebarOpen) closeSidebar();
-  else app.sidebarOpen = true;
+  if (app.sidebarOpen) {
+    closeSidebar();
+    return;
+  }
+  /*
+   * 窄窗口里 Agent 卡片正开着、三栏放不下：后打开的一方优先——目录要回来，
+   * 先收起 Agent（会话与形态都保留，右下角胶囊可继续），否则又是一条被压扁的正文。
+   */
+  if (chatDockOpen.value && !sidebarFitsWithDock.value) {
+    app.minimizeChat();
+    sidebarYieldedToDock.value = false;
+  }
+  app.sidebarOpen = true;
 }
 
 /**
