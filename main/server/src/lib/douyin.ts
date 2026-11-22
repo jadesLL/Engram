@@ -84,15 +84,6 @@ function formatBytes(value: number): string {
   return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
 }
 
-function formatDuration(seconds: number): string {
-  const total = Math.max(0, Math.round(Number(seconds) || 0));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const rest = total % 60;
-  if (hours > 0) return hours + ' 小时 ' + minutes + ' 分 ' + rest + ' 秒';
-  return minutes + ' 分 ' + rest + ' 秒';
-}
-
 /** 带超时的 fetch：外层 signal 与内部超时任一触发都会中断请求 */
 async function fetchWithTimeout(
   fetchImpl: typeof fetch,
@@ -528,38 +519,4 @@ export async function chooseDouyinMedia(detail: DouyinVideoDetail, options: Douy
       formatBytes(maxBytes) + '：请换更短的视频，或在设置里调低清晰度/改用上传片段',
     'too-large'
   );
-}
-
-export interface DouyinApiMedia {
-  title: string;
-  author: string;
-  durationSec: number;
-  url: string;
-  bytes: number;
-  qualityLabel: string;
-  note: string;
-}
-
-/** 接口路径的完整准备：详情 → 选清晰度 → 返回可下载地址（不写盘） */
-export async function prepareDouyinApiMedia(awemeId: string, options: DouyinPickOptions = {}): Promise<DouyinApiMedia> {
-  options.onProgress?.('获取视频', '解析抖音接口（无需浏览器）');
-  const detail = await fetchDouyinDetail(awemeId, options);
-  options.onProgress?.(
-    '获取视频',
-    '已解析「' + detail.title + '」' + (detail.durationSec > 0 ? '（' + formatDuration(detail.durationSec) + '）' : '')
-  );
-  const chosen = await chooseDouyinMedia(detail, options);
-  options.onProgress?.(
-    '获取视频',
-    '已选择 ' + (chosen.qualityLabel || '默认清晰度') + (chosen.bytes > 0 ? '（约 ' + formatBytes(chosen.bytes) + '）' : '')
-  );
-  return {
-    title: detail.title,
-    author: detail.author,
-    durationSec: detail.durationSec,
-    url: chosen.url,
-    bytes: chosen.bytes,
-    qualityLabel: chosen.qualityLabel,
-    note: chosen.note,
-  };
 }

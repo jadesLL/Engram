@@ -376,12 +376,3 @@ export function insertAtPosition(token: string, content: string): InsertedPositi
     alreadyUsed: false,
   };
 }
-
-/** 只读查询（CLI 的帮助/测试用）：令牌是否仍可用 */
-export function positionTokenUsable(token: string): boolean {
-  const row = db.prepare(`SELECT used_at, created_at FROM assistant_positions WHERE token = ?`).get(token) as
-    | { used_at: string | null; created_at: string }
-    | undefined;
-  if (!row || row.used_at) return false;
-  return Date.now() - Date.parse(row.created_at) <= TOKEN_TTL_MS;
-}

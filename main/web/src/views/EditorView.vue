@@ -707,7 +707,6 @@ import {
   canReadClipboard,
   copyText,
   openContextMenu,
-  selectionInside,
   type ContextMenuItem,
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
@@ -733,7 +732,6 @@ import { emptyDistillState, probeIdeaDistill, useIdeaDistill } from '../lib/idea
 import { useTasksStore } from '../stores/tasks';
 import { useHomeBoardStore } from '../stores/homeBoard';
 import { ideaPagesOf, recentPagesOf } from '../lib/homeBoard.ts';
-import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { isComposingKey } from '../lib/ime';
 import { extractMarkdownOutline } from '../lib/outline';
 import {

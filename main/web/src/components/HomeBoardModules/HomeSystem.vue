@@ -81,7 +81,7 @@ interface JobsView extends SystemRowView {
   failed: number;
 }
 
-const props = defineProps<{
+defineProps<{
   counts: { concepts: number; entities: number; files: number };
   agentName: string;
 }>();

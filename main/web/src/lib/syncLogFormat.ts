@@ -16,7 +16,6 @@ export type SyncLogOutcome = 'changed' | 'none' | 'failed';
 /** 内容维度：按改动的文件归属分（原始资料 / 概念 / 实体 / 内置 Agent / 其他） */
 export type SyncLogContent = '原始资料' | '概念' | '实体' | '内置 Agent' | '其他';
 
-export const SYNC_LOG_OUTCOMES: SyncLogOutcome[] = ['changed', 'none', 'failed'];
 export const SYNC_LOG_CONTENTS: SyncLogContent[] = ['原始资料', '概念', '实体', '内置 Agent', '其他'];
 
 export const OUTCOME_LABELS: Record<SyncLogOutcome, string> = {
@@ -295,12 +294,6 @@ export function eventLabel(event: string): string {
 export function eventCategory(event: string): SyncEventCategory {
   return SYNC_EVENT_META[event]?.category || '其他';
 }
-
-export const SCOPE_LABELS: Record<SyncLogScope, string> = {
-  hub: '中枢',
-  member: '成员',
-  app: '配置',
-};
 
 /** 结构化字段的中文名：抽屉展开详情时按「字段 / 值」两列渲染 */
 const DATA_LABELS: Record<string, string> = {

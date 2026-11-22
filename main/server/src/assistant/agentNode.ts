@@ -250,8 +250,3 @@ export function ensureAgentNodeRuntime(options: AgentNodeOptions = {}): AgentNod
   cachedStatus = { ok: true, path: picked.path, source: picked.source, version: picked.version, error: '' };
   return cachedStatus;
 }
-
-/** 只读状态：未初始化时返回 ok=false 的占位（不触发探测） */
-export function currentAgentNodeStatus(): AgentNodeStatus {
-  return cachedStatus ?? { ok: false, path: '', source: 'none', version: '', error: '尚未初始化' };
-}

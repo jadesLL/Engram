@@ -1064,16 +1064,6 @@ export async function captureDouyinPost(
   throw new Error('抖音接口抓取失败（' + reason + '）。' + hints.join('；'));
 }
 
-/** 只要视频的旧入口（图文笔记会给出可操作提示）：保留给只处理视频的调用方 */
-export async function captureDouyinMedia(awemeId: string, options: CaptureDouyinOptions): Promise<PreparedVideo> {
-  const post = await captureDouyinPost(awemeId, options);
-  if (post.kind === 'images') {
-    throw new Error('这是抖音图文笔记：请在收集箱里按图文提炼，或改用视频链接/上传本地视频');
-  }
-  const video: PreparedVideo = post;
-  return video;
-}
-
 /** 接口路径的视频下载：详情已拿到时选清晰度 → 下载（不需要任何浏览器） */
 async function downloadDouyinVideo(
   detail: DouyinVideoDetail,

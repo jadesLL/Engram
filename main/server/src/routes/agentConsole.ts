@@ -158,7 +158,6 @@ function officialModels(view: any): Array<{ id: string; name: string; contextWin
 
 /** pi-ai 用户自己加的提供者（user 层优先，base 层兜底） */
 function customProvidersOf(view: any): Array<{ id: string; raw: any }> {
-  const value = viewValue(view);
   const base = view && typeof view.base === 'object' && view.base !== null ? view.base.providers : undefined;
   const user = view && typeof view.user === 'object' && view.user !== null ? view.user.providers : undefined;
   const merged: Record<string, any> = {
@@ -629,7 +628,6 @@ async function savePluginCard(origin: string, cardKey: string, body: any): Promi
       await mutateNamespace(origin, selectedNs, sectionOps, expectedRevisions[selectedNs] ?? viewRevision(selectedView));
     }
     if (apiKey) await consoleRpc.call(origin, 'credentials/set', { ref: keyRef, value: apiKey });
-    const webValue = viewValue(webView);
     const base = webView && typeof webView.base === 'object' && webView.base !== null ? webView.base : {};
     const selectionOps: any[] = [];
     for (const field of ['searchProvider', 'fetchProvider'] as const) {

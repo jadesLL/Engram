@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { ChatInboxFile } from '../stores/chat';
 // 测试由 node 内置类型擦除直接跑（web 包无额外测试框架），相对导入要带真实扩展名
 import {
   CHAT_ATTACHMENT_DIR,

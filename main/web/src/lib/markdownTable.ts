@@ -342,7 +342,7 @@ export function replaceTableBlock(markdown: string, block: TableBlock, table: Ma
 }
 
 /** 光标所在行对应的视觉行号：分隔行（第 2 行）按表头处理 */
-export function visualRowOfLine(block: TableBlock, lineIndex: number): number {
+export function visualRowOfLine(_block: TableBlock, lineIndex: number): number {
   return Math.max(0, lineIndex - 1);
 }
 

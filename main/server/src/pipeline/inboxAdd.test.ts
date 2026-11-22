@@ -173,7 +173,7 @@ test('越界路径被拒绝：.. 与目录结构异常', () => {
     );
   }
   for (const target of cases) {
-    assert.equal(fs.existsSync(path.join(BRAIN_DIR, '越界.md')), false);
+    assert.equal(fs.existsSync(path.join(BRAIN_DIR, '越界.md')), false, `不应写出文件：${target}`);
   }
 });
 

@@ -1,4 +1,4 @@
-import { db, getSetting, newId, now, setSetting } from './lib/db.js';
+import { db, getSetting, newId, now } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
 import { enqueuePagePipeline, saveIdeaDistillResult } from './jobQueue.js';
@@ -515,38 +515,6 @@ function resumePausedJobs(): { started: number; failed: number; errors: string[]
     started += resumed.changes;
   }
   return { started, failed, errors };
-}
-
-export function stopJobQueue(): { status: 'stopped'; stopped: number } {
-  setSetting(JOB_QUEUE_ENABLED_SETTING, '0');
-  const jobs = db.prepare(`SELECT * FROM jobs WHERE status IN ('pending','running') ORDER BY id`).all() as any[];
-  let stopped = 0;
-  for (const job of jobs) {
-    const updated = db.prepare(
-      `UPDATE jobs SET status='paused',stage='已停止',detail='',
-       cancel_requested=?,updated_at=?
-       WHERE id=? AND status=?`
-    ).run(job.status === 'running' ? 1 : 0, now(), job.id, job.status);
-    if (!updated.changes) continue;
-    stopped++;
-    if (job.status === 'running') activeExecutions.get(job.id)?.controller.abort();
-  }
-  return { status: 'stopped', stopped };
-}
-
-export function startJobQueue(): {
-  status: 'running';
-  started: number;
-  failed: number;
-  errors: string[];
-} {
-  setSetting(JOB_QUEUE_ENABLED_SETTING, '1');
-  const result = resumePausedJobs();
-  if (running) {
-    pollLane('default');
-    pollLane('document');
-  }
-  return { status: 'running', ...result };
 }
 
 function abortStaleJobs(): void {

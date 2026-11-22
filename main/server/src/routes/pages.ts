@@ -1,9 +1,8 @@
 import { FastifyInstance } from 'fastify';
-import fs from 'node:fs';
 import path from 'node:path';
 import { db } from '../lib/db.js';
 import {
-  readPage, writePage, createPage, movePage, safeJoin, reconcileMissingPages, pagePathTaken,
+  readPage, writePage, createPage, movePage, reconcileMissingPages, pagePathTaken,
 } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';

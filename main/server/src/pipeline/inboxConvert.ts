@@ -18,7 +18,6 @@ import { enqueuePagePipeline } from '../jobQueue.js';
 import { appendWikiLog } from './indexFile.js';
 import {
   INBOX_DERIVED_DIR,
-  INBOX_DIR,
   isInboxPath,
   stemOf,
 } from '../lib/brainPaths.js';
@@ -677,6 +676,3 @@ export function readDerivedMarkdown(relPath: string): { derivedPath: string; mar
   if (!derived) throw new InboxConvertError('这份文件还没有转换产物');
   return { derivedPath: derived, markdown: fs.readFileSync(safeJoin(derived), 'utf8') };
 }
-
-/** 收集箱根目录（界面提示用） */
-export const INBOX_ROOT = INBOX_DIR;

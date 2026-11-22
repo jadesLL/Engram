@@ -95,9 +95,6 @@ export const IDEA_STAGE_LABELS: Record<IdeaDistillStage, string> = {
   failed: '提炼失败',
 };
 
-/** 灵感页里用户手改并保存后顶掉服务端状态的文案（SPEC 第 5 节验收：改一改保存 →「已手动修改」） */
-export const IDEA_MANUAL_EDITED_LABEL = '已手动修改';
-
 export function ideaStageLabel(staged: string | null | undefined): string {
   const key = String(staged || 'unknown') as IdeaDistillStage;
   return IDEA_STAGE_LABELS[key] || IDEA_STAGE_LABELS.unknown;

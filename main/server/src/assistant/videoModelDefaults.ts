@@ -121,8 +121,3 @@ export async function ensureVideoProviderSeeded(origin: string | null): Promise<
     return { ok: false, seeded: false, skipped: false, error: errorText(error) };
   }
 }
-
-/** 仅供测试/诊断：清掉「已播种」标记（不清 dsh 配置） */
-export function resetVideoProviderSeedFlag(): void {
-  setSetting(SEEDED_SETTING, '');
-}

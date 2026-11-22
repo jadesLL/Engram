@@ -150,11 +150,6 @@ export function videoModelConfig(): VideoModelResolution {
   return resolveVideoModel(home, syncedVideoFallback());
 }
 
-/** 缺哪一项就点哪一项：面板与错误文案共用这一个判定 */
-export function videoConfigMissing(model?: ResolvedVideoModel): string[] {
-  return missingVideoModelFields(model ?? videoModelConfig().provider);
-}
-
 /** 能不能直接提炼：开关打开且 dsh 里模型与 Key 齐全 */
 export function videoConfigReady(config: VideoConfig = getVideoConfig(), model?: ResolvedVideoModel): boolean {
   if (!config.enabled) return false;

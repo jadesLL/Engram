@@ -265,7 +265,7 @@ const SINGLE_STACK_REASON: Record<AddressFamily, string> = {
 export function planAttempts(
   state: HostFamilyState,
   availability: { ipv6: boolean; ipv4: boolean },
-  config: DualStackConfig,
+  _config: DualStackConfig,
   options: { bodyless: boolean }
 ): PlannedAttempt[] {
   if (!availability.ipv4) return [{ family: 6, probe: false }];

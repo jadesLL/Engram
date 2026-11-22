@@ -191,14 +191,6 @@ export function scheduleSyncLogReload(delay = 250): void {
   }, delay);
 }
 
-export function resetSyncLogFilters(): void {
-  syncLogState.outcome = 'all';
-  syncLogState.content = 'all';
-  syncLogState.peer = '';
-  syncLogState.query = '';
-  void refreshSyncLog();
-}
-
 export function toggleSyncLogAutoRefresh(): void {
   syncLogState.autoRefresh = !syncLogState.autoRefresh;
   try {
