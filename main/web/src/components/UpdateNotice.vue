@@ -483,13 +483,15 @@ onUnmounted(() => {
 .update-notice-panel { position: absolute; top: 44px; right: 0; width: 364px; max-width: calc(100vw - 28px); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--card-bg); box-shadow: var(--shadow-dialog); overflow: hidden; }
 /*
  * 桌面端标题栏形态：入口不再是浮在正文上的固定层，而是 46px 页眉里紧挨同步胶囊的一枚绿色图标。
- * 面板锚在图标下方（左对齐）并落在页眉下缘（12+22+12=46），层级随标题栏（--z-chrome）
- * 盖住正文与抽屉；no-drag 保证整条拖拽区里按钮和面板仍可点。
+ * 面板锚在图标下方并落在页眉下缘（12+22+12=46），层级随标题栏（--z-chrome）盖住正文与抽屉；
+ * no-drag 保证整条拖拽区里按钮和面板仍可点。
+ * 必须右对齐：图标右侧还留着 152px 原生窗口按钮区，364px 宽的左对齐面板会冲出窗口右缘
+ * 把「立即更新」裁掉（用户 2026-11-22 截图报告），右对齐后面板挂在图标下方、贴窗口内缘。
  */
 .update-notice-titlebar { position: relative; top: auto; right: auto; z-index: auto; display: flex; align-items: center; -webkit-app-region: no-drag; }
 .update-notice-titlebar .update-notice-trigger { width: 22px; height: 22px; padding: 0; border-radius: var(--radius-control); border-color: var(--success); box-shadow: none; -webkit-app-region: no-drag; }
 .update-notice-titlebar .update-notice-trigger:hover { filter: brightness(1.08); }
-.update-notice-titlebar .update-notice-panel { top: calc(100% + 12px); left: 0; right: auto; -webkit-app-region: no-drag; }
+.update-notice-titlebar .update-notice-panel { top: calc(100% + 12px); right: 0; left: auto; -webkit-app-region: no-drag; }
 .update-notice-head { display: flex; gap: 11px; align-items: flex-start; padding: 18px 18px 12px; }
 .update-notice-symbol { flex: none; width: 34px; height: 34px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); border-radius: 9px; }
 .update-notice-heading { flex: 1; min-width: 0; display: grid; gap: 3px; }
