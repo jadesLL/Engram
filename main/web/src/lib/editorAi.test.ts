@@ -74,6 +74,22 @@ test('AI 请求走 /api/editor/ai，关闭对话框会 abort', () => {
   assert.match(editorSource, /requestEditorAi\(/, '编辑器没有调用 AI 接口');
   assert.match(editorSource, /new AbortController\(\)/, '请求不可取消');
   assert.match(editorSource, /aiAbort\.abort\(\)/, '关闭时没有取消请求');
+  assert.match(editorSource, /inlineInsertAbort\.abort\(\)/, '收起指令行时没有取消请求');
   const lib = fs.readFileSync(path.resolve(here, 'editorAi.ts'), 'utf8');
   assert.match(lib, /'\/api\/editor\/ai'/, '前端契约没指向 /api/editor/ai');
+});
+
+test('插入改成光标处的终端指令行，不再打开居中对话框', () => {
+  const insertFn = editorSource.match(/function openAiInsert\(\) \{([\s\S]*?)\n\}/);
+  assert.ok(insertFn, '找不到 openAiInsert');
+  assert.match(insertFn[1], /openInlineInsert\(range\)/, '插入没有走原地指令行');
+  assert.doesNotMatch(insertFn[1], /openAiDialog\('insert'\)/, '插入仍在打开居中对话框');
+  assert.match(editorSource, /class="ai-inline"/, '缺少终端指令行');
+  assert.match(editorSource, /placeholder="直接说要求，⏎ 让 AI 写…"/, '缺少输入提示');
+  assert.match(editorSource, /inlineInsertRange = range\.cloneRange\(\)/, '没有记住插入位置');
+  assert.match(editorSource, /task: 'insert'/, '请求没有走 insert');
+  assert.match(editorSource, /applyAiResult\('insert', result\.text, range\)/, '结果没有落回原位置');
+  assert.match(editorSource, /closeInlineInsert\(true\)/, '安卓返回键没有先收起指令行');
+  assert.match(editorSource, /html\.kb-open \.ai-inline \{ bottom: calc\(10px \+ var\(--safe-bottom\)\); \}/, '键盘弹起时没有跟随');
+  assert.match(editorSource, /bottom: calc\(64px \+ var\(--safe-bottom\)\);/, '手机档没有贴在底部导航上方');
 });
