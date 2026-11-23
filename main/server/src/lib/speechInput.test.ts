@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   SPEECH_MAX_AUDIO_BYTES,
   SPEECH_SILENT_RMS,
+  SpeechAudioUnsupportedError,
   SpeechUnavailableError,
   buildSpeechCatalog,
   cleanTranscript,
+  inferAudioSupport,
   isWavBuffer,
+  localShortTranscriptWarning,
   speechStatus,
   transcribeAudio,
   transcribeWithModel,
@@ -17,7 +20,9 @@ import type { SyncedAgentModelConfig } from './agentModelConfig.js';
 
 /**
  * 语音输入的转写口径：
- *  - 引擎顺序：默认 Agent 模型（声明音频）→ 本机离线识别 → 已配置的音频模型 → 可操作提示；
+ *  - 引擎顺序：默认 Agent 模型（能听音频）→ 用户配置的音频模型（声明优先，其次模型名推断）→ 本机离线识别；
+ *  - 配置过音频模型时不要把用户静默降级到 SAPI（SAPI 对长句经常只回几个字）；
+ *  - 按模型名推断的引擎被上游拒绝音频时，自动模式回退本机并带 warning；
  *  - 模型请求是 OpenAI 兼容 chat/completions + input_audio（base64 data URI + format=wav）+ stream；
  *  - SSE 文本要逐段累积，网关直接回 JSON 也要兜住；
  *  - 模型的包装（代码围栏 / 整段引号 /「转写：」前缀）与无人声哨兵值要清掉；
@@ -43,9 +48,26 @@ const textDefault: SyncedAgentModelConfig = {
   keys: { DASHSCOPE_API_KEY: 'test-key' },
 };
 
+/** 同一个 Omni 模型，但控制台里没填 input 能力（真实机器的常见状态） */
+const undeclaredOmni: SyncedAgentModelConfig = {
+  ...textDefault,
+  providers: {
+    dashscope: {
+      ...textDefault.providers.dashscope,
+      models: [{ id: 'qwen3.8-omni-flash', name: 'qwen3.8-omni-flash' }],
+    },
+  },
+};
+
 /** 默认模型本身声明音频 */
 const audioDefault: SyncedAgentModelConfig = {
   ...textDefault,
+  default: { provider: 'dashscope', model: 'qwen3.8-omni-flash' },
+};
+
+/** 默认模型本身是 Omni，但没声明 input */
+const inferredDefault: SyncedAgentModelConfig = {
+  ...undeclaredOmni,
   default: { provider: 'dashscope', model: 'qwen3.8-omni-flash' },
 };
 
@@ -98,14 +120,45 @@ test('WAV 校验：能读时长，非 WAV 直接拒', () => {
   assert.ok(SPEECH_MAX_AUDIO_BYTES > 4 * 1024 * 1024);
 });
 
-test('音频能力只看声明：默认模型是 text/image 时不算音频模型', () => {
-  const catalog = buildSpeechCatalog(textDefault, textDefault.keys);
-  assert.equal(catalog.defaultModel?.model, 'deepseek-flash');
-  assert.equal(catalog.defaultModel?.supportsAudio, false);
-  assert.deepEqual(catalog.defaultModel?.inputs, ['text', 'image']);
-  assert.deepEqual(catalog.audioCandidates.map((item) => item.id), ['model:dashscope:qwen3.8-omni-flash']);
-  assert.equal(catalog.audioCandidates[0].apiKey, 'test-key');
-  assert.equal(catalog.audioCandidates[0].baseUrl, 'https://dashscope.example.com/compatible-mode/v1');
+test('音频能力：声明优先，没声明时按模型名推断', () => {
+  const declared = buildSpeechCatalog(textDefault, textDefault.keys);
+  assert.equal(declared.defaultModel?.model, 'deepseek-flash');
+  assert.equal(declared.defaultModel?.supportsAudio, false);
+  assert.deepEqual(declared.defaultModel?.inputs, ['text', 'image']);
+  assert.deepEqual(declared.audioCandidates.map((item) => item.id), ['model:dashscope:qwen3.8-omni-flash']);
+  assert.equal(declared.audioCandidates[0].audioSupport, 'declared');
+  assert.equal(declared.audioCandidates[0].apiKey, 'test-key');
+
+  // 真实机器的常见状态：控制台只填了 id/name，没有 input 能力
+  const inferred = buildSpeechCatalog(undeclaredOmni, undeclaredOmni.keys);
+  assert.deepEqual(inferred.audioCandidates.map((item) => item.id), ['model:dashscope:qwen3.8-omni-flash']);
+  assert.equal(inferred.audioCandidates[0].audioSupport, 'inferred');
+  assert.equal(inferred.defaultModel?.supportsAudio, false, '默认模型仍是纯文本');
+
+  // 显式声明 text 时不能被名字里的 omni 带偏
+  const explicitText = buildSpeechCatalog(
+    {
+      ...textDefault,
+      providers: {
+        dashscope: {
+          ...textDefault.providers.dashscope,
+          models: [{ id: 'qwen3.8-omni-flash', name: 'qwen3.8-omni-flash', input: ['text'] }],
+        },
+      },
+    },
+    textDefault.keys
+  );
+  assert.deepEqual(explicitText.audioCandidates, []);
+});
+
+test('模型名推断只认音频能力词', () => {
+  assert.equal(inferAudioSupport('qwen3.8-omni-flash'), true);
+  assert.equal(inferAudioSupport('gpt-4o-audio-preview'), true);
+  assert.equal(inferAudioSupport('glm-realtime'), true);
+  assert.equal(inferAudioSupport('whisper-large'), true);
+  assert.equal(inferAudioSupport('chat', '语音助手'), true);
+  assert.equal(inferAudioSupport('deepseek-v4-pro'), false);
+  assert.equal(inferAudioSupport('qwen3.8-coder'), false);
 });
 
 test('默认模型声明音频时优先用它', () => {
@@ -114,22 +167,46 @@ test('默认模型声明音频时优先用它', () => {
   assert.equal(catalog.defaultCandidate?.id, 'model:dashscope:qwen3.8-omni-flash');
 });
 
-test('引擎自动选择：默认模型不支持音频时先用本机离线识别', async () => {
+test('引擎自动选择：默认模型不支持音频时优先用你配置的音频模型', async () => {
   const status = await speechStatus({
     config: textDefault,
     keys: textDefault.keys,
     local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
   });
   assert.equal(status.configured, true);
-  assert.equal(status.defaultEngine, 'local');
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
   assert.match(status.defaultEngineReason, /DeepSeek-V4\.1-Flash/);
   assert.match(status.defaultEngineReason, /只声明了 text \/ image 输入/);
-  // 用户配过的音频模型仍然列在菜单里可手动选
-  assert.deepEqual(status.engines.map((engine) => engine.id), ['local', 'model:dashscope:qwen3.8-omni-flash']);
+  assert.match(status.defaultEngineReason, /已声明支持音频输入/);
+  // 音频模型排在菜单里，本机识别只作为兜底
+  assert.deepEqual(status.engines.map((engine) => engine.id), ['model:dashscope:qwen3.8-omni-flash', 'local']);
+  assert.equal(status.engines.find((engine) => engine.kind === 'model')?.audioSupport, 'declared');
   assert.deepEqual(
     status.engines.find((engine) => engine.id === 'model:dashscope:qwen3.8-omni-flash')?.label,
     '阿里云百炼（DashScope） · qwen3.8-omni-flash'
   );
+});
+
+test('引擎自动选择：没声明 input 的 Omni 也能按模型名选中', async () => {
+  const status = await speechStatus({
+    config: undeclaredOmni,
+    keys: undeclaredOmni.keys,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
+  assert.match(status.defaultEngineReason, /模型名表明支持音频/);
+  assert.equal(status.engines.find((engine) => engine.kind === 'model')?.audioSupport, 'inferred');
+  assert.match(status.engines.find((engine) => engine.kind === 'model')?.detail || '', /不支持时会自动回退本机识别/);
+});
+
+test('默认模型本身是没声明的 Omni：直接用它', async () => {
+  const status = await speechStatus({
+    config: inferredDefault,
+    keys: inferredDefault.keys,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
+  assert.match(status.defaultEngineReason, /默认 Agent 模型.*模型名表明支持音频输入/);
 });
 
 test('引擎自动选择：本机没有离线识别时用用户配置的音频模型', async () => {
@@ -139,8 +216,20 @@ test('引擎自动选择：本机没有离线识别时用用户配置的音频�
     local: { available: false, detail: 'Docker 没有 SAPI' },
   });
   assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
-  assert.match(status.defaultEngineReason, /本机离线识别不可用/);
+  assert.match(status.defaultEngineReason, /改用你配置的/);
   assert.match(status.defaultEngineReason, /阿里云百炼/);
+});
+
+test('没有可用音频模型时才用本机离线识别', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'local');
+  assert.match(status.defaultEngineReason, /没有可用的音频模型/);
+  assert.match(status.defaultEngineReason, /本机离线识别/);
+  assert.deepEqual(status.engines.map((engine) => engine.id), ['local']);
 });
 
 test('默认模型声明音频时，即使本机可离线识别也优先默认模型', async () => {
@@ -250,7 +339,7 @@ test('上游 401：提示去检查 Key，而不是抛原始英文报文', async 
   await assert.rejects(() => transcribeWithModel(makeWav(1), candidate, { fetchImpl }), /API Key 无效或没有权限/);
 });
 
-test('模型不支持音频：给出勾音频 / 换本机识别的提示', async () => {
+test('模型不支持音频：抛可识别的音频错误，文案给勾音频 / 换本机识别的提示', async () => {
   const candidate = buildSpeechCatalog(textDefault, textDefault.keys).audioCandidates[0];
   const fetchImpl = (async () =>
     new Response(JSON.stringify({ error: { message: 'input_audio is not supported by this model' } }), {
@@ -259,7 +348,11 @@ test('模型不支持音频：给出勾音频 / 换本机识别的提示', async
     })) as unknown as typeof fetch;
   await assert.rejects(
     () => transcribeWithModel(makeWav(1), candidate, { fetchImpl }),
-    /勾上音频输入.*本机离线识别|本机离线识别/
+    (error: any) => {
+      assert.ok(error instanceof SpeechAudioUnsupportedError);
+      assert.match(error.message, /勾上音频输入.*本机离线识别|本机离线识别/);
+      return true;
+    }
   );
 });
 
@@ -280,19 +373,106 @@ test('音量检测：静音判为静音，正常波形能算出平均振幅', ()
 
 test('录音几乎是静音：不跑本机识别，直接提示检查麦克风', async () => {
   const status = await speechStatus({
-    config: textDefault,
-    keys: textDefault.keys,
+    config: noAudio,
+    keys: {},
     local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
   });
   assert.equal(status.defaultEngine, 'local');
+  let called = false;
   await assert.rejects(
-    () => transcribeAudio(makeWav(2), { status }),
+    () => transcribeAudio(makeWav(2), {
+      status,
+      localTranscribe: async () => {
+        called = true;
+        return { text: '不该被调用', culture: 'zh-CN' };
+      },
+    }),
     (error: any) => {
       assert.match(error.message, /几乎没有声音/);
       assert.match(error.message, /麦克风/);
       return true;
     }
   );
+  assert.equal(called, false, '静音录音不应启动本机识别');
+});
+
+test('本机识别只回几个字：返回 warning，提示换音频模型', () => {
+  assert.match(localShortTranscriptWarning(6, '今天') || '', /只认出 2 个字/);
+  assert.equal(localShortTranscriptWarning(6, '今天下午开会讨论方案'), undefined);
+  assert.equal(localShortTranscriptWarning(3, '今天'), undefined);
+});
+
+test('按模型名推断的引擎不支持音频：自动模式回退本机并带 warning', async () => {
+  const status = await speechStatus({
+    config: undeclaredOmni,
+    keys: undeclaredOmni.keys,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ error: { message: 'input_audio is not supported by this model' } }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+  let localCalls = 0;
+  const result = await transcribeAudio(makeWav(6, 16384), {
+    status,
+    config: undeclaredOmni,
+    keys: undeclaredOmni.keys,
+    fetchImpl,
+    localTranscribe: async () => {
+      localCalls += 1;
+      return { text: '本机兜底转写', culture: 'zh-CN' };
+    },
+  });
+  assert.equal(result.engine, 'local');
+  assert.equal(result.text, '本机兜底转写');
+  assert.equal(localCalls, 1);
+  assert.match(result.warning || '', /不支持音频输入/);
+  assert.match(result.warning || '', /本机离线识别/);
+});
+
+test('手动指定按模型名推断的引擎：不回退，保留上游错误', async () => {
+  const status = await speechStatus({
+    config: undeclaredOmni,
+    keys: undeclaredOmni.keys,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ error: { message: 'input_audio is not supported by this model' } }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+  let localCalls = 0;
+  await assert.rejects(
+    () => transcribeAudio(makeWav(6, 16384), {
+      status,
+      config: undeclaredOmni,
+      keys: undeclaredOmni.keys,
+      engine: 'model:dashscope:qwen3.8-omni-flash',
+      fetchImpl,
+      localTranscribe: async () => {
+        localCalls += 1;
+        return { text: '不该被调用', culture: 'zh-CN' };
+      },
+    }),
+    /不支持音频输入/
+  );
+  assert.equal(localCalls, 0, '手动指定引擎时不应静默换引擎');
+});
+
+test('本机识别结果过短：转写成功但带 warning', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  const result = await transcribeAudio(makeWav(6, 16384), {
+    status,
+    localTranscribe: async () => ({ text: '嗯嗯', culture: 'zh-CN' }),
+  });
+  assert.equal(result.text, '嗯嗯');
+  assert.match(result.warning || '', /只认出 2 个字/);
 });
 
 test('默认模型声明音频但协议不是 OpenAI 兼容：不选它，回退本机识别', async () => {

@@ -10,6 +10,8 @@ import { api } from '../api';
  *  - 浏览器只允许安全上下文调用麦克风（https / localhost）；Docker 走 http 局域网地址时要明确告知。
  *  - 录音统一转成 **WAV 16k 单声道 PCM16** 再上送：Omni 模型只认常见音频格式，
  *    各端 MediaRecorder 产出的 webm/mp4 在服务端解码不可控，浏览器侧一次转好最稳。
+ *  - 识别引擎由服务端选：默认模型的音频能力 → 配置过的音频模型（声明或模型名推断）→
+ *    本机离线识别兜底；选中的引擎与自动回退原因随转写结果返回，界面直接展示。
  */
 
 /** 本机麦克风偏好（'auto' = 跟随系统，不传 deviceId） */
@@ -20,6 +22,9 @@ export const VOICE_MAX_DURATION_SEC = 120;
 const TARGET_SAMPLE_RATE = 16000;
 
 export type VoiceDevicePreference = 'auto' | string;
+
+/** 音频能力来源：控制台声明 / 模型名推断 / 不支持 */
+export type SpeechAudioSupport = 'declared' | 'inferred' | 'none';
 
 export interface VoiceInputDevice {
   deviceId: string;
@@ -39,6 +44,8 @@ export interface SpeechEngineOption {
   label: string;
   detail: string;
   available: boolean;
+  /** 模型引擎的音频能力来源（本机引擎不填） */
+  audioSupport?: SpeechAudioSupport;
 }
 
 export interface SpeechModelInfo {
@@ -47,6 +54,8 @@ export interface SpeechModelInfo {
   model: string;
   modelName: string;
   supportsAudio: boolean;
+  /** 音频能力来源（声明 / 模型名推断 / 不支持） */
+  audioSupport?: SpeechAudioSupport;
   inputs: string[];
 }
 
@@ -466,15 +475,24 @@ export function saveVoiceEnginePreference(engine: string): void {
 }
 
 /** 把 WAV 上送转写；失败时把服务端的中文原因原样抛出（HUD 直接展示） */
-export async function transcribeVoice(blob: Blob, engine = 'auto'): Promise<{ text: string; engineLabel: string }> {
+export async function transcribeVoice(
+  blob: Blob,
+  engine = 'auto'
+): Promise<{ text: string; engineLabel: string; warning: string }> {
   const form = new FormData();
   form.append('audio', blob, 'voice.wav');
   if (engine && engine !== 'auto') form.append('engine', engine);
   try {
-    const { data } = await api.post<{ text: string; engineLabel?: string }>('/api/speech/transcribe', form, {
-      timeout: 180_000,
-    });
-    return { text: String(data?.text || '').trim(), engineLabel: String(data?.engineLabel || '') };
+    const { data } = await api.post<{ text: string; engineLabel?: string; warning?: string }>(
+      '/api/speech/transcribe',
+      form,
+      { timeout: 180_000 }
+    );
+    return {
+      text: String(data?.text || '').trim(),
+      engineLabel: String(data?.engineLabel || ''),
+      warning: String(data?.warning || '').trim(),
+    };
   } catch (error: any) {
     const detail = error?.response?.data?.error || error?.message;
     throw new Error(detail || '语音识别失败，请重试');
