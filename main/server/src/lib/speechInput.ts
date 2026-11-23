@@ -20,16 +20,34 @@ import {
 import type { SenseVoiceStatus } from './senseVoice.js';
 import { SENSEVOICE_TOTAL_BYTES } from './senseVoiceAssets.js';
 import { preferenceValue } from '../sync/preferences.js';
+import {
+  SPEECH_ASR_ENGINE,
+  getSpeechAsrConfig,
+  speechAsrPublic,
+  type SpeechAsrConfig,
+  type SpeechAsrPublic,
+} from './speechAsr.js';
+import { transcribeWithAsr } from './speechAsrClient.js';
+import { abortWith } from './speechHttp.js';
+import { SPEECH_SYSTEM_PROMPT, cleanTranscript } from './speechText.js';
+
+// 兼容既有调用方：cleanTranscript 从 speechText 单独成模块后仍从 speechInput 导出
+export { cleanTranscript } from './speechText.js';
 
 /**
  * 编辑器「语音输入」的转写服务。
  *
  * 引擎选择（不写死任何厂商）：
+ *  0. **客户配置的专用 ASR**（设置 → 外设接入 → 语音输入）→ 最快，优先使用；
  *  1. **内置 Agent 的默认模型**声明了音频输入（`input` / `inputModalities` 含 audio）→ 录音直接发给它；
  *  2. 否则用用户**配置过的音频模型**（声明了音频，或模型名明确是 omni / audio / voice 这类多模态模型）；
  *  3. 都没有才用**本机离线识别**：优先 SenseVoice（随包 sherpa-onnx，模型需用户点下载），
  *     模型没准备好时退回 Windows SAPI 兼容模式；不联网、不要 Key；
  *  4. 一个都没有 → 返回可操作提示（下载本机模型 / 配置一个音频模型）。
+ *
+ * 为什么专用 ASR 排最前：omni 这类多模态对话模型要把整段音频先「理解」一遍，速度明显慢；
+ * 专用 ASR 的接口就是为转写设计的，出字更快。dsh 的模型页配不了这类接口（协议不是 chat/completions），
+ * 所以 Engram 自己维护一份 ASR 配置（见 lib/speechAsr.ts）。
  *
  * 为什么本机不再默认 SAPI：SAPI 的 DictationGrammar 对真实麦克风的长句经常只回几个字
  * （用户实测 5 秒录音多次返回「没有识别到语音」）。SenseVoice 在同一段录音上整句带标点全对。
@@ -64,17 +82,6 @@ const OFFICIAL_DEFAULT_MODEL = 'deepseek-flash';
 const OFFICIAL_DEFAULT_MODALITIES = ['text', 'image'];
 const OFFICIAL_BASE_URL = 'https://api.deepseek.com';
 
-/** 转写提示词：只转写、不翻译、不解释；无人声时用固定哨兵值，服务端统一清成空串 */
-const SPEECH_SYSTEM_PROMPT = [
-  '你是语音转写器。把录音里的说话内容逐字转成文字：',
-  '- 说话人说什么语言就写什么语言（中文写中文、英文写英文），不要翻译；',
-  '- 保留语气词与自然的措辞，按语义补全标点；',
-  '- 只输出转写文本本身，不要解释、总结、标题、引号、Markdown 标记或「转写：」之类的前缀；',
-  '- 录音里没有可辨识的人声时，只输出 NO_SPEECH。',
-].join('\n');
-
-const NO_SPEECH_SENTINEL = 'NO_SPEECH';
-
 /** 音频能力来源：控制台声明 / 模型名推断 / 不支持 */
 export type SpeechAudioSupport = 'declared' | 'inferred' | 'none';
 
@@ -92,13 +99,13 @@ export function inferAudioSupport(id: string, name = ''): boolean {
 }
 
 export interface SpeechEngineOption {
-  /** `local` 或 `model:<provider>:<model>` */
+  /** `asr`、`local` 或 `model:<provider>:<model>` */
   id: string;
-  kind: 'local' | 'model';
+  kind: 'asr' | 'local' | 'model';
   label: string;
   detail: string;
   available: boolean;
-  /** 模型引擎的音频能力来源（本机引擎不填） */
+  /** 模型引擎的音频能力来源（本机引擎与专用 ASR 不填） */
   audioSupport?: SpeechAudioSupport;
 }
 
@@ -121,6 +128,8 @@ export interface SpeechStatus {
   defaultEngine: string;
   /** 为什么自动选了它（面板直接展示，用户能看懂用了谁的模型） */
   defaultEngineReason: string;
+  /** 客户配置的专用 ASR（不含 Key，只给 hasKey） */
+  asr: SpeechAsrPublic;
   /** 内置 Agent 当前的默认模型 */
   defaultModel: SpeechModelInfo | null;
   /** 本机离线识别是否可用 */
@@ -334,6 +343,8 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
 export interface SpeechStatusOptions {
   config?: SyncedAgentModelConfig;
   keys?: Record<string, string>;
+  /** 专用 ASR 配置（测试注入；缺省读设置 speech_asr_config） */
+  asr?: SpeechAsrConfig | null;
   /** 本机识别的探测结果（测试注入；缺省现探） */
   local?: {
     available: boolean;
@@ -399,8 +410,26 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
   const local = options.local ? normalizeLocal(options.local) : await localSpeechRuntime();
   const catalog = buildSpeechCatalog(config, keys);
   const defaultModel = catalog.defaultModel;
+  const asrConfig = options.asr !== undefined ? options.asr : getSpeechAsrConfig();
+  const asr = speechAsrPublic(asrConfig);
 
-  const engines: SpeechEngineOption[] = catalog.audioCandidates.map(candidateEngine);
+  const engines: SpeechEngineOption[] = [];
+  if (asrConfig && asr.configured) {
+    let host = '';
+    try {
+      host = new URL(asrConfig.baseUrl).host;
+    } catch {
+      host = asrConfig.baseUrl;
+    }
+    engines.push({
+      id: SPEECH_ASR_ENGINE,
+      kind: 'asr',
+      label: asr.label,
+      detail: `${asr.protocolLabel} · ${host}`,
+      available: true,
+    });
+  }
+  engines.push(...catalog.audioCandidates.map(candidateEngine));
   if (local.available) {
     engines.push({
       id: SPEECH_LOCAL_ENGINE,
@@ -440,7 +469,11 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
   const declared = catalog.audioCandidates.filter((item) => item.audioSupport === 'declared');
   const inferred = catalog.audioCandidates.filter((item) => item.audioSupport === 'inferred');
 
-  if (usableDefault) {
+  if (asrConfig && asr.configured) {
+    // 专用 ASR 是客户为「语音输入」显式配置的引擎：优先于多模态对话模型（出字更快）
+    defaultEngine = SPEECH_ASR_ENGINE;
+    defaultEngineReason = `已配置专用语音识别模型「${asr.label}」，优先使用（专用转写接口比多模态模型更快）`;
+  } else if (usableDefault) {
     defaultEngine = usableDefault.id;
     defaultEngineReason =
       usableDefault.audioSupport === 'declared'
@@ -467,13 +500,14 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
     ? ''
     : local.model.supported
       ? '本机识别模型还没下载（约 240MB）：在语音输入菜单点「下载模型」，或到 设置 → 外设接入 → 语音输入；也可以在内置 Agent 控制台配置一个支持音频输入的模型'
-      : '默认 Agent 模型不支持音频输入，当前平台也没有可用的本机识别运行时：请在内置 Agent 控制台配置一个声明支持音频的模型，或到 设置 → 外设接入 → 语音输入 查看';
+      : '没有可用的识别引擎：到 设置 → 外设接入 → 语音输入 配置专用 ASR / 下载本机模型，或在内置 Agent 控制台配置一个声明支持音频的模型';
 
   return {
     configured: Boolean(defaultEngine),
     engines,
     defaultEngine,
     defaultEngineReason,
+    asr,
     defaultModel,
     localAvailable: local.available,
     localDetail: local.detail,
@@ -507,13 +541,15 @@ export interface TranscribeOptions {
   config?: SyncedAgentModelConfig;
   /** 测试注入的凭据（缺省读 dsh 凭据文件） */
   keys?: Record<string, string>;
+  /** 专用 ASR 配置（测试注入；缺省读设置 speech_asr_config） */
+  asr?: SpeechAsrConfig | null;
   /** 测试注入的本机识别实现 */
   localTranscribe?: (wav: Buffer) => Promise<{ text: string; culture: string }>;
 }
 
 export interface TranscribeResult {
   text: string;
-  /** `local` 或 `model:<provider>:<model>` */
+  /** `asr`、`local` 或 `model:<provider>:<model>` */
   engine: string;
   engineLabel: string;
   model: string;
@@ -654,57 +690,6 @@ async function readTranscription(response: Response): Promise<string> {
     /* 已读完 */
   }
   return text;
-}
-
-/** 成对引号（中英文）与反引号：只在整段被包住时剥一层，正文里的引号不动 */
-const WRAPPING_QUOTES: Array<[string, string]> = [
-  ['"', '"'],
-  ["'", "'"],
-  ['`', '`'],
-  ['“', '”'],
-  ['‘', '’'],
-  ['「', '」'],
-  ['『', '』'],
-];
-
-/**
- * 清掉模型常见的包装：代码围栏、整段引号、「转写：」前缀；无人声哨兵值归空串。
- * 只在首尾动手，不改正文里的标点与措辞。
- */
-export function cleanTranscript(raw: string): string {
-  let text = String(raw || '').replace(/\r\n?/g, '\n').trim();
-  if (!text) return '';
-  if (text === NO_SPEECH_SENTINEL || text.toLowerCase() === NO_SPEECH_SENTINEL.toLowerCase()) return '';
-  const fenced = text.match(/^```[^\n]*\n([\s\S]*?)\n```$/);
-  if (fenced) text = fenced[1].trim();
-  for (const [open, close] of WRAPPING_QUOTES) {
-    if (text.length > open.length + close.length && text.startsWith(open) && text.endsWith(close)) {
-      const inner = text.slice(open.length, text.length - close.length).trim();
-      if (inner) text = inner;
-      break;
-    }
-  }
-  text = text.replace(/^\s*(?:转写|识别|听写)(?:结果|文本|内容)?\s*[:：]\s*/, '');
-  text = text.replace(/^[（(](?:无|没有|未检测到)[^）)]*(?:语音|人声|音频)[^）)]*[）)]$/, '');
-  return text.trim();
-}
-
-function abortWith(timeoutMs: number, outer?: AbortSignal): { signal: AbortSignal; done: () => void } {
-  const controller = new AbortController();
-  // 统一用无 reason 的 abort：fetch 才会以 AbortError 拒绝（自定义 reason 会原样抛出，难区分超时与网络错误）
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const forward = () => controller.abort();
-  if (outer) {
-    if (outer.aborted) forward();
-    else outer.addEventListener('abort', forward, { once: true });
-  }
-  return {
-    signal: controller.signal,
-    done: () => {
-      clearTimeout(timer);
-      outer?.removeEventListener('abort', forward);
-    },
-  };
 }
 
 export interface ModelTranscribeOptions {
@@ -854,7 +839,7 @@ async function transcribeWithLocal(
 }
 
 /**
- * 转写一段 WAV 录音：按用户选择的引擎（或自动选择结果）走模型 / 本机离线识别。
+ * 转写一段 WAV 录音：按用户选择的引擎（或自动选择结果）走专用 ASR / 模型 / 本机离线识别。
  * 没配好抛 SpeechUnavailableError（路由回 409），上游失败抛带可读中文的 Error（路由回 502）。
  */
 export async function transcribeAudio(
@@ -867,6 +852,34 @@ export async function transcribeAudio(
   const auto = !options.engine || !status.engines.some((engine) => engine.id === options.engine);
   const wanted = auto ? status.defaultEngine : options.engine!;
   if (wanted === SPEECH_LOCAL_ENGINE) return transcribeWithLocal(audio, options, status.localLabel);
+
+  if (wanted === SPEECH_ASR_ENGINE) {
+    const asrConfig = options.asr !== undefined ? options.asr : getSpeechAsrConfig();
+    if (!asrConfig) {
+      throw new SpeechUnavailableError(
+        '专用语音识别模型配置不完整：去 设置 → 外设接入 → 语音输入 填写接口地址与模型名'
+      );
+    }
+    const level = wavAudioLevel(audio);
+    if (level && level.rms < SPEECH_SILENT_RMS) throw new Error(silentRecordingMessage(level.rms));
+    try {
+      return await transcribeWithAsr(audio, asrConfig, options);
+    } catch (error: any) {
+      // 自动模式下专用 ASR 失败（断网 / 额度 / Key 过期）时回退本机识别，别让语音输入直接不可用；
+      // 手动选定的引擎不回退，尊重用户选择并把上游原因原样给他。
+      if (auto && status.localAvailable) {
+        const fallback = await transcribeWithLocal(audio, options, status.localLabel);
+        const label = `${asrConfig.name || '专用语音识别'} · ${asrConfig.model}`;
+        const message = String(error?.message || '转写失败');
+        const reason = message.length > 160 ? `${message.slice(0, 157)}…` : message;
+        return {
+          ...fallback,
+          warning: `专用语音识别模型「${label}」转写失败：${reason}；已改用本机离线识别${fallback.warning ? `；${fallback.warning}` : ''}`,
+        };
+      }
+      throw error;
+    }
+  }
 
   const config = options.config ?? currentModelConfig();
   const keys = options.keys ?? currentKeys(bundledDshHome(), config);

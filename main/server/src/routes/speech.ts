@@ -2,6 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { wavAudioLevel } from '../lib/localSpeech.js';
 import {
+  SPEECH_ASR_CONFIG_KEY,
+  clearSpeechAsrConfig,
+  saveSpeechAsrConfig,
+  speechAsrProtocolOptions,
+  speechAsrPublic,
+} from '../lib/speechAsr.js';
+import {
   cancelSenseVoicePrepare,
   senseVoiceStatus,
   startSenseVoicePrepare,
@@ -15,6 +22,9 @@ import {
   transcribeAudio,
   wavDurationSec,
 } from '../lib/speechInput.js';
+import { stampPreference } from '../sync/preferences.js';
+import { currentNodeId } from '../sync/store.js';
+import { recordLocalChange } from '../sync/index.js';
 
 /**
  * 编辑器「语音输入」：状态 + 转写 + 本机模型准备。
@@ -29,7 +39,31 @@ import {
 export async function speechRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAssistantAccess);
 
+  /** 设置页的专用 ASR 配置：公开结构只有 hasKey，Key 原文绝不出服务端 */
+  function asrPayload() {
+    return { config: speechAsrPublic(), protocols: speechAsrProtocolOptions() };
+  }
+  /** 改了配置要进同步队列（设置分类）：其他设备 / 中枢都能拿到同一份 ASR 配置 */
+  function markAsrChanged(): void {
+    stampPreference(SPEECH_ASR_CONFIG_KEY, currentNodeId());
+    recordLocalChange('preference', SPEECH_ASR_CONFIG_KEY);
+  }
+
   app.get('/api/speech/status', async () => speechStatus());
+
+  // 专用 ASR：读配置（脱敏）/ 保存 / 清空。鉴权与视频模型配置一致——owner 登录态、
+  // Agent 令牌、手机同步成员令牌都可（手机绑定中枢后就在设置页远程改中枢的 ASR）。
+  app.get('/api/speech/asr-config', async () => asrPayload());
+  app.put('/api/speech/asr-config', async (req, reply) => {
+    const result = saveSpeechAsrConfig(req.body);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    if (result.changed) markAsrChanged();
+    return asrPayload();
+  });
+  app.delete('/api/speech/asr-config', async () => {
+    if (clearSpeechAsrConfig()) markAsrChanged();
+    return asrPayload();
+  });
 
   // SenseVoice 本机识别模型：状态（含下载进度）/ 开始下载 / 取消
   app.get('/api/speech/local/status', async () => senseVoiceStatus());
