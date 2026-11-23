@@ -81,6 +81,14 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     ipcRenderer.on('desktop-update-state', listener);
     return () => ipcRenderer.removeListener('desktop-update-state', listener);
   },
+  // 安装位置（设置 → 版本与更新 → 桌面端更新）：
+  // { scope:'machine'|'user', installDir, exePath, requiresElevation, scopeFlag,
+  //   supported, portable, uninstallerExists, perUserExe }
+  // machine = 装在 Program Files（静默升级会弹 UAC），user = 个人目录（更新无需提权）
+  desktopUpdateGetScope: () => ipcRenderer.invoke('desktop-update-get-scope'),
+  // 切换到「当前用户」安装：下载/复用安装包 → 静默卸载旧的所有用户安装（这一次需要 UAC）
+  // → /currentuser 装到个人目录 → 自动重启。返回 { ok, migrating } 或 { ok:false, error, busy? }
+  desktopUpdateSwitchScope: () => ipcRenderer.invoke('desktop-update-switch-scope'),
   // ---------- 源码模式自更新（非打包形态；安装包形态主进程会拒绝） ----------
   // 查询运行形态：{ packaged, prebuilt, platform, version }，非安装包形态额外带 git 身份
   // { commit, commitDate, dirty }（版本号仅随发版变化，提交号随每次更新变化）；

@@ -229,6 +229,10 @@
             <span class="value-label">更新方式</span>
             <span class="value-text is-muted">{{ desktopUpdateModeText }}</span>
           </li>
+          <li v-if="installerMode && installScopeInfo" class="value-row">
+            <span class="value-label">安装位置</span>
+            <span class="value-text is-muted">{{ installScopeText }}</span>
+          </li>
           <li v-if="desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.latestVersion" class="value-row">
             <span class="value-label">最新版本</span>
             <span class="value-text">{{ 'v' + desktopCheck.latestVersion }}</span>
@@ -241,6 +245,32 @@
         <p v-if="prebuiltMode" class="setting-note">
           预构建安装不含 Git：应用内不能增量拉源码，请用新版安装器覆盖安装，知识库数据保留。
         </p>
+
+        <!-- 所有用户安装：每次自动更新都要过一次 UAC。给一次性切换入口：
+             静默卸载旧安装（弹一次 UAC）→ 装到个人目录 → 自动重启，之后更新全程无提权。 -->
+        <template v-if="installerMode && installScopeInfo?.scope === 'machine' && installScopeInfo?.supported">
+          <div v-if="installScopeInfo.uninstallerExists" class="setting-row">
+            <div class="setting-copy">
+              <strong>每次更新都弹管理员确认？</strong>
+              <span>当前装在 Program Files（所有用户）。切换为「当前用户」安装只需这次确认一次，之后更新全静默；知识库数据不受影响。</span>
+            </div>
+            <button class="btn" type="button" :disabled="scopeSwitching || downloading || installing || autoDownloading" @click="switchInstallScope">
+              <AppSpinner v-if="scopeSwitching" :size="11" />
+              <template v-if="scopeSwitching">正在切换…</template>
+              <template v-else>切换安装位置</template>
+            </button>
+          </div>
+          <p v-else class="setting-note">
+            当前为「所有用户」安装，但没有找到旧版卸载器，无法自动切换。可在 Windows「设置 → 应用 → 已安装的应用」卸载 Engram 后运行新版安装包，之后更新不再需要管理员确认。
+          </p>
+          <div v-if="scopeSwitching && downloadPercent !== null" class="update-progress">
+            <div class="update-progress-bar" :style="{ width: downloadPercent + '%' }" />
+          </div>
+          <p v-if="scopeSwitching" class="setting-message warn">{{ scopePhaseText }}</p>
+          <p v-else-if="scopeNotice" class="setting-message warn">{{ scopeNotice }}</p>
+          <p v-if="scopeError" class="setting-message err">{{ scopeError }}</p>
+        </template>
+        <p v-if="autoState.scopeSwitchNotice" class="setting-message ok">{{ autoState.scopeSwitchNotice }}</p>
 
         <template v-if="autoSupported && installerMode">
           <div class="setting-row">
@@ -319,13 +349,16 @@
             <strong>下载并安装</strong>
             <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装。</span>
           </div>
-          <button class="btn primary" type="button" :disabled="downloading || installing || autoDownloading" :title="autoDownloading ? '自动更新正在后台下载/安装安装包，完成后会自动安装；如需手动下载请先关闭「自动更新」' : ''" @click="downloadAndInstall">
-            {{ installing ? '安装中…' : downloading ? '下载中 ' + (downloadPercent ?? '') + (downloadPercent !== null ? '%' : '') : autoDownloading ? '自动更新下载中…' : '下载并安装' }}
+          <button class="btn primary" type="button" :disabled="downloading || installing || autoDownloading || Boolean(scopeSwitching)" :title="autoDownloading ? '自动更新已经在后台下载/安装，完成后会自动安装；进度见上方，不需要再点一次' : ''" @click="downloadAndInstall">
+            {{ installing ? '安装中…' : downloading ? '下载中 ' + (downloadPercent ?? '') + (downloadPercent !== null ? '%' : '') : autoDownloading ? (autoState.percent !== null && autoState.percent !== undefined ? '自动更新下载中 ' + autoState.percent + '%' : '自动更新下载中…') : '下载并安装' }}
           </button>
         </div>
         <div v-if="installerMode && downloading && downloadPercent !== null" class="update-progress">
           <div class="update-progress-bar" :style="{ width: downloadPercent + '%' }" />
         </div>
+        <p v-if="installerMode && autoDownloading" class="setting-note">
+          自动更新已在后台下载/安装同一个安装包，完成后会自动重启；不需要再点「下载并安装」。
+        </p>
         <p v-if="installerMode && downloadError" class="setting-message err">{{ downloadError }}</p>
         <p v-else-if="installerMode && installing" class="setting-message warn">正在静默安装更新，应用将自动重启，请勿关闭。</p>
 
@@ -656,10 +689,31 @@ const autoState = ref<any>({
   // 自动更新失败暂停（主进程 lib/update-failure.js）：有值表示该版本失败过一次、本版本不再自动重试
   blockedVersion: null,
   blockedReason: '',
+  // 上一次「切换安装位置」成功后的提示（主进程重启后判定落点写入）
+  scopeSwitchNotice: '',
 });
 let offAutoState: (() => void) | null = null;
 /** 「重试自动更新」请求进行中（按钮转圈，避免连点） */
 const retryingAuto = ref(false);
+/**
+ * 安装位置（所有用户 / 当前用户）。所有用户装在 Program Files，应用内静默升级每次都会弹
+ * UAC；这里给一次性切换入口（卸载旧安装 → 装到个人目录），之后更新不再需要管理员确认。
+ */
+const installScopeInfo = ref<any>(null);
+const scopeSwitching = ref(false);
+const scopeError = ref('');
+const scopePhaseText = ref('');
+/** 切换前被自动更新占用时的提示（不是错误，单独一行 warn） */
+const scopeNotice = ref('');
+/** 安装位置的读屏文案：未就绪时写 —，不先猜成某一类 */
+const installScopeText = computed(() => {
+  const info = installScopeInfo.value;
+  if (!info) return '—';
+  if (info.portable) return '便携版（不参与自动更新）';
+  return info.scope === 'machine'
+    ? '所有用户（Program Files，更新时需要管理员确认）'
+    : '当前用户（个人目录，更新无需管理员确认）';
+});
 
 const savingConfig = ref(false);
 /** 更新通道单独即时保存（顶部常规行，不随「保存配置」按钮） */
@@ -987,6 +1041,14 @@ const autoProgressVisible = computed(() => autoProgressVisibleOf(autoState.value
 /** 自动更新正在下载/安装：手动「下载并安装」要禁用（两者落盘同一个文件） */
 const autoDownloading = computed(() => installerMode.value && isAutoDownloading(autoState.value));
 
+// 安装链路失败（进度窗起不来、安装器被拦、UAC 被取消）时把「安装中/下载中」的按钮状态放开，
+// 否则「下载并安装」会一直灰着，用户只能重启应用
+watch(autoState, (state) => {
+  if (state?.phase !== 'failed') return;
+  installing.value = false;
+  downloading.value = false;
+}, { deep: true });
+
 async function toggleAuto(e: Event) {
   const wd = wikiDesktop();
   const enabled = (e.target as HTMLInputElement).checked;
@@ -1143,10 +1205,64 @@ async function downloadAndInstall() {
     // 下载完成进入静默安装阶段：按钮变「安装中…」并提示即将重启（此前这段 UI 从未被点亮）
     onInstalling: () => { installing.value = true; },
   });
+  // 后台自动更新已经在下载/安装同一个包：不是错误，切到上方那条自动更新进度，别再弹「下载失败」
+  if (r.ok && r.busy) {
+    downloading.value = false;
+    notify.success(r.busy === 'auto' ? '自动更新已经在后台下载，进度见上方' : '安装包正在下载中，请稍候');
+    return;
+  }
   if (!r.ok) {
     downloading.value = false;
     installing.value = false;
     downloadError.value = friendlyApplyError(r.error);
+  }
+}
+
+/**
+ * 切换到「当前用户」安装（所有用户安装每次更新都会弹 UAC 的一次性解法）：
+ * 主进程负责下载/复用安装包 → 静默卸载旧安装（这一次需要 UAC）→ 装到个人目录 → 自动重启。
+ * 确认框先讲清「会退出并重装一次、数据不受影响」，避免用户以为什么都没发生。
+ */
+async function switchInstallScope() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopUpdateSwitchScope) {
+    scopeError.value = '当前桌面端壳不支持切换安装位置，请先更新一次桌面端。';
+    return;
+  }
+  const ok = await confirmDialog({
+    title: '切换为当前用户安装',
+    message:
+      '将先卸载当前的「所有用户」安装，再装到你的个人目录并自动重启。卸载这一步会弹一次「用户账户控制」，请点「是」；知识库数据在数据目录，不受影响。继续？',
+    confirmText: '开始切换',
+  });
+  if (!ok) return;
+  scopeSwitching.value = true;
+  scopeError.value = '';
+  scopeNotice.value = '';
+  scopePhaseText.value = '正在准备安装包（已下载过会直接复用）…';
+  downloadPercent.value = null;
+  try {
+    const r = await wd.desktopUpdateSwitchScope();
+    if (!r?.ok) {
+      scopeSwitching.value = false;
+      if (r?.busy) {
+        scopeNotice.value = r.error || '自动更新正在进行，等它完成后再切换。';
+        return;
+      }
+      scopeError.value = r?.error || '切换失败，请稍后重试';
+      return;
+    }
+    if (r.alreadyUser) {
+      scopeSwitching.value = false;
+      if (r.scope) installScopeInfo.value = r.scope;
+      notify.success('当前已经是「当前用户」安装，不需要切换');
+      return;
+    }
+    scopePhaseText.value = '正在切换安装位置：如出现「用户账户控制」请点「是」，应用完成后会自动重启…';
+    notify.success('开始切换安装位置，请留意屏幕上的安装进度窗口');
+  } catch (e: any) {
+    scopeSwitching.value = false;
+    scopeError.value = e?.message || '切换失败，请稍后重试';
   }
 }
 
@@ -1271,6 +1387,17 @@ onMounted(() => {
     offProgress = wd.onUpdateProgress((p: any) => {
       if (!acceptManualProgressEvent(p)) return;
       downloadPercent.value = p?.percent ?? null;
+      // 切换安装位置时这条进度是「正在下载安装包」：文案要跟着动，别停在「准备中」
+      if (scopeSwitching.value && downloadPercent.value !== null) {
+        scopePhaseText.value = `正在下载安装包 ${downloadPercent.value}%（只需这一次）…`;
+      }
+    });
+  }
+  if (wd?.desktopUpdateGetScope) {
+    wd.desktopUpdateGetScope().then((info: any) => {
+      installScopeInfo.value = info;
+    }).catch(() => {
+      /* 旧版壳没有这个 IPC：不显示安装位置行，其余更新功能照常 */
     });
   }
   if (wd?.desktopUpdateGetState) {

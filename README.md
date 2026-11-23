@@ -33,7 +33,7 @@
 
 | 使用方式 | 入口 |
 |---|---|
-| Windows 安装包 | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`，双击安装；固定装到当前用户目录（`%LOCALAPPDATA%\Programs\Engram`），应用内自动更新无需管理员权限、不弹 UAC；更新面板按「更新 / 优化 / 修复」列出本次内容（源码模式从 CHANGELOG 增量读取，不再显示提交标题）；某个版本的自动更新失败一次后会暂停该版本的自动重试并提示（设置页可「重试自动更新」或手动更新），发布新版本后自动恢复；设置 → 本机应用 → 版本信息也能直接检查并更新本机软件（源码模式增量拉取重建，安装包模式下载并静默安装） |
+| Windows 安装包 | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`，双击安装；固定装到当前用户目录（`%LOCALAPPDATA%\Programs\Engram`），应用内自动更新无需管理员权限、不弹 UAC。旧版装在 Program Files（「所有用户」安装）的机器可在 设置 → 版本与更新 → 桌面端更新 里点「切换安装位置」一次性迁移到当前用户目录，之后更新也不再弹 UAC。更新时会保留一张安装进度窗口直到装完并自动重启；后台自动更新下载期间点右上角更新图标可直接看到下载进度，不会再报「正在下载」。更新面板按「更新 / 优化 / 修复」列出本次内容（源码模式从 CHANGELOG 增量读取，不再显示提交标题）；某个版本的自动更新失败一次后会暂停该版本的自动重试并提示（设置页可「重试自动更新」或手动更新），发布新版本后自动恢复；设置 → 本机应用 → 版本信息也能直接检查并更新本机软件（源码模式增量拉取重建，安装包模式下载并静默安装） |
 | Windows 源码版 | 下载 [源码版安装器](https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe)（内置 Node 22.20.0 + pnpm 10.20.0，裸机离线可装），日常通过应用内「检查更新」更新（预构建环境包安装会直接提示用新版安装器覆盖更新） |
 | Android | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 APK；可离线使用，也可连接同步中枢，详见 [Android 指南](./main/docs/ANDROID.md) |
 | Docker / NAS | 按下面的命令从源码启动，或参考 [部署指南](./main/docs/BUILDING.md) 使用 Registry 镜像 / NAS Compose |

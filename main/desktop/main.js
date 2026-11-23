@@ -53,6 +53,8 @@ const updateFailure = require('./scripts/lib/update-failure');
 const updateCard = require('./lib/update-card');
 // 安装包静默安装进度窗的 PowerShell 脚本（同一张深色卡片 + 自绘最小化），单测见 scripts/tests/install-card.test.js
 const installCard = require('./lib/install-card');
+// 安装作用域判定（所有用户 / 当前用户 → 静默参数与「切换安装位置」入口），单测见 scripts/tests/install-scope.test.js
+const installScope = require('./lib/install-scope');
 // 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
 const uninstallGuard = require('./scripts/lib/uninstall-guard');
 // 整棵进程树的收尾（Windows taskkill /T + tasklist 轮询），单测见 scripts/tests/process-tree.test.js。
@@ -886,6 +888,9 @@ app.whenReady().then(() => {
   // 上一次「退出安装」结算：版本没前进就把原因挂到 autoState.installError、写入失败暂停并弹通知，
   // 界面启动后能直接看到
   reportPendingUpdateResult();
+  // 上一次「切换安装位置」结算：落到当前用户目录就把成功提示摆到设置页，没成就写清原因
+  reportScopeMigrationResult();
+  cleanupInstallHandshakeDirs();
   // 已有的失败暂停记录先灌进状态：设置页在首轮自动检查（启动 4 秒后）之前就能显示暂停横幅
   {
     const recordedFailure = readAutoUpdateFailure();
@@ -1516,16 +1521,22 @@ async function downloadUpdateFile(cfg, url, send, signal, expectedSha256, progre
 // 手动下载与自动更新落盘到同一个文件名（downloads/<安装包名>）：同时跑会互相覆盖，
 // 进度也会在设置页来回跳（2026-11-08 用户报障）。两边都设忙标记，绝不允许并发。
 let manualDownloadBusy = false;
+/** 切换安装位置期间（下载安装包 + 卸载重装）暂停自动更新，避免两套安装链同时动 */
+let scopeMigrationBusy = false;
 
 ipcMain.handle('desktop-update-download', async (e, url) => {
   // 下载源只认主进程持有的配置（.env），渲染进程传来的任何配置一律不采信：那条路径曾能
   // 任意指定 giteaUrl，把「只从配置源下载」的校验变成空转。资产还必须真在本次 Release 里。
+  //
+  // 自动更新正在后台下载时**不能抛错**（用户 2026-11-24 报障：点右上角「下载」直接弹
+  // 「自动更新正在后台下载…」，像故障一样）。这里回一个结构化 busy，渲染层据此把界面切到
+  // 后台自动更新的进度上——下载的是同一个安装包，用户不需要再点一次。
+  if (autoState.phase === 'downloading' || autoState.phase === 'installing') {
+    return { ok: false, busy: 'auto', state: { ...autoState } };
+  }
+  if (manualDownloadBusy || scopeMigrationBusy) return { ok: false, busy: 'manual' };
   const cfg = await resolveUpdateCfg(null);
   if (!cfg.giteaUrl || !cfg.giteaRepo) throw new Error('尚未配置更新源');
-  if (autoState.phase === 'downloading' || autoState.phase === 'installing') {
-    throw new Error('自动更新正在后台下载/安装安装包，请等它完成，或先关闭「自动更新」再手动下载');
-  }
-  if (manualDownloadBusy) throw new Error('安装包正在下载中，请稍候');
   manualDownloadBusy = true;
   try {
     lastCheckCfg = cfg;
@@ -1536,9 +1547,10 @@ ipcMain.handle('desktop-update-download', async (e, url) => {
     if (!asset) throw new Error('下载地址不是当前更新源最新 Release 的资产，请保存更新源设置后重试');
     const expected = await fetchSha256ForAsset(cfg, release, asset);
     const sender = e.sender;
-    return await downloadUpdateFile(cfg, asset.url, (ch, data) => {
+    const file = await downloadUpdateFile(cfg, asset.url, (ch, data) => {
       if (sender && !sender.isDestroyed()) sender.send(ch, data);
     }, undefined, expected, 'manual');
+    return { ...file, ok: true };
   } finally {
     manualDownloadBusy = false;
   }
@@ -1589,6 +1601,8 @@ const autoState = {
   // 上一次「退出安装」的结果（重启后比对版本号得出）：装失败时留在这里给界面提示，
   // 与 phase/error 分开是因为自动检查每 4 秒就会把 phase 推着走一遍，message 会被冲掉。
   installError: '',
+  // 上一次「切换安装位置」成功后的提示（重启后判定落点得出）：设置页显示一次，不需要用户再确认
+  scopeSwitchNotice: '',
   // 自动更新失败后暂停的目标版本与原因（config.json 的 autoUpdateFailure，见 lib/update-failure.js）；
   // 有值时 主进程不再对这个版本自动下载/安装，界面显示暂停横幅并提供「重试自动更新」。
   blockedVersion: null,
@@ -1731,17 +1745,11 @@ function cleanupOldInstallers(keepPath) {
   }
 }
 
-/** 推断当前安装作用域：Program Files 下视为所有用户安装（NSIS /allusers，静默时会触发 UAC），
- *  其余（用户目录）为当前用户安装（/currentuser，无提权）。不传模式参数时 NSIS 会继承上次
- *  安装记住的模式，可能与本次实际位置不符导致静默参数失效。
+/** 当前安装作用域（所有用户 / 当前用户）——静默参数与设置页入口共用 desktop/lib/install-scope.js 的口径。
  *  新版安装器已固定「仅当前用户」（build/installer.nsh 的 customInstallMode），/allusers 只用于
  *  兼容旧版装在 Program Files 的机器——它们必须先卸载重装才能摆脱每次更新的 UAC。 */
-function installerScopeFlag() {
-  const exe = app.getPath('exe').toLowerCase();
-  const pf = (process.env.ProgramFiles || 'C:\\Program Files').toLowerCase();
-  const pf86 = (process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)').toLowerCase();
-  if (exe.startsWith(pf + path.sep) || exe.startsWith(pf86 + path.sep)) return '/allusers';
-  return '/currentuser';
+function currentInstallScope() {
+  return installScope.describe({ exePath: app.getPath('exe'), env: process.env });
 }
 
 /** 把 asar 内的品牌 PNG 落到 userData 的真实文件：PowerShell 窗读不了 app.asar。
@@ -1763,18 +1771,296 @@ function realBrandPng() {
   }
 }
 
-/** 生成安装进度窗（powershell WinForms 无边框置顶窗，经 -EncodedCommand 启动，无临时脚本文件）。
- *  窗口纯装饰：按安装包进程名轮询，安装器退出即自动关窗；被安全软件拦截也不影响安装——
- *  安装与重启由下方独立的 cmd 链执行，不依赖任何脚本解释器。 */
-function spawnInstallUiForm(version) {
-  const script = installCard.buildScript({
-    version: sanitizeVersion(version),
-    iconPath: realBrandPng(),
-    exePath: installedAppExe(),
+/** 安装卡片与主进程的握手目录：%TEMP%\engram-install-<pid>（安装日志留在里面便于排障） */
+function installHandshakeDir(pid = process.pid) {
+  const dir = path.join(app.getPath('temp'), `engram-install-${pid}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** 卡片必须在这么长时间内画出窗口：主进程收到 ready 才退出，否则视为启动失败 */
+const INSTALL_CARD_READY_TIMEOUT_MS = 6_000;
+
+function waitForPath(target, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (fs.existsSync(target)) return resolve(true);
+      if (Date.now() >= deadline) return resolve(false);
+      setTimeout(tick, 100);
+    };
+    tick();
   });
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  const child = spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', encoded], { detached: true, stdio: 'ignore' });
-  child.unref();
+}
+
+/** 杀掉没画出窗口的 PowerShell 卡片：它还在等 go，杀掉后绝不会擅自开始安装 */
+function killInstallCard(child) {
+  if (!child) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    /* 已退出 */
+  }
+  if (child.pid) {
+    try {
+      execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+    } catch {
+      /* taskkill 不可用 */
+    }
+  }
+}
+
+/** 进度卡起不来时的兜底：打开 NSIS 安装向导（自带可见窗口），至少不是「应用消失、什么都没发生」 */
+function openInstallerWizard(file) {
+  try {
+    const child = spawn('cmd.exe', ['/d', '/s', '/c', `start "" "${file}"`], {
+      detached: true,
+      stdio: 'ignore',
+      windowsVerbatimArguments: true,
+    });
+    child.on('error', (e) => log('[update] 打开安装向导失败（非致命）：' + describeError(e)));
+    child.unref();
+    return true;
+  } catch (e) {
+    log('[update] 打开安装向导失败（非致命）：' + describeError(e));
+    return false;
+  }
+}
+
+/**
+ * 启动安装监督卡，并等它真正画出窗口（ready 文件）。
+ *
+ * 握手顺序（与 lib/install-card.js 头注释一致）：
+ *   PowerShell 画卡 → 写 ready → 主进程执行 onReady（落盘 pending 标记）→ 写 go → 主进程退出
+ *   → 卡片等主进程 PID 退出 → 跑安装器（Start-Process -Wait）→ 拉起新版 / 失败给原因。
+ * 只要 ready 没出现（PowerShell 被策略拦、进程秒退），这里返回失败且**主进程不退出**，
+ * 调用方改走安装向导兜底或把错误显示出来。
+ *
+ * @param {object} opts 传给 installCard.buildScript 的参数
+ * @param {() => void} [onReady] ready 之后、放行之前执行（写 config 必须在卡片开始安装前完成）
+ * @returns {Promise<{ok: boolean, error?: string, dir?: string, logFile?: string, pid?: number}>}
+ */
+async function launchInstallCard(opts, onReady) {
+  const dir = installHandshakeDir();
+  const readyFile = path.join(dir, installCard.CARD_READY_FILE);
+  const goFile = path.join(dir, installCard.CARD_GO_FILE);
+  const logFile = path.join(dir, 'install.log');
+  fs.rmSync(readyFile, { force: true });
+  fs.rmSync(goFile, { force: true });
+  let script;
+  try {
+    script = installCard.buildScript({
+      ...opts,
+      iconPath: realBrandPng(),
+      exePath: opts.relaunchPath || installedAppExe(),
+      readyFile,
+      goFile,
+      logFile,
+    });
+  } catch (e) {
+    return { ok: false, error: describeError(e) };
+  }
+  let child;
+  try {
+    // 不能走 -EncodedCommand：监督卡脚本已超过 Windows 命令行 32KB 上限（2026-11-24 实测
+    // 34728 字符直接报「文件名或扩展名太长」）。落地成带 UTF-8 BOM 的 .ps1 再 -File 启动；
+    // 没有 BOM 时 Windows PowerShell 5.1 会按 ANSI 读中文，解析直接崩。
+    const scriptFile = path.join(dir, 'install-card.ps1');
+    fs.writeFileSync(scriptFile, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, 'utf8')]));
+    child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptFile], {
+      detached: true,
+      stdio: 'ignore',
+    });
+  } catch (e) {
+    return { ok: false, error: describeError(e) };
+  }
+  const outcome = await Promise.race([
+    waitForPath(readyFile, INSTALL_CARD_READY_TIMEOUT_MS).then((ok) =>
+      ok ? { ok: true } : { ok: false, error: '安装进度窗口没有及时出现' },
+    ),
+    new Promise((resolve) => child.once('error', (e) => resolve({ ok: false, error: '无法启动安装进度窗口：' + describeError(e) }))),
+    new Promise((resolve) => child.once('exit', (code) => resolve({ ok: false, error: `安装进度窗口提前退出（code=${code}）` }))),
+  ]);
+  if (!outcome.ok) {
+    killInstallCard(child);
+    return { ...outcome, dir, logFile };
+  }
+  try {
+    onReady?.();
+  } catch (e) {
+    log('[update] 安装前落盘标记失败（非致命）：' + describeError(e));
+  }
+  try {
+    fs.writeFileSync(goFile, 'go');
+  } catch (e) {
+    killInstallCard(child);
+    return { ok: false, error: '无法通知安装窗口开始安装：' + describeError(e), dir, logFile };
+  }
+  return { ok: true, dir, logFile, pid: child.pid };
+}
+
+/** 静默安装 + 自动重启：安装监督卡负责「等应用退出 → /S 安装 → 拉起新版」整条链。
+ *  **先 await stopLocalTree() 把 server 与内置 Agent 整棵子树收干净再启动安装器**：
+ *  NSIS 升级的第一步是跑旧版卸载器把旧安装目录原子改名，孙进程（dsh 的 node.exe、子代理）
+ *  还占着文件时这一步必失败，用户看到的就是 "Failed to uninstall old application files...: 2"。
+ *  顺序不能反：先 spawn 安装器再退出是旧实现的写法，正是本次事故来源。 */
+async function beginSilentInstall(file, version, source = 'auto update') {
+  const treeFreed = await stopLocalTree();
+  if (!treeFreed) log('[update] 安装前进程树未完全退出，继续安装（安装器兜底会清旧目录）');
+  const target = installedAppExe();
+  const scope = currentInstallScope();
+  const card = await launchInstallCard(
+    {
+      version,
+      installerPath: file,
+      installerArgs: ['/S', scope.scopeFlag],
+      elevate: scope.scope === installScope.SCOPE_MACHINE,
+      relaunchPath: target,
+      appPid: process.pid,
+      mode: 'update',
+    },
+    () => markPendingUpdate(version),
+  );
+  if (!card.ok) {
+    // 卡片起不来（PowerShell 被安全策略拦住等）：改开安装向导，至少有一个可见窗口让用户完成安装，
+    // 不再出现「应用直接消失、什么都没发生」。向导由用户点完；下次启动按 pendingUpdate 结算结果。
+    log(`[update] 安装进度窗口未能启动（${card.error}），改为打开安装向导：${file}`);
+    if (!openInstallerWizard(file)) {
+      // 连安装向导都打不开：留在应用里把原因说清楚，绝不再静默退出
+      autoState.installError =
+        `无法启动安装程序（${card.error}）。请到仓库 Release 页手动下载安装包，或检查系统是否拦截了 PowerShell。`;
+      if (version) {
+        saveAutoUpdateFailure(version, autoState.installError);
+        notifyAutoUpdateFailure(version, autoState.installError);
+      }
+      setAutoPhase('failed');
+      return { ok: false, error: autoState.installError };
+    }
+    markPendingUpdate(version);
+    setTimeout(() => app.quit(), 1200);
+    return { ok: true, fallback: 'wizard' };
+  }
+  log(`${source}: install card ready (scope ${scope.scopeFlag}): ${file} (relaunch -> ${target}, log ${card.logFile})`);
+  setTimeout(() => app.quit(), 400);
+  return { ok: true };
+}
+
+/** 记下「正在切换安装位置」：下次启动看是否真的落到当前用户目录，没成要如实告诉用户 */
+function markScopeMigration(fromScope, toScope) {
+  try {
+    const cfg = readConfig();
+    cfg.scopeMigration = { from: fromScope, to: toScope, at: Date.now() };
+    // 切换会装上最新的安装包：旧的「待结算更新」记录不再适用，避免下次启动误报「上次更新未生效」
+    delete cfg.pendingUpdate;
+    writeConfig(cfg);
+    autoState.installError = '';
+  } catch (e) {
+    log('record scope migration failed (non-fatal): ' + describeError(e));
+  }
+}
+
+/** 撤销切换记录（卡片没起来、安装压根没开始时） */
+function clearScopeMigration() {
+  try {
+    const cfg = readConfig();
+    if (!cfg.scopeMigration) return;
+    delete cfg.scopeMigration;
+    writeConfig(cfg);
+  } catch (e) {
+    log('clear scope migration failed (non-fatal): ' + describeError(e));
+  }
+}
+
+/**
+ * 切换到「当前用户」安装（解决旧版所有用户安装每次更新都弹 UAC）。
+ *
+ * 不能直接装：只要旧的所有用户安装还在，NSIS 的静默分支就会先提权、再按所有用户模式装回去
+ * （templates/nsis/installer.nsi 的 `$hasPerMachineInstallation == "1"` 分支）。所以顺序固定为
+ * 「静默卸载旧安装（这一次需要 UAC）→ /currentuser 装到个人目录 → 拉起新版」。
+ * 卸载成功后如果安装失败，卡片会给出「重新运行安装包」入口，不会让机器上什么版本都没有。
+ */
+async function beginScopeMigration(file, version) {
+  const scope = currentInstallScope();
+  if (scope.scope !== installScope.SCOPE_MACHINE) {
+    return { ok: false, error: '当前已经是「当前用户」安装，不需要切换。' };
+  }
+  const uninstaller = installScope.machineUninstallerPath(scope.installDir);
+  if (!fs.existsSync(uninstaller)) {
+    return {
+      ok: false,
+      error: `找不到旧版卸载器（${uninstaller}）。请到 Windows「设置 → 应用 → 已安装的应用」卸载 Engram，再运行新版安装包（会自动装到当前用户目录）。`,
+    };
+  }
+  await stopLocalTree();
+  const card = await launchInstallCard(
+    {
+      version,
+      installerPath: file,
+      installerArgs: ['/S', installScope.scopeFlag(installScope.SCOPE_USER)],
+      elevate: false,
+      relaunchPath: installScope.perUserExePath(process.env) || installedAppExe(),
+      appPid: process.pid,
+      mode: 'switch',
+      oldUninstaller: uninstaller,
+      oldInstallDir: scope.installDir,
+    },
+    () => markScopeMigration(scope.scope, installScope.SCOPE_USER),
+  );
+  if (!card.ok) {
+    clearScopeMigration();
+    return { ok: false, error: card.error || '安装进度窗口没有启动，切换已取消' };
+  }
+  log(`scope migration: card ready, old=${scope.installDir}, log=${card.logFile}`);
+  setTimeout(() => app.quit(), 400);
+  return { ok: true, migrating: true };
+}
+
+/** 启动时结算「切换安装位置」：当前 exe 已不在所有用户目录 = 成功；否则把原因挂到设置页 */
+function reportScopeMigrationResult() {
+  let pending = null;
+  try {
+    const cfg = readConfig();
+    pending = cfg.scopeMigration || null;
+    if (pending) {
+      delete cfg.scopeMigration;
+      writeConfig(cfg);
+    }
+  } catch (e) {
+    log('read scope migration failed (non-fatal): ' + describeError(e));
+    return;
+  }
+  if (!pending) return;
+  const now = currentInstallScope();
+  if (now.scope === installScope.SCOPE_USER) {
+    // 换了安装位置：原版本的失败暂停记录不再适用，顺手清掉
+    clearAutoUpdateFailure();
+    autoState.scopeSwitchNotice = '已切换到「当前用户」安装，以后自动更新不再需要管理员确认（UAC）。';
+    log('scope migration result: success (' + now.installDir + ')');
+    return;
+  }
+  autoState.installError =
+    '切换到「当前用户」安装没有完成（可能取消了「用户账户控制」），当前仍是「所有用户」安装。可再试一次。';
+  log('scope migration result: still ' + now.scope + ' (' + now.installDir + ')');
+}
+
+/** 清理一周前的安装握手目录（%TEMP%\engram-install-<pid>）：里面只有 ready/go 标记与安装日志 */
+function cleanupInstallHandshakeDirs() {
+  try {
+    const temp = app.getPath('temp');
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const name of fs.readdirSync(temp)) {
+      if (!name.startsWith('engram-install-')) continue;
+      const dir = path.join(temp, name);
+      try {
+        const st = fs.statSync(dir);
+        if (st.isDirectory() && st.mtimeMs < cutoff) fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* 正在被其他进程使用：下次再清 */
+      }
+    }
+  } catch {
+    /* 临时目录读不了不影响启动 */
+  }
 }
 
 /** 退出安装前记下目标版本：下次启动比对实际版本号，才能知道这次安装到底成没成 */
@@ -1823,34 +2109,6 @@ function reportPendingUpdateResult() {
     autoState.installError = `上次更新到 v${outcome.pendingVersion} 的结果无法确认，请检查当前版本。`;
   }
   log('pending update result: ' + autoState.installError);
-}
-
-/** 静默安装 + 自动重启：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否
- *  自动启动，也不依赖任何脚本解释器）；PS 进度窗为尽力而为的装饰层。
- *  **先 await stopLocalTree() 把 server 与内置 Agent 整棵子树收干净再启动安装器**：
- *  NSIS 升级的第一步是跑旧版卸载器把旧安装目录原子改名，孙进程（dsh 的 node.exe、子代理）
- *  还占着文件时这一步必失败，用户看到的就是 "Failed to uninstall old application files...: 2"。
- *  顺序不能反：先 spawn 安装器再退出是旧实现的写法，正是本次事故来源。 */
-async function beginSilentInstall(file, version, source = 'auto update') {
-  const treeFreed = await stopLocalTree();
-  if (!treeFreed) log('[update] 安装前进程树未完全退出，继续安装（安装器兜底会清旧目录）');
-  const target = installedAppExe();
-  const scopeFlag = installerScopeFlag();
-  const cmd = `start "" /wait "${file}" /S ${scopeFlag} & start "" "${target}"`;
-  markPendingUpdate(version);
-  const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
-    detached: true,
-    stdio: 'ignore',
-    windowsVerbatimArguments: true,
-  });
-  child.unref();
-  try {
-    spawnInstallUiForm(version);
-  } catch (e) {
-    log('install ui form failed (non-fatal): ' + describeError(e));
-  }
-  log(`${source}: silent installer launched (scope ${scopeFlag}): ${file} (relaunch -> ${target})`);
-  setTimeout(() => app.quit(), 500);
 }
 
 // 自动检查的调度：单一定时器 + 自适应退避档位（不用 setInterval——固定间隔会把节奏写死，
@@ -1905,8 +2163,8 @@ async function autoUpdateTick() {
     setAutoPhase('idle');
     return;
   }
-  // 手动下载正在跑：别和它抢同一个安装包文件（会互相覆盖、进度互相串），一分钟后再看
-  if (manualDownloadBusy) {
+  // 手动下载/切换安装位置正在跑：别和它抢同一个安装包文件（会互相覆盖、进度互相串），一分钟后再看
+  if (manualDownloadBusy || scopeMigrationBusy) {
     scheduleAutoUpdateCheck(60_000);
     return;
   }
@@ -1944,8 +2202,8 @@ async function autoUpdateTick() {
       return;
     }
     if (recordedFailure) clearAutoUpdateFailure(); // 新版本已发布：旧的失败记录不再拦自动更新
-    // 这轮检查期间用户点了手动下载：让路，别和它抢同一个安装包文件（本轮就此结束）
-    if (manualDownloadBusy) {
+    // 这轮检查期间用户点了手动下载/切换安装位置：让路，别和它抢同一个安装包文件（本轮就此结束）
+    if (manualDownloadBusy || scopeMigrationBusy) {
       setAutoPhase('idle');
       return;
     }
@@ -2024,6 +2282,83 @@ ipcMain.handle('desktop-update-retry-auto', () => {
     scheduleAutoUpdateCheck(1000);
   }
   return { ...autoState };
+});
+
+// ---------- 安装位置（所有用户 / 当前用户） ----------
+// 旧版「为所有用户安装」在 Program Files，应用内静默升级每次都要 UAC；新版安装器已固定
+// 仅当前用户。设置页据此提供一次性切换：静默卸载旧安装（这一次需要 UAC）→ 装到个人目录，
+// 之后自动更新全程无提权。状态与入口都放在这里，避免渲染层自己猜路径。
+
+function installScopeInfo() {
+  const scope = currentInstallScope();
+  const portable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
+  const uninstaller = installScope.machineUninstallerPath(scope.installDir);
+  return {
+    ...scope,
+    supported: process.platform === 'win32' && PACKAGED && !portable,
+    portable,
+    uninstallerExists: Boolean(uninstaller) && fs.existsSync(uninstaller),
+    perUserExe: installScope.perUserExePath(process.env),
+    perUserDir: installScope.perUserInstallDir(process.env),
+  };
+}
+
+ipcMain.handle('desktop-update-get-scope', () => installScopeInfo());
+
+/** 切换安装位置需要安装包：优先复用已下载且 sha256 对得上的最新包，否则现下（进度走手动通道） */
+async function ensureInstallerForScopeSwitch(sender) {
+  const cfg = await resolveUpdateCfg(null);
+  if (!cfg.giteaUrl || !cfg.giteaRepo) throw new Error('尚未配置更新源，无法下载安装包');
+  const release = await giteaLatestRelease(cfg);
+  if (!release) throw new Error('更新源上没有可用的 Release');
+  const asset = release.assets.find((a) => a.name.endsWith('.exe'));
+  if (!asset) throw new Error('远端 Release 里没有可用的安装包（exe）');
+  const expected = await fetchSha256ForAsset(cfg, release, asset);
+  const dir = path.join(app.getPath('userData'), 'downloads');
+  fs.mkdirSync(dir, { recursive: true });
+  const cached = updateChain.resolveInsideDir(dir, updateChain.installerFileName(asset.url));
+  if (expected && fs.existsSync(cached)) {
+    try {
+      if ((await updateChain.sha256File(cached)) === expected) {
+        log('[update] scope switch reuses downloaded installer: ' + cached);
+        return { file: cached, version: release.version || app.getVersion() };
+      }
+    } catch {
+      /* 读不了就重下 */
+    }
+  }
+  const file = await downloadUpdateFile(cfg, asset.url, (ch, data) => {
+    if (sender && !sender.isDestroyed()) sender.send(ch, data);
+  }, undefined, expected, 'manual');
+  return { file: file.path, version: release.version || app.getVersion() };
+}
+
+ipcMain.handle('desktop-update-switch-scope', async (e) => {
+  if (process.platform !== 'win32' || !PACKAGED) return { ok: false, error: '只有 Windows 安装版支持切换安装位置。' };
+  if (process.env.PORTABLE_EXECUTABLE_DIR) return { ok: false, error: '便携版不参与安装位置切换。' };
+  if (autoState.phase === 'downloading' || autoState.phase === 'installing') {
+    return { ok: false, busy: 'auto', state: { ...autoState }, error: '自动更新正在进行，等它完成后再切换安装位置。' };
+  }
+  if (manualDownloadBusy || scopeMigrationBusy) {
+    return { ok: false, busy: 'manual', error: '安装包正在下载或切换正在进行，请稍候。' };
+  }
+  const scope = currentInstallScope();
+  if (scope.scope !== installScope.SCOPE_MACHINE) {
+    return { ok: true, alreadyUser: true, scope: installScopeInfo() };
+  }
+  scopeMigrationBusy = true;
+  manualDownloadBusy = true;
+  try {
+    const pkg = await ensureInstallerForScopeSwitch(e.sender);
+    const result = await beginScopeMigration(pkg.file, pkg.version);
+    if (!result.ok) scopeMigrationBusy = false;
+    return result.ok ? { ok: true, migrating: true } : result;
+  } catch (err) {
+    scopeMigrationBusy = false;
+    return { ok: false, error: describeError(err) };
+  } finally {
+    manualDownloadBusy = false;
+  }
 });
 
 // ---------- 源码模式自更新（非打包形态：应用内增量拉源码并重建） ----------

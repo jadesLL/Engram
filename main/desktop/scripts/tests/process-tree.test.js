@@ -65,11 +65,13 @@ test('main.js：静默安装前必须 await 进程树退出（否则旧卸载器
   assert.ok(text.includes("'./scripts/lib/process-tree'"), 'main.js 必须使用 process-tree 库');
   assert.ok(text.includes('async function beginSilentInstall'), 'beginSilentInstall 必须是 async：要先等进程树退出');
   const start = text.indexOf('async function beginSilentInstall');
-  const body = text.slice(start, start + 1200);
+  const body = text.slice(start, start + 1600);
   const stopAt = body.indexOf('await stopLocalTree()');
-  const spawnAt = body.indexOf("spawn('cmd.exe'");
+  // 安装动作现在交给安装监督卡（卡片等主进程退出后才跑安装器）；启动卡片前仍必须先收干净子树
+  const cardAt = body.indexOf('await launchInstallCard(');
   assert.ok(stopAt > 0, 'beginSilentInstall 必须先 stopLocalTree()');
-  assert.ok(spawnAt > stopAt, '必须先 await 进程树退出，再 spawn 安装器');
+  assert.ok(cardAt > stopAt, '必须先 await 进程树退出，再启动安装监督卡（安装器在应用退出后才跑）');
+  assert.ok(body.includes('app.quit()'), '卡片就绪后必须退出应用，把安装目录的文件锁让出来');
   assert.ok(text.includes('taskkill'), '进程树必须用 taskkill 结束（/T 连带孙进程）');
   assert.ok(/app\.on\('before-quit'[\s\S]{0,900}stopLocalTree\(\)/.test(text), 'before-quit 退出前也要清整棵子树');
 });

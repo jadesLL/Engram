@@ -58,7 +58,7 @@ test('自动更新与手动下载的进度必须分道：事件带 source，自�
 
 test('自动更新与手动下载不允许并发（同一落盘文件），新一轮下载先清掉旧百分比', () => {
   assert.ok(desktopMain.includes('manualDownloadBusy'), '手动下载要有忙标记');
-  assert.ok(/if \(manualDownloadBusy\) \{\s*scheduleAutoUpdateCheck/.test(desktopMain), '自动轮询遇到手动下载要让路而不是并发下载');
+  assert.ok(/if \(manualDownloadBusy \|\| scopeMigrationBusy\) \{\s*scheduleAutoUpdateCheck/.test(desktopMain), '自动轮询遇到手动下载/切换安装位置要让路而不是并发下载');
   assert.ok(desktopMain.includes("autoState.phase === 'downloading' || autoState.phase === 'installing'"), '手动下载要拒绝在自动更新下载/安装期间启动');
   assert.ok(desktopMain.includes('autoState.percent = null; // 新一轮下载从 0 开始'), '新一轮自动下载不能继承上一轮的 100%');
   assert.ok(/if \(phase !== 'downloading' && phase !== 'installing'\) autoState\.percent = null;/.test(desktopMain), '离开下载/安装态必须清掉百分比');

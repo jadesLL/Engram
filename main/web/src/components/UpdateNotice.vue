@@ -49,25 +49,32 @@
             </div>
           </div>
         </div>
-        <!-- 一键更新按下后就地显示进度：源码/安装包形态会随即重启应用，服务端形态会等服务恢复后自动刷新 -->
-        <div v-if="applyPhase !== 'idle'" class="update-notice-progress" :class="{ failed: applyPhase === 'error' }">
+        <!-- 一键更新按下后就地显示进度：源码/安装包形态会随即重启应用，服务端形态会等服务恢复后自动刷新。
+             自动更新正在后台下载/安装时也常驻这一块：用户点右上角图标就能直接看到后台进度，
+             不用再点一次「下载」去撞「已经在下载」的报错。 -->
+        <div v-if="applyPhase !== 'idle' || autoBusyPhase" class="update-notice-progress" :class="{ failed: applyPhase === 'error' }">
           <div class="update-notice-progress-head">
             <span class="update-notice-progress-label">{{ progressLabel }}</span>
-            <span v-if="applyPercent !== null" class="update-notice-progress-pct">{{ applyPercent }}%</span>
+            <span v-if="shownPercent !== null" class="update-notice-progress-pct">{{ shownPercent }}%</span>
           </div>
-          <div v-if="applyPercent !== null" class="update-notice-progress-bar">
-            <i :style="{ width: applyPercent + '%' }" />
+          <div v-if="shownPercent !== null" class="update-notice-progress-bar">
+            <i :style="{ width: shownPercent + '%' }" />
           </div>
           <div v-if="progressLines.length" class="update-notice-progress-log">
             <div v-for="(line, index) in progressLines" :key="index">{{ line }}</div>
           </div>
         </div>
+        <!-- 安装位置提示：所有用户安装每次更新都会弹一次 UAC，提前说清并给出一次性切换入口 -->
+        <p v-if="shellKind === 'installer' && machineScope" class="update-notice-note">
+          当前为「所有用户」安装，更新时会弹一次管理员确认；到「设置 → 版本与更新」可切换为当前用户安装，以后不再弹。
+        </p>
+        <p v-if="desktopAuto.installError" class="update-notice-note err">{{ desktopAuto.installError }}</p>
         <div class="update-notice-foot">
           <div class="update-notice-foot-left">
             <button type="button" class="update-notice-later" :disabled="applying" @click="snooze">稍后提醒</button>
             <button type="button" class="update-notice-link" @click="goToUpdate">查看详情</button>
           </div>
-          <button type="button" class="update-notice-go" :disabled="applying" @click="runUpdate">{{ applyLabel }}</button>
+          <button type="button" class="update-notice-go" :disabled="applying || Boolean(autoBusyPhase)" @click="runUpdate">{{ applyLabel }}</button>
         </div>
       </section>
     </div>
@@ -137,7 +144,17 @@ const applyPhase = ref<ApplyPhase>('idle');
 const applyLog = ref<string[]>([]);
 const applyError = ref('');
 const applyPercent = ref<number | null>(null);
+/**
+ * 安装包形态的自动更新状态（主进程 autoState）：后台下载时也要能在这里看到进度，
+ * 并且下载被别人占用时把界面切到它的进度而不是报错（2026-11-24 用户报障）。
+ */
+const desktopAuto = ref<any>({ phase: 'idle', percent: null, latestVersion: null, error: '', installError: '' });
+/** 安装位置（machine=Program Files，更新会弹 UAC；user=个人目录，更新无提权） */
+const installScopeInfo = ref<any>(null);
+/** 本次点击被后台自动更新接手：失败/安装阶段由它的状态推动界面 */
+const attachedAuto = ref(false);
 let offSourceState: (() => void) | null = null;
+let offAutoState: (() => void) | null = null;
 let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -198,7 +215,31 @@ const subtitle = computed(() => {
 /* ===== 一键更新 ===== */
 const applying = computed(() => applyPhase.value === 'running' || applyPhase.value === 'waiting');
 
+/** 后台自动更新正在下载/安装（仅安装包形态）：此时不发起第二次下载，直接显示它的进度 */
+const autoBusyPhase = computed<'downloading' | 'installing' | ''>(() => {
+  if (shellKind.value !== 'installer') return '';
+  const phase = desktopAuto.value?.phase;
+  return phase === 'downloading' || phase === 'installing' ? phase : '';
+});
+const autoBusyPercent = computed<number | null>(() => {
+  const raw = desktopAuto.value?.percent;
+  if (raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+});
+/** 面板里显示的进度：后台自动下载优先（手动下载在它忙时本来就会被禁用），其余用手动进度 */
+const shownPercent = computed<number | null>(() => {
+  if (autoBusyPhase.value === 'downloading') return autoBusyPercent.value;
+  return applyPercent.value;
+});
+/** 当前是「所有用户」安装：每次更新会弹一次 UAC，面板里提示可去设置切换 */
+const machineScope = computed(() => installScopeInfo.value?.scope === 'machine');
+
 const applyLabel = computed(() => {
+  if (autoBusyPhase.value === 'downloading') {
+    return autoBusyPercent.value === null ? '后台下载中…' : `后台下载中 ${autoBusyPercent.value}%`;
+  }
+  if (autoBusyPhase.value === 'installing') return '正在安装…';
   if (applyPhase.value === 'running') {
     if (shellKind.value === 'installer') return applyPercent.value === null ? '正在准备下载…' : `下载中 ${applyPercent.value}%`;
     if (shellKind.value === 'apk') return applyPercent.value === null ? '正在下载安装包…' : `下载中 ${applyPercent.value}%`;
@@ -212,6 +253,14 @@ const applyLabel = computed(() => {
   return '立即更新';
 });
 const progressLabel = computed(() => {
+  // 后台自动更新优先展示它自己的阶段：这时候用户没点过下载，界面不能停在「正在更新…」
+  if (autoBusyPhase.value === 'installing') return '自动更新正在安装，应用即将自动重启…';
+  if (autoBusyPhase.value === 'downloading') {
+    const v = desktopAuto.value?.latestVersion ? ` v${desktopAuto.value.latestVersion}` : '';
+    return autoBusyPercent.value === null
+      ? `自动更新正在后台下载${v}，完成后会自动安装…`
+      : `自动更新正在后台下载${v} ${autoBusyPercent.value}%，完成后会自动安装`;
+  }
   if (applyPhase.value === 'error') return '更新失败';
   if (applyPhase.value === 'skipped') return '已是最新版本';
   if (applyPhase.value === 'waiting') return '更新已提交，服务正在重启…';
@@ -302,6 +351,16 @@ async function runUpdate() {
       log,
       onWaiting: () => { applyPhase.value = 'waiting'; },
     });
+  }
+  // 后台自动更新抢在前面：不报错，把面板切到它的进度上（下载完成后它会自己安装并重启）
+  if (result.ok && result.busy) {
+    attachedAuto.value = true;
+    applyPhase.value = 'running';
+    if (result.state) desktopAuto.value = result.state;
+    log(result.busy === 'auto'
+      ? '自动更新已经在后台下载，这里显示它的进度，完成后会自动安装。'
+      : '安装包正在下载中，请稍候…');
+    return;
   }
   if (result.ok) {
     applyPhase.value = result.skipped ? 'skipped' : 'done';
@@ -428,6 +487,16 @@ const checkedLabel = computed(() => {
  */
 // 更新期间面板必须留在屏幕上：进度与失败原因都显示在这里
 watch(applying, (now) => { if (now) panelOpen.value = true; });
+// 本次点击被后台自动更新接手后，由它的状态机推动界面：装完会自动退出重启，失败要如实报出来
+watch(desktopAuto, (state) => {
+  if (!attachedAuto.value || !state) return;
+  if (state.phase === 'failed') {
+    applyPhase.value = 'error';
+    applyError.value = state.error || '自动更新失败，请稍后重试';
+  } else if (state.phase === 'installing') {
+    applyPhase.value = 'done';
+  }
+}, { deep: true });
 watch([hasUpdate, sourceHasUpdate], ([show, source]) => emit('change', show, source), { immediate: true });
 
 /** 「稍后提醒」：只收起面板，绿色图标留在原地继续提示（图标本身就是常驻的更新提醒） */
@@ -484,6 +553,17 @@ onMounted(async () => {
   try {
     const env = await desktop.getDesktopEnv();
     desktopEnv.value = env || null;
+    // 安装包形态：订阅自动更新状态（后台进度 / 安装 / 失败）并读一次安装位置。
+    // 放在源码模式的 early-return 之前——安装包形态拿不到这些，右上角就只能干巴巴一个「下载」。
+    if (desktop.desktopUpdateGetState) {
+      desktop.desktopUpdateGetState().then((state: any) => { if (state) desktopAuto.value = state; }).catch(() => {});
+      if (desktop.onUpdateState) {
+        offAutoState = desktop.onUpdateState((state: any) => { if (state) desktopAuto.value = state; });
+      }
+    }
+    if (desktop.desktopUpdateGetScope) {
+      desktop.desktopUpdateGetScope().then((info: any) => { installScopeInfo.value = info; }).catch(() => {});
+    }
     if (!sourceMode.value || !desktop.desktopSourceAutoState) return;
     if (desktop.onSourceState) offSourceState = desktop.onSourceState((state: SourceUpdateState) => { sourceState.value = state; });
     sourceState.value = await desktop.desktopSourceAutoState();
@@ -496,6 +576,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
   if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
   offSourceState?.();
+  offAutoState?.();
 });
 </script>
 
@@ -554,6 +635,9 @@ onUnmounted(() => {
 .update-notice-progress-log { margin-top: 7px; max-height: 76px; overflow: hidden; color: var(--text-faint); font-size: var(--fs-caption); line-height: var(--lh-ui); overflow-wrap: anywhere; }
 .update-notice-progress.failed .update-notice-progress-label { color: var(--danger); }
 .update-notice-progress.failed .update-notice-progress-log { color: var(--danger); }
+/* 安装位置 / 安装失败等说明：与进度块同层级，不抢标题的注意力 */
+.update-notice-note { margin: 0; padding: 10px 18px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: var(--fs-caption); line-height: 1.5; overflow-wrap: anywhere; }
+.update-notice-note.err { color: var(--danger); }
 .update-notice-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 18px; border-top: 1px solid var(--border); background: var(--bg-secondary); }
 .update-notice-foot button { border-radius: 6px; padding: 6px 10px; font-size: var(--fs-small); font-weight: 600; }
 .update-notice-foot button:disabled { opacity: 0.6; cursor: default; }
