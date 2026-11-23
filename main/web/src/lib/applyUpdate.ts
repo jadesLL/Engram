@@ -35,6 +35,13 @@ export interface ApplyResult {
   handingOff?: boolean;
   /** 等服务端恢复超时（仅服务器形态） */
   timeout?: boolean;
+  /**
+   * 手动下载被后台自动更新（auto）或另一次手动下载（manual）占用：不是失败。
+   * 调用方应把界面切到对应进度上——下载的是同一个安装包，用户不需要再点一次。
+   */
+  busy?: 'auto' | 'manual';
+  /** busy='auto' 时主进程的自动更新状态（phase/percent/latestVersion…），用于立即显示后台进度 */
+  state?: any;
 }
 
 export const UPDATE_SOURCE_HINT = '还没有配置更新源：打开「设置 → 连接与同步 → 更新源配置」填写远端仓库地址后重试。';
@@ -178,6 +185,23 @@ export async function applyDesktopInstallerUpdate(h: InstallerUpdateHandlers = {
   if (!wd?.desktopUpdateCheck || !wd.desktopUpdateDownload || !wd.desktopUpdateRunInstaller) {
     return { ok: false, error: '当前桌面端壳不支持自动安装更新，请到「设置 → 连接与同步 → 桌面端更新」手动更新。' };
   }
+  // 后台自动更新正在跑：直接接手它的进度，不再发起第二次下载（两者落盘同一个文件，主进程也会拒绝）。
+  // 以前这里会一路点到主进程并抛「自动更新正在后台下载…」，用户看到的是报错（2026-11-24 报障）。
+  if (wd.desktopUpdateGetState) {
+    try {
+      const state = await wd.desktopUpdateGetState();
+      if (state?.phase === 'downloading' || state?.phase === 'installing') {
+        log(
+          state.phase === 'installing'
+            ? '自动更新已经开始安装，应用即将自动重启，不需要再点一次。'
+            : `自动更新正在后台下载${state.percent != null ? ` ${state.percent}%` : ''}，完成后会自动安装，不需要再点一次。`,
+        );
+        return { ok: true, busy: 'auto', state };
+      }
+    } catch {
+      // 读不到状态就按原流程尝试；主进程还有 busy 返回值兜底
+    }
+  }
   let check = h.check || null;
   if (!check) {
     log('正在检查更新源…');
@@ -191,7 +215,18 @@ export async function applyDesktopInstallerUpdate(h: InstallerUpdateHandlers = {
   log(`开始下载 v${check.latestVersion || '新版本'} 安装包…`);
   const off = wd.onUpdateProgress ? wd.onUpdateProgress((p: any) => h.onProgress?.(p?.percent ?? null)) : null;
   try {
-    const { path: filePath } = await wd.desktopUpdateDownload(exe.url);
+    const downloaded = await wd.desktopUpdateDownload(exe.url);
+    // 主进程发现自动更新刚好在下载/安装：回结构化 busy，不是异常
+    if (downloaded?.busy) {
+      log(
+        downloaded.busy === 'auto'
+          ? '自动更新已经在后台下载了，这里显示它的进度，完成后会自动安装。'
+          : '安装包正在下载中，请稍候…',
+      );
+      return { ok: true, busy: downloaded.busy, state: downloaded.state };
+    }
+    const filePath = downloaded?.path;
+    if (!filePath) return { ok: false, error: '下载完成但没有拿到安装包路径，请重试。' };
     h.onProgress?.(null);
     log('下载完成，正在静默安装并重启…');
     h.onInstalling?.();
