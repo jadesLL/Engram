@@ -22,6 +22,26 @@ function normalizePath(value) {
   return String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
+/**
+ * Windows 绝对路径判定：`C:\…` / `C:/…` / `\\server\…`。
+ *
+ * 为什么要区分：这个模块在 Windows 上跑，但单测在 Linux 容器（verify 的 Docker）里也跑，
+ * POSIX 的 path.dirname('C:\\…\\Engram.exe') 只会得到 '.'，把「Program Files 下的安装」
+ * 判成不可写的自定义目录（2026-11-24 CI 实测）。路径风格按输入判断，fixture 与真实平台都对。
+ */
+function isWindowsPath(value) {
+  return /^[a-zA-Z]:[\\/]/.test(String(value || '')) || /^\\\\/.test(String(value || ''));
+}
+
+function dirOf(value) {
+  const p = String(value || '');
+  return isWindowsPath(p) ? pathDefault.win32.dirname(p) : pathDefault.dirname(p);
+}
+
+function joinPath(...parts) {
+  return parts.some(isWindowsPath) ? pathDefault.win32.join(...parts) : pathDefault.join(...parts);
+}
+
 /** 是否落在 Program Files / Program Files (x86) 下（大小写与尾斜杠不敏感） */
 function isUnderProgramFiles(dir, env = process.env) {
   const target = normalizePath(dir);
@@ -38,7 +58,7 @@ function isUnderProgramFiles(dir, env = process.env) {
  *  不必再靠探测文件判断——杀软临时锁目录时不能把当前用户安装误判成所有用户 */
 function isUnderPerUserPrograms(dir, env = process.env) {
   const target = normalizePath(dir);
-  const base = normalizePath(env.LOCALAPPDATA ? pathDefault.join(env.LOCALAPPDATA, 'Programs') : '');
+  const base = normalizePath(env.LOCALAPPDATA ? joinPath(env.LOCALAPPDATA, 'Programs') : '');
   if (!target || !base) return false;
   return target === base || target.startsWith(base + '\\');
 }
@@ -46,7 +66,7 @@ function isUnderPerUserPrograms(dir, env = process.env) {
 /** 目录是否可写：用真实创建/删除一个测试文件判断（受 ACL 与 UAC 虚拟化影响，比读注册表可靠） */
 function canWriteDir(dir, fs = fsDefault, pid = process.pid) {
   if (!dir) return false;
-  const probe = pathDefault.join(dir, `.engram-write-test-${pid}-${Date.now()}`);
+  const probe = joinPath(dir, `.engram-write-test-${pid}-${Date.now()}`);
   try {
     fs.writeFileSync(probe, '');
     fs.unlinkSync(probe);
@@ -69,7 +89,7 @@ function canWriteDir(dir, fs = fsDefault, pid = process.pid) {
  */
 function describe(input = {}) {
   const exePath = String(input.exePath || '');
-  const installDir = exePath ? pathDefault.dirname(exePath) : '';
+  const installDir = exePath ? dirOf(exePath) : '';
   const env = input.env || process.env;
   const fs = input.fs || fsDefault;
   let machine = isUnderProgramFiles(installDir, env);
@@ -94,18 +114,18 @@ function scopeFlag(scope) {
 
 /** 所有用户安装的卸载器路径（electron-builder 的 UNINSTALL_FILENAME = "Uninstall ${PRODUCT_FILENAME}.exe"） */
 function machineUninstallerPath(installDir) {
-  return installDir ? pathDefault.join(installDir, 'Uninstall Engram.exe') : '';
+  return installDir ? joinPath(installDir, 'Uninstall Engram.exe') : '';
 }
 
 /** 当前用户安装的标准落点：NSIS 的 per-user INSTDIR = %LOCALAPPDATA%\Programs\Engram */
 function perUserInstallDir(env = process.env) {
   const base = String(env.LOCALAPPDATA || '').trim();
-  return base ? pathDefault.join(base, 'Programs', 'Engram') : '';
+  return base ? joinPath(base, 'Programs', 'Engram') : '';
 }
 
 function perUserExePath(env = process.env) {
   const dir = perUserInstallDir(env);
-  return dir ? pathDefault.join(dir, 'Engram.exe') : '';
+  return dir ? joinPath(dir, 'Engram.exe') : '';
 }
 
 module.exports = {
