@@ -280,6 +280,8 @@ interface GNode {
   deg: number; inDeg: number; r: number; x: number; y: number; vx: number; vy: number; fixed: boolean;
   /** 压暗程度：0 正常、1 完全压暗；选中/悬停时逐帧缓动，避免非关联节点瞬间变灰 */
   dim: number;
+  /** 本帧屏幕坐标（每次重绘算一次，节点绘制、连边裁剪与标签共用，避免重复乘加） */
+  sx: number; sy: number;
 }
 /** 右栏「关联页面」列表项：邻居节点 + 合并后的关系名 */
 type RelItem = GNode & { rel: string };
@@ -447,7 +449,7 @@ async function load() {
   const nodes: GNode[] = (data.nodes || []).map((n) => ({
     id: n.id, label: n.label, group: n.group, raw: !!n.raw, words: n.words || 0,
     tags: n.tags || [], updatedAt: n.updatedAt || '',
-    deg: 0, inDeg: 0, r: 4, x: 0, y: 0, vx: 0, vy: 0, fixed: false, dim: 0,
+    deg: 0, inDeg: 0, r: 4, x: 0, y: 0, vx: 0, vy: 0, fixed: false, dim: 0, sx: 0, sy: 0,
   }));
   const index = new Map<string, number>();
   nodes.forEach((n, i) => index.set(n.id, i));
@@ -711,6 +713,12 @@ function derivePhysics() {
 }
 let PH = derivePhysics();
 function syncPhysics() { PH = derivePhysics(); }
+/**
+ * 收敛帧上限：900 帧（15 秒）对百来页的图有意义，但「本页关联」带实体与死链时动辄
+ * 六七百个节点，越跑越慢、越跑越糊，还一直占着重绘预算。大图早点停（alpha 在 360 帧后
+ * 也早衰减到 0.0001 量级），把小图的时间留给真正需要细调的关系。
+ */
+const tickBudget = () => (visible.length > 400 ? 360 : visible.length > 200 ? 600 : P.maxTicks);
 
 function applyFilter(warmupMs = 0) {
   saveFilters();
@@ -774,7 +782,7 @@ function prewarm(budgetMs: number) {
   const until = performance.now() + budgetMs;
   let streak = 0;
   let ticks = 0;
-  while (ticks < P.maxTicks) {
+  while (ticks < tickBudget()) {
     const speed = stepGraphForces(visible, forceLinks, PH, alpha);
     alpha += (0 - alpha) * P.alphaDecay;
     ticks++;
@@ -796,7 +804,7 @@ function tick() {
   alpha += ((draggingNode ? P.dragAlpha : 0) - alpha) * P.alphaDecay;
   simTicks++;
   if (!draggingNode && alpha <= P.settleAlpha && maxSpeed < P.settleSpeed) settleStreak++; else settleStreak = 0;
-  settled = !draggingNode && (settleStreak >= P.settleTicks || simTicks >= P.maxTicks);
+  settled = !draggingNode && (settleStreak >= P.settleTicks || simTicks >= tickBudget());
   if (settled) for (const n of visible) { n.vx = 0; n.vy = 0; }
   // 每帧都写坐标缓存既费内存又制造 GC 压力；每隔几帧 + 收敛时落一次足够。
   if (settled || simTicks % 6 === 0) for (const n of visible) rememberGraphPosition(n.id, n.x, n.y);
@@ -983,6 +991,7 @@ function refreshPalette() {
     nodeHot: cssVar(el, '--chart-node-hot', app.dark ? '#e9e5da' : '#4c473b'),
     focus: cssVar(el, '--chart-focus', app.dark ? '#e08a6a' : '#d97757'),
   };
+  labelWidthCache.clear();
 }
 const theme = () => palette;
 const nodePaintColor = (n: GNode) => colorGroups.value ? colorOf(n) : palette.node;
@@ -1084,6 +1093,9 @@ function strokeEdges() {
   for (const l of visibleLinks) {
     const a = rawNodes[l.a];
     const b = rawNodes[l.b];
+    // 两端都在视口外就整条跳过：放大看局部时能省掉大部分连边
+    if ((a.sx < -40 && b.sx < -40) || (a.sx > W + 40 && b.sx > W + 40)
+      || (a.sy < -40 && b.sy < -40) || (a.sy > H + 40 && b.sy > H + 40)) continue;
     bctx.moveTo(a.x, a.y);
     bctx.lineTo(b.x, b.y);
   }
@@ -1099,6 +1111,8 @@ function drawBase() {
   bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   bctx.clearRect(0, 0, W, H);
   if (!visible.length) return;
+  // 本帧屏幕坐标只算一遍：节点绘制、连边裁剪与标签共用。
+  for (const n of visible) { n.sx = n.x * view.s + view.x; n.sy = n.y * view.s + view.y; }
   bctx.save();
   bctx.translate(view.x, view.y);
   bctx.scale(view.s, view.s);
@@ -1113,9 +1127,7 @@ function drawBase() {
   if (!dimmed) {
     const groups = new Map<string, GNode[]>();
     for (const n of visible) {
-      const sx = n.x * view.s + view.x;
-      const sy = n.y * view.s + view.y;
-      if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
+      if (n.sx < -24 || n.sx > W + 24 || n.sy < -24 || n.sy > H + 24) continue;
       const color = nodePaintColor(n);
       const list = groups.get(color);
       if (list) list.push(n); else groups.set(color, [n]);
@@ -1132,10 +1144,9 @@ function drawBase() {
       bctx.fill();
     }
   } else {
+    // 压暗过渡期间每个节点 alpha 各不相同：逐点画，视口外的直接跳过。
     for (const n of visible) {
-      const sx = n.x * view.s + view.x;
-      const sy = n.y * view.s + view.y;
-      if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
+      if (n.sx < -24 || n.sx > W + 24 || n.sy < -24 || n.sy > H + 24) continue;
       const rr = nodeScreenR(n.r);
       bctx.beginPath();
       bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
@@ -1157,12 +1168,12 @@ function drawBase() {
     if (L.n.id === focus?.id) continue; // The overlay draws the focused title once.
     const alpha = 1 - L.n.dim;
     if (alpha < 0.02) continue;
-    const x = Math.round(L.n.x * view.s + view.x + L.dx);
-    const y = Math.round(L.n.y * view.s + view.y + L.dy);
-    bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
+    const x = Math.round(L.n.sx + L.dx);
+    const y = Math.round(L.n.sy + L.dy);
     // Nodes move while dragging. Recheck collisions without rebuilding or swapping label anchors.
     // 宽度用规划时缓存的测量值，不再每帧为每个标签 measureText。
     if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: L.w, h: L.fs + 4 }, occupied)) continue;
+    bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     bctx.globalAlpha = alpha;
     bctx.lineWidth = 4;
     bctx.strokeStyle = T.bg;
