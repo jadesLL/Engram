@@ -199,7 +199,7 @@
         <SettingsGroup
           anchor="peripheral-speech"
           title="语音输入"
-          hint="本机 SenseVoice 模型、识别引擎与麦克风；没有云端模型也能离线转写"
+          hint="专用 ASR（Whisper / Qwen-Audio-ASR）比多模态模型快；也可下载 SenseVoice 离线识别、选引擎与麦克风"
         >
           <SpeechInputPanel />
         </SettingsGroup>

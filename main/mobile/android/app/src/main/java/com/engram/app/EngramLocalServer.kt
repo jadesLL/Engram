@@ -648,10 +648,14 @@ class EngramLocalServer private constructor(private val context: Context) {
         // PUT 只认 enabled（模型与 Key 在中枢的「内置 Agent 控制台 → 模型」里配，手机只读状态、改开关）。
         get("/api/settings/video-config") { call.proxyHub("GET", "/api/settings/video-config") }
         put("/api/settings/video-config") { call.proxyHub("PUT", "/api/settings/video-config", call.receiveText()) }
-        // 编辑器「语音输入」：手机没有模型也没有 Key，状态与录音转写都窄代理到中枢
-        //（转写在有 SenseVoice 本机模型 / 音频模型的那台设备上完成；录音只在请求里存在，
-        // 不落手机存储、不进同步）。本机模型也下载到中枢，手机只转发准备/进度/取消。
+        // 编辑器「语音输入」：手机没有模型也没有 Key，状态、专用 ASR 配置与录音转写都窄代理到中枢
+        //（转写在有 SenseVoice 本机模型 / 专用 ASR / 音频模型的那台设备上完成；录音只在请求里存在，
+        // 不落手机存储、不进同步）。本机模型也下载到中枢，手机只转发准备/进度/取消；
+        // 专用 ASR 配置存中枢的 speech_asr_config，接口只回显「已配置」，Key 不下发手机。
         get("/api/speech/status") { call.proxyHub("GET", "/api/speech/status") }
+        get("/api/speech/asr-config") { call.proxyHub("GET", "/api/speech/asr-config") }
+        put("/api/speech/asr-config") { call.proxyHub("PUT", "/api/speech/asr-config", call.receiveText()) }
+        delete("/api/speech/asr-config") { call.proxyHub("DELETE", "/api/speech/asr-config") }
         get("/api/speech/local/status") { call.proxyHub("GET", "/api/speech/local/status") }
         post("/api/speech/local/prepare") { call.proxyHub("POST", "/api/speech/local/prepare", "{}") }
         post("/api/speech/local/cancel") { call.proxyHub("POST", "/api/speech/local/cancel", "{}") }

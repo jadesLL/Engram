@@ -38,14 +38,58 @@ export interface VoiceDeviceList {
 }
 
 export interface SpeechEngineOption {
-  /** `local` 或 `model:<provider>:<model>` */
+  /** `asr`、`local` 或 `model:<provider>:<model>` */
   id: string;
-  kind: 'local' | 'model';
+  kind: 'asr' | 'local' | 'model';
   label: string;
   detail: string;
   available: boolean;
-  /** 模型引擎的音频能力来源（本机引擎不填） */
+  /** 模型引擎的音频能力来源（本机引擎与专用 ASR 不填） */
   audioSupport?: SpeechAudioSupport;
+}
+
+/** 专用 ASR 的接口形态（与服务端 speechAsr.ts 对齐） */
+export type SpeechAsrProtocol =
+  | 'openai-transcriptions'
+  | 'openai-chat-audio'
+  | 'dashscope-audio'
+  | 'dashscope-qwen3';
+
+export interface SpeechAsrProtocolMeta {
+  id: SpeechAsrProtocol;
+  label: string;
+  hint: string;
+  baseUrlPlaceholder: string;
+  modelPlaceholder: string;
+  keyExpected: boolean;
+}
+
+/** 专用 ASR 的脱敏状态：只有 hasKey，Key 原文永远不下发前端 */
+export interface SpeechAsrPublic {
+  configured: boolean;
+  protocol: SpeechAsrProtocol;
+  protocolLabel: string;
+  baseUrl: string;
+  endpoint: string;
+  model: string;
+  name: string;
+  label: string;
+  hasKey: boolean;
+}
+
+export interface SpeechAsrPayload {
+  config: SpeechAsrPublic;
+  protocols: SpeechAsrProtocolMeta[];
+}
+
+/** 保存专用 ASR：apiKey 省略 = 保留原 Key；clearKey = 清空；其余字段省略时沿用已存值 */
+export interface SpeechAsrSaveInput {
+  protocol?: SpeechAsrProtocol;
+  baseUrl?: string;
+  model?: string;
+  name?: string;
+  apiKey?: string;
+  clearKey?: boolean;
 }
 
 export interface SpeechModelInfo {
@@ -84,6 +128,8 @@ export interface SpeechStatus {
   defaultEngine: string;
   /** 为什么自动选了它 */
   defaultEngineReason: string;
+  /** 客户配置的专用 ASR（不含 Key） */
+  asr: SpeechAsrPublic;
   defaultModel: SpeechModelInfo | null;
   localAvailable: boolean;
   localDetail: string;
@@ -475,6 +521,22 @@ export class VoiceRecorder {
 
 export async function fetchSpeechStatus(): Promise<SpeechStatus> {
   const { data } = await api.get<SpeechStatus>('/api/speech/status');
+  return data;
+}
+
+/** 专用 ASR：读配置（脱敏）与可选协议（设置页表单用） */
+export async function fetchSpeechAsrConfig(): Promise<SpeechAsrPayload> {
+  const { data } = await api.get<SpeechAsrPayload>('/api/speech/asr-config');
+  return data;
+}
+
+export async function saveSpeechAsrConfig(input: SpeechAsrSaveInput): Promise<SpeechAsrPayload> {
+  const { data } = await api.put<SpeechAsrPayload>('/api/speech/asr-config', input);
+  return data;
+}
+
+export async function deleteSpeechAsrConfig(): Promise<SpeechAsrPayload> {
+  const { data } = await api.delete<SpeechAsrPayload>('/api/speech/asr-config');
   return data;
 }
 

@@ -17,6 +17,7 @@ import {
 } from './speechInput.js';
 import { wavAudioLevel } from './localSpeech.js';
 import type { SyncedAgentModelConfig } from './agentModelConfig.js';
+import type { SpeechAsrConfig } from './speechAsr.js';
 import type { SenseVoiceStatus } from './senseVoice.js';
 import { SENSEVOICE_TOTAL_BYTES } from './senseVoiceAssets.js';
 
@@ -78,6 +79,16 @@ const noAudio: SyncedAgentModelConfig = {
   ...textDefault,
   providers: {},
   keys: {},
+};
+
+/** 客户配置的专用 ASR（应优先于多模态音频模型 / 本机识别） */
+const asrConfig: SpeechAsrConfig = {
+  version: 1,
+  protocol: 'dashscope-audio',
+  baseUrl: 'https://dashscope.aliyuncs.com',
+  model: 'qwen-audio-3.1-asr-flash',
+  name: '百炼 ASR',
+  apiKey: 'sk-asr-test',
 };
 
 /** 造一段 16k 单声道 PCM16 WAV（sec 秒；amplitude=0 即静音） */
@@ -566,4 +577,140 @@ test('默认模型声明音频但没 Key：回退本机识别，理由写清缺 
   assert.equal(status.defaultEngine, 'local');
   assert.match(status.defaultEngineReason, /还没配置 API Key/);
   assert.ok(status.engines.some((engine) => engine.id === status.defaultEngine));
+});
+
+test('专用 ASR 优先于默认音频模型与本机识别', async () => {
+  const status = await speechStatus({
+    config: audioDefault,
+    keys: audioDefault.keys,
+    asr: asrConfig,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.configured, true);
+  assert.equal(status.defaultEngine, 'asr');
+  assert.match(status.defaultEngineReason, /专用语音识别/);
+  assert.equal(status.engines[0].id, 'asr');
+  assert.equal(status.engines[0].kind, 'asr');
+  assert.equal(status.engines[0].label, '百炼 ASR · qwen-audio-3.1-asr-flash');
+  assert.equal(status.asr.configured, true);
+  assert.equal(status.asr.hasKey, true);
+  assert.ok(status.engines.some((engine) => engine.kind === 'model'), '多模态模型仍保留在菜单里');
+  assert.ok(status.engines.some((engine) => engine.kind === 'local'), '本机识别仍保留在菜单里');
+});
+
+test('自动模式：专用 ASR 直接发请求，结果与引擎标注正确', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    asr: asrConfig,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ output: { text: '专用转写' } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+  const result = await transcribeAudio(makeWav(2, 16384), { status, asr: asrConfig, fetchImpl });
+  assert.equal(calls, 1);
+  assert.equal(result.engine, 'asr');
+  assert.equal(result.engineLabel, '百炼 ASR · qwen-audio-3.1-asr-flash');
+  assert.equal(result.text, '专用转写');
+  assert.equal(result.warning, undefined);
+});
+
+test('自动模式：专用 ASR 失败时回退本机并带 warning', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    asr: asrConfig,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ message: 'upstream down' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+  let localCalls = 0;
+  const result = await transcribeAudio(makeWav(6, 16384), {
+    status,
+    asr: asrConfig,
+    fetchImpl,
+    localTranscribe: async () => {
+      localCalls += 1;
+      return { text: '本机兜底转写', culture: 'zh-CN' };
+    },
+  });
+  assert.equal(localCalls, 1);
+  assert.equal(result.engine, 'local');
+  assert.equal(result.text, '本机兜底转写');
+  assert.match(result.warning || '', /专用语音识别模型/);
+  assert.match(result.warning || '', /已改用本机离线识别/);
+});
+
+test('手动选专用 ASR：失败不回退，保留上游原因', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    asr: asrConfig,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ message: 'upstream down' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+  let localCalls = 0;
+  await assert.rejects(
+    () => transcribeAudio(makeWav(6, 16384), {
+      status,
+      asr: asrConfig,
+      engine: 'asr',
+      fetchImpl,
+      localTranscribe: async () => {
+        localCalls += 1;
+        return { text: '不该被调用', culture: 'zh-CN' };
+      },
+    }),
+    /upstream down/
+  );
+  assert.equal(localCalls, 0, '手动指定引擎时不应静默换引擎');
+});
+
+test('静音录音：不向专用 ASR 发请求，直接提示麦克风', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    asr: asrConfig,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  let called = false;
+  const fetchImpl = (async () => {
+    called = true;
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    () => transcribeAudio(makeWav(1, 0), { status, asr: asrConfig, fetchImpl }),
+    /几乎没有声音/
+  );
+  assert.equal(called, false, '静音录音不应发上云请求');
+});
+
+test('专用 ASR 配置不完整：抛 SpeechUnavailableError（路由回 409）', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    asr: asrConfig,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  await assert.rejects(
+    () => transcribeAudio(makeWav(2, 16384), { status, asr: null, engine: 'asr' }),
+    (error: any) => {
+      assert.ok(error instanceof SpeechUnavailableError);
+      assert.match(error.message, /接口地址与模型名/);
+      return true;
+    }
+  );
 });

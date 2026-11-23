@@ -74,11 +74,107 @@
       </li>
     </ul>
 
+    <!-- 专用 ASR：客户自己填接口，出字比 Omni 这类多模态对话模型快；dsh 的模型页配不了这类接口 -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>专用语音识别模型（ASR）</strong>
+        <span>
+          直接调用专用转写接口，比 Omni 这类多模态模型快。可填 OpenAI 兼容的 Whisper 服务，
+          也可以填阿里云百炼的 Qwen-Audio-ASR / Qwen3-ASR 原生接口；保存后「自动」优先用它。
+        </span>
+      </div>
+      <span class="setting-value" :class="asr.configured ? 'tone-ok' : ''">
+        {{ asr.configured ? asr.label : '未配置' }}
+      </span>
+    </div>
+
+    <template v-if="asrProtocols.length">
+      <div class="setting-row setting-row-form">
+        <div class="setting-copy">
+          <strong>接口类型</strong>
+          <span>{{ asrMeta.hint }}</span>
+        </div>
+        <div class="setting-control speech-asr-control">
+          <AppSelect
+            v-model="asrForm.protocol"
+            aria-label="ASR 接口类型"
+            :options="asrProtocolOptions"
+            @change="onAsrProtocolChanged"
+          />
+        </div>
+      </div>
+      <div class="setting-row setting-row-form">
+        <div class="setting-copy">
+          <strong>接口地址</strong>
+          <span>填 Base URL（如 https://api.openai.com/v1）或完整接口地址，两种都认。</span>
+        </div>
+        <div class="setting-control speech-asr-control">
+          <input
+            v-model.trim="asrForm.baseUrl"
+            type="url"
+            :placeholder="asrMeta.baseUrlPlaceholder"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="ASR 接口地址"
+          />
+        </div>
+      </div>
+      <div class="setting-row setting-row-form">
+        <div class="setting-copy">
+          <strong>模型名</strong>
+          <span>按服务商的模型 ID 填，不要带「模型：」之类的前缀。</span>
+        </div>
+        <div class="setting-control speech-asr-control">
+          <input
+            v-model.trim="asrForm.model"
+            type="text"
+            :placeholder="asrMeta.modelPlaceholder"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="ASR 模型名"
+          />
+        </div>
+      </div>
+      <div class="setting-row setting-row-form">
+        <div class="setting-copy">
+          <strong>API Key</strong>
+          <span>{{ asrKeyHint }}</span>
+        </div>
+        <div class="setting-control speech-asr-control">
+          <SecretField
+            v-model="asrForm.apiKey"
+            :stored="asr.hasKey ? 'stored' : ''"
+            placeholder="粘贴 API Key（留空保持现有）"
+            aria-label="ASR API Key"
+          />
+        </div>
+      </div>
+      <div class="setting-actions speech-asr-actions">
+        <button class="btn primary small" type="button" :disabled="asrSaving" @click="saveAsr()">
+          {{ asrSaving ? '保存中…' : '保存 ASR 配置' }}
+        </button>
+        <button v-if="asr.hasKey" class="btn ghost small" type="button" :disabled="asrSaving" @click="clearAsrKey">
+          清除 Key
+        </button>
+        <button v-if="asr.configured" class="btn ghost small" type="button" :disabled="asrSaving" @click="removeAsr">
+          删除配置
+        </button>
+      </div>
+      <p v-if="asrError" class="speech-error">{{ asrError }}</p>
+      <p v-else-if="asrMessage" class="speech-note tone-ok">{{ asrMessage }}</p>
+      <p class="speech-note">
+        Key 不会通过接口回显，也不进日志；开启「设置」同步时会随群组内设备同步。
+        录音会发送给你填写的 ASR 服务，只在本次请求里存在，不落盘。
+      </p>
+    </template>
+    <p v-if="asrError && !asrProtocols.length" class="speech-error">{{ asrError }}</p>
+    <p v-else-if="!asrProtocols.length" class="speech-note">正在读取专用 ASR 配置… 读取失败时刷新页面重试。</p>
+
     <!-- 引擎偏好 -->
     <div class="setting-row">
       <div class="setting-copy">
         <strong>识别引擎</strong>
-        <span>自动会优先用已配置的音频模型，其次本机识别；也可以固定用某一个。</span>
+        <span>自动会优先用专用 ASR，其次内置 Agent 的音频模型，最后本机识别；也可以固定用某一个。</span>
       </div>
       <div class="setting-control">
         <AppSelect v-model="engine" aria-label="识别引擎" :options="engineOptions" @change="onEngineChanged" />
@@ -117,10 +213,10 @@
     <p v-if="testError" class="speech-error">{{ testError }}</p>
     <p v-if="!recordingSupported" class="speech-note">{{ recordingReason }}</p>
 
-    <!-- 云端音频模型：入口 + 当前配置 -->
+    <!-- 云端音频模型：没有专用 ASR 时的兜底 -->
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>云端音频模型</strong>
+        <strong>云端音频模型（多模态）</strong>
         <span>{{ cloudText }}</span>
       </div>
       <div class="setting-actions">
@@ -128,6 +224,7 @@
       </div>
     </div>
     <p class="speech-note">
+      没有配置专用 ASR 时，才会用这里声明的多模态音频模型：它们要先把整段音频「理解」一遍，通常更慢。
       在内置 Agent 控制台的「模型」页添加一个支持音频输入的 OpenAI 兼容模型并填好 API Key，
       回到这里即可在「识别引擎」里选它。模型提供商不限，按控制台里声明的能力使用。
     </p>
@@ -135,13 +232,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import AppSelect from '../ui/AppSelect.vue';
+import SecretField from '../SecretField.vue';
+import { notify } from '../../lib/notify';
 import {
   VoiceRecorder,
   cancelLocalModel,
+  deleteSpeechAsrConfig,
   fetchLocalModelStatus,
+  fetchSpeechAsrConfig,
   fetchSpeechStatus,
   formatModelSize,
   listVoiceDevices,
@@ -150,12 +251,18 @@ import {
   localModelPercent,
   localModelSummary,
   prepareLocalModel,
+  saveSpeechAsrConfig,
   saveVoiceDevicePreference,
   saveVoiceEnginePreference,
   transcribeVoice,
   voiceInputErrorMessage,
   voiceInputSupport,
   type SenseVoiceStatus,
+  type SpeechAsrPayload,
+  type SpeechAsrProtocol,
+  type SpeechAsrProtocolMeta,
+  type SpeechAsrPublic,
+  type SpeechAsrSaveInput,
   type SpeechStatus,
   type VoiceInputDevice,
 } from '../../lib/voiceInput';
@@ -163,9 +270,10 @@ import {
 /**
  * 设置 → 外设接入 → 语音输入。
  *
- * 这页解决两件事：
- *  1. 没有云端模型 / API Key 的用户：在这里下载 SenseVoice 本机模型，完全离线转写；
- *  2. 找不到配置入口的用户：本机模型、识别引擎、麦克风、云端模型入口、测试识别都在同一页。
+ * 这页解决三件事：
+ *  1. 想让识别更快：配置专用 ASR（Whisper / Qwen-Audio-ASR 等），不依赖 dsh 的多模态模型；
+ *  2. 没有云端模型 / API Key 的用户：在这里下载 SenseVoice 本机模型，完全离线转写；
+ *  3. 找不到配置入口的用户：本机模型、识别引擎、麦克风、云端模型入口、测试识别都在同一页。
  *
  * 测试录音只用于当场验证，不写入正文；录音仍只在请求里存在，不落盘、不进同步。
  */
@@ -178,6 +286,49 @@ const error = ref('');
 const devices = ref<VoiceInputDevice[]>([]);
 const engine = ref(loadVoiceEnginePreference());
 const device = ref(loadVoiceDevicePreference());
+
+/** 专用 ASR 的脱敏状态（旧中枢没有 asr 字段时按未配置渲染） */
+const EMPTY_ASR: SpeechAsrPublic = {
+  configured: false,
+  protocol: 'openai-transcriptions',
+  protocolLabel: '',
+  baseUrl: '',
+  endpoint: '',
+  model: '',
+  name: '',
+  label: '',
+  hasKey: false,
+};
+const EMPTY_ASR_PROTOCOL: SpeechAsrProtocolMeta = {
+  id: 'openai-transcriptions',
+  label: 'OpenAI 兼容 · 转写接口',
+  hint: '',
+  baseUrlPlaceholder: '',
+  modelPlaceholder: '',
+  keyExpected: true,
+};
+const asrProtocols = ref<SpeechAsrProtocolMeta[]>([]);
+const asrForm = reactive({
+  protocol: 'openai-transcriptions' as SpeechAsrProtocol,
+  baseUrl: '',
+  model: '',
+  apiKey: '',
+});
+const asrSaving = ref(false);
+const asrMessage = ref('');
+const asrError = ref('');
+const asr = computed(() => status.value?.asr ?? EMPTY_ASR);
+const asrMeta = computed(
+  () => asrProtocols.value.find((item) => item.id === asrForm.protocol) ?? asrProtocols.value[0] ?? EMPTY_ASR_PROTOCOL
+);
+const asrProtocolOptions = computed(() =>
+  asrProtocols.value.map((item) => ({ value: item.id, label: item.label }))
+);
+const asrKeyHint = computed(() =>
+  asr.value.hasKey
+    ? '已配置（不回显）。要换 Key 直接粘贴新的；留空保存则保持现有。'
+    : '只存在服务端设置里，页面不回显；自建 Whisper 不需要 Key 时可以留空。'
+);
 
 const EMPTY_MODEL: SenseVoiceStatus = {
   supported: false,
@@ -222,16 +373,18 @@ const sapiText = computed(() => {
 const stripTone = computed(() => {
   if (!status.value) return 'tone-busy';
   if (error.value) return 'tone-danger';
-  if (!hubSupportsLocalModel.value) return 'tone-warn';
   if (preparing.value) return 'tone-busy';
+  if (asr.value.configured) return 'tone-ok';
+  if (!hubSupportsLocalModel.value) return 'tone-warn';
   if (model.value.ready) return 'tone-ok';
   return 'tone-warn';
 });
 const stripTitle = computed(() => {
   if (!status.value) return '正在检测语音识别状态…';
   if (error.value) return '语音识别状态读取失败';
-  if (!hubSupportsLocalModel.value) return '中枢版本较旧，暂不支持本机模型管理';
   if (preparing.value) return `正在下载本机识别模型（${percent.value}%）`;
+  if (asr.value.configured) return '专用语音识别已配置';
+  if (!hubSupportsLocalModel.value) return '中枢版本较旧，暂不支持本机模型管理';
   if (model.value.ready) return '本机离线识别已就绪';
   if (model.value.phase === 'error') return '本机识别模型需要重新下载';
   if (!model.value.supported) return '当前平台没有可用的本机识别运行时';
@@ -240,10 +393,13 @@ const stripTitle = computed(() => {
 const stripHint = computed(() => {
   if (!status.value) return '读取中枢的识别引擎与本机模型状态…';
   if (error.value) return error.value;
+  if (preparing.value) return `${modelText.value}；下载完成后自动生效，不需要重启`;
+  if (asr.value.configured) {
+    return `自动识别会优先用「${asr.value.label}」；识别失败时自动回退本机识别，可以在下面直接测试。`;
+  }
   if (!hubSupportsLocalModel.value) {
     return '升级中枢（桌面端 / 服务器更新）后即可在这里下载 SenseVoice；编辑页语音输入仍可用。';
   }
-  if (preparing.value) return `${modelText.value}；下载完成后自动生效，不需要重启`;
   if (model.value.ready) return '语音输入不需要联网、也不需要 API Key；可以在编辑页语音菜单或下面直接测试。';
   if (model.value.phase === 'error') return model.value.error || '模型文件校验失败，请重新下载';
   if (!model.value.supported) return model.value.error || '安装包缺少 SenseVoice 运行时；仍可配置云端音频模型。';
@@ -263,6 +419,7 @@ const engineOptions = computed(() => {
 const autoEngineLabel = computed(() => {
   const current = status.value;
   if (!current?.defaultEngine) return '自动（未配置）';
+  if (current.defaultEngine === 'asr') return '自动（专用 ASR）';
   if (current.defaultEngine === 'local') return `自动（${current.localLabel || '本机识别'}）`;
   const found = current.engines.find((item) => item.id === current.defaultEngine);
   return found ? `自动（${found.label}）` : '自动（未配置）';
@@ -385,6 +542,106 @@ function openAgentConsole(): void {
   void router.push('/settings/agent-console');
 }
 
+/* -------- 专用 ASR -------- */
+/** 把服务端返回的脱敏配置灌进表单；Key 输入框永远清空（不回显，留空 = 保持现有） */
+function applyAsrPayload(payload: SpeechAsrPayload): void {
+  if (Array.isArray(payload?.protocols) && payload.protocols.length) {
+    asrProtocols.value = payload.protocols;
+  }
+  const config = payload?.config;
+  if (!config) return;
+  asrForm.protocol = config.protocol;
+  asrForm.baseUrl = config.baseUrl;
+  asrForm.model = config.model;
+  asrForm.apiKey = '';
+  if (!config.configured && !asrForm.baseUrl && !asrForm.model) onAsrProtocolChanged();
+  if (status.value) status.value = { ...status.value, asr: config };
+}
+
+async function loadAsrConfig(): Promise<void> {
+  try {
+    applyAsrPayload(await fetchSpeechAsrConfig());
+    asrError.value = '';
+  } catch (err: any) {
+    asrError.value = err?.response?.data?.error || err?.message || '读取专用 ASR 配置失败';
+  }
+}
+
+/** 换接口类型时把示例地址 / 模型名带过去（用户已手填的内容不动） */
+function onAsrProtocolChanged(): void {
+  const meta = asrMeta.value;
+  const knownBases = asrProtocols.value.map((item) => item.baseUrlPlaceholder).filter(Boolean);
+  const knownModels = asrProtocols.value.map((item) => item.modelPlaceholder).filter(Boolean);
+  if (!asrForm.baseUrl || knownBases.includes(asrForm.baseUrl)) asrForm.baseUrl = meta.baseUrlPlaceholder;
+  if (!asrForm.model || knownModels.includes(asrForm.model)) asrForm.model = meta.modelPlaceholder;
+  asrMessage.value = '';
+  asrError.value = '';
+}
+
+async function saveAsr(): Promise<void> {
+  if (asrSaving.value) return;
+  asrError.value = '';
+  asrMessage.value = '';
+  const baseUrl = asrForm.baseUrl.trim();
+  const model = asrForm.model.trim();
+  if (!baseUrl || !model) {
+    asrError.value = '请先填写接口地址与模型名';
+    return;
+  }
+  asrSaving.value = true;
+  try {
+    const body: SpeechAsrSaveInput = { protocol: asrForm.protocol, baseUrl, model };
+    if (asrForm.apiKey.trim()) body.apiKey = asrForm.apiKey.trim();
+    applyAsrPayload(await saveSpeechAsrConfig(body));
+    asrMessage.value = '已保存，自动识别会优先用它';
+    notify.success('ASR 配置已保存');
+    await refresh();
+  } catch (err: any) {
+    asrError.value = err?.response?.data?.error || err?.message || '保存 ASR 配置失败';
+  } finally {
+    asrSaving.value = false;
+  }
+}
+
+async function clearAsrKey(): Promise<void> {
+  if (asrSaving.value) return;
+  asrSaving.value = true;
+  asrError.value = '';
+  asrMessage.value = '';
+  try {
+    // 只清 Key：地址 / 模型沿用服务端已存值，不依赖表单当前内容
+    applyAsrPayload(await saveSpeechAsrConfig({ clearKey: true }));
+    asrForm.apiKey = '';
+    asrMessage.value = '已清除 API Key';
+    notify.success('已清除 ASR Key');
+    await refresh();
+  } catch (err: any) {
+    asrError.value = err?.response?.data?.error || err?.message || '清除 ASR Key 失败';
+  } finally {
+    asrSaving.value = false;
+  }
+}
+
+async function removeAsr(): Promise<void> {
+  if (asrSaving.value) return;
+  asrSaving.value = true;
+  asrError.value = '';
+  asrMessage.value = '';
+  try {
+    applyAsrPayload(await deleteSpeechAsrConfig());
+    asrForm.baseUrl = '';
+    asrForm.model = '';
+    asrForm.apiKey = '';
+    asrMessage.value = '已删除专用 ASR 配置，自动改回内置 Agent 模型或本机识别';
+    notify.success('已删除 ASR 配置');
+    await refresh();
+  } catch (err: any) {
+    asrError.value = err?.response?.data?.error || err?.message || '删除 ASR 配置失败';
+  } finally {
+    asrSaving.value = false;
+  }
+}
+
 /* -------- 测试录音 -------- */
 const recorder = new VoiceRecorder();
 const testRecording = ref(false);
@@ -439,7 +696,9 @@ async function finishTest(): Promise<void> {
   }
 }
 
-onMounted(refresh);
+onMounted(async () => {
+  await Promise.all([refresh(), loadAsrConfig()]);
+});
 onBeforeUnmount(() => {
   stopPoll();
   recorder.cancel();
@@ -515,6 +774,16 @@ onBeforeUnmount(() => {
 }
 .tone-ok { color: var(--success); }
 .tone-warn { color: var(--warning); }
+.speech-asr-control {
+  width: 320px;
+}
+.speech-asr-control input {
+  width: 100%;
+}
+.speech-asr-actions {
+  justify-content: flex-start;
+  padding: 2px 0 4px;
+}
 @media (max-width: 640px) {
   .speech-settings .setting-row {
     flex-direction: column;
@@ -522,6 +791,12 @@ onBeforeUnmount(() => {
   }
   .speech-model-control {
     align-self: flex-start;
+  }
+  .speech-asr-control {
+    width: 100%;
+  }
+  .speech-asr-actions {
+    justify-content: stretch;
   }
 }
 </style>

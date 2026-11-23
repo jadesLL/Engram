@@ -8,10 +8,10 @@ export const CATEGORY_DEFAULTS = {
 export type SyncCategory = keyof typeof CATEGORY_DEFAULTS;
 export const PREFERENCE_KEYS = [
   'home_layout', 'search_synonyms', 'name_fixes', 'show_ai_workspace', 'theme', 'editor_mode', 'customer_research_rules',
-  // 2026-11：内置 Agent 模型配置（提供商 / 官方配置 / 默认模型 / 相关 Key）与视频理解总开关
-  // 都归「设置」分类。video_config 此前没登记，stampPreference / recordLocalChange 静默失效，
-  // 导致视频理解开关与 Key 都不同步——这是本次要修的存量 bug。
-  'agent_model_config', 'video_config',
+  // 2026-11：内置 Agent 模型配置（提供商 / 官方配置 / 默认模型 / 相关 Key）、视频理解总开关、
+  // 语音输入的专用 ASR 配置（含 Key）都归「设置」分类。video_config 此前没登记，
+  // stampPreference / recordLocalChange 静默失效，导致视频理解开关与 Key 都不同步——这是本次要修的存量 bug。
+  'agent_model_config', 'video_config', 'speech_asr_config',
   // 办公本接入（2026-11）：类型选择与官方 CLI 登录凭据都归「设置」分类。
   // 凭据值只在服务端同步偏好里流转，不进入 /api/settings 响应、不进日志、不下发前端；
   // Android 的 SyncPreferences.keys 不登记这两个 key，手机只忽略、不落盘。
