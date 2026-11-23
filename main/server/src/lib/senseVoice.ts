@@ -8,12 +8,8 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { bundledDshBin, bundledDshHome } from '../assistant/config.js';
 import {
-  AGENT_NODE_MISSING_ERROR,
-  agentNodeCandidates,
-  isElectronRuntime,
+  ensureAgentNodeRuntime,
   nativePathForPlainNode,
-  pickUsableAgentNode,
-  probeNodeVersion,
 } from '../assistant/agentNode.js';
 import {
   SENSEVOICE_ASSETS,
@@ -106,19 +102,20 @@ function resolveWorkerPath(): string | null {
   return workerPathCache.value;
 }
 
-/** 真实 Node：Electron 进程不能直接跑 sherpa 原生模块（ABI / V8 内存笼），与 dsh 同一套解析 */
+/**
+ * 真实 Node：Electron 进程不能直接跑 sherpa 原生模块（ABI / V8 内存笼），与 dsh 同一套解析。
+ * 必须复用 ensureAgentNodeRuntime() 的结果：它成功后会故意把 process.execPath 改指真实 Node，
+ * 若这里再拿默认的 agentNodeCandidates() 扫一遍，会把那个真实 Node 当成「进程自身」排除掉
+ * （2026-11-23 语音面板报 Node 缺失的根因）。
+ */
 let nodePathCache: { ok: boolean; path: string; error: string } | null = null;
 
 function resolveNodePath(): { ok: boolean; path: string; error: string } {
   if (nodePathCache) return nodePathCache;
-  if (!isElectronRuntime()) {
-    nodePathCache = { ok: true, path: process.execPath, error: '' };
-    return nodePathCache;
-  }
-  const picked = pickUsableAgentNode(agentNodeCandidates(), probeNodeVersion);
-  nodePathCache = picked
-    ? { ok: true, path: picked.path, error: '' }
-    : { ok: false, path: '', error: AGENT_NODE_MISSING_ERROR };
+  const runtime = ensureAgentNodeRuntime();
+  nodePathCache = runtime.ok
+    ? { ok: true, path: runtime.path, error: '' }
+    : { ok: false, path: '', error: runtime.error };
   return nodePathCache;
 }
 
