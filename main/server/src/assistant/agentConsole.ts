@@ -8,6 +8,7 @@ import { CONSOLE_PROFILE } from './agentSettings.js';
 import { ensureAgentNodeRuntime } from './agentNode.js';
 import { cleanupLegacyMcpPatches } from './agentPatch.js';
 import { ensureLocalAgentCli } from '../lib/cliShim.js';
+import { withManagedPythonEnv } from '../lib/pythonRuntime.js';
 
 /**
  * 内置 Agent 控制台：DeepSeek Harness 原生的网页界面（插件页 + 设置 → 模型 / 内置插件）。
@@ -212,14 +213,14 @@ function startConsole(origin: string): Promise<ConsoleStatus> {
     } catch (error) {
       console.warn('[agent] 控制台 engram CLI 初始化失败', error);
     }
-    const env: NodeJS.ProcessEnv = {
+    const env: NodeJS.ProcessEnv = withManagedPythonEnv({
       ...process.env,
       ...cliEnv,
       DSH_HOME: home,
       // 权限模式：完全访问 / 工作区写入 / 只读（设置页可改；改完路由会重启控制台）
       DSH_PERMISSION_MODE: agentPermissionMode(),
       ...(getAgentConfig().apiKey ? { DEEPSEEK_API_KEY: getAgentConfig().apiKey as string } : {}),
-    };
+    });
     // 真实 Node 不需要 ELECTRON_RUN_AS_NODE（留着只会让下游误判运行形态）
     delete env.ELECTRON_RUN_AS_NODE;
     const proc = spawn(

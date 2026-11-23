@@ -18,6 +18,7 @@ import { CONSOLE_PROFILE, agentSettingsStateFingerprint } from './agentSettings.
 import { resolveAgentModelRoute, type AgentModelRoute } from './agentModelRoute.js';
 import { cleanupLegacyMcpPatches, writeChatPatch } from './agentPatch.js';
 import { ensureLocalAgentCli } from '../lib/cliShim.js';
+import { withManagedPythonEnv } from '../lib/pythonRuntime.js';
 import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
 import { mapNotification, type AgentEvent } from './mapping.js';
 
@@ -179,7 +180,7 @@ function acquireRuntime(key: string): RuntimeEntry {
   const workspace = agentWorkspaceDir();
   fs.mkdirSync(workspace, { recursive: true });
 
-  const env: NodeJS.ProcessEnv = {
+  const env: NodeJS.ProcessEnv = withManagedPythonEnv({
     ...process.env,
     // PATH 里带上 shim 目录：Agent 直接跑 `engram status` / `engram search ...` 即可
     ...cliEnv,
@@ -188,7 +189,7 @@ function acquireRuntime(key: string): RuntimeEntry {
     DSH_PERMISSION_MODE: agentPermissionMode(),
     // 旧版 Engram 里存的 Key 继续作为官方 Provider 的凭据（新配置请到控制台「设置 → 模型」）
     ...(config.apiKey ? { DEEPSEEK_API_KEY: config.apiKey } : {}),
-  };
+  });
   // SDK 用 process.execPath 起子进程；桌面端它已被 ensureAgentNodeRuntime() 指向真实 Node，
   // 不需要（也不该留）ELECTRON_RUN_AS_NODE，让子进程误以为自己是 Electron。
   delete env.ELECTRON_RUN_AS_NODE;

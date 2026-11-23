@@ -26,6 +26,7 @@ import {
   waitDoxentBindSettled,
 } from '../lib/doxent.js';
 import { clearDoxentSession } from '../lib/doxentCredentials.js';
+import { pythonRuntimeStatus } from '../lib/pythonRuntime.js';
 import { clearDoxentSessionPreference, doxentSessionSyncState, mirrorDoxentSession } from '../sync/doxentSync.js';
 import { syncCategories } from '../sync/categories.js';
 import { recordLocalChange } from '../sync/index.js';
@@ -144,7 +145,10 @@ export async function doxentRoutes(app: FastifyInstance) {
       checkLogin,
     });
     if (status.login.state === 'logged-in') mirrorSessionQuietly();
-    return { ...status, bind: job, config: readDoxentConfig(), sync };
+    // 共享 Python 运行时的状态随办公本状态一起回：设置页缺 Python 时直接给「下载」入口，
+    // 进程进度也复用同一次轮询（下载期间前端会切到更快的轮询节奏）。
+    const runtime = await pythonRuntimeStatus();
+    return { ...status, bind: job, config: readDoxentConfig(), sync, runtime };
   });
 
   /** 办公本类型：写入 preference 并登记为「设置」分类的同步项 */

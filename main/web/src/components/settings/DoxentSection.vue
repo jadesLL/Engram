@@ -29,10 +29,42 @@
         <span class="doxent-status-hint">{{ stripHint }}</span>
       </div>
       <div class="setting-actions">
+        <button
+          v-if="canInstallRuntime"
+          class="btn small"
+          type="button"
+          :disabled="loading || binding"
+          @click="installRuntime"
+        >
+          {{ runtimeInstallLabel }}
+        </button>
+        <button
+          v-else-if="runtimeBusy"
+          class="btn ghost small"
+          type="button"
+          :disabled="cancellingRuntime"
+          @click="cancelRuntime"
+        >
+          {{ cancellingRuntime ? '取消中…' : '取消下载' }}
+        </button>
         <button class="btn ghost small" type="button" :disabled="loading || binding" @click="refresh">
           {{ loading ? '检测中…' : binding ? '绑定中…' : '重新检测' }}
         </button>
       </div>
+    </div>
+
+    <!-- 运行时下载进度：约 21MB，后台下载；界面只读服务端状态，离开本页再回来会接着显示 -->
+    <div v-if="runtimeBusy" class="python-runtime-progress" aria-live="polite">
+      <div
+        class="python-runtime-track"
+        role="progressbar"
+        :aria-valuenow="runtimePercent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <span class="python-runtime-fill" :style="{ width: runtimePercent + '%' }" />
+      </div>
+      <span class="python-runtime-meta">{{ runtimeProgressText }}</span>
     </div>
 
     <ul class="value-list">
@@ -99,7 +131,7 @@
           v-if="!bound"
           class="btn small"
           type="button"
-          :disabled="binding || busy || syncing || savingType || !pythonOk"
+          :disabled="binding || busy || syncing || savingType || !pythonOk || runtimeBusy"
           @click="bind"
         >
           {{ binding ? (switching ? '切换中…' : '准备中…') : syncing ? '同步中…' : (waiting ? '重新获取链接' : switchRequested ? '切换中…' : bindFailed ? '重试绑定' : '绑定办公本') }}
@@ -108,7 +140,7 @@
           <button
             class="btn ghost small"
             type="button"
-            :disabled="binding || busy || syncing || savingType || !pythonOk"
+            :disabled="binding || busy || syncing || savingType || !pythonOk || runtimeBusy"
             @click="switchAccount"
           >
             {{ switching ? '切换中…' : '切换账号' }}
@@ -148,9 +180,20 @@
     </div>
 
     <p v-if="errorText" class="setting-note tone-warn">{{ errorText }}</p>
-    <p v-else-if="!pythonOk" class="setting-note tone-warn">
-      官方客户端是 Python 脚本（meta.json 要求 3.8+）：装好 Python 后点「重新检测」，或用环境变量
-      <code>DOXENT_PYTHON</code> 指定解释器路径。
+    <p v-else-if="!pythonOk && !runtimeBusy" class="setting-note tone-warn">
+      <template v-if="runtime?.supported">
+        官方客户端是 Python 脚本（meta.json 要求 3.8+）：点上方「下载 Python 运行时」由 Engram 安装一份共用解释器
+        （约 {{ runtimeSizeMb }}MB，不修改系统环境，其他需要 Python 的接入共用这一份）；也可以自行安装 Python 后点「重新检测」，
+        或用环境变量 <code>DOXENT_PYTHON</code> 指定解释器路径。
+      </template>
+      <template v-else>
+        官方客户端是 Python 脚本（meta.json 要求 3.8+），当前平台没有可下载的托管运行时{{ runtime?.error ? `：${runtime.error}` : '' }}；
+        可用环境变量 <code>DOXENT_PYTHON</code> 指定解释器路径。
+      </template>
+    </p>
+    <p v-else-if="runtime?.ready" class="setting-note">
+      正在使用 Engram 共享 Python 运行时（Python {{ runtime.version }}）：运行时装在数据目录内，不修改系统环境，
+      之后其他需要 Python 的接入会直接复用这一份。
     </p>
     <p v-if="bound && accountFallback" class="setting-note">
       官方 CLI 的扫码 / 旧版会话没有记录手机号，这里用脱敏的用户 ID 展示当前账号；不影响读写办公本资料。
@@ -209,6 +252,25 @@ interface DoxentPython {
   command?: string;
   args?: string[];
   version?: string;
+  /** env=显式指定 / managed=Engram 共享运行时 / system=系统 Python */
+  source?: 'env' | 'managed' | 'system';
+  error?: string;
+}
+
+/**
+ * Engram 共享 Python 运行时（服务端 /api/settings/python-runtime 同款结构）。
+ * 这块 UI 虽然出现在办公本分组里，运行时本身是 Engram 级共享资产。
+ */
+interface PythonRuntime {
+  supported: boolean;
+  platform: string;
+  version: string;
+  ready: boolean;
+  phase: 'ready' | 'missing' | 'downloading' | 'installing' | 'error' | 'unsupported';
+  downloadedBytes: number;
+  totalBytes: number;
+  root: string;
+  interpreter?: string;
   error?: string;
 }
 
@@ -288,6 +350,8 @@ interface DoxentStatus {
   config?: DoxentConfig;
   /** 登录凭据的跨端同步进度 */
   sync?: DoxentSyncState;
+  /** Engram 共享 Python 运行时状态（缺 Python 时给「下载」入口与进度） */
+  runtime?: PythonRuntime;
 }
 
 /** 办公本品牌：目前只实现讯飞（Doxent）。新增品牌时在这里加选项，并在服务端补对应接入。 */
@@ -343,7 +407,35 @@ let syncTimer: ReturnType<typeof setInterval> | null = null;
 let syncPollInFlight = false;
 const SYNC_POLL_INTERVAL_MS = 1500;
 
+/** 共享 Python 运行时下载期间轮询（约 1 秒）；离开页面不影响服务端任务 */
+let runtimeTimer: ReturnType<typeof setInterval> | null = null;
+let runtimePollInFlight = false;
+const RUNTIME_POLL_INTERVAL_MS = 1000;
+
 const pythonOk = computed(() => Boolean(status.value.python?.available));
+const runtime = computed<PythonRuntime | undefined>(() => status.value.runtime);
+const runtimeBusy = computed(
+  () => runtime.value?.phase === 'downloading' || runtime.value?.phase === 'installing',
+);
+const runtimePercent = computed(() => {
+  const total = runtime.value?.totalBytes || 0;
+  if (!total) return 0;
+  return Math.min(100, Math.floor(((runtime.value?.downloadedBytes || 0) / total) * 100));
+});
+const runtimeSizeMb = computed(() => Math.max(1, Math.round((runtime.value?.totalBytes || 0) / (1024 * 1024))));
+/** 缺 Python 且平台有托管运行时：显示「下载 Python 运行时」主按钮（已就绪但探测失败时不重复下载） */
+const canInstallRuntime = computed(
+  () => !pythonOk.value && Boolean(runtime.value?.supported) && !runtime.value?.ready && !runtimeBusy.value,
+);
+const runtimeInstallLabel = computed(() => {
+  if (runtime.value?.phase === 'error') return '重新下载 Python 运行时';
+  return `下载 Python 运行时（约 ${runtimeSizeMb.value}MB）`;
+});
+const runtimeProgressText = computed(() => {
+  if (runtime.value?.phase === 'installing') return '校验安装中…';
+  return `${runtimePercent.value}%`;
+});
+const cancellingRuntime = ref(false);
 const bound = computed(() => status.value.login?.state === 'logged-in');
 const binding = computed(() => bindJob.value?.state === 'running');
 /** 切换到新账号：请求刚发出，或后台任务正在跑且明确标记为 switch */
@@ -447,6 +539,7 @@ const bindElapsedText = computed(() => {
 
 const stripTone = computed(() => {
   if (syncing.value) return 'tone-busy';
+  if (runtimeBusy.value) return 'tone-busy';
   if (!pythonOk.value) return 'tone-warn';
   if (bound.value) return 'tone-ok';
   if (bindFailed.value) return 'tone-danger';
@@ -458,6 +551,9 @@ const stripTitle = computed(() => {
   if (syncing.value) {
     return sync.value.phase === 'applying' ? '正在应用同步的办公本登录' : '正在准备同步的办公本登录';
   }
+  if (runtimeBusy.value) {
+    return runtime.value?.phase === 'installing' ? '正在安装 Python 运行时' : '正在下载 Python 运行时';
+  }
   if (!pythonOk.value) return '环境不满足：需要 Python 3.8+';
   if (bound.value) return '已绑定办公本';
   if (bindFailed.value) return '上次绑定没有完成';
@@ -468,7 +564,15 @@ const stripTitle = computed(() => {
 const stripHint = computed(() => {
   if (binding.value) return bindDetailText.value;
   if (syncing.value) return syncDetail.value;
-  if (!pythonOk.value) return status.value.python?.error || '未找到可用的 Python';
+  if (runtimeBusy.value) {
+    return runtime.value?.phase === 'installing'
+      ? '下载完成，正在校验并解压到数据目录（不修改系统环境）…'
+      : `正在下载 Engram 共享 Python 运行时：${runtimePercent.value}%（约 ${runtimeSizeMb.value}MB），完成后所有需要 Python 的接入共用。`;
+  }
+  if (!pythonOk.value) {
+    const runtimeError = runtime.value?.phase === 'error' ? runtime.value.error : '';
+    return runtimeError || status.value.python?.error || '未找到可用的 Python';
+  }
   if (bound.value) return '内置 Agent 可读写笔记、Office 文档、书籍与日程。';
   if (bindFailed.value && errorText.value) return errorText.value;
   if (waiting.value) return '已打开浏览器：在页面里完成登录，这里会自动变成已绑定。';
@@ -479,7 +583,15 @@ const stripHint = computed(() => {
 
 const pythonText = computed(() => {
   const python = status.value.python;
-  if (!python?.available) return python?.error || '未找到 Python 3.8+';
+  if (!python?.available) {
+    if (runtimeBusy.value) {
+      return runtime.value?.phase === 'installing'
+        ? '正在安装 Engram 共享运行时…'
+        : `正在下载 Engram 共享运行时（${runtimePercent.value}%）…`;
+    }
+    return python?.error || '未找到 Python 3.8+';
+  }
+  if (python.source === 'managed') return `Python ${python.version || ''}（Engram 共享运行时）`.trim();
   const command = [python.command, ...(python.args ?? [])].filter(Boolean).join(' ');
   return `Python ${python.version || ''}（${command}）`.trim();
 });
@@ -526,6 +638,7 @@ async function loadStatus(refresh = false, skillOnly = false, keepError = false)
     status.value = data as DoxentStatus;
     applyConfigFromStatus();
     if (status.value.sync && status.value.sync.phase !== 'idle') startSyncWatch();
+    if (runtimeBusy.value) startRuntimeWatch();
     const job = status.value.bind;
     if (job?.state === 'running') {
       bindJob.value = job;
@@ -604,6 +717,80 @@ async function pollSyncStatus(): Promise<void> {
     /* 网络抖动：保持轮询，下一轮再试 */
   } finally {
     syncPollInFlight = false;
+  }
+}
+
+function stopRuntimeWatch(): void {
+  if (runtimeTimer) clearInterval(runtimeTimer);
+  runtimeTimer = null;
+}
+
+function startRuntimeWatch(): void {
+  if (runtimeTimer) return;
+  runtimeTimer = setInterval(() => {
+    void pollRuntimeStatus();
+  }, RUNTIME_POLL_INTERVAL_MS);
+}
+
+/** 下载期间只读运行时状态；完成后刷新一次 Python 探测结果（/api/settings/doxent?refresh=1） */
+async function pollRuntimeStatus(): Promise<void> {
+  if (runtimePollInFlight) return;
+  runtimePollInFlight = true;
+  try {
+    const { data } = await api.get('/api/settings/python-runtime');
+    const next = data?.runtime as PythonRuntime | undefined;
+    if (!next) return;
+    status.value = { ...status.value, runtime: next };
+    if (next.phase === 'ready') {
+      stopRuntimeWatch();
+      notify.success('Python 运行时已就绪，可以绑定办公本了');
+      await loadStatus(true, true);
+      return;
+    }
+    if (next.phase === 'error' || next.phase === 'missing' || next.phase === 'unsupported') {
+      stopRuntimeWatch();
+      if (next.phase === 'error') {
+        errorText.value = next.error || 'Python 运行时下载失败，可重试';
+        notify.error(errorText.value);
+      }
+      await loadStatus(true, true, true);
+    }
+  } catch {
+    /* 网络抖动：保持轮询，下一轮再试 */
+  } finally {
+    runtimePollInFlight = false;
+  }
+}
+
+/** 一键下载 Engram 共享 Python 运行时（服务端后台任务，这里只轮询进度） */
+async function installRuntime(): Promise<void> {
+  if (runtimeBusy.value || cancellingRuntime.value) return;
+  errorText.value = '';
+  try {
+    const { data } = await api.post('/api/settings/python-runtime/install');
+    const next = data?.runtime as PythonRuntime | undefined;
+    if (next) status.value = { ...status.value, runtime: next };
+    startRuntimeWatch();
+  } catch (error) {
+    errorText.value = errorMessage(error, '启动 Python 运行时下载失败');
+    notify.error(errorText.value);
+  }
+}
+
+/** 取消下载 / 解压：服务端中止任务，界面回到「未下载」并重新探测一次 */
+async function cancelRuntime(): Promise<void> {
+  if (!runtimeBusy.value || cancellingRuntime.value) return;
+  cancellingRuntime.value = true;
+  try {
+    const { data } = await api.post('/api/settings/python-runtime/cancel');
+    const next = data?.runtime as PythonRuntime | undefined;
+    if (next) status.value = { ...status.value, runtime: next };
+    stopRuntimeWatch();
+    await loadStatus(true, true, true);
+  } catch (error) {
+    errorText.value = errorMessage(error, '取消 Python 运行时下载失败');
+  } finally {
+    cancellingRuntime.value = false;
   }
 }
 
@@ -934,6 +1121,7 @@ onBeforeUnmount(() => {
   stopPolling();
   stopBindPolling();
   stopSyncWatch();
+  stopRuntimeWatch();
 });
 </script>
 
@@ -1027,5 +1215,31 @@ onBeforeUnmount(() => {
 .doxent-link-row a {
   font-size: var(--font-md);
   overflow-wrap: anywhere;
+}
+/* 共享 Python 运行时下载进度：4px 细轨 + 主色进度，不铺大块背景 */
+.python-runtime-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+}
+.python-runtime-track {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+}
+.python-runtime-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.python-runtime-meta {
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  white-space: nowrap;
 }
 </style>
