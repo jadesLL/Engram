@@ -41,6 +41,8 @@ html:root {
   --accent: var(--cc-clay);
   --accent-soft: var(--cc-clay-soft);
   --on-accent: #fff;
+  /* 行级焦点环：陶土深色在暖纸底上约 5:1；直接用 --cc-clay 只有约 2.9:1 */
+  --row-ring-focus: var(--cc-clay-deep);
   /* 主操作按钮不是点缀：确认 / 保存 / 提交一律实心墨色，陶土只留作 >、选中与热力这类小面积记号 */
   --action-solid: var(--cc-ink);
   --action-solid-hover: #35322b;
@@ -371,6 +373,47 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 }
 .board :is(.mini-task, .stat-row, .tag-row, .week-row, .section-row, .ring-row, .summary-row, .activity-item, .hb-row, .heat-recent-day):focus-visible {
   border-radius: 6px;
+}
+
+/* ---------- 列表行：发丝环（2026-11-23，C 版） ----------
+ * 用户反馈：悬停铺底 + 点开关后的满铺焦点底像一块贴上去的「影子」。
+ * 列表行改成行内一圈发丝环：悬停 1px、按下转陶土 + 4% 洗色、键盘焦点 2px 深陶土。
+ * 环画在伪元素上、贴着行自己的边缘（上下留 3px 不压分隔线）。
+ * 注意：这些行是 <button>，Chrome 会把按钮的绘制裁到按钮盒子里，负 inset 会被切掉，
+ * 所以环只能收在行内；行本身离卡片边还有 .shell 的 17px 内边距，视觉上仍与卡边留出空隙。
+ * 触屏（hover: none）不保留悬停环，点按仍有按下态。
+ */
+.board .hb-row { position: relative; }
+.board .hb-row > * { position: relative; z-index: 1; }
+.board .hb-row::before {
+  content: "";
+  position: absolute;
+  inset: 3px 0;
+  z-index: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+  pointer-events: none;
+  transition: box-shadow var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard);
+}
+/* 覆盖上面 :is(...) 给 .hb-row 的悬停底色，以及 homeBoard.css 的标题转陶土 */
+.board .hb-row:hover { background: transparent; }
+.board .hb-row:hover .hb-row-title { color: var(--cc-ink); }
+@media (hover: hover) {
+  /* :not(:active)：按下时让位给下面的陶土按下环 */
+  .board .hb-row:hover:not(:active)::before { box-shadow: inset 0 0 0 1px var(--cc-rule-2); }
+}
+.board .hb-row:active::before {
+  background: color-mix(in srgb, var(--cc-clay) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-clay) 55%, transparent);
+}
+.board .hb-row:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.board .hb-row:focus-visible::before {
+  box-shadow: inset 0 0 0 2px var(--row-ring-focus);
 }
 
 /* ---------- 近期待办 ---------- */
