@@ -102,13 +102,15 @@ test('写入探测文件失败时清理现场，不留下探测文件', () => {
 });
 
 test('卸载器与当前用户落点按 electron-builder 的固定命名推导', () => {
+  // 期望值写死 Windows 分隔符：verify 的 Docker 是 Linux，path.join 会把分隔符混成 '/'，
+  // 而安装路径在 Windows 上永远是反斜杠（2026-11-24 CI 实测）
   assert.equal(
     scope.machineUninstallerPath('C:\\Program Files\\Engram'),
-    path.join('C:\\Program Files\\Engram', 'Uninstall Engram.exe'),
+    'C:\\Program Files\\Engram\\Uninstall Engram.exe',
   );
   assert.equal(
     scope.perUserExePath(ENV),
-    path.join('C:\\Users\\tester\\AppData\\Local', 'Programs', 'Engram', 'Engram.exe'),
+    'C:\\Users\\tester\\AppData\\Local\\Programs\\Engram\\Engram.exe',
   );
   assert.equal(scope.scopeFlag('machine'), '/allusers');
   assert.equal(scope.scopeFlag('user'), '/currentuser');
