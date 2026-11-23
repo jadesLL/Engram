@@ -24,6 +24,8 @@ export interface PageEvent {
   runId?: string;
   count?: number;
   text?: string;
+  /** settings-changed：哪个设置项变了（如 speech_asr_config / agent_model_config） */
+  key?: string;
   /** 内容版本号（服务端随内容事件附带）：兜底轮询据此判断「这条事件已经处理过」，不重复刷新 */
   rev?: number;
 }

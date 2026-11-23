@@ -8,7 +8,7 @@ import {
   readAgentModelConfig,
   type SyncedAgentModelConfig,
 } from './agentModelConfig.js';
-import { modelKeyRef } from './videoModel.js';
+import { VIDEO_MODEL_ID, modelKeyRef } from './videoModel.js';
 import { parseCredentialRefs } from './credentialsFile.js';
 import {
   localSpeechRuntime,
@@ -40,7 +40,8 @@ export { cleanTranscript } from './speechText.js';
  * 引擎选择（不写死任何厂商）：
  *  0. **客户配置的专用 ASR**（设置 → 外设接入 → 语音输入）→ 最快，优先使用；
  *  1. **内置 Agent 的默认模型**声明了音频输入（`input` / `inputModalities` 含 audio）→ 录音直接发给它；
- *  2. 否则用用户**配置过的音频模型**（声明了音频，或模型名明确是 omni / audio / voice 这类多模态模型）；
+ *  2. 否则用用户**配置过的音频模型**（声明了音频，或模型名明确是 omni / audio / voice 这类多模态模型；
+ *     视频理解的预置模型 qwen3.8-omni-flash 不算，除非控制台里显式声明了音频输入）；
  *  3. 都没有才用**本机离线识别**：优先 SenseVoice（随包 sherpa-onnx，模型需用户点下载），
  *     模型没准备好时退回 Windows SAPI 兼容模式；不联网、不要 Key；
  *  4. 一个都没有 → 返回可操作提示（下载本机模型 / 配置一个音频模型）。
@@ -180,6 +181,20 @@ function audioSupportOf(id: string, name: string | undefined, modalities: string
   return 'none';
 }
 
+/**
+ * 语音引擎的音频能力判定（在 audioSupportOf 之上再排除「视频理解预置模型」）。
+ *
+ * qwen3.8-omni-flash 是 Engram 为视频理解播种到控制台里的默认提供商，用户并没有为
+ * 语音输入做过任何声明。只凭名字里的 omni 就把它当成语音引擎，会让「识别引擎」里
+ * 冒出一个用户从没配过的选项（多模态对话模型转写也更慢）。控制台里显式给它勾上音频
+ * 输入时仍然认可——显式声明永远优先。
+ */
+function speechAudioSupport(id: string, name: string | undefined, modalities: string[]): SpeechAudioSupport {
+  const support = audioSupportOf(id, name, modalities);
+  if (support === 'inferred' && id === VIDEO_MODEL_ID) return 'none';
+  return support;
+}
+
 function keyFor(ref: string, keys: Record<string, string>): string {
   return String(keys[ref] || process.env[ref] || '').trim();
 }
@@ -253,7 +268,7 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
       api: 'openai-completions',
       apiKey: officialApiKey,
       modalities,
-      audioSupport: audioSupportOf(model.id, model.name, modalities),
+      audioSupport: speechAudioSupport(model.id, model.name, modalities),
     });
   }
   for (const [providerId, provider] of Object.entries(config.providers || {})) {
@@ -271,7 +286,7 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
         api: (provider.api || 'openai-completions').trim(),
         apiKey,
         modalities,
-        audioSupport: audioSupportOf(model.id, model.name, modalities),
+        audioSupport: speechAudioSupport(model.id, model.name, modalities),
       });
     }
   }
@@ -288,7 +303,7 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
       api: 'openai-completions',
       apiKey: officialApiKey,
       modalities: [...OFFICIAL_DEFAULT_MODALITIES],
-      audioSupport: audioSupportOf(OFFICIAL_DEFAULT_MODEL, OFFICIAL_DEFAULT_MODEL, OFFICIAL_DEFAULT_MODALITIES),
+      audioSupport: speechAudioSupport(OFFICIAL_DEFAULT_MODEL, OFFICIAL_DEFAULT_MODEL, OFFICIAL_DEFAULT_MODALITIES),
     });
   }
 

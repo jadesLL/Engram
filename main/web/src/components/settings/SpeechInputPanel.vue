@@ -163,7 +163,8 @@
       <p v-if="asrError" class="speech-error">{{ asrError }}</p>
       <p v-else-if="asrMessage" class="speech-note tone-ok">{{ asrMessage }}</p>
       <p class="speech-note">
-        Key 不会通过接口回显，也不进日志；开启「设置」同步时会随群组内设备同步。
+        Key 不会通过接口回显，也不进日志。到 设置 → 多端同步 → 同步内容 打开「设置」分类后，
+        接口地址、模型和 Key 会随群组内设备同步（两端都要开启）；别端保存后本页会自动刷新。
         录音会发送给你填写的 ASR 服务，只在本次请求里存在，不落盘。
       </p>
     </template>
@@ -237,6 +238,8 @@ import { useRouter } from 'vue-router';
 import AppSelect from '../ui/AppSelect.vue';
 import SecretField from '../SecretField.vue';
 import { notify } from '../../lib/notify';
+import { loadRuntimeCapabilities } from '../../lib/capabilities';
+import { openPageStream } from '../../lib/events';
 import {
   VoiceRecorder,
   cancelLocalModel,
@@ -445,6 +448,8 @@ const cloudText = computed(() => {
 
 /* -------- 下载 -------- */
 let pollTimer = 0;
+/** 设置页开着时的 SSE 订阅（别端同步过来 ASR / 模型配置后自动刷新）；离开页面时注销 */
+let closeStream: (() => void) | null = null;
 function stopPoll(): void {
   if (pollTimer) {
     window.clearInterval(pollTimer);
@@ -698,8 +703,25 @@ async function finishTest(): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([refresh(), loadAsrConfig()]);
+  // 多端同步：别端保存 ASR / 模型配置后，本页（设置页开着时）自动重读，
+  // 不用手动点「重新检测」才能看到「已配置」。手机的本地 API 与 WebView 同进程，
+  // 没有常驻 SSE（同 Home.vue 的口径），跳过订阅。
+  const caps = await loadRuntimeCapabilities();
+  if (caps.runtime !== 'android-local') {
+    closeStream = openPageStream((ev) => {
+      if (ev.type !== 'settings-changed') return;
+      if (ev.key === 'speech_asr_config') {
+        void loadAsrConfig();
+        void refresh();
+      } else if (ev.key === 'agent_model_config') {
+        void refresh();
+      }
+    });
+  }
 });
 onBeforeUnmount(() => {
+  closeStream?.();
+  closeStream = null;
   stopPoll();
   recorder.cancel();
 });
