@@ -344,8 +344,8 @@ test('同步内容「设置」分类说明写清含内置 Agent 模型配置与 
   const sync = fs.readFileSync(syncPanelPath, 'utf8');
   assert.match(
     sync,
-    /key: 'settings'[\s\S]{0,300}?内置 Agent 模型配置与相关 API Key（明文随群组下发）/,
-    '「设置」分类说明没有写清含内置 Agent 模型配置与 API Key：用户仍会以为模型 Key 不下发',
+    /key: 'settings'[\s\S]{0,300}?内置 Agent 模型配置、语音识别 ASR 配置与相关 API Key（明文随群组下发）/,
+    '「设置」分类说明没有写清含内置 Agent / 语音识别 ASR 配置与 API Key：用户仍会以为 Key 不下发',
   );
   assert.match(
     sync,

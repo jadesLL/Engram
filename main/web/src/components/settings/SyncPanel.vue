@@ -347,7 +347,7 @@
 
         <!-- 同步范围：必要语义压到每段 ≤2 行 -->
         <div v-if="status && status.role !== 'none'" class="sync-role-note">
-          <p class="setting-note">同步范围：页面、附件图片、原始资料、证据账本、Agent 会话与任务看板、客户洞察记录；「设置」分类含模型配置与 API Key（明文随群组下发）。</p>
+          <p class="setting-note">同步范围：页面、附件图片、原始资料、证据账本、Agent 会话与任务看板、客户洞察记录；「设置」分类含模型配置、语音识别 ASR 配置与 API Key（明文随群组下发）。</p>
           <p class="setting-note">各端登录密码、绑定令牌等仍各端独立；同一页面两端同时改按字符级合并，无法合并时以最新修改为准。</p>
           <p v-if="capabilities.runtime === 'android-local'" class="setting-note">安卓端退到后台后最多再同步 {{ BACKGROUND_SYNC_MINUTES }} 分钟（窗口内用前台服务保活）；回到前台立即再对一次账。</p>
         </div>
@@ -626,7 +626,7 @@ const canBeHub = computed(() => capabilities.value.syncRoles.includes('hub'));
 const status = ref<SyncStatus | null>(null);
 const syncCategoryItems = [
   { key: 'homeCards', label: '主页卡片', hint: '卡片种类、顺序和尺寸；默认关闭。' },
-  { key: 'settings', label: '设置', hint: '主题、编辑模式、同义词、AI 工作区偏好，含内置 Agent 模型配置与相关 API Key（明文随群组下发）；默认关闭。' },
+  { key: 'settings', label: '设置', hint: '主题、编辑模式、同义词、AI 工作区偏好，含内置 Agent 模型配置、语音识别 ASR 配置与相关 API Key（明文随群组下发）；默认关闭。' },
   { key: 'knowledge', label: '知识库内容', hint: '知识页面、普通附件和收集箱。' },
   { key: 'materials', label: '原始资料', hint: '文档、对话与灵感碎片。' },
   { key: 'customerResearch', label: '客户洞察', hint: '调研记录、报告正文与流程模板；默认开启。' },
