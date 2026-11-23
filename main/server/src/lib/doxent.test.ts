@@ -14,6 +14,7 @@ import {
   doxentBindJob,
   doxentCliInstallPath,
   doxentCliState,
+  doxentPythonCandidates,
   doxentSkillRoot,
   doxentSkillState,
   doxentSkillUrl,
@@ -233,6 +234,23 @@ test('doxentStatus 的目录状态：没装 / 装了 / 未管理三种口径', a
 test('doxentSkillUrl：ENGRAM_DOXENT_SKILL_URL 覆盖默认官方地址', () => {
   assert.equal(doxentSkillUrl({}), 'https://download.iflyink.com/apk/doxent_skills.zip');
   assert.equal(doxentSkillUrl({ ENGRAM_DOXENT_SKILL_URL: 'https://mirror.test/doxent.zip' }), 'https://mirror.test/doxent.zip');
+});
+
+test('doxentPythonCandidates：显式指定 → Engram 共享运行时 → 系统命令', () => {
+  const candidates = doxentPythonCandidates(
+    { DOXENT_PYTHON: '/opt/python3 -u' },
+    { managed: 'C:\\Users\\example\\AppData\\Roaming\\Engram\\data\\runtime\\python\\3.12.16\\python\\python.exe' },
+  );
+  assert.deepEqual(candidates[0], { command: '/opt/python3', args: ['-u'], source: 'env' });
+  assert.equal(candidates[1].source, 'managed');
+  assert.match(candidates[1].command, /python\.exe$/);
+  assert.ok(candidates.slice(2).every((item) => item.source === 'system'));
+  assert.ok(candidates.length >= 3);
+
+  // 没下载共享运行时：直接从系统命令开始探测，不能编造一个不存在的解释器
+  const plain = doxentPythonCandidates({}, { managed: null });
+  assert.ok(plain.length >= 2);
+  assert.ok(plain.every((item) => item.source === 'system'));
 });
 
 /* ------------------------------------------------------------------ 官方 CLI 状态/安装锁 */

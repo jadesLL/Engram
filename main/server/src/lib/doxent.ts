@@ -7,6 +7,7 @@ import {
   type DoxentAccountDisplay,
   type DoxentCredentialOptions,
 } from './doxentCredentials.js';
+import { managedPythonInterpreter } from './pythonRuntime.js';
 
 /**
  * 讯飞办公本（Doxent）绑定：技能安装 + 官方 CLI 的登录/状态/解绑。
@@ -17,7 +18,9 @@ import {
  *  1. 把这份技能装进内置 Agent 的 DSH_HOME/skills，让聊天里的 Agent 能按官方规则读写办公本数据；
  *  2. 代理登录动作（--cli-action login / login-status / logout），把真实登录链接交给设置页；
  *  3. 由本机会话派生脱敏的「当前账号」展示，并在换账号时先 logout 再走同一套登录流程。
- * 因此运行依赖是宿主机的 Python 3.8+（官方 meta.json 的要求），而不是随包的 Node。
+ * 运行依赖是 Python 3.8+（官方 meta.json 的要求）。解释器按「显式指定 → Engram 共享运行时 →
+ * 系统 Python」解析：共享运行时由设置页一键下载（见 pythonRuntime.ts），所有需要 Python 的
+ * 接入共用一份；Docker 镜像已内置 python3，所以容器里通常直接用系统解释器。
  *
  * 安全边界：技能目录带管理标记（.engram-doxent.json），只覆盖/删除 Engram 自己装的；
  * 用户手工放在同名目录里的技能不会被改动（官方包会被接管并补标记，其它同名目录直接拒绝）。
@@ -60,11 +63,13 @@ const CLI_PROGRESS_INTERVAL_MS = 2_000;
 
 export interface DoxentPython {
   available: boolean;
-  /** 探测成功的可执行命令（Windows 上是 py），不含 -3 */
+  /** 探测成功的可执行命令（Windows 系统的 py 不含 -3） */
   command?: string;
   /** 固定参数（Windows 上 py 需要 -3） */
   args?: string[];
   version?: string;
+  /** 解释器来源：env=显式指定 / managed=Engram 共享运行时 / system=系统 Python */
+  source?: 'env' | 'managed' | 'system';
   error?: string;
 }
 
@@ -498,25 +503,54 @@ function runProcess(command: string, args: string[], timeoutMs: number, env?: No
 interface PythonCandidate {
   command: string;
   args: string[];
+  source: 'env' | 'managed' | 'system';
 }
 
-/** 候选解释器：DOXENT_PYTHON / ENGRAM_DOXENT_PYTHON → 平台默认顺序 */
-function pythonCandidates(env: NodeJS.ProcessEnv): PythonCandidate[] {
+/**
+ * 候选解释器（顺序即优先级）：
+ *  1. DOXENT_PYTHON / ENGRAM_DOXENT_PYTHON（用户显式指定，含参数）
+ *  2. Engram 共享运行时（设置页一键下载的固定版本，见 pythonRuntime.ts）
+ *  3. 平台默认命令（Windows: py -3 / python / python3；POSIX: python3 / python）
+ */
+export function doxentPythonCandidates(
+  env: NodeJS.ProcessEnv,
+  options: { managed?: string | null } = {},
+): PythonCandidate[] {
   const pinned = (env.DOXENT_PYTHON || env.ENGRAM_DOXENT_PYTHON || '').trim();
-  const fallback: PythonCandidate[] = process.platform === 'win32'
+  const managed = options.managed === undefined ? managedPythonInterpreter() : options.managed;
+  const candidates: PythonCandidate[] = [];
+  if (pinned) {
+    const [command, ...args] = pinned.split(/\s+/).filter(Boolean);
+    if (command) candidates.push({ command, args, source: 'env' });
+  }
+  if (managed) candidates.push({ command: managed, args: [], source: 'managed' });
+  const fallback = process.platform === 'win32'
     ? [{ command: 'py', args: ['-3'] }, { command: 'python', args: [] }, { command: 'python3', args: [] }]
     : [{ command: 'python3', args: [] }, { command: 'python', args: [] }];
-  if (!pinned) return fallback;
-  const [command, ...args] = pinned.split(/\s+/).filter(Boolean);
-  return command ? [{ command, args }, ...fallback] : fallback;
+  for (const item of fallback) candidates.push({ ...item, source: 'system' });
+  return candidates;
 }
 
-/** 探测可用 Python（>=3.8）；结果按环境变量缓存，避免每次状态查询都起进程 */
+/** 探测可用 Python（>=3.8）；结果按候选列表缓存，避免每次状态查询都起进程 */
 export async function probePython(env: NodeJS.ProcessEnv = process.env): Promise<DoxentPython> {
-  const key = (env.DOXENT_PYTHON || '') + '|' + (env.ENGRAM_DOXENT_PYTHON || '');
+  const managed = managedPythonInterpreter();
+  const candidates = doxentPythonCandidates(env, { managed });
+  // 共享运行时可能在运行期被安装/卸载：把文件指纹也放进缓存键，装好后的「重新检测」不会拿到旧结果
+  let managedStamp = '';
+  if (managed) {
+    try {
+      const stat = fs.statSync(managed);
+      managedStamp = `${stat.size}:${Math.round(stat.mtimeMs)}`;
+    } catch {
+      managedStamp = 'missing';
+    }
+  }
+  const key =
+    candidates.map((item) => `${item.source}:${item.command} ${item.args.join(' ')}`).join('|') +
+    `|managed:${managedStamp}`;
   if (pythonCache && pythonCache.key === key) return pythonCache.value;
-  let error = '未找到 Python 3.8+（安装 Python 后重试，或用 DOXENT_PYTHON 指定解释器）';
-  for (const candidate of pythonCandidates(env)) {
+  let error = '未找到 Python 3.8+（可点「下载 Python 运行时」由 Engram 安装，或自行安装后用 DOXENT_PYTHON 指定解释器）';
+  for (const candidate of candidates) {
     const result = await runProcess(candidate.command, [...candidate.args, '--version'], PYTHON_PROBE_TIMEOUT_MS, env);
     const text = (result.stdout + '\n' + result.stderr).trim();
     const match = /Python (\d+)\.(\d+)/.exec(text);
@@ -529,6 +563,7 @@ export async function probePython(env: NodeJS.ProcessEnv = process.env): Promise
           command: candidate.command,
           args: candidate.args,
           version: major + '.' + minor,
+          source: candidate.source,
         };
         pythonCache = { key, value };
         return value;
@@ -999,7 +1034,7 @@ export async function doxentStatus(
   const cli = doxentCliState(options.env);
   const downloadUrl = doxentSkillUrl(options.env);
   if (!python.available) {
-    return { python, skill, cli, downloadUrl, login: { state: 'unknown', detail: '缺少 Python，无法调用官方客户端' } };
+    return { python, skill, cli, downloadUrl, login: { state: 'unknown', detail: '缺少 Python，无法调用官方客户端（可在设置页下载 Engram 共享运行时）' } };
   }
   if (!skill.installed) {
     return { python, skill, cli, downloadUrl, login: { state: 'logged-out', detail: '尚未绑定办公本' } };
