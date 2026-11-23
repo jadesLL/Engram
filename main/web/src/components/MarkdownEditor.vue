@@ -274,37 +274,76 @@
             <p class="voice-menu-hint">{{ voiceError || '正在检查识别引擎…' }}</p>
             <button type="button" class="voice-btn ghost" @click="loadVoiceStatus()">重新检查</button>
           </template>
-          <template v-else-if="!voiceStatus.configured">
-            <p class="voice-menu-hint">{{ voiceStatus.hint }}</p>
-            <button type="button" class="voice-btn primary" @click="goSpeechConfig">去配置</button>
-          </template>
           <template v-else>
-            <div class="voice-field">
-              <span>识别引擎</span>
-              <select v-model="voiceEngine" @change="onVoiceEngineChanged">
-                <option value="auto">自动（{{ defaultEngineLabel }}）</option>
-                <option v-for="engine in voiceStatus?.engines || []" :key="engine.id" :value="engine.id">
-                  {{ engine.label }}
-                </option>
-              </select>
+            <!-- 本机模型没准备好：菜单里直接给下载入口，不用去翻设置页 -->
+            <div v-if="localModelNeedsSetup" class="voice-local-model">
+              <div class="voice-local-model-head">
+                <b>本机识别模型</b>
+                <span>{{ localModelText }}</span>
+              </div>
+              <div
+                v-if="localModelPreparing"
+                class="voice-local-progress"
+                role="progressbar"
+                :aria-valuenow="localModelPercentValue"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <i :style="{ width: localModelPercentValue + '%' }" />
+              </div>
+              <div class="voice-local-actions">
+                <button
+                  v-if="localModelPreparing"
+                  type="button"
+                  class="voice-btn ghost"
+                  @click="cancelLocalModelPrepare"
+                >取消下载</button>
+                <button
+                  v-else
+                  type="button"
+                  class="voice-btn primary"
+                  :disabled="!voiceStatus.localModel.supported"
+                  @click="startLocalModelPrepare"
+                >下载模型（{{ formatModelSize(voiceStatus.localModel.totalBytes) }}）</button>
+                <button type="button" class="voice-btn ghost" @click="goSpeechConfig">设置</button>
+              </div>
+              <p class="voice-menu-note">
+                SenseVoice 本机离线识别，下载一次后不需要 API Key；中文准确率远高于 Windows 自带识别。
+              </p>
+              <p v-if="voiceError" class="voice-menu-note tone-warn">{{ voiceError }}</p>
             </div>
-            <div class="voice-field">
-              <span>麦克风</span>
-              <select v-model="voiceDevice" :disabled="voiceStage !== 'idle'" @change="onVoiceDeviceChanged">
-                <option value="auto">自动（跟随系统）</option>
-                <option v-for="device in voiceDevices" :key="device.deviceId" :value="device.deviceId">
-                  {{ device.label }}
-                </option>
-              </select>
-            </div>
-            <p v-if="voiceDeviceNote" class="voice-menu-note">{{ voiceDeviceNote }}</p>
-            <p v-if="!voiceSupport.supported" class="voice-menu-note">{{ voiceSupport.reason }}</p>
-            <div v-if="voiceStage === 'error'" class="voice-menu-actions">
-              <button type="button" class="voice-btn primary" @click="retryVoiceFromMenu">用这个麦克风重试</button>
-            </div>
-            <p class="voice-menu-keys">
-              <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> 开始/停止 · <kbd>Esc</kbd> 取消 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销
-            </p>
+            <template v-if="!voiceStatus.configured">
+              <p class="voice-menu-hint">{{ voiceStatus.hint }}</p>
+              <button type="button" class="voice-btn ghost" @click="goSpeechConfig">配置音频模型</button>
+            </template>
+            <template v-else>
+              <div class="voice-field">
+                <span>识别引擎</span>
+                <select v-model="voiceEngine" @change="onVoiceEngineChanged">
+                  <option value="auto">自动（{{ defaultEngineLabel }}）</option>
+                  <option v-for="engine in voiceStatus?.engines || []" :key="engine.id" :value="engine.id">
+                    {{ engine.label }}
+                  </option>
+                </select>
+              </div>
+              <div class="voice-field">
+                <span>麦克风</span>
+                <select v-model="voiceDevice" :disabled="voiceStage !== 'idle'" @change="onVoiceDeviceChanged">
+                  <option value="auto">自动（跟随系统）</option>
+                  <option v-for="device in voiceDevices" :key="device.deviceId" :value="device.deviceId">
+                    {{ device.label }}
+                  </option>
+                </select>
+              </div>
+              <p v-if="voiceDeviceNote" class="voice-menu-note">{{ voiceDeviceNote }}</p>
+              <p v-if="!voiceSupport.supported" class="voice-menu-note">{{ voiceSupport.reason }}</p>
+              <div v-if="voiceStage === 'error'" class="voice-menu-actions">
+                <button type="button" class="voice-btn primary" @click="retryVoiceFromMenu">用这个麦克风重试</button>
+              </div>
+              <p class="voice-menu-keys">
+                <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> 开始/停止 · <kbd>Esc</kbd> 取消 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销
+              </p>
+            </template>
           </template>
         </div>
       </template>
@@ -464,10 +503,16 @@ import { notify, pushToast } from '../lib/notify';
 import { useRouter } from 'vue-router';
 import {
   VoiceRecorder,
+  cancelLocalModel,
+  fetchLocalModelStatus,
   fetchSpeechStatus,
+  formatModelSize,
   listVoiceDevices,
   loadVoiceDevicePreference,
   loadVoiceEnginePreference,
+  localModelPercent,
+  localModelSummary,
+  prepareLocalModel,
   saveVoiceDevicePreference,
   saveVoiceEnginePreference,
   transcribeVoice,
@@ -3316,7 +3361,7 @@ let voicePeakLevel = 0;
 const defaultEngineLabel = computed(() => {
   const status = voiceStatus.value;
   if (!status) return '自动';
-  if (status.defaultEngine === 'local') return '本机离线识别';
+  if (status.defaultEngine === 'local') return status.localLabel || '本机离线识别';
   return status.engines.find((engine) => engine.id === status.defaultEngine)?.label || '未配置';
 });
 const voiceClock = computed(() => {
@@ -3329,6 +3374,72 @@ const voiceHudStyle = computed(() => {
 });
 /** 错误和麦克风/采集有关时，HUD 直接给一个「换麦克风」入口 */
 const voiceErrorMentionsDevice = computed(() => /没有声音|静音|麦克风|没有识别到语音/.test(voiceError.value));
+
+/* ---------- 本机识别模型（SenseVoice）的下载与进度 ---------- */
+let localModelPollTimer = 0;
+const localModelBusy = ref(false);
+const localModel = computed(() => voiceStatus.value?.localModel || null);
+/** 模型没准备好：菜单里直接显示下载卡片（有云端模型时也提示，但不挡使用） */
+const localModelNeedsSetup = computed(() => Boolean(localModel.value?.supported && !localModel.value?.ready));
+const localModelPreparing = computed(() => localModel.value?.phase === 'preparing');
+const localModelPercentValue = computed(() => (localModel.value ? localModelPercent(localModel.value) : 0));
+const localModelText = computed(() => (localModel.value ? localModelSummary(localModel.value) : ''));
+
+function stopLocalModelPoll(): void {
+  if (localModelPollTimer) {
+    window.clearInterval(localModelPollTimer);
+    localModelPollTimer = 0;
+  }
+}
+
+function applyLocalModelStatus(status: NonNullable<typeof localModel.value>): void {
+  const current = voiceStatus.value;
+  if (!current) return;
+  voiceStatus.value = { ...current, localModel: status };
+}
+
+function scheduleLocalModelPoll(): void {
+  stopLocalModelPoll();
+  localModelPollTimer = window.setInterval(async () => {
+    try {
+      const status = await fetchLocalModelStatus();
+      applyLocalModelStatus(status);
+      if (status.phase === 'ready') {
+        stopLocalModelPoll();
+        // 模型就绪后引擎会从 SAPI 切到 SenseVoice：刷新完整状态（引擎列表/默认理由）
+        await loadVoiceStatus();
+      } else if (status.phase === 'error') {
+        stopLocalModelPoll();
+      }
+    } catch {
+      /* 网络抖动：下一轮继续 */
+    }
+  }, 1200);
+}
+
+async function startLocalModelPrepare(): Promise<void> {
+  if (localModelBusy.value) return;
+  localModelBusy.value = true;
+  try {
+    const status = await prepareLocalModel();
+    applyLocalModelStatus(status);
+    scheduleLocalModelPoll();
+  } catch (error: any) {
+    voiceError.value = error?.response?.data?.error || error?.message || '下载本机识别模型失败';
+  } finally {
+    localModelBusy.value = false;
+  }
+}
+
+async function cancelLocalModelPrepare(): Promise<void> {
+  try {
+    const status = await cancelLocalModel();
+    applyLocalModelStatus(status);
+  } catch {
+    /* 取消失败也停轮询，让用户重新点下载 */
+  }
+  stopLocalModelPoll();
+}
 
 function voiceBarHeight(index: number): string {
   const center = (VOICE_HUD_BARS - 1) / 2;
@@ -3428,10 +3539,11 @@ function positionVoiceMenu(): void {
   const rect = voiceFabEl.value?.getBoundingClientRect();
   if (!rect) return;
   const width = 300;
-  const height = 300;
-  let left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+  // 菜单里可能带本机模型下载卡片：按实际高度定位，避免被视口裁掉
+  const height = Math.min(voiceMenuEl.value?.offsetHeight || 320, window.innerHeight - 16);
+  const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
   let top = rect.top - height - 10;
-  if (top < 8) top = Math.min(window.innerHeight - height - 8, rect.bottom + 10);
+  if (top < 8) top = Math.max(8, Math.min(window.innerHeight - height - 8, rect.bottom + 10));
   voiceMenuPos.value = { top: Math.round(top), left: Math.round(left) };
 }
 
@@ -3445,12 +3557,18 @@ async function openVoiceMenu(): Promise<void> {
   voiceEngine.value = loadVoiceEnginePreference();
   // 每次打开菜单都刷新：用户可能刚在控制台改了默认模型 / 勾了音频能力
   await Promise.all([refreshVoiceDevices(), loadVoiceStatus()]);
+  if (voiceStatus.value?.localModel?.phase === 'preparing') scheduleLocalModelPoll();
+  else stopLocalModelPoll();
   await nextTick();
+  // 状态加载后菜单高度会变（下载卡片/错误提示），重新贴一次 FAB
+  positionVoiceMenu();
   voiceMenuEl.value?.querySelector<HTMLElement>('select')?.focus({ preventScroll: true });
 }
 
 function closeVoiceMenu(): void {
   voiceMenuOpen.value = false;
+  // 下载在服务端继续，只是不再轮询；下次打开菜单会恢复进度
+  stopLocalModelPoll();
 }
 
 function toggleVoiceMenu(): void {
@@ -3460,7 +3578,7 @@ function toggleVoiceMenu(): void {
 
 function goSpeechConfig(): void {
   closeVoiceMenu();
-  void router.push({ path: '/settings', query: { section: 'agent', anchor: 'agent-console' } });
+  void router.push({ path: '/settings', query: { section: 'peripheral', anchor: 'peripheral-speech' } });
 }
 
 /** 从错误提示进菜单换完设备后，直接按新设备再录一次 */
@@ -4486,6 +4604,7 @@ watch(
 onUnmounted(() => {
   // 离开编辑页（切页/收起）不中断美化：任务留在全局 store，胶囊接管
   if (editorAi.task?.pageId === String(props.pageId || '')) editorAi.minimize();
+  stopLocalModelPoll();
   if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
   if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);
@@ -5305,6 +5424,8 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   position: fixed;
   z-index: var(--z-popup);
   width: 300px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -5318,6 +5439,49 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
   font-size: var(--fs-caption);
   line-height: 1.45;
   color: var(--text-secondary);
+}
+/* 本机识别模型卡片：菜单里直接下载 SenseVoice，不让人去翻设置页 */
+.voice-local-model {
+  margin: 10px 0 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-tertiary);
+}
+.voice-local-model-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-small);
+}
+.voice-local-model-head b { font-weight: 600; color: var(--text); }
+.voice-local-model-head span {
+  flex: none;
+  max-width: 58%;
+  text-align: right;
+  font-size: var(--fs-caption);
+  color: var(--text-secondary);
+}
+.voice-local-progress {
+  height: 4px;
+  margin: 8px 0 2px;
+  border-radius: 99px;
+  background: var(--border);
+  overflow: hidden;
+}
+.voice-local-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.voice-local-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
 }
 .voice-menu-hint {
   margin: 9px 0;

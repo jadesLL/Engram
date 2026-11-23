@@ -1,0 +1,527 @@
+<template>
+  <div class="speech-settings settings-native">
+    <!-- 结论先行：本机模型是否就绪 / 当前用哪个引擎 / 出错原因 -->
+    <div class="state-strip" :class="stripTone">
+      <span class="state-dot" aria-hidden="true" />
+      <div class="speech-status-copy">
+        <strong>{{ stripTitle }}</strong>
+        <span class="speech-status-hint">{{ stripHint }}</span>
+      </div>
+      <div class="setting-actions">
+        <button class="btn ghost small" type="button" :disabled="loading" @click="refresh">
+          {{ loading ? '检测中…' : '重新检测' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 本机识别：SenseVoice，不联网、不要 Key -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>本机离线识别（SenseVoice）</strong>
+        <span>
+          不联网、不要 API Key。下载一次模型后，中文语音可直接转文字；Windows 与 Docker 都由中枢执行。
+          没有下载模型时，Windows 会退回系统自带识别（兼容模式，准确率有限）。
+        </span>
+      </div>
+      <div v-if="hubSupportsLocalModel" class="setting-control speech-model-control">
+        <button
+          v-if="!model.ready && !preparing"
+          class="btn small"
+          type="button"
+          :disabled="!model.supported || busy"
+          @click="prepareModel"
+        >
+          {{ busy ? '正在开始…' : model.totalBytes ? `下载模型（${formatModelSize(model.totalBytes)}）` : '检查中…' }}
+        </button>
+        <button v-else-if="preparing" class="btn ghost small" type="button" @click="cancelPrepare">
+          取消下载
+        </button>
+        <button v-else class="btn ghost small" type="button" :disabled="busy" @click="prepareModel">
+          校验模型
+        </button>
+      </div>
+      <span v-else-if="status" class="speech-note">升级中枢后可管理本机模型</span>
+    </div>
+
+    <div v-if="preparing" class="speech-progress-wrap" aria-live="polite">
+      <div
+        class="speech-progress"
+        role="progressbar"
+        :aria-valuenow="percent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <i :style="{ width: percent + '%' }" />
+      </div>
+      <span class="speech-progress-text">{{ modelText }}</span>
+    </div>
+    <p v-if="model.error" class="speech-error">{{ model.error }}</p>
+
+    <ul class="value-list">
+      <li class="value-row">
+        <span class="value-label">当前本机引擎</span>
+        <span class="value-text" :class="status?.localEngine === 'sensevoice' ? 'tone-ok' : localEngineTone">
+          {{ localEngineText }}
+        </span>
+      </li>
+      <li class="value-row">
+        <span class="value-label">模型状态</span>
+        <span class="value-text">{{ modelText }}</span>
+      </li>
+      <li class="value-row">
+        <span class="value-label">Windows 兼容识别</span>
+        <span class="value-text">{{ sapiText }}</span>
+      </li>
+    </ul>
+
+    <!-- 引擎偏好 -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>识别引擎</strong>
+        <span>自动会优先用已配置的音频模型，其次本机识别；也可以固定用某一个。</span>
+      </div>
+      <div class="setting-control">
+        <AppSelect v-model="engine" aria-label="识别引擎" :options="engineOptions" @change="onEngineChanged" />
+      </div>
+    </div>
+
+    <!-- 麦克风 -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>麦克风</strong>
+        <span>选择只存本机，不参与多端同步；与编辑页语音菜单里的选择是同一份。</span>
+      </div>
+      <div class="setting-control">
+        <AppSelect v-model="device" aria-label="麦克风" :options="deviceOptions" @change="onDeviceChanged" />
+      </div>
+    </div>
+
+    <!-- 就地测试 -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>测试识别</strong>
+        <span>{{ testHint }}</span>
+      </div>
+      <div class="setting-actions">
+        <button
+          class="btn small"
+          type="button"
+          :disabled="!recordingSupported || testBusy || (preparing && engine === 'local')"
+          @click="toggleTest"
+        >
+          {{ testBusy ? '识别中…' : testRecording ? '停止并识别' : '录 5 秒测试' }}
+        </button>
+      </div>
+    </div>
+    <p v-if="testText" class="speech-test-result" aria-live="polite">{{ testText }}</p>
+    <p v-if="testError" class="speech-error">{{ testError }}</p>
+    <p v-if="!recordingSupported" class="speech-note">{{ recordingReason }}</p>
+
+    <!-- 云端音频模型：入口 + 当前配置 -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <strong>云端音频模型</strong>
+        <span>{{ cloudText }}</span>
+      </div>
+      <div class="setting-actions">
+        <button class="btn ghost small" type="button" @click="openAgentConsole">打开内置 Agent 控制台</button>
+      </div>
+    </div>
+    <p class="speech-note">
+      在内置 Agent 控制台的「模型」页添加一个支持音频输入的 OpenAI 兼容模型并填好 API Key，
+      回到这里即可在「识别引擎」里选它。模型提供商不限，按控制台里声明的能力使用。
+    </p>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import AppSelect from '../ui/AppSelect.vue';
+import {
+  VoiceRecorder,
+  cancelLocalModel,
+  fetchLocalModelStatus,
+  fetchSpeechStatus,
+  formatModelSize,
+  listVoiceDevices,
+  loadVoiceDevicePreference,
+  loadVoiceEnginePreference,
+  localModelPercent,
+  localModelSummary,
+  prepareLocalModel,
+  saveVoiceDevicePreference,
+  saveVoiceEnginePreference,
+  transcribeVoice,
+  voiceInputErrorMessage,
+  voiceInputSupport,
+  type SenseVoiceStatus,
+  type SpeechStatus,
+  type VoiceInputDevice,
+} from '../../lib/voiceInput';
+
+/**
+ * 设置 → 外设接入 → 语音输入。
+ *
+ * 这页解决两件事：
+ *  1. 没有云端模型 / API Key 的用户：在这里下载 SenseVoice 本机模型，完全离线转写；
+ *  2. 找不到配置入口的用户：本机模型、识别引擎、麦克风、云端模型入口、测试识别都在同一页。
+ *
+ * 测试录音只用于当场验证，不写入正文；录音仍只在请求里存在，不落盘、不进同步。
+ */
+
+const router = useRouter();
+const status = ref<SpeechStatus | null>(null);
+const loading = ref(false);
+const busy = ref(false);
+const error = ref('');
+const devices = ref<VoiceInputDevice[]>([]);
+const engine = ref(loadVoiceEnginePreference());
+const device = ref(loadVoiceDevicePreference());
+
+const EMPTY_MODEL: SenseVoiceStatus = {
+  supported: false,
+  platform: '',
+  ready: false,
+  phase: 'missing',
+  downloadedBytes: 0,
+  totalBytes: 0,
+  currentFile: '',
+  error: '',
+  modelRoot: '',
+  sources: [],
+  nodeAvailable: false,
+};
+
+const model = computed<SenseVoiceStatus>(() => status.value?.localModel ?? EMPTY_MODEL);
+/** 旧版中枢不会返回 localModel：此时不要谎报「平台不支持」，提示升级中枢即可 */
+const hubSupportsLocalModel = computed(() => Boolean(status.value?.localModel));
+const preparing = computed(() => model.value.phase === 'preparing');
+const percent = computed(() => localModelPercent(model.value));
+const modelText = computed(() => {
+  if (!status.value) return '检测中…';
+  return hubSupportsLocalModel.value ? localModelSummary(model.value) : '中枢版本较旧，未上报本机模型状态';
+});
+const recordingSupport = voiceInputSupport();
+const recordingSupported = recordingSupport.supported;
+const recordingReason = recordingSupport.reason;
+
+const localEngineText = computed(() => {
+  if (!status.value) return '未检测';
+  if (status.value.localEngine === 'sensevoice') return `SenseVoice · ${status.value.localDetail}`;
+  if (status.value.localEngine === 'sapi') return `Windows 系统识别（兼容模式）· ${status.value.localDetail}`;
+  return status.value.localDetail || '没有可用的本机引擎';
+});
+const localEngineTone = computed(() => (status.value?.localEngine === 'sapi' ? 'tone-warn' : ''));
+const sapiText = computed(() => {
+  if (!status.value) return '未检测';
+  if (status.value.localEngine === 'sensevoice') return '已就绪；SenseVoice 优先，不再使用系统识别';
+  if (status.value.localEngine === 'sapi') return '当前在用；准确率有限，建议下载 SenseVoice 模型';
+  return '不可用或未检测到系统识别器';
+});
+const stripTone = computed(() => {
+  if (!status.value) return 'tone-busy';
+  if (error.value) return 'tone-danger';
+  if (!hubSupportsLocalModel.value) return 'tone-warn';
+  if (preparing.value) return 'tone-busy';
+  if (model.value.ready) return 'tone-ok';
+  return 'tone-warn';
+});
+const stripTitle = computed(() => {
+  if (!status.value) return '正在检测语音识别状态…';
+  if (error.value) return '语音识别状态读取失败';
+  if (!hubSupportsLocalModel.value) return '中枢版本较旧，暂不支持本机模型管理';
+  if (preparing.value) return `正在下载本机识别模型（${percent.value}%）`;
+  if (model.value.ready) return '本机离线识别已就绪';
+  if (model.value.phase === 'error') return '本机识别模型需要重新下载';
+  if (!model.value.supported) return '当前平台没有可用的本机识别运行时';
+  return '本机识别模型还没下载';
+});
+const stripHint = computed(() => {
+  if (!status.value) return '读取中枢的识别引擎与本机模型状态…';
+  if (error.value) return error.value;
+  if (!hubSupportsLocalModel.value) {
+    return '升级中枢（桌面端 / 服务器更新）后即可在这里下载 SenseVoice；编辑页语音输入仍可用。';
+  }
+  if (preparing.value) return `${modelText.value}；下载完成后自动生效，不需要重启`;
+  if (model.value.ready) return '语音输入不需要联网、也不需要 API Key；可以在编辑页语音菜单或下面直接测试。';
+  if (model.value.phase === 'error') return model.value.error || '模型文件校验失败，请重新下载';
+  if (!model.value.supported) return model.value.error || '安装包缺少 SenseVoice 运行时；仍可配置云端音频模型。';
+  const fallback = status.value?.localEngine === 'sapi'
+    ? '没下载前 Windows 会退回系统自带识别'
+    : '没下载前本机识别不可用';
+  return `下载一次（约 ${formatModelSize(model.value.totalBytes)}）后即可完全离线使用；${fallback}。`;
+});
+
+const engineOptions = computed(() => {
+  const options = [{ value: 'auto', label: autoEngineLabel.value }];
+  for (const item of status.value?.engines ?? []) {
+    options.push({ value: item.id, label: item.label });
+  }
+  return options;
+});
+const autoEngineLabel = computed(() => {
+  const current = status.value;
+  if (!current?.defaultEngine) return '自动（未配置）';
+  if (current.defaultEngine === 'local') return `自动（${current.localLabel || '本机识别'}）`;
+  const found = current.engines.find((item) => item.id === current.defaultEngine);
+  return found ? `自动（${found.label}）` : '自动（未配置）';
+});
+const deviceOptions = computed(() => {
+  const options = [{ value: 'auto', label: '自动（跟随系统）' }];
+  for (const item of devices.value) options.push({ value: item.deviceId, label: item.label });
+  return options;
+});
+const cloudText = computed(() => {
+  const current = status.value;
+  if (!current) return '未检测';
+  const models = current.engines.filter((item) => item.kind === 'model');
+  if (!models.length) {
+    return '还没有配置支持音频的模型。没有云端模型也可以只用上面的本机识别。';
+  }
+  const chosen =
+    current.defaultEngine === 'local'
+      ? current.localLabel
+      : models.find((item) => item.id === current.defaultEngine)?.label;
+  return `已配置：${models.map((item) => item.label).join('、')}${chosen ? `；当前自动选择：${chosen}` : ''}`;
+});
+
+/* -------- 下载 -------- */
+let pollTimer = 0;
+function stopPoll(): void {
+  if (pollTimer) {
+    window.clearInterval(pollTimer);
+    pollTimer = 0;
+  }
+}
+function applyModel(next: SenseVoiceStatus): void {
+  const current = status.value;
+  if (!current) return;
+  status.value = { ...current, localModel: next };
+}
+function schedulePoll(): void {
+  stopPoll();
+  pollTimer = window.setInterval(async () => {
+    try {
+      const next = await fetchLocalModelStatus();
+      applyModel(next);
+      if (next.phase === 'ready') {
+        stopPoll();
+        await refresh();
+      } else if (next.phase === 'error') {
+        stopPoll();
+      }
+    } catch {
+      /* 网络抖动：下一轮继续 */
+    }
+  }, 1200);
+}
+async function prepareModel(): Promise<void> {
+  if (busy.value || preparing.value) return;
+  if (!hubSupportsLocalModel.value) {
+    error.value = '中枢版本较旧，暂不支持本机模型管理：升级中枢后再试';
+    return;
+  }
+  busy.value = true;
+  error.value = '';
+  try {
+    applyModel(await prepareLocalModel());
+    schedulePoll();
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || '下载本机识别模型失败';
+  } finally {
+    busy.value = false;
+  }
+}
+async function cancelPrepare(): Promise<void> {
+  try {
+    applyModel(await cancelLocalModel());
+  } catch {
+    /* 取消失败也停轮询 */
+  }
+  stopPoll();
+}
+
+/* -------- 状态 / 设备 -------- */
+async function refresh(): Promise<void> {
+  loading.value = true;
+  error.value = '';
+  try {
+    const next = await fetchSpeechStatus();
+    let listed: { devices: VoiceInputDevice[]; labelsAvailable: boolean } = {
+      devices: [],
+      labelsAvailable: false,
+    };
+    try {
+      listed = await listVoiceDevices();
+    } catch {
+      /* 设备枚举失败不影响识别引擎状态 */
+    }
+    status.value = next;
+    devices.value = listed.devices;
+    if (engine.value !== 'auto' && !next.engines.some((item) => item.id === engine.value)) {
+      engine.value = 'auto';
+      saveVoiceEnginePreference('auto');
+    }
+    if (device.value !== 'auto' && !listed.devices.some((item) => item.deviceId === device.value)) {
+      device.value = 'auto';
+      saveVoiceDevicePreference('auto');
+    }
+    if (next.localModel?.phase === 'preparing') schedulePoll();
+    else stopPoll();
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || '语音识别状态读取失败';
+  } finally {
+    loading.value = false;
+  }
+}
+function onEngineChanged(): void {
+  saveVoiceEnginePreference(engine.value);
+}
+function onDeviceChanged(): void {
+  saveVoiceDevicePreference(device.value);
+}
+function openAgentConsole(): void {
+  void router.push('/settings/agent-console');
+}
+
+/* -------- 测试录音 -------- */
+const recorder = new VoiceRecorder();
+const testRecording = ref(false);
+const testBusy = ref(false);
+const testText = ref('');
+const testError = ref('');
+const testHint = '录 5 秒，用当前引擎转写；结果只在这里显示，不写入正文。';
+
+async function toggleTest(): Promise<void> {
+  if (testBusy.value) return;
+  if (testRecording.value) {
+    await finishTest();
+    return;
+  }
+  testText.value = '';
+  testError.value = '';
+  testRecording.value = true;
+  try {
+    await recorder.start(
+      device.value,
+      {
+        onMaxDuration: () => {
+          void finishTest();
+        },
+      },
+      5
+    );
+  } catch (err) {
+    testRecording.value = false;
+    testError.value = voiceInputErrorMessage(err);
+    recorder.cancel();
+  }
+}
+
+async function finishTest(): Promise<void> {
+  if (!testRecording.value || testBusy.value) return;
+  testBusy.value = true;
+  try {
+    const recording = await recorder.stop();
+    testRecording.value = false;
+    testText.value = '正在识别…';
+    const result = await transcribeVoice(recording.blob, engine.value);
+    if (!result.text) throw new Error('没有识别到语音，请靠近麦克风再说一次');
+    const suffix = result.engineLabel ? `（${result.engineLabel}）` : '';
+    testText.value = `识别结果：${result.text}${suffix}${result.warning ? `\n注意：${result.warning}` : ''}`;
+  } catch (err: any) {
+    testText.value = '';
+    testError.value = err?.message || '语音识别失败，请重试';
+  } finally {
+    testBusy.value = false;
+    testRecording.value = false;
+  }
+}
+
+onMounted(refresh);
+onBeforeUnmount(() => {
+  stopPoll();
+  recorder.cancel();
+});
+</script>
+
+<style scoped>
+.speech-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.speech-status-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.speech-status-hint {
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+.speech-model-control {
+  flex: none;
+}
+.speech-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.speech-progress {
+  height: 4px;
+  border-radius: 99px;
+  background: var(--border);
+  overflow: hidden;
+}
+.speech-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.speech-progress-text {
+  font-size: var(--fs-caption);
+  color: var(--text-secondary);
+}
+.speech-error {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--danger);
+  word-break: break-word;
+}
+.speech-test-result {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-tertiary);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.speech-note {
+  margin: 0;
+  font-size: var(--fs-caption);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.tone-ok { color: var(--success); }
+.tone-warn { color: var(--warning); }
+@media (max-width: 640px) {
+  .speech-settings .setting-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .speech-model-control {
+    align-self: flex-start;
+  }
+}
+</style>

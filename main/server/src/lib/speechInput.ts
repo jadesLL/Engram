@@ -10,7 +10,15 @@ import {
 } from './agentModelConfig.js';
 import { modelKeyRef } from './videoModel.js';
 import { parseCredentialRefs } from './credentialsFile.js';
-import { localSpeechAvailability, transcribeLocalWav, wavAudioLevel } from './localSpeech.js';
+import {
+  localSpeechRuntime,
+  transcribeLocalWav,
+  wavAudioLevel,
+  type LocalSpeechEngine,
+  type LocalSpeechRuntime,
+} from './localSpeech.js';
+import type { SenseVoiceStatus } from './senseVoice.js';
+import { SENSEVOICE_TOTAL_BYTES } from './senseVoiceAssets.js';
 import { preferenceValue } from '../sync/preferences.js';
 
 /**
@@ -19,12 +27,12 @@ import { preferenceValue } from '../sync/preferences.js';
  * 引擎选择（不写死任何厂商）：
  *  1. **内置 Agent 的默认模型**声明了音频输入（`input` / `inputModalities` 含 audio）→ 录音直接发给它；
  *  2. 否则用用户**配置过的音频模型**（声明了音频，或模型名明确是 omni / audio / voice 这类多模态模型）；
- *  3. 都没有才用**本机离线识别**（Windows SAPI，见 lib/localSpeech.ts）——不联网、不要 Key，
- *     但中文听写的准确率受系统语言包限制，只适合做最后兜底；
- *  4. 一个都没有 → 返回可操作提示（去控制台给默认模型勾音频，或配置一个音频模型）。
+ *  3. 都没有才用**本机离线识别**：优先 SenseVoice（随包 sherpa-onnx，模型需用户点下载），
+ *     模型没准备好时退回 Windows SAPI 兼容模式；不联网、不要 Key；
+ *  4. 一个都没有 → 返回可操作提示（下载本机模型 / 配置一个音频模型）。
  *
- * 为什么音频模型排在 SAPI 前面：SAPI 的 DictationGrammar 对带口音 / 有停顿的长句经常只回几个字，
- * 用户会以为「说了半天只转出两个字」。配置过模型的机器应该优先用模型，本机识别只在没有模型时兜底。
+ * 为什么本机不再默认 SAPI：SAPI 的 DictationGrammar 对真实麦克风的长句经常只回几个字
+ * （用户实测 5 秒录音多次返回「没有识别到语音」）。SenseVoice 在同一段录音上整句带标点全对。
  *
  * 录音只在本次请求里存在：不落盘（本机识别用的临时 WAV 也在 finally 删除）、不进同步、不进日志。
  */
@@ -118,6 +126,12 @@ export interface SpeechStatus {
   /** 本机离线识别是否可用 */
   localAvailable: boolean;
   localDetail: string;
+  /** 本机识别引擎：SenseVoice / Windows SAPI 兼容 / 无 */
+  localEngine: LocalSpeechEngine;
+  /** 本机识别引擎名（菜单直接展示） */
+  localLabel: string;
+  /** SenseVoice 模型状态（是否支持 / 是否就绪 / 下载进度） */
+  localModel: SenseVoiceStatus;
   hint: string;
   maxDurationSec: number;
   maxBytes: number;
@@ -320,8 +334,47 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
 export interface SpeechStatusOptions {
   config?: SyncedAgentModelConfig;
   keys?: Record<string, string>;
-  /** 本机离线识别的探测结果（测试注入；缺省现探） */
-  local?: { available: boolean; detail: string };
+  /** 本机识别的探测结果（测试注入；缺省现探） */
+  local?: {
+    available: boolean;
+    detail: string;
+    engine?: LocalSpeechEngine;
+    label?: string;
+    model?: SenseVoiceStatus;
+  };
+}
+
+/** 测试/旧调用只传 available + detail 时，补一个最小可用的模型状态 */
+function normalizeLocal(
+  local: NonNullable<SpeechStatusOptions['local']>
+): LocalSpeechRuntime {
+  const engine: LocalSpeechEngine = local.engine ?? (local.available ? 'sapi' : 'none');
+  const ready = engine === 'sensevoice';
+  return {
+    available: local.available,
+    engine,
+    label:
+      local.label
+      ?? (engine === 'sensevoice'
+        ? '本机离线识别（SenseVoice）'
+        : engine === 'sapi'
+          ? 'Windows 语音识别（兼容模式）'
+          : '本机离线识别'),
+    detail: local.detail,
+    model: local.model ?? {
+      supported: ready,
+      platform: `${process.platform}-${process.arch}`,
+      ready,
+      phase: ready ? 'ready' : 'missing',
+      downloadedBytes: ready ? SENSEVOICE_TOTAL_BYTES : 0,
+      totalBytes: SENSEVOICE_TOTAL_BYTES,
+      currentFile: '',
+      error: '',
+      modelRoot: '',
+      sources: [],
+      nodeAvailable: true,
+    },
+  };
 }
 
 function candidateEngine(candidate: SpeechModelCandidate): SpeechEngineOption {
@@ -343,7 +396,7 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
   const home = bundledDshHome();
   const config = options.config ?? currentModelConfig();
   const keys = options.keys ?? currentKeys(home, config);
-  const local = options.local ?? (await localSpeechAvailability());
+  const local = options.local ? normalizeLocal(options.local) : await localSpeechRuntime();
   const catalog = buildSpeechCatalog(config, keys);
   const defaultModel = catalog.defaultModel;
 
@@ -352,7 +405,7 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
     engines.push({
       id: SPEECH_LOCAL_ENGINE,
       kind: 'local',
-      label: '本机离线识别',
+      label: local.label,
       detail: local.detail,
       available: true,
     });
@@ -404,12 +457,17 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
     defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${whyDefaultUnusable}，改用${candidateLabel(candidate)}（模型名表明支持音频）`;
   } else if (local.available) {
     defaultEngine = SPEECH_LOCAL_ENGINE;
-    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${whyDefaultUnusable}，没有可用的音频模型，改用本机离线识别（不联网，但准确率受系统语言包限制）`;
+    const compat = local.engine === 'sapi'
+      ? '；当前是 Windows 兼容模式，准确率有限，建议下载 SenseVoice 模型'
+      : '';
+    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${whyDefaultUnusable}，没有可用的音频模型，改用「${local.label}」（不联网、不要 Key${compat}）`;
   }
 
   const hint = defaultEngine
     ? ''
-    : '默认 Agent 模型不支持音频输入，本机也没有离线识别器：请在内置 Agent 控制台给默认模型勾上音频输入，或配置一个声明支持音频的模型';
+    : local.model.supported
+      ? '本机识别模型还没下载（约 240MB）：在语音输入菜单点「下载模型」，或到 设置 → 外设接入 → 语音输入；也可以在内置 Agent 控制台配置一个支持音频输入的模型'
+      : '默认 Agent 模型不支持音频输入，当前平台也没有可用的本机识别运行时：请在内置 Agent 控制台配置一个声明支持音频的模型，或到 设置 → 外设接入 → 语音输入 查看';
 
   return {
     configured: Boolean(defaultEngine),
@@ -419,6 +477,9 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
     defaultModel,
     localAvailable: local.available,
     localDetail: local.detail,
+    localEngine: local.engine,
+    localLabel: local.label,
+    localModel: local.model,
     hint,
     maxDurationSec: SPEECH_UI_MAX_DURATION_SEC,
     maxBytes: SPEECH_MAX_AUDIO_BYTES,
@@ -771,7 +832,11 @@ export function localShortTranscriptWarning(durationSec: number, text: string): 
 }
 
 /** 本机离线识别：静音先拦、结果清洗、过短给提示 */
-async function transcribeWithLocal(audio: Buffer, options: TranscribeOptions = {}): Promise<TranscribeResult> {
+async function transcribeWithLocal(
+  audio: Buffer,
+  options: TranscribeOptions = {},
+  engineLabel = '本机离线识别'
+): Promise<TranscribeResult> {
   const level = wavAudioLevel(audio);
   if (level && level.rms < SPEECH_SILENT_RMS) throw new Error(silentRecordingMessage(level.rms));
   const run = options.localTranscribe ?? transcribeLocalWav;
@@ -781,7 +846,7 @@ async function transcribeWithLocal(audio: Buffer, options: TranscribeOptions = {
   return {
     text: cleaned,
     engine: SPEECH_LOCAL_ENGINE,
-    engineLabel: '本机离线识别',
+    engineLabel,
     model: '',
     provider: '',
     warning: localShortTranscriptWarning(wavDurationSec(audio), cleaned),
@@ -801,7 +866,7 @@ export async function transcribeAudio(
   if (!status.configured) throw new SpeechUnavailableError(status.hint);
   const auto = !options.engine || !status.engines.some((engine) => engine.id === options.engine);
   const wanted = auto ? status.defaultEngine : options.engine!;
-  if (wanted === SPEECH_LOCAL_ENGINE) return transcribeWithLocal(audio, options);
+  if (wanted === SPEECH_LOCAL_ENGINE) return transcribeWithLocal(audio, options, status.localLabel);
 
   const config = options.config ?? currentModelConfig();
   const keys = options.keys ?? currentKeys(bundledDshHome(), config);
@@ -820,7 +885,7 @@ export async function transcribeAudio(
       && error instanceof SpeechAudioUnsupportedError
       && status.localAvailable
     ) {
-      const fallback = await transcribeWithLocal(audio, options);
+      const fallback = await transcribeWithLocal(audio, options, status.localLabel);
       const label = `${candidate.providerName} · ${candidate.modelName}`;
       return {
         ...fallback,
