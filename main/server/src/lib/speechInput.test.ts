@@ -17,6 +17,8 @@ import {
 } from './speechInput.js';
 import { wavAudioLevel } from './localSpeech.js';
 import type { SyncedAgentModelConfig } from './agentModelConfig.js';
+import type { SenseVoiceStatus } from './senseVoice.js';
+import { SENSEVOICE_TOTAL_BYTES } from './senseVoiceAssets.js';
 
 /**
  * 语音输入的转写口径：
@@ -109,6 +111,23 @@ function sseResponse(chunks: string[]): Response {
       .map((text) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`)
       .join('') + 'data: [DONE]\n\n';
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
+/** SenseVoice 模型状态夹具：ready=true 表示模型已下载并通过校验 */
+function senseVoiceModel(ready: boolean): SenseVoiceStatus {
+  return {
+    supported: true,
+    platform: 'win32-x64',
+    ready,
+    phase: ready ? 'ready' : 'missing',
+    downloadedBytes: ready ? SENSEVOICE_TOTAL_BYTES : 0,
+    totalBytes: SENSEVOICE_TOTAL_BYTES,
+    currentFile: '',
+    error: '',
+    modelRoot: 'C:/data/dsh/speech-to-text/sensevoice',
+    sources: ['https://hf-mirror.com'],
+    nodeAvailable: true,
+  };
 }
 
 test('WAV 校验：能读时长，非 WAV 直接拒', () => {
@@ -220,16 +239,54 @@ test('引擎自动选择：本机没有离线识别时用用户配置的音频�
   assert.match(status.defaultEngineReason, /阿里云百炼/);
 });
 
-test('没有可用音频模型时才用本机离线识别', async () => {
+test('没有可用音频模型时用本机识别：默认 SAPI 兼容模式', async () => {
   const status = await speechStatus({
     config: noAudio,
     keys: {},
     local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
   });
   assert.equal(status.defaultEngine, 'local');
+  assert.equal(status.localEngine, 'sapi');
   assert.match(status.defaultEngineReason, /没有可用的音频模型/);
-  assert.match(status.defaultEngineReason, /本机离线识别/);
+  assert.match(status.defaultEngineReason, /Windows 语音识别（兼容模式）/);
+  assert.match(status.defaultEngineReason, /建议下载 SenseVoice 模型/);
   assert.deepEqual(status.engines.map((engine) => engine.id), ['local']);
+  assert.equal(status.engines[0].label, 'Windows 语音识别（兼容模式）');
+});
+
+test('SenseVoice 就绪时本机引擎用它，不再退回 SAPI', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    local: {
+      available: true,
+      detail: 'SenseVoice 本地模型，离线可用',
+      engine: 'sensevoice',
+      label: '本机离线识别（SenseVoice）',
+      model: senseVoiceModel(true),
+    },
+  });
+  assert.equal(status.defaultEngine, 'local');
+  assert.equal(status.localEngine, 'sensevoice');
+  assert.equal(status.localModel.ready, true);
+  assert.equal(status.engines[0].label, '本机离线识别（SenseVoice）');
+  assert.match(status.defaultEngineReason, /没有可用的音频模型/);
+});
+
+test('模型没下载且没有 SAPI：提示可下载本机模型，而不是只说去配置', async () => {
+  const status = await speechStatus({
+    config: noAudio,
+    keys: {},
+    local: {
+      available: false,
+      detail: '本机识别模型还没下载（约 240MB）',
+      engine: 'none',
+      model: senseVoiceModel(false),
+    },
+  });
+  assert.equal(status.configured, false);
+  assert.match(status.hint, /下载模型/);
+  assert.match(status.hint, /外设接入/);
 });
 
 test('默认模型声明音频时，即使本机可离线识别也优先默认模型', async () => {

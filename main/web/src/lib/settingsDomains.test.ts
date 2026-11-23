@@ -67,7 +67,7 @@ test('单职责大类（顺序即导航顺序；2026-11-18 新增「外设接入
       interface: ['account-appearance', 'data-synonyms'],
       data: ['data-location', 'data-backup', 'storage-trash', 'storage-assets', 'data-danger'],
       sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
-      peripheral: ['peripheral-doxent'],
+      peripheral: ['peripheral-speech', 'peripheral-doxent'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
       agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
@@ -88,7 +88,7 @@ test('能力开关关掉时，对应的大类与分组一起消失', () => {
   assert.equal(
     noAgent.some((domain) => domain.id === 'peripheral'),
     false,
-    '「外设接入」当前只有 owner 级的办公本绑定，管理面关闭时应整类隐藏',
+    '管理面与中枢配置都关闭时，「外设接入」应整类隐藏',
   );
   assert.equal(noAgent.some((domain) => domain.id === 'account'), true, '账户与访问不受影响');
 
@@ -123,14 +123,19 @@ test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出
     ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-tools'],
     '手机端「外部接入」不该出现（Agent 令牌不能下发到手机），其余 Agent 分组都应可用',
   );
-  assert.equal(
-    mobile.some((domain) => domain.id === 'peripheral'),
-    false,
-    '手机不出现「外设接入」：办公本绑定要在本机装技能、起官方 CLI、开浏览器登录',
+  assert.deepEqual(
+    mobile.find((domain) => domain.id === 'peripheral')?.groups.map((group) => group.id),
+    ['peripheral-speech'],
+    '手机绑定中枢后只显示语音输入（经窄代理到中枢）；办公本绑定仍要在本机装技能/起 CLI，不出现',
   );
   // 未绑定中枢：两个新能力位都是 false → Agent 整类不登记（导航里不留点不动的空大类）
   const unbound = visibleSettingsDomains({ agent: false, serverUpdate: true, apkUpdate: true });
   assert.equal(unbound.some((domain) => domain.id === 'agent'), false, '手机未绑定中枢时不该出现 Agent 大类');
+  assert.equal(
+    unbound.some((domain) => domain.id === 'peripheral'),
+    false,
+    '未绑定中枢时语音输入设置不可用，外设接入整类不出现',
+  );
   // 只放开视频模型（例如未来单独开关）：视频分组在，管理面分组仍隐藏
   const videoOnly = visibleSettingsDomains({ agent: false, serverUpdate: true, videoConfig: true });
   assert.deepEqual(videoOnly.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id), ['panel-video']);

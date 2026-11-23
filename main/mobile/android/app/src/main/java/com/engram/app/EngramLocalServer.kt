@@ -649,8 +649,12 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/api/settings/video-config") { call.proxyHub("GET", "/api/settings/video-config") }
         put("/api/settings/video-config") { call.proxyHub("PUT", "/api/settings/video-config", call.receiveText()) }
         // 编辑器「语音输入」：手机没有模型也没有 Key，状态与录音转写都窄代理到中枢
-        //（转写在有 Omni 模型的那台设备上完成；录音只在请求里存在，不落手机存储、不进同步）。
+        //（转写在有 SenseVoice 本机模型 / 音频模型的那台设备上完成；录音只在请求里存在，
+        // 不落手机存储、不进同步）。本机模型也下载到中枢，手机只转发准备/进度/取消。
         get("/api/speech/status") { call.proxyHub("GET", "/api/speech/status") }
+        get("/api/speech/local/status") { call.proxyHub("GET", "/api/speech/local/status") }
+        post("/api/speech/local/prepare") { call.proxyHub("POST", "/api/speech/local/prepare", "{}") }
+        post("/api/speech/local/cancel") { call.proxyHub("POST", "/api/speech/local/cancel", "{}") }
         post("/api/speech/transcribe") {
             call.proxyHubUpload("/api/speech/transcribe", defaultField = "audio", triggerSync = false)
         }

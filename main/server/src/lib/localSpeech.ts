@@ -2,20 +2,29 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  senseVoiceStatus,
+  transcribeSenseVoice,
+  type SenseVoiceStatus,
+} from './senseVoice.js';
+import { SENSEVOICE_TOTAL_BYTES } from './senseVoiceAssets.js';
 
 /**
- * 本机离线语音识别（Windows SAPI，`System.Speech`）。
+ * 本机离线语音识别：SenseVoice（首选）+ Windows SAPI（兼容兜底）。
  *
  * 为什么需要它：内置 Agent 的默认模型多半只声明文本 / 图片输入（DeepSeek 就是），
- * 直接发音频会被上游拒绝。这里用 Windows 自带的语音识别器把 WAV 离线转成文字，
- * 再交给「插入正文」链路——不联网、不要 Key、不花钱。
+ * 直接发音频会被上游拒绝；有的用户也拿不到/不想配云端 API Key。本机识别让语音输入
+ * 不依赖任何 Key 就能用。
  *
- * 边界：
- *  - 只在 Windows 桌面端可用（Docker/Linux 没有 SAPI；手机本身不跑转写）；
- *  - 识别质量取决于系统装的语言包，中文 Windows 一般自带 zh-CN 识别器；
- *  - 录音仍然由浏览器按用户选中的麦克风采（所以「换麦克风」照旧生效），
- *    这里只处理已经编码好的 WAV；
- *  - 临时 WAV / 结果文件在 finally 里删除，不进日志、不进同步。
+ * 引擎顺序：
+ *  1. **SenseVoice**（随包 sherpa-onnx）：中文准确率高、带标点，Windows / Docker 都能用；
+ *     模型首次需用户点「下载」（约 240MB），之后完全离线；
+ *  2. **Windows SAPI**（`System.Speech`）：模型没下载时的兼容兜底，长句/真实麦克风
+ *     经常只回几个字，界面必须标明「兼容模式」；
+ *  3. 都没有 → 给可操作提示（下载模型 / 配置音频模型）。
+ *
+ * 边界：录音由浏览器按用户选中的麦克风采，这里只处理已编码的 WAV；临时文件在 finally
+ * 删除，不进日志、不进同步。SAPI 只在 Windows 有；SenseVoice 覆盖 win32-x64 / linux / macOS。
  */
 
 /** 探测结果的缓存时长：识别器是系统组件，进程生命周期内基本不变 */
@@ -34,8 +43,17 @@ function removeTempDir(dir: string): void {
   }
 }
 
-export function localSpeechPlatformSupported(): boolean {
-  return process.platform === 'win32';
+export type LocalSpeechEngine = 'sensevoice' | 'sapi' | 'none';
+
+export interface LocalSpeechRuntime {
+  available: boolean;
+  engine: LocalSpeechEngine;
+  /** 菜单/提示直接展示的引擎名 */
+  label: string;
+  /** 为什么用这个引擎 / 模型状态 */
+  detail: string;
+  /** SenseVoice 模型状态（含下载进度），界面据此显示「下载模型」 */
+  model: SenseVoiceStatus;
 }
 
 export interface WavAudioLevel {
@@ -176,10 +194,10 @@ if ($infos.Count -eq 0) { Write-Output '0'; exit 0 }
 Write-Output ('1|' + (($infos | ForEach-Object { $_.Culture.Name }) -join ','))
 `;
 
-/** 本机有没有可用的 SAPI 识别器（仅 Windows；结果缓存 5 分钟） */
-export async function localSpeechAvailability(force = false): Promise<{ available: boolean; detail: string }> {
-  if (!localSpeechPlatformSupported()) {
-    return { available: false, detail: '本机离线识别只在 Windows 桌面端可用' };
+/** Windows SAPI 探测（仅 Windows；结果缓存 5 分钟） */
+async function sapiAvailability(force = false): Promise<{ available: boolean; detail: string }> {
+  if (process.platform !== 'win32') {
+    return { available: false, detail: 'Windows 语音识别只在 Windows 可用' };
   }
   if (!force && probeCache && Date.now() - probeCache.at < PROBE_TTL_MS) {
     return { available: probeCache.available, detail: probeCache.detail };
@@ -195,10 +213,43 @@ export async function localSpeechAvailability(force = false): Promise<{ availabl
     probeCache = { at: Date.now(), available, detail };
     return { available, detail };
   } catch (error: any) {
-    const detail = `本机离线识别不可用：${error?.message || '探测失败'}`;
+    const detail = `Windows 语音识别不可用：${error?.message || '探测失败'}`;
     probeCache = { at: Date.now(), available: false, detail };
     return { available: false, detail };
   }
+}
+
+/** 本机识别当前用哪个引擎：SenseVoice 优先，Windows SAPI 兼容兜底 */
+export async function localSpeechRuntime(): Promise<LocalSpeechRuntime> {
+  const model = await senseVoiceStatus();
+  if (model.supported && model.ready) {
+    return {
+      available: true,
+      engine: 'sensevoice',
+      label: '本机离线识别（SenseVoice）',
+      detail: '本地模型，离线可用',
+      model,
+    };
+  }
+  const sapi = await sapiAvailability();
+  if (sapi.available) {
+    const percent = Math.floor((model.downloadedBytes / SENSEVOICE_TOTAL_BYTES) * 100);
+    const why = model.phase === 'preparing'
+      ? `SenseVoice 模型正在下载（${percent}%）`
+      : 'SenseVoice 模型还没下载';
+    return {
+      available: true,
+      engine: 'sapi',
+      label: 'Windows 语音识别（兼容模式）',
+      detail: `系统自带识别，准确率有限；${why}`,
+      model,
+    };
+  }
+  const detail = model.error
+    || (model.supported
+      ? '本机识别模型还没下载（约 240MB）'
+      : '当前平台没有可用的本机识别运行时');
+  return { available: false, engine: 'none', label: '本机离线识别', detail, model };
 }
 
 const TRANSCRIBE_SCRIPT = `
@@ -230,8 +281,8 @@ Write-Output 'OK'
 `;
 
 /** 用本机 SAPI 识别一段 WAV（16k 单声道 PCM）；没识别到内容返回空串 */
-export async function transcribeLocalWav(wav: Buffer): Promise<{ text: string; culture: string }> {
-  const availability = await localSpeechAvailability();
+async function transcribeSapiWav(wav: Buffer): Promise<{ text: string; culture: string }> {
+  const availability = await sapiAvailability();
   if (!availability.available) throw new Error(availability.detail);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-speech-'));
   const wavPath = path.join(dir, 'input.wav');
@@ -249,4 +300,27 @@ export async function transcribeLocalWav(wav: Buffer): Promise<{ text: string; c
   } finally {
     removeTempDir(dir);
   }
+}
+
+/** 本机识别的可操作提示：模型没下载 / 正在下载 / 平台不支持 */
+function localPrepareHint(runtime: LocalSpeechRuntime): string {
+  if (runtime.model.phase === 'preparing') {
+    const percent = Math.floor((runtime.model.downloadedBytes / SENSEVOICE_TOTAL_BYTES) * 100);
+    return `本机识别模型正在下载（${percent}%），完成后即可使用；也可以先配置一个支持音频的模型`;
+  }
+  if (!runtime.model.supported) {
+    return `当前平台没有可用的本机识别运行时${runtime.model.error ? `：${runtime.model.error}` : ''}`;
+  }
+  return '本机识别模型还没下载（约 240MB）：在语音输入菜单点「下载模型」，或到 设置 → 外设接入 → 语音输入';
+}
+
+/** 本机转写：SenseVoice 优先，SAPI 兼容兜底 */
+export async function transcribeLocalWav(wav: Buffer): Promise<{ text: string; culture: string }> {
+  const runtime = await localSpeechRuntime();
+  if (runtime.engine === 'sensevoice') {
+    const result = await transcribeSenseVoice(wav);
+    return { text: result.text, culture: 'auto' };
+  }
+  if (runtime.engine === 'sapi') return transcribeSapiWav(wav);
+  throw new Error(localPrepareHint(runtime));
 }

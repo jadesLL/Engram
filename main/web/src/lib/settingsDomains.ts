@@ -172,13 +172,17 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'peripheral',
     label: '外设接入',
-    desc: '把办公本这类外部设备接进来，让内置 Agent 直接调阅其中的资料。',
+    desc: '把麦克风、办公本这类外部设备接进来：语音输入选识别引擎与本机模型，办公本绑定后 Agent 可调阅资料。',
     icon: 'plug',
     groups: [
+      // 语音输入（2026-11-23）：本机 SenseVoice 模型下载 / 识别引擎 / 麦克风 / 测试。
+      // 录音与转写都走中枢（手机是窄代理），所以挂 agentConsole：桌面/服务端恒 true，
+      // 手机绑定中枢后 true；未绑定时不出现，避免点进去只能看到 409。
+      { id: 'peripheral-speech', label: '语音输入', icon: 'mic', need: 'agentConsole' },
       // 办公本接入（2026-11）：绑定办公本账号（目前只支持讯飞 Doxent）后，内置 Agent 经官方
       // skill + CLI 读写办公本的笔记 / Office 文档 / 书籍 / 日程。品牌选择在分组内的「办公本类型」
       // 下拉里，分组名保持中性。绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，
-      // 同属 owner 级管理面，所以挂 agent（手机恒 false，整个「外设接入」大类不出现）。
+      // 同属 owner 级管理面，所以挂 agent（手机恒 false；手机上只显示上面的语音输入分组）。
       { id: 'peripheral-doxent', label: '办公本接入', icon: 'book-open', need: 'agent' },
     ],
   },

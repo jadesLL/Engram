@@ -1,4 +1,4 @@
-import { api } from '../api';
+import { api } from '../api.ts';
 
 /**
  * 编辑器「语音输入」的采集侧：设备枚举 / 录音 / WAV 编码 / 转写请求。
@@ -59,6 +59,24 @@ export interface SpeechModelInfo {
   inputs: string[];
 }
 
+/** 本机识别引擎：SenseVoice / Windows SAPI 兼容 / 无 */
+export type LocalSpeechEngine = 'sensevoice' | 'sapi' | 'none';
+
+/** SenseVoice 模型状态（与服务端 senseVoice.ts 对齐） */
+export interface SenseVoiceStatus {
+  supported: boolean;
+  platform: string;
+  ready: boolean;
+  phase: 'ready' | 'missing' | 'preparing' | 'error';
+  downloadedBytes: number;
+  totalBytes: number;
+  currentFile: string;
+  error: string;
+  modelRoot: string;
+  sources: string[];
+  nodeAvailable: boolean;
+}
+
 export interface SpeechStatus {
   configured: boolean;
   engines: SpeechEngineOption[];
@@ -69,6 +87,12 @@ export interface SpeechStatus {
   defaultModel: SpeechModelInfo | null;
   localAvailable: boolean;
   localDetail: string;
+  /** 本机识别引擎（SenseVoice / Windows 兼容 / 无） */
+  localEngine: LocalSpeechEngine;
+  /** 本机识别引擎名（菜单直接展示） */
+  localLabel: string;
+  /** SenseVoice 模型状态（是否支持 / 是否就绪 / 下载进度） */
+  localModel: SenseVoiceStatus;
   hint: string;
   maxDurationSec: number;
   maxBytes: number;
@@ -452,6 +476,48 @@ export class VoiceRecorder {
 export async function fetchSpeechStatus(): Promise<SpeechStatus> {
   const { data } = await api.get<SpeechStatus>('/api/speech/status');
   return data;
+}
+
+/** SenseVoice 本机模型：状态 / 开始下载 / 取消下载 */
+export async function fetchLocalModelStatus(): Promise<SenseVoiceStatus> {
+  const { data } = await api.get<SenseVoiceStatus>('/api/speech/local/status');
+  return data;
+}
+
+export async function prepareLocalModel(): Promise<SenseVoiceStatus> {
+  const { data } = await api.post<SenseVoiceStatus>('/api/speech/local/prepare');
+  return data;
+}
+
+export async function cancelLocalModel(): Promise<SenseVoiceStatus> {
+  const { data } = await api.post<SenseVoiceStatus>('/api/speech/local/cancel');
+  return data;
+}
+
+/** 字节数 → 人话：按十进制 MB/GB 展示（与下载页、安装包大小口径一致） */
+export function formatModelSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0MB';
+  const mb = bytes / 1_000_000;
+  if (mb >= 100) return `${Math.round(mb)}MB`;
+  if (mb >= 1) return `${mb.toFixed(1)}MB`;
+  return `${Math.max(1, Math.round(bytes / 1_000))}KB`;
+}
+
+/** 模型下载进度 0..100（总大小未知时返回 0） */
+export function localModelPercent(status: SenseVoiceStatus): number {
+  if (!status.totalBytes) return 0;
+  return Math.min(100, Math.max(0, Math.round((status.downloadedBytes / status.totalBytes) * 100)));
+}
+
+/** 本机模型状态的一句话（菜单/设置页共用） */
+export function localModelSummary(status: SenseVoiceStatus): string {
+  if (status.phase === 'ready') return '已就绪，离线可用';
+  if (status.phase === 'preparing') {
+    return `正在下载 ${localModelPercent(status)}%（${formatModelSize(status.downloadedBytes)} / ${formatModelSize(status.totalBytes)}）`;
+  }
+  if (status.phase === 'error') return status.error || '模型文件校验失败，请重新下载';
+  if (!status.supported) return status.error || '当前平台没有可用的本机识别运行时';
+  return `未下载（约 ${formatModelSize(status.totalBytes)}）`;
 }
 
 /** 识别引擎偏好（本机）：'auto' 跟随服务端自动选择，其余是引擎 id（local / model:…） */

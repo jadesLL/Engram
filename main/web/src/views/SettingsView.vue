@@ -197,6 +197,13 @@
       >
         <DomainHead :domain="domainOf('peripheral')" />
         <SettingsGroup
+          anchor="peripheral-speech"
+          title="语音输入"
+          hint="本机 SenseVoice 模型、识别引擎与麦克风；没有云端模型也能离线转写"
+        >
+          <SpeechInputPanel />
+        </SettingsGroup>
+        <SettingsGroup
           anchor="peripheral-doxent"
           title="办公本接入"
           hint="选择办公本类型并绑定账号，内置 Agent 可调阅办公本资料"
@@ -305,8 +312,9 @@ const StoragePanel = defineAsyncComponent(() => import('../components/settings/S
 const DataPanel = defineAsyncComponent(() => import('../components/settings/DataPanel.vue'));
 const DataDangerSection = defineAsyncComponent(() => import('../components/settings/DataDangerSection.vue'));
 const SearchPanel = defineAsyncComponent(() => import('../components/settings/SearchPanel.vue'));
-/* 外设接入：办公本绑定要装技能、起官方 CLI、开本机浏览器，只在桌面 / 服务端可用；
-   与其他面板一样按需加载，首次进入「外设接入」大类时才取 chunk。 */
+/* 外设接入：语音输入（本机 SenseVoice 模型 / 引擎 / 麦克风）与办公本绑定。
+   两者都按需加载，首次进入「外设接入」大类时才取 chunk。 */
+const SpeechInputPanel = defineAsyncComponent(() => import('../components/settings/SpeechInputPanel.vue'));
 const DoxentSection = defineAsyncComponent(() => import('../components/settings/DoxentSection.vue'));
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { hiddenSettingsAnchors } from '../lib/settingsNavVisibility';

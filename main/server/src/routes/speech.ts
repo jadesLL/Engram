@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { wavAudioLevel } from '../lib/localSpeech.js';
 import {
+  cancelSenseVoicePrepare,
+  senseVoiceStatus,
+  startSenseVoicePrepare,
+} from '../lib/senseVoice.js';
+import {
   SPEECH_MAX_AUDIO_BYTES,
   SPEECH_MAX_DURATION_SEC,
   SpeechUnavailableError,
@@ -12,18 +17,34 @@ import {
 } from '../lib/speechInput.js';
 
 /**
- * 编辑器「语音输入」：状态 + 转写。
+ * 编辑器「语音输入」：状态 + 转写 + 本机模型准备。
  *
  * 鉴权用 requireAssistantAccess（owner 登录态 / Agent 令牌 / 同步成员令牌都行）：
  * 手机没有模型，录音经本机 Ktor 窄代理打到中枢，转写在中枢那台设备上完成
- * （中枢是桌面端时可用本机离线识别；Docker 上则看客户配置的音频模型）。
+ * （中枢是桌面端/ Docker 时都用随包的 SenseVoice 本机识别；也可以配置云端音频模型）。
  *
  * 录音只在本次请求里存在：不落盘、不进同步、不写日志；返回的只有转写文本。
+ * 本机模型下载是用户显式动作：准备接口只负责启动/查询/取消，不会在状态查询时偷偷联网。
  */
 export async function speechRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAssistantAccess);
 
   app.get('/api/speech/status', async () => speechStatus());
+
+  // SenseVoice 本机识别模型：状态（含下载进度）/ 开始下载 / 取消
+  app.get('/api/speech/local/status', async () => senseVoiceStatus());
+  app.post('/api/speech/local/prepare', async (_req, reply) => {
+    try {
+      const status = await startSenseVoicePrepare();
+      return reply.code(202).send(status);
+    } catch (error: any) {
+      return reply.code(409).send({ error: error?.message || '本机识别运行时不可用，无法准备模型' });
+    }
+  });
+  app.post('/api/speech/local/cancel', async () => {
+    cancelSenseVoicePrepare();
+    return senseVoiceStatus();
+  });
 
   app.post('/api/speech/transcribe', async (req, reply) => {
     if (!req.isMultipart()) {

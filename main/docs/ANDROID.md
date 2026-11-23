@@ -164,7 +164,7 @@ main/mobile/
 
 - **入口**：编辑区右下角悬浮麦克风（不占顶栏），点一下开始、再点停止；桌面另有 `Ctrl+Shift+Space` 在光标处直接启停、`Esc` 取消、`Ctrl+Z` 撤销插入，右键菜单也有「语音输入」。录音期间 HUD 贴在光标下方（手机档贴底、键盘上方），不抢焦点，文字直接插到记下的光标位置。
 - **录音**：WebView 的 `getUserMedia` + `MediaRecorder`，默认走系统默认麦克风（菜单里「自动（跟随系统）」，也可以换成本机其他输入设备，选择只存本机 localStorage、不参与多端同步）；录音在 WebView 内转成 **WAV 16k 单声道**再上送，只在当次请求里存在，不落手机存储、不进同步。Manifest 声明 `android.permission.RECORD_AUDIO`，取流时由 Capacitor 的 `BridgeWebChromeClient.onPermissionRequest` 向系统申请运行时权限（与「扫码绑定」的摄像头同一条路径）；被拒绝 / 被占用 / 没有麦克风都在 HUD 里给中文原因。
-- **转写（不写死厂商）**：手机没有模型也没有 Key，`GET /api/speech/status` 与 `POST /api/speech/transcribe`（multipart，字段 `audio`，可选 `engine`）都窄代理到中枢。中枢按顺序选引擎：① 内置 Agent 的**默认模型**能听音频就直接发给它；② 否则用客户自己配过的**音频模型**（控制台声明了音频，或模型名含 omni / audio / voice 等；未声明时按模型名推断，上游拒绝音频会自动回退并说明）；③ 都没有才用**本机离线识别**（Windows SAPI，不联网/不要 Key，准确率受系统语言包限制）；④ 连本机识别器也没有才返回可操作提示。菜单里会显示当前用的是哪一个，也可以手动指定；本机识别只回几个字时插入后会提示「可能不准确」。未绑定中枢时返回 409 中文提示。
+- **转写（不写死厂商）**：手机没有模型也没有 Key，`GET /api/speech/status`、`GET /api/speech/local/status`、`POST /api/speech/local/prepare`、`POST /api/speech/local/cancel` 与 `POST /api/speech/transcribe`（multipart，字段 `audio`，可选 `engine`）都窄代理到中枢。中枢按顺序选引擎：① 内置 Agent 的**默认模型**能听音频就直接发给它；② 否则用客户自己配过的**音频模型**（控制台声明了音频，或模型名含 omni / audio / voice 等；未声明时按模型名推断，上游拒绝音频会自动回退并说明）；③ 都没有才用**本机识别**——本机默认是随包的 **SenseVoice**（模型下载到中枢，约 240MB，一次准备后完全离线、不要 Key）；模型没准备好时 Windows 退回 SAPI **兼容模式**（准确率有限，界面会标明）；④ 连本机识别器也没有才返回可操作提示。菜单里会显示当前用的是哪一个，也可以手动指定；本机识别只回几个字时插入后会提示「可能不准确」。**设置 → 外设接入 → 语音输入** 在手机绑定中枢后可见：可以在手机上触发中枢下载本机模型并看进度、选识别引擎/麦克风、录 5 秒测试；模型与录音都不落手机存储。未绑定中枢时返回 409 中文提示。
 - **降级**：Docker 走 http 局域网地址时不是安全上下文，Web 侧会直接说明「浏览器只允许 https 或 localhost」，不发起录音。
 
 ## 导出 PDF 与长图（D 类）
