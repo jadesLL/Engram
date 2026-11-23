@@ -1285,11 +1285,7 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-/* 控件获得焦点时整行一起点亮：键盘用户不会跟丢 */
-.settings-native .setting-row:focus-within {
-  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
-}
-.settings-native .setting-row:focus-within strong { color: var(--accent-text); }
+/* 控件获得焦点时整行一起点亮：焦点环的几何统一在 .setting-row::before 的状态块里（2026-11-23） */
 
 /* 数字统一等宽：版本号、统计、百分比滚动时不抖 */
 .settings-view { font-variant-numeric: tabular-nums; line-break: strict; }
@@ -1366,22 +1362,42 @@
 .settings-native .setting-value.tone-danger { color: var(--danger); }
 .settings-native .setting-value.tone-accent { color: var(--accent); }
 
-/* ---------- 整行可点的勾选行：行面任何位置都能点，悬停时整行铺浅底 ---------- */
+/* ---------- 行状态：发丝环（2026-11-23，C 版） ----------
+ * 用户反馈：点开关后整行铺 42% 陶土底、贴到卡片两边，像一块抹不掉的影子。
+ * 现在整行可点的勾选行在悬停/按下、任意行里的控件获得焦点时，统一用一圈发丝环：
+ * 悬停 1px、按下转陶土 + 4% 洗色、焦点 2px 深陶土。
+ * 环左右伸进 .group-body 的 22px 内边距（距卡片边 10px），上下留 3px 不压分隔线；
+ * 行内容抬到 z-index 1，环不吃点击。手机档内边距 16px，环同步收至 -8px。
+ */
 .settings-native .setting-row { position: relative; }
 .settings-native .setting-row-toggle { cursor: pointer; }
-.settings-native .setting-row-toggle::before {
+.settings-native .setting-row::before {
   position: absolute;
-  /* 下缘留 1px：行间细线不被悬停底色盖住 */
-  inset: 1px -12px 0;
+  inset: 3px -12px;
   z-index: 0;
   border-radius: 8px;
   background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
   content: "";
-  transition: background 0.12s ease;
+  pointer-events: none;
+  transition: box-shadow var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard);
 }
-.settings-native .setting-row-toggle:hover::before { background: var(--bg-hover); }
-.settings-native .setting-row-toggle:active::before { background: var(--bg-tertiary); }
-.settings-native .setting-row-toggle > * { position: relative; z-index: 1; }
+.settings-native .setting-row > * { position: relative; z-index: 1; }
+@media (hover: hover) {
+  /* :not(:active)：按下时让位给下面的陶土按下环，否则 1px 发丝色会盖掉它 */
+  .settings-native .setting-row-toggle:hover:not(:active)::before {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+}
+.settings-native .setting-row-toggle:active::before {
+  background: var(--row-ring-wash);
+  box-shadow: inset 0 0 0 1px var(--row-ring-press);
+}
+/* 焦点环放最后：悬停与焦点同时命中时，2px 焦点环覆盖 1px 悬停环 */
+.settings-native .setting-row:focus-within::before {
+  box-shadow: inset 0 0 0 2px var(--row-ring-focus, var(--accent));
+}
 
 /* ---------- 值列表：卡内 label → value 成对信息，无外框、无灰底，只留行间细线 ---------- */
 .settings-native .value-list {
@@ -1522,11 +1538,11 @@
   .settings-native .setting-actions { justify-content: stretch; }
   .settings-native .setting-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
   .settings-native .setting-row .btn:not(.btn.icon):not(.btn.ghost) { min-height: 40px; }
-  .settings-native .setting-row-toggle::before { inset: 1px -8px 0; }
+  .settings-native .setting-row::before { inset: 3px -8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-native .setting-row-toggle::before { transition: none; }
+  .settings-native .setting-row::before { transition: none; }
 }
 /* 全局玻璃：设置左栏面板（追加在末尾，确保优先级） */
 .settings-nav { background-color: var(--glass-fill) !important; background-image: var(--glass-sheen) !important; backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter); border: 1px solid var(--glass-edge) !important; border-radius: 22px; box-shadow: var(--shadow-card); padding: 10px 12px 16px !important; }

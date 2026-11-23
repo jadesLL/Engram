@@ -109,6 +109,14 @@
   --control-border: rgba(0, 0, 0, 0.06);
   --control-border-strong: rgba(0, 0, 0, 0.17);
   /*
+   * 行级状态（2026-11-23）：可点行的悬停 / 按下 / 焦点统一用一圈发丝环，不再铺整行底色。
+   * 环画在行的伪元素上，悬停 1px、按下转主色 + 4% 洗色、键盘焦点 2px。
+   * Claude Code 主题把焦点环换成更深的陶土（--cc-clay-deep），保证暖纸底上 3:1。
+   */
+  --row-ring-press: color-mix(in srgb, var(--accent) 55%, transparent);
+  --row-ring-wash: color-mix(in srgb, var(--accent) 4%, transparent);
+  --row-ring-focus: var(--accent);
+  /*
    * 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） / card 内容卡（浮层分层：软投影分层，hover 抬升加深）
    * 规则：大阴影不要用超过 -4px 的负 spread——box-shadow 的有效圆角是「元素圆角 + spread」，
    * 负到比圆角还大时阴影会变成直角矩形，卡片是圆的、影子却是方的（2026-11-21 全站修过一轮）。
