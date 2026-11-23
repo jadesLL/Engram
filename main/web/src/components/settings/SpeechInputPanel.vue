@@ -213,28 +213,11 @@
     <p v-if="testText" class="speech-test-result" aria-live="polite">{{ testText }}</p>
     <p v-if="testError" class="speech-error">{{ testError }}</p>
     <p v-if="!recordingSupported" class="speech-note">{{ recordingReason }}</p>
-
-    <!-- 云端音频模型：没有专用 ASR 时的兜底 -->
-    <div class="setting-row">
-      <div class="setting-copy">
-        <strong>云端音频模型（多模态）</strong>
-        <span>{{ cloudText }}</span>
-      </div>
-      <div class="setting-actions">
-        <button class="btn ghost small" type="button" @click="openAgentConsole">打开内置 Agent 控制台</button>
-      </div>
-    </div>
-    <p class="speech-note">
-      没有配置专用 ASR 时，才会用这里声明的多模态音频模型：它们要先把整段音频「理解」一遍，通常更慢。
-      在内置 Agent 控制台的「模型」页添加一个支持音频输入的 OpenAI 兼容模型并填好 API Key，
-      回到这里即可在「识别引擎」里选它。模型提供商不限，按控制台里声明的能力使用。
-    </p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
 import AppSelect from '../ui/AppSelect.vue';
 import SecretField from '../SecretField.vue';
 import { notify } from '../../lib/notify';
@@ -276,12 +259,11 @@ import {
  * 这页解决三件事：
  *  1. 想让识别更快：配置专用 ASR（Whisper / Qwen-Audio-ASR 等），不依赖 dsh 的多模态模型；
  *  2. 没有云端模型 / API Key 的用户：在这里下载 SenseVoice 本机模型，完全离线转写；
- *  3. 找不到配置入口的用户：本机模型、识别引擎、麦克风、云端模型入口、测试识别都在同一页。
+ *  3. 找不到配置入口的用户：本机模型、识别引擎、麦克风、测试识别都在同一页。
  *
  * 测试录音只用于当场验证，不写入正文；录音仍只在请求里存在，不落盘、不进同步。
  */
 
-const router = useRouter();
 const status = ref<SpeechStatus | null>(null);
 const loading = ref(false);
 const busy = ref(false);
@@ -405,7 +387,7 @@ const stripHint = computed(() => {
   }
   if (model.value.ready) return '语音输入不需要联网、也不需要 API Key；可以在编辑页语音菜单或下面直接测试。';
   if (model.value.phase === 'error') return model.value.error || '模型文件校验失败，请重新下载';
-  if (!model.value.supported) return model.value.error || '安装包缺少 SenseVoice 运行时；仍可配置云端音频模型。';
+  if (!model.value.supported) return model.value.error || '安装包缺少 SenseVoice 运行时；仍可配置上方专用 ASR。';
   const fallback = status.value?.localEngine === 'sapi'
     ? '没下载前 Windows 会退回系统自带识别'
     : '没下载前本机识别不可用';
@@ -431,19 +413,6 @@ const deviceOptions = computed(() => {
   const options = [{ value: 'auto', label: '自动（跟随系统）' }];
   for (const item of devices.value) options.push({ value: item.deviceId, label: item.label });
   return options;
-});
-const cloudText = computed(() => {
-  const current = status.value;
-  if (!current) return '未检测';
-  const models = current.engines.filter((item) => item.kind === 'model');
-  if (!models.length) {
-    return '还没有配置支持音频的模型。没有云端模型也可以只用上面的本机识别。';
-  }
-  const chosen =
-    current.defaultEngine === 'local'
-      ? current.localLabel
-      : models.find((item) => item.id === current.defaultEngine)?.label;
-  return `已配置：${models.map((item) => item.label).join('、')}${chosen ? `；当前自动选择：${chosen}` : ''}`;
 });
 
 /* -------- 下载 -------- */
@@ -542,9 +511,6 @@ function onEngineChanged(): void {
 }
 function onDeviceChanged(): void {
   saveVoiceDevicePreference(device.value);
-}
-function openAgentConsole(): void {
-  void router.push('/settings/agent-console');
 }
 
 /* -------- 专用 ASR -------- */
