@@ -10,7 +10,7 @@ import {
 } from './agentModelConfig.js';
 import { modelKeyRef } from './videoModel.js';
 import { parseCredentialRefs } from './credentialsFile.js';
-import { localSpeechAvailability, transcribeLocalWav } from './localSpeech.js';
+import { localSpeechAvailability, transcribeLocalWav, wavAudioLevel } from './localSpeech.js';
 import { preferenceValue } from '../sync/preferences.js';
 
 /**
@@ -36,6 +36,14 @@ export const SPEECH_TIMEOUT_MS = 180_000;
 
 /** 本机离线识别的引擎 id（与模型引擎 `model:<provider>:<model>` 区分） */
 export const SPEECH_LOCAL_ENGINE = 'local';
+
+/**
+ * 平均音量低于这个值（满幅 1）基本可以判定这段录音没采到人声：
+ * 直接提示检查麦克风，别让用户对着静音反复重试。
+ */
+export const SPEECH_SILENT_RMS = 0.004;
+/** 低于这个平均音量即使识别不出来，也把「音量偏低」写进提示 */
+export const SPEECH_LOW_VOLUME_RMS = 0.02;
 
 /** 官方 DeepSeek 提供商的缺省值（与 dsh 自带 bundle / SDK 兜底一致） */
 const OFFICIAL_PROVIDER_ID = 'deepseek-official';
@@ -311,20 +319,28 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
 
   let defaultEngine = '';
   let defaultEngineReason = '';
-  if (
-    catalog.defaultCandidate &&
-    defaultModel?.supportsAudio &&
-    catalog.defaultCandidate.apiKey &&
-    catalog.defaultCandidate.baseUrl
-  ) {
-    defaultEngine = catalog.defaultCandidate.id;
+  const defaultId = catalog.defaultCandidate?.id || '';
+  // 只有同时满足「声明音频 + 地址/Key/协议可用」的默认模型才能真正发音频；
+  // 只声明了音频但协议不是 OpenAI 兼容 / 没 Key 时，不能算 configured。
+  const usableDefault = defaultId
+    ? catalog.audioCandidates.find((item) => item.id === defaultId) ?? null
+    : null;
+  if (usableDefault && defaultModel?.supportsAudio) {
+    defaultEngine = usableDefault.id;
     defaultEngineReason = `默认 Agent 模型「${defaultLabel}」声明支持音频输入，录音直接发给它`;
   } else if (local.available) {
     defaultEngine = SPEECH_LOCAL_ENGINE;
-    const why =
-      defaultModel && defaultModel.inputs.length
-        ? `只声明了 ${defaultModel.inputs.join(' / ')} 输入`
-        : '没有声明音频输入';
+    const why = (() => {
+      if (!defaultModel) return '没有声明音频输入';
+      if (!defaultModel.supportsAudio) {
+        return defaultModel.inputs.length ? `只声明了 ${defaultModel.inputs.join(' / ')} 输入` : '没有声明音频输入';
+      }
+      if (!catalog.defaultCandidate) return '接口地址或 Key 还没配好';
+      if (catalog.defaultCandidate.api !== 'openai-completions') return '协议不是 OpenAI 兼容，发不了音频';
+      if (!catalog.defaultCandidate.apiKey) return '还没配置 API Key';
+      if (!catalog.defaultCandidate.baseUrl) return '还没配置接口地址';
+      return '当前配置不完整';
+    })();
     defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${why}，改用本机离线识别`;
   } else if (catalog.audioCandidates.length) {
     const candidate = catalog.audioCandidates[0];
@@ -643,6 +659,28 @@ export async function transcribeWithModel(
   }
 }
 
+function volumePercent(rms: number): string {
+  const percent = Math.round(rms * 100);
+  return percent < 1 ? '不到 1%' : `${percent}%`;
+}
+
+/** 录音几乎是静音：问题在麦克风/采集，不在识别引擎，别让用户反复重试 */
+export function silentRecordingMessage(rms: number): string {
+  return (
+    `录音几乎没有声音（平均音量 ${volumePercent(rms)}）：麦克风可能选错了、被静音，`
+    + '或者远程串流用的虚拟麦克风没在采集。'
+    + '点语音输入的「选项」换一个麦克风，或检查系统声音设置后重试。'
+  );
+}
+
+/** 有声音但识别不出来；音量明显偏低时把这一点一并说出来 */
+export function noSpeechMessage(rms?: number): string {
+  const low = rms !== undefined && rms < SPEECH_LOW_VOLUME_RMS
+    ? `（这段录音平均音量只有 ${volumePercent(rms)}，麦克风可能离得太远或被静音）`
+    : '';
+  return `没有识别到语音${low}：请靠近麦克风、说清楚一点再试`;
+}
+
 /**
  * 转写一段 WAV 录音：按用户选择的引擎（或自动选择结果）走本机离线识别 / 模型。
  * 没配好抛 SpeechUnavailableError（路由回 409），上游失败抛带可读中文的 Error（路由回 502）。
@@ -659,9 +697,11 @@ export async function transcribeAudio(
       ? options.engine
       : status.defaultEngine;
   if (wanted === SPEECH_LOCAL_ENGINE) {
+    const level = wavAudioLevel(audio);
+    if (level && level.rms < SPEECH_SILENT_RMS) throw new Error(silentRecordingMessage(level.rms));
     const { text } = await transcribeLocalWav(audio);
     const cleaned = cleanTranscript(text);
-    if (!cleaned) throw new Error('没有识别到语音：请靠近麦克风、说清楚一点再试');
+    if (!cleaned) throw new Error(noSpeechMessage(level?.rms));
     return {
       text: cleaned,
       engine: SPEECH_LOCAL_ENGINE,

@@ -270,7 +270,11 @@
             <b>语音输入</b>
             <span class="voice-menu-sub">{{ voiceStatus?.defaultEngineReason || '正在检查识别引擎…' }}</span>
           </div>
-          <template v-if="voiceStatus && !voiceStatus.configured">
+          <template v-if="!voiceStatus">
+            <p class="voice-menu-hint">{{ voiceError || '正在检查识别引擎…' }}</p>
+            <button type="button" class="voice-btn ghost" @click="loadVoiceStatus()">重新检查</button>
+          </template>
+          <template v-else-if="!voiceStatus.configured">
             <p class="voice-menu-hint">{{ voiceStatus.hint }}</p>
             <button type="button" class="voice-btn primary" @click="goSpeechConfig">去配置</button>
           </template>
@@ -295,6 +299,9 @@
             </div>
             <p v-if="voiceDeviceNote" class="voice-menu-note">{{ voiceDeviceNote }}</p>
             <p v-if="!voiceSupport.supported" class="voice-menu-note">{{ voiceSupport.reason }}</p>
+            <div v-if="voiceStage === 'error'" class="voice-menu-actions">
+              <button type="button" class="voice-btn primary" @click="retryVoiceFromMenu">用这个麦克风重试</button>
+            </div>
             <p class="voice-menu-keys">
               <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> 开始/停止 · <kbd>Esc</kbd> 取消 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销
             </p>
@@ -306,8 +313,9 @@
     <!-- 语音输入 HUD：录音计时/电平/停止/取消；桌面贴光标，手机档贴底（键盘上方）。
          全程 mousedown.prevent，点它不会把光标从正文里抢走。 -->
     <Teleport to="body">
+      <!-- 错误态点「换麦克风」会弹出菜单：菜单和 HUD 都贴底，窄屏会互相遮挡，开菜单时先让 HUD 让位 -->
       <div
-        v-if="voiceStage !== 'idle'"
+        v-if="voiceStage !== 'idle' && !(voiceStage === 'error' && voiceMenuOpen)"
         class="voice-hud"
         :class="{ error: voiceStage === 'error', mobile: voiceMobile }"
         :style="voiceHudStyle"
@@ -323,7 +331,8 @@
           <span class="voice-hud-level" aria-hidden="true">
             <i v-for="(_bar, index) in VOICE_HUD_BARS" :key="index" :style="{ height: voiceBarHeight(index) }" />
           </span>
-          <span class="voice-hud-hint">{{ voiceDeviceLabel }}</span>
+          <span v-if="voiceSilent" class="voice-hud-warn">没听到声音</span>
+          <span v-else class="voice-hud-hint">{{ voiceDeviceLabel }}</span>
           <button type="button" class="voice-btn primary" @click="stopVoiceInput">停止</button>
           <button type="button" class="voice-btn ghost" @click="cancelVoiceInput">取消</button>
         </template>
@@ -334,6 +343,12 @@
         <template v-else>
           <span class="voice-hud-error">{{ voiceError }}</span>
           <button type="button" class="voice-btn primary" @click="startVoiceInput">重试</button>
+          <button
+            v-if="voiceErrorMentionsDevice"
+            type="button"
+            class="voice-btn ghost"
+            @click="openVoiceMenu()"
+          >换麦克风</button>
           <button type="button" class="voice-btn ghost" @click="cancelVoiceInput">关闭</button>
         </template>
       </div>
@@ -3282,16 +3297,20 @@ const voiceMenuPos = ref({ top: 0, left: 0 });
 const voiceMenuEl = ref<HTMLElement | null>(null);
 const voiceFabEl = ref<HTMLElement | null>(null);
 const voiceDevices = ref<VoiceInputDevice[]>([]);
-const voiceDevice = ref<VoiceDevicePreference>('auto');
+// 上次选过的麦克风/引擎在直接按快捷键或点悬浮麦克风时也要生效，不能只在打开菜单后才读
+const voiceDevice = ref<VoiceDevicePreference>(loadVoiceDevicePreference());
 const voiceDeviceNote = ref('');
-const voiceEngine = ref('auto');
+const voiceEngine = ref(loadVoiceEnginePreference());
 const voiceEngineLabel = ref('');
 const voiceDeviceLabel = ref('自动（跟随系统）');
+const voiceSilent = ref(false);
 const voiceHudPos = ref({ top: 0, left: 0 });
 const VOICE_HUD_BARS = 10;
 const voiceRecorder = new VoiceRecorder();
 let voiceSavedRange: Range | null = null;
 let voiceStopping = false;
+/** 本次录音的最大电平：到 3 秒还没动过就提示检查麦克风 */
+let voicePeakLevel = 0;
 
 const defaultEngineLabel = computed(() => {
   const status = voiceStatus.value;
@@ -3307,6 +3326,8 @@ const voiceHudStyle = computed(() => {
   if (voiceMobile.value) return {};
   return { top: `${voiceHudPos.value.top}px`, left: `${voiceHudPos.value.left}px` };
 });
+/** 错误和麦克风/采集有关时，HUD 直接给一个「换麦克风」入口 */
+const voiceErrorMentionsDevice = computed(() => /没有声音|静音|麦克风|没有识别到语音/.test(voiceError.value));
 
 function voiceBarHeight(index: number): string {
   const center = (VOICE_HUD_BARS - 1) / 2;
@@ -3441,6 +3462,12 @@ function goSpeechConfig(): void {
   void router.push({ path: '/settings', query: { section: 'agent', anchor: 'agent-console' } });
 }
 
+/** 从错误提示进菜单换完设备后，直接按新设备再录一次 */
+function retryVoiceFromMenu(): void {
+  closeVoiceMenu();
+  void startVoiceInput();
+}
+
 async function startVoiceInput(): Promise<void> {
   if (voiceStage.value === 'recording' || voiceStage.value === 'transcribing') return;
   if (!voiceSupport.supported) {
@@ -3471,6 +3498,8 @@ async function startVoiceInput(): Promise<void> {
   voiceStage.value = 'recording';
   voiceSeconds.value = 0;
   voiceLevel.value = 0;
+  voiceSilent.value = false;
+  voicePeakLevel = 0;
   voiceError.value = '';
   voiceEngineLabel.value = '';
   voiceDeviceLabel.value =
@@ -3483,9 +3512,12 @@ async function startVoiceInput(): Promise<void> {
       {
         onLevel: (value) => {
           voiceLevel.value = value;
+          voicePeakLevel = Math.max(voicePeakLevel, value);
         },
         onTick: (value) => {
           voiceSeconds.value = value;
+          // 录到 3 秒仍然没有电平：几乎肯定是麦克风选错/静音，早点告诉用户
+          voiceSilent.value = value >= 3 && voicePeakLevel < 0.02;
         },
         onMaxDuration: () => {
           void stopVoiceInput();
@@ -3535,6 +3567,15 @@ function commitVoiceText(text: string, engineLabel: string): void {
   });
 }
 
+/** 识别失败且原因指向麦克风时带上当前设备名——远程串流的虚拟麦克风最容易踩这个坑 */
+function withVoiceDeviceHint(message: string): string {
+  const raw = voiceDeviceLabel.value || '';
+  const label = raw === '自动（跟随系统）' ? '系统默认麦克风' : raw;
+  if (!label || message.includes(label)) return message;
+  if (!/没有声音|静音|麦克风|没有识别到语音/.test(message)) return message;
+  return `${message}（当前麦克风：${label}）`;
+}
+
 async function stopVoiceInput(): Promise<void> {
   if (voiceStage.value !== 'recording' || voiceStopping) return;
   voiceStopping = true;
@@ -3548,7 +3589,7 @@ async function stopVoiceInput(): Promise<void> {
     commitVoiceText(result.text, result.engineLabel);
   } catch (error: any) {
     voiceStage.value = 'error';
-    voiceError.value = error?.message || '语音识别失败，请重试';
+    voiceError.value = withVoiceDeviceHint(error?.message || '语音识别失败，请重试');
   } finally {
     voiceStopping = false;
   }
@@ -5307,6 +5348,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
 }
 .voice-field select:disabled { opacity: 0.55; }
 .voice-menu-note { margin: 5px 0 0; font-size: var(--fs-caption); line-height: 1.45; color: var(--text-faint); }
+.voice-menu-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .voice-menu-keys { margin: 10px 0 0; font-size: var(--fs-caption); line-height: 1.6; color: var(--text-faint); }
 .voice-menu-keys kbd {
   padding: 0 3px;
@@ -5363,6 +5405,7 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
 }
 .voice-hud-hint.faint { color: var(--text-faint); }
 .voice-hud-error { max-width: 280px; line-height: 1.4; color: var(--danger); }
+.voice-hud-warn { color: var(--danger); font-weight: 650; white-space: nowrap; }
 .voice-btn {
   flex: none;
   min-height: 28px;
