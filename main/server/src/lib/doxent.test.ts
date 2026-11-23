@@ -11,6 +11,7 @@ import {
   DOXENT_MARKER_FILE,
   clearDoxentBindJob,
   clearStaleDoxentCliLock,
+  describeDoxentLoginFailure,
   doxentBindJob,
   doxentCliInstallPath,
   doxentCliState,
@@ -18,16 +19,20 @@ import {
   doxentSkillRoot,
   doxentSkillState,
   doxentSkillUrl,
+  extractDoxentFailureLine,
   installDoxentSkill,
   parseDoxentLoginBlock,
   parseDoxentLoginState,
   prepareDoxentAfterCredentialSync,
   readDoxentCliVersion,
   readDoxentSkillVersion,
+  redactDoxentOutput,
   removeDoxentSkill,
   startDoxentBind,
   stopDoxentCliForCredentialSync,
   waitDoxentBindSettled,
+  type DoxentCliFailureKind,
+  type DoxentCliState,
 } from './doxent.js';
 
 function tempHome(): string {
@@ -37,6 +42,22 @@ function tempHome(): string {
 /** 临时官方 CLI 安装目录：测试绝不碰宿主机真实的 %LOCALAPPDATA%\Doxent */
 function tempCliEnv(): NodeJS.ProcessEnv {
   return { DOXENT_CLI_INSTALL_DIR: tempHome() };
+}
+
+/** 未安装、无锁的官方 CLI 状态（失败说明的输入） */
+const IDLE_CLI: DoxentCliState = { installed: false, path: '', lock: false, lockStale: false };
+
+/** 官方客户端装/换 CLI 失败时的真实输出形状：前面全是帧路径，真正原因只在最后一行 */
+function cliTraceback(exception: string): string {
+  return [
+    'Traceback (most recent call last):',
+    '  File "C:\\Users\\x\\AppData\\Roaming\\@engram\\desktop\\data\\dsh\\skills\\doxent\\shared\\scripts\\doxent_api.py", line 1439, in <module>',
+    '    sys.exit(main())',
+    '             ^^^^^^',
+    '  File "C:\\Users\\x\\AppData\\Roaming\\@engram\\desktop\\data\\dsh\\skills\\doxent\\shared\\scripts\\doxent_api.py", line 1240, in run_cli_command',
+    '    executable, _ = ensure_cli_current(executable, service_is_running=bool(query_cli_endpoint(executable)))',
+    exception,
+  ].join('\n');
 }
 
 /** 轮询等待条件成立（绑定任务是异步推进的，断言阶段前先等它走到预期位置） */
@@ -513,6 +534,175 @@ test('startDoxentBind：超时错误带「安装锁」线索（设置页据此�
   assert.equal(finished?.state, 'error');
   assert.match(finished?.error || '', /安装锁/);
   assert.match(finished?.error || '', /超时/);
+  clearDoxentBindJob();
+});
+
+test('extractDoxentFailureLine：取 traceback 的异常末行，不拿帧路径当原因', () => {
+  assert.equal(
+    extractDoxentFailureLine(cliTraceback('RuntimeError: 旧 CLI 停止失败，取消替换')),
+    'RuntimeError: 旧 CLI 停止失败，取消替换',
+  );
+  // 没有 traceback 的普通错误：取最后一行，不编造
+  assert.equal(extractDoxentFailureLine('DOXENT CLI v1.0.4\n未登录'), '未登录');
+  assert.equal(extractDoxentFailureLine(''), '');
+});
+
+test('redactDoxentOutput：错误说明里不泄露一次性登录链接的 pollKey', () => {
+  const redacted = redactDoxentOutput(
+    'https://cli.iflyink.com/login?sn=nsn_abc&pollKey=deadbeef&token=abc [打开登录页面]',
+  );
+  assert.equal(redacted.includes('deadbeef'), false);
+  assert.equal(redacted.includes('token=abc'), false);
+  assert.match(redacted, /pollKey=\*\*\*/);
+});
+
+test('describeDoxentLoginFailure：安装锁超时给出「已清理 / 请清理」两种可执行建议', () => {
+  const stderr = cliTraceback(
+    'RuntimeError: 等待 CLI 安装锁超时；确认无安装进程后清理：C:\\Users\\x\\AppData\\Local\\Doxent\\CoreCLI\\.doxent-cli-install.lock',
+  );
+  const cleared = describeDoxentLoginFailure({
+    stdout: '',
+    stderr,
+    timedOut: false,
+    // 失败后锁已被 Engram 清掉：读到的 CLI 状态已经没有锁
+    cli: IDLE_CLI,
+    lockCleared: true,
+  });
+  assert.equal(cleared.kind, 'lock');
+  assert.match(cleared.message, /安装锁被占用/);
+  assert.match(cleared.message, /已由 Engram 自动清理/);
+  assert.match(cleared.message, /RuntimeError: 等待 CLI 安装锁超时/, '末行异常要带出来，便于支持排查');
+  assert.doesNotMatch(cleared.message, /Traceback/, '不能再把调用栈头当原因');
+
+  // 重试时锁已经被清掉（lockCleared=false 且读不到锁）：别再让用户找「清理安装锁」按钮
+  const alreadyGone = describeDoxentLoginFailure({
+    stdout: '',
+    stderr,
+    timedOut: false,
+    cli: IDLE_CLI,
+    lockCleared: false,
+  });
+  assert.match(alreadyGone.message, /安装锁已不在（可能刚被清理）/);
+
+  const stillLocked = describeDoxentLoginFailure({
+    stdout: '',
+    stderr,
+    timedOut: false,
+    cli: { ...IDLE_CLI, lock: true, lockAgeMs: 10_000 },
+    lockCleared: false,
+  });
+  assert.match(stillLocked.message, /清理安装锁/);
+
+  const clearedButLockRemains = describeDoxentLoginFailure({
+    stdout: '',
+    stderr,
+    timedOut: false,
+    cli: { ...IDLE_CLI, lock: true, lockAgeMs: 10_000 },
+    lockCleared: true,
+  });
+  assert.match(clearedButLockRemains.message, /已由 Engram 自动清理/);
+});
+
+test('describeDoxentLoginFailure：解压 / 替换 / 下载校验 / 权限失败都翻成人话', () => {
+  const cases: Array<[string, DoxentCliFailureKind, RegExp]> = [
+    ['RuntimeError: Doxent CLI 解压失败或缺少 Node/JS：C:\\...\\.doxent-runtime\\abc', 'extract', /安全软件拦截/],
+    ['RuntimeError: 旧 CLI 服务仍在运行，取消替换', 'update', /完全退出讯飞办公本客户端/],
+    ['RuntimeError: 下载的 CLI 文件摘要与版本探测结果不一致', 'download', /检查网络 \/ 代理/],
+    ['PermissionError: [WinError 5] 拒绝访问。: \'C:\\\\Users\\\\x\\\\AppData\\\\Local\\\\Doxent\\\\CoreCLI\'', 'permission', /没有权限写入/],
+  ];
+  for (const [exception, kind, pattern] of cases) {
+    const failure = describeDoxentLoginFailure({
+      stdout: '',
+      stderr: cliTraceback(exception),
+      timedOut: false,
+      cli: IDLE_CLI,
+    });
+    assert.equal(failure.kind, kind, exception);
+    assert.match(failure.message, pattern, exception);
+    assert.match(failure.message, new RegExp(exception.split(':')[0] + ':'), '异常类型要在说明里');
+  }
+});
+
+test('describeDoxentLoginFailure：认不出的失败至少带出末行，并保留超时 / 锁线索', () => {
+  const failure = describeDoxentLoginFailure({
+    stdout: 'DOXENT CLI\n未登录',
+    stderr: '',
+    timedOut: true,
+    cli: { ...IDLE_CLI, installed: true, lock: true, lockAgeMs: DOXENT_CLI_LOCK_STALE_MS * 2, lockStale: true },
+  });
+  assert.equal(failure.kind, 'other');
+  assert.match(failure.message, /超时/);
+  assert.match(failure.message, /未登录/, '没有 traceback 时把官方输出末行带出来');
+  assert.match(failure.message, /安装锁仍存在/);
+  assert.match(failure.message, /清理安装锁/);
+});
+
+test('startDoxentBind：安装锁超时失败后自动清锁，重试不用再白等 180 秒', async () => {
+  clearDoxentBindJob();
+  const env = tempCliEnv();
+  const dir = path.dirname(doxentCliInstallPath(env));
+  const lockPath = path.join(dir, DOXENT_CLI_LOCK_NAME);
+  // 锁是「刚创建」的（低于 5 分钟残留阈值）：不能指望启动时的清理逻辑
+  fs.mkdirSync(lockPath, { recursive: true });
+
+  startDoxentBind({
+    home: tempHome(),
+    env,
+    warn: () => {},
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    runAction: async (action) =>
+      action === 'login-status'
+        ? { code: 0, stdout: '未登录', stderr: '', timedOut: false }
+        : {
+            code: 1,
+            stdout: '',
+            timedOut: false,
+            stderr: cliTraceback(
+              'RuntimeError: 等待 CLI 安装锁超时；确认无安装进程后清理：' + lockPath,
+            ),
+          },
+  });
+
+  await waitDoxentBindSettled();
+  const finished = doxentBindJob();
+  assert.equal(finished?.state, 'error');
+  assert.equal(fs.existsSync(lockPath), false, '锁超时说明锁已无主，必须就地清掉');
+  assert.match(finished?.error || '', /已由 Engram 自动清理/);
+  assert.match(finished?.error || '', /RuntimeError: 等待 CLI 安装锁超时/);
+  assert.doesNotMatch(finished?.error || '', /Traceback/);
+  clearDoxentBindJob();
+});
+
+test('startDoxentBind：普通失败不动可能正在用的安装锁', async () => {
+  clearDoxentBindJob();
+  const env = tempCliEnv();
+  const dir = path.dirname(doxentCliInstallPath(env));
+  const lockPath = path.join(dir, DOXENT_CLI_LOCK_NAME);
+  fs.mkdirSync(lockPath, { recursive: true });
+
+  startDoxentBind({
+    home: tempHome(),
+    env,
+    warn: () => {},
+    install: async (options) => ({
+      installed: true,
+      managed: true,
+      root: doxentSkillRoot(options.home),
+      version: '1.3.10',
+    }),
+    runAction: async (action) =>
+      action === 'login-status'
+        ? { code: 0, stdout: '未登录', stderr: '', timedOut: false }
+        : { code: 1, stdout: '', timedOut: false, stderr: cliTraceback('RuntimeError: 别的安装问题') },
+  });
+
+  await waitDoxentBindSettled();
+  assert.equal(fs.existsSync(lockPath), true, '不是锁超时的失败不能替官方客户端清锁');
   clearDoxentBindJob();
 });
 

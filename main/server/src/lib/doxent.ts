@@ -625,6 +625,141 @@ export function parseDoxentLoginState(text: string): DoxentLoginState {
   return 'unknown';
 }
 
+/* ------------------------------------------------------------------ 失败说明 */
+
+/**
+ * 官方 CLI 失败归类：Python 的 traceback 第一行只是 `Traceback (most recent call last):`，
+ * 真正原因在最后一行。设置页只显示一条说明，必须把末行异常翻译成人话再展示，
+ * 不能把调用栈头 300 字当原因（2026-11-24 安装版绑定报错只有帧路径就是这个原因）。
+ */
+export type DoxentCliFailureKind = 'lock' | 'update' | 'extract' | 'download' | 'permission' | 'other';
+
+export interface DoxentCliFailure {
+  kind: DoxentCliFailureKind;
+  /** 官方输出的异常末行（已去掉 traceback 帧），供支持人员对照 */
+  exception: string;
+  /** 给失败弹框 / 卡片看的一句话说明（含下一步建议） */
+  message: string;
+}
+
+/** 输出里可能带一次性登录链接：错误说明与日志都不能把 pollKey 带出去 */
+export function redactDoxentOutput(text: string): string {
+  return String(text || '')
+    .replace(/pollKey=([^&\s)]+)/gi, 'pollKey=***')
+    .replace(/([?&](?:token|ticket|code)=)([^&\s)]+)/gi, '$1***');
+}
+
+function clipDoxentText(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + '…' : text;
+}
+
+/**
+ * 取失败输出的「异常末行」。
+ * - 有 traceback：跳过帧路径与 `^^^^` 提示，取最后一条 `XxxError: ...`；
+ * - 没有 traceback：取最后一行（官方 CLI 的普通错误往往就是一行），不编造原因。
+ */
+export function extractDoxentFailureLine(text: string): string {
+  const lines = redactDoxentOutput(text)
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[\^~]+$/.test(line));
+  if (!lines.length) return '';
+  const start = lines.lastIndexOf('Traceback (most recent call last):');
+  const tail = start >= 0 ? lines.slice(start + 1) : lines;
+  for (let index = tail.length - 1; index >= 0; index -= 1) {
+    if (/^[A-Za-z_][\w.]*(Error|Exception|Exit|Interrupt|Warning)\b/.test(tail[index])) return tail[index];
+  }
+  return tail[tail.length - 1] || '';
+}
+
+export interface DoxentLoginFailureInput {
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  /** 失败后的官方 CLI 状态（锁是否还在） */
+  cli: DoxentCliState;
+  /** 失败后 Engram 是否已经把这个残留锁清掉 */
+  lockCleared?: boolean;
+}
+
+/**
+ * 把官方客户端的失败输出整理成一条可执行说明。
+ *
+ * 官方客户端是 Python 脚本，装 CLI / 换 CLI / 抢安装锁失败时抛的是未捕获异常：
+ * stderr 是整段 traceback，真正原因只在最后一行。这里按已知原因给出对应处置建议，
+ * 其余情况至少把末行异常原样带出来，不再只留一串文件路径。
+ */
+export function describeDoxentLoginFailure(input: DoxentLoginFailureInput): DoxentCliFailure {
+  const raw = redactDoxentOutput((input.stderr || '').trim() || (input.stdout || '').trim());
+  const exception = extractDoxentFailureLine(raw);
+  const detail = exception ? `官方异常：${clipDoxentText(exception, 240)}。` : '';
+  const hit = (pattern: RegExp): boolean => pattern.test(raw) || (!!exception && pattern.test(exception));
+
+  if (hit(/等待 CLI 安装锁超时/)) {
+    // 锁可能已被 Engram 清掉、也可能本来就没了（上次清理后重试）：按当前状态给建议，
+    // 不能让用户去找一个已经不存在的「清理安装锁」按钮。
+    const lockState = input.lockCleared
+      ? '残留锁已由 Engram 自动清理，请再点「重试」。'
+      : input.cli.lock
+        ? '请点下方「清理安装锁」后重试。'
+        : '安装锁已不在（可能刚被清理），请再点「重试」。';
+    return {
+      kind: 'lock',
+      exception,
+      message: '官方 CLI 安装锁被占用，等了 180 秒仍未释放。' + lockState + detail,
+    };
+  }
+  if (hit(/解压失败|缺少 Node\/JS/)) {
+    return {
+      kind: 'extract',
+      exception,
+      message:
+        '官方 CLI 解压失败：官方客户端没能释放运行文件，常见原因是安全软件拦截或安装目录没有写权限。' +
+        '请检查安全软件拦截记录或 %LOCALAPPDATA%\\Doxent\\CoreCLI 的权限后重试。' +
+        detail,
+    };
+  }
+  if (hit(/旧 CLI 停止失败|旧 CLI 服务仍在运行/)) {
+    return {
+      kind: 'update',
+      exception,
+      message:
+        '旧版官方 CLI 仍在运行，官方客户端无法替换文件。' +
+        '请先完全退出讯飞办公本客户端（或在任务管理器结束 doxent-cli 进程）后重试。' +
+        detail,
+    };
+  }
+  if (hit(/下载的 CLI 文件校验失败|下载的 CLI 文件摘要/)) {
+    return {
+      kind: 'download',
+      exception,
+      message:
+        '官方 CLI 下载内容校验失败（可能被网络代理或安全软件改写）。请检查网络 / 代理后重试。' + detail,
+    };
+  }
+  if (hit(/PermissionError|WinError \d+|拒绝访问|Access is denied/i)) {
+    return {
+      kind: 'permission',
+      exception,
+      message:
+        '没有权限写入官方 CLI 安装目录（%LOCALAPPDATA%\\Doxent\\CoreCLI）。' +
+        '请检查该目录权限或安全软件拦截后重试。' +
+        detail,
+    };
+  }
+
+  const timeoutHead = input.timedOut
+    ? `打开登录页面超时（官方 CLI ${Math.round(LOGIN_TIMEOUT_MS / 1000)} 秒内没有返回登录链接）。`
+    : '官方 CLI 没有返回登录链接。';
+  const lockNote = input.cli.lock
+    ? `官方 CLI 安装锁仍存在${input.cli.lockStale
+        ? '（应是上次安装被中断留下的残留锁，可点「清理安装锁」后重试）'
+        : '（可能仍在安装）'}。`
+    : '';
+  return { kind: 'other', exception, message: timeoutHead + detail + lockNote };
+}
+
 /* ------------------------------------------------------------------ 对外动作 */
 
 interface DoxentBindResult {
@@ -676,6 +811,8 @@ export interface DoxentBindOptions {
   credentials?: DoxentCredentialOptions;
   /** 注入 CLI 状态读取（测试：不读宿主机真实安装目录） */
   cliState?: (env?: NodeJS.ProcessEnv) => DoxentCliState;
+  /** 注入告警日志（测试静默）；失败时把官方 stderr 全文留在服务端便于排查 */
+  warn?: (message: string) => void;
 }
 
 let bindJob: DoxentBindJob | null = null;
@@ -713,13 +850,17 @@ function cliLoginDetail(cli: DoxentCliState): string {
   return `官方 CLI 已安装${version}，正在生成登录链接…`;
 }
 
-/** 登录阶段每 2 秒读一次 CLI 安装状态（纯文件读取），只在文字变化时回写任务 */
+/**
+ * 登录阶段每 2 秒读一次 CLI 安装状态（纯文件读取），只在文字变化时回写任务。
+ * 同时记住「这次 login 过程中出现过安装锁」：登录被超时强杀后，锁就是我们自己留下的。
+ */
 function watchCliLoginProgress(
   env: NodeJS.ProcessEnv | undefined,
   getCli: (env?: NodeJS.ProcessEnv) => DoxentCliState,
   onDetail: (detail: string) => void,
-): () => void {
+): { stop: () => void; sawLock: () => boolean } {
   let last = '';
+  let sawLock = false;
   const tick = () => {
     let cli: DoxentCliState;
     try {
@@ -727,6 +868,7 @@ function watchCliLoginProgress(
     } catch {
       return;
     }
+    if (cli.lock) sawLock = true;
     const detail = cliLoginDetail(cli);
     if (detail === last) return;
     last = detail;
@@ -735,20 +877,7 @@ function watchCliLoginProgress(
   tick();
   const timer = setInterval(tick, CLI_PROGRESS_INTERVAL_MS);
   timer.unref?.();
-  return () => clearInterval(timer);
-}
-
-/** 没有拿到登录链接时的失败说明：把 CLI 安装锁状态一起说清楚，避免只看到笼统超时 */
-function loginFailureMessage(result: DoxentRunResult, cli: DoxentCliState): string {
-  const tail = (result.stderr || result.stdout).trim().slice(0, 300);
-  const lock = cli.lock
-    ? `；官方 CLI 安装锁仍存在${cli.lockStale ? '（应是上次安装被中断留下的残留锁）' : '（可能仍在安装）'}`
-    : '';
-  if (result.timedOut) {
-    return `打开登录页面超时（官方 CLI ${Math.round(LOGIN_TIMEOUT_MS / 1000)} 秒内没有返回登录链接${lock}）。` +
-      (tail ? `官方输出：${tail}` : '');
-  }
-  return '官方 CLI 没有返回登录链接' + (tail ? '：' + tail : '') + lock + '。';
+  return { stop: () => clearInterval(timer), sawLock: () => sawLock };
 }
 
 /** 绑定正文：装技能 → 触发官方登录 → 把真实链接交回设置页；换账号先退出旧会话 */
@@ -760,6 +889,7 @@ async function runDoxentBind(
   const install = options.install ?? installDoxentSkill;
   const runAction = options.runAction ?? runDoxentApiAction;
   const getCli = options.cliState ?? doxentCliState;
+  const warn = options.warn ?? ((message: string) => console.warn(message));
   if (options.reason === 'switch') {
     onStep('logout', undefined, '正在退出当前账号并清理本机登录凭据…');
     await options.prepareSwitch?.();
@@ -787,12 +917,12 @@ async function runDoxentBind(
   }
   // 先在任务里写明 CLI 现状：设置页不用猜「现在是装 CLI 还是在等链接」
   onStep('login', skill, cliLoginDetail(getCli(options.env)));
-  const stopWatch = watchCliLoginProgress(options.env, getCli, onDetail);
+  const watcher = watchCliLoginProgress(options.env, getCli, onDetail);
   let result: DoxentRunResult;
   try {
     result = await runAction('login', { home: options.home, timeoutMs: LOGIN_TIMEOUT_MS, env: options.env });
   } finally {
-    stopWatch();
+    watcher.stop();
   }
   const output = result.stdout + '\n' + result.stderr;
   const page = parseDoxentLoginBlock(output);
@@ -805,7 +935,37 @@ async function runDoxentBind(
     loginStateCache = { at: Date.now(), value: login };
     return { skill, login, page };
   }
-  throw new Error(loginFailureMessage(result, getCli(options.env)));
+  const stderr = result.stderr || '';
+  const cliAfter = getCli(options.env);
+  const lockTimeout = /等待 CLI 安装锁超时/.test(stderr || result.stdout || '');
+  let lockCleared = false;
+  if (cliAfter.lock && (lockTimeout || (result.timedOut && watcher.sawLock()))) {
+    // 两种情况都能判定锁已无主：①官方客户端自己等了 180 秒仍没抢到锁；
+    // ②本次 login 超时被强杀，锁是这次安装留下的。留着会让「重试」继续白等三分钟。
+    const cleared = clearStaleDoxentCliLock({
+      env: options.env ?? process.env,
+      ...(lockTimeout ? { force: true } : { staleMs: 30_000 }),
+    });
+    lockCleared = cleared.cleared;
+    if (lockCleared) {
+      warn('[doxent] 已清理绑定失败后残留的官方 CLI 安装锁：' + doxentCliInstallPath(options.env ?? process.env));
+    }
+  }
+  const failure = describeDoxentLoginFailure({
+    stdout: result.stdout,
+    stderr,
+    timedOut: result.timedOut,
+    cli: getCli(options.env),
+    lockCleared,
+  });
+  // 完整官方输出只留 stderr（不包含登录链接），截到 4KB，避免日志被 traceback 刷满
+  warn(
+    '[doxent] 官方 CLI login 失败（' +
+      failure.kind +
+      '）：' +
+      (stderr.trim() ? clipDoxentText(redactDoxentOutput(stderr.trim()), 4_000) : '(stderr 为空)'),
+  );
+  throw new Error(failure.message);
 }
 
 /**
