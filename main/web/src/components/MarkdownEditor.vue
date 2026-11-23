@@ -3283,7 +3283,8 @@ function closeAiMenu() {
 
 /* ---------- 语音输入（悬浮麦克风 + 光标 HUD + 快捷键） ----------
  * 入口不再放顶栏：编辑区右下角悬浮麦克风，Ctrl+Shift+Space 在光标处直接启停；
- * 录音仍按用户选中的麦克风采（WAV 16k），转写由服务端自动选「默认模型 → 本机离线 → 已配音频模型」。 */
+ * 录音仍按用户选中的麦克风采（WAV 16k），转写由服务端自动选「默认模型 → 已配音频模型 → 本机离线」。
+ * 自动回退本机 / 本机结果过短时，服务端返回 warning，插入后随 toast 一起提示。 */
 const router = useRouter();
 const voiceSupport = voiceInputSupport();
 const voiceMobile = ref(false);
@@ -3540,7 +3541,7 @@ async function startVoiceInput(): Promise<void> {
   }
 }
 
-function commitVoiceText(text: string, engineLabel: string): void {
+function commitVoiceText(text: string, engineLabel: string, warning = ''): void {
   if (!vditor) return;
   if (!restoreAiRange(voiceSavedRange)) {
     const fallback = endOfEditorRange();
@@ -3561,9 +3562,10 @@ function commitVoiceText(text: string, engineLabel: string): void {
   vditor.focus();
   void nextTick(() => emitEditorValue());
   pushToast({
-    kind: 'success',
-    text: `已插入 ${text.length} 字${engineLabel ? `（${engineLabel}）` : ''}`,
+    kind: warning ? 'info' : 'success',
+    text: `已插入 ${text.length} 字${engineLabel ? `（${engineLabel}）` : ''}${warning ? ` · ${warning}` : ''}`,
     actions: [{ label: '撤销', onClick: () => executeHistoryCommand('undo') }],
+    duration: warning ? 9000 : undefined,
   });
 }
 
@@ -3586,7 +3588,7 @@ async function stopVoiceInput(): Promise<void> {
     if (!result.text) throw new Error('没有识别到语音，请靠近麦克风再说一次');
     voiceEngineLabel.value = result.engineLabel;
     stageIdleSoon();
-    commitVoiceText(result.text, result.engineLabel);
+    commitVoiceText(result.text, result.engineLabel, result.warning);
   } catch (error: any) {
     voiceStage.value = 'error';
     voiceError.value = withVoiceDeviceHint(error?.message || '语音识别失败，请重试');

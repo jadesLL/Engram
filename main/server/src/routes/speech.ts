@@ -75,7 +75,13 @@ export async function speechRoutes(app: FastifyInstance) {
       'speech transcribe'
     );
     try {
-      return await transcribeAudio(audio, { engine });
+      const result = await transcribeAudio(audio, { engine });
+      // 只记引擎与是否回退，不记转写内容：排查「为什么用了本机识别」时不用再猜
+      req.log.info(
+        { engine: result.engine, fallback: result.warning ? true : undefined },
+        'speech transcribe done'
+      );
+      return result;
     } catch (error: any) {
       if (error instanceof SpeechUnavailableError) {
         return reply.code(409).send({ error: error.message });

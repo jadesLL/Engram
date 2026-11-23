@@ -18,9 +18,13 @@ import { preferenceValue } from '../sync/preferences.js';
  *
  * 引擎选择（不写死任何厂商）：
  *  1. **内置 Agent 的默认模型**声明了音频输入（`input` / `inputModalities` 含 audio）→ 录音直接发给它；
- *  2. 否则用**本机离线识别**（Windows SAPI，见 lib/localSpeech.ts）——不联网、不要 Key；
- *  3. 本机没有离线识别器（Docker/Linux）→ 用客户自己配置过、且声明支持音频的模型；
+ *  2. 否则用用户**配置过的音频模型**（声明了音频，或模型名明确是 omni / audio / voice 这类多模态模型）；
+ *  3. 都没有才用**本机离线识别**（Windows SAPI，见 lib/localSpeech.ts）——不联网、不要 Key，
+ *     但中文听写的准确率受系统语言包限制，只适合做最后兜底；
  *  4. 一个都没有 → 返回可操作提示（去控制台给默认模型勾音频，或配置一个音频模型）。
+ *
+ * 为什么音频模型排在 SAPI 前面：SAPI 的 DictationGrammar 对带口音 / 有停顿的长句经常只回几个字，
+ * 用户会以为「说了半天只转出两个字」。配置过模型的机器应该优先用模型，本机识别只在没有模型时兜底。
  *
  * 录音只在本次请求里存在：不落盘（本机识别用的临时 WAV 也在 finally 删除）、不进同步、不进日志。
  */
@@ -63,6 +67,22 @@ const SPEECH_SYSTEM_PROMPT = [
 
 const NO_SPEECH_SENTINEL = 'NO_SPEECH';
 
+/** 音频能力来源：控制台声明 / 模型名推断 / 不支持 */
+export type SpeechAudioSupport = 'declared' | 'inferred' | 'none';
+
+/**
+ * 模型名 / 显示名是否明确指向「能听音频」的模型（omni / audio / voice / speech / realtime…）。
+ *
+ * 为什么需要：控制台里的第三方模型常常只填 id / name，不填 input 能力；这类模型
+ * （例如 qwen-omni）以前会被当成纯文本模型，语音输入被静默降级到本机 SAPI。
+ * 只在**没有声明** input 时用名字兜底；显式声明永远优先。
+ */
+export function inferAudioSupport(id: string, name = ''): boolean {
+  const text = `${id} ${name}`;
+  return /(?:^|[^a-z0-9])(omni|audio|voice|speech|asr|whisper|transcri(?:be|ption)|realtime)(?:$|[^a-z0-9])/i.test(text)
+    || /语音|音频|听写/.test(text);
+}
+
 export interface SpeechEngineOption {
   /** `local` 或 `model:<provider>:<model>` */
   id: string;
@@ -70,6 +90,8 @@ export interface SpeechEngineOption {
   label: string;
   detail: string;
   available: boolean;
+  /** 模型引擎的音频能力来源（本机引擎不填） */
+  audioSupport?: SpeechAudioSupport;
 }
 
 export interface SpeechModelInfo {
@@ -77,8 +99,10 @@ export interface SpeechModelInfo {
   providerName: string;
   model: string;
   modelName: string;
-  /** 声明支持音频输入 */
+  /** 声明或模型名推断支持音频输入 */
   supportsAudio: boolean;
+  /** 音频能力来源 */
+  audioSupport: SpeechAudioSupport;
   /** 声明支持的输入能力（text / image / audio / video…） */
   inputs: string[];
 }
@@ -110,6 +134,8 @@ export interface SpeechModelCandidate {
   api: string;
   apiKey: string;
   modalities: string[];
+  /** 声明 / 模型名推断 / 不支持 */
+  audioSupport: SpeechAudioSupport;
 }
 
 function readText(file: string): string {
@@ -122,6 +148,13 @@ function readText(file: string): string {
 
 function supportsAudio(modalities: string[] | undefined): boolean {
   return (modalities || []).some((value) => /audio/i.test(String(value)));
+}
+
+/** 声明优先；没有声明（空输入列表）时才按模型名推断 */
+function audioSupportOf(id: string, name: string | undefined, modalities: string[]): SpeechAudioSupport {
+  if (supportsAudio(modalities)) return 'declared';
+  if (!modalities.length && inferAudioSupport(id, name || '')) return 'inferred';
+  return 'none';
 }
 
 function keyFor(ref: string, keys: Record<string, string>): string {
@@ -173,7 +206,7 @@ interface ModelCatalog {
   defaultModel: SpeechModelInfo | null;
   /** 默认模型的完整候选（含 Key / 地址；对不上时为 null） */
   defaultCandidate: SpeechModelCandidate | null;
-  /** 所有可用且声明支持音频的模型（默认提供商优先） */
+  /** 所有可用且能听音频的模型（声明优先、默认提供商优先） */
   audioCandidates: SpeechModelCandidate[];
 }
 
@@ -186,6 +219,7 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
   const officialBaseUrl = (official.baseURL || '').trim() || OFFICIAL_BASE_URL;
 
   for (const model of official.models || []) {
+    const modalities = [...(model.inputModalities || [])];
     candidates.push({
       id: modelEngineId(OFFICIAL_PROVIDER_ID, model.id),
       providerId: OFFICIAL_PROVIDER_ID,
@@ -195,13 +229,15 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
       baseUrl: officialBaseUrl,
       api: 'openai-completions',
       apiKey: officialApiKey,
-      modalities: [...(model.inputModalities || [])],
+      modalities,
+      audioSupport: audioSupportOf(model.id, model.name, modalities),
     });
   }
   for (const [providerId, provider] of Object.entries(config.providers || {})) {
     const keyRef = modelKeyRef(providerId, provider.apiKeyEnv);
     const apiKey = keyFor(keyRef, keys);
     for (const model of provider.models || []) {
+      const modalities = [...(model.input || [])];
       candidates.push({
         id: modelEngineId(providerId, model.id),
         providerId,
@@ -211,7 +247,8 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
         baseUrl: (provider.baseURL || '').trim(),
         api: (provider.api || 'openai-completions').trim(),
         apiKey,
-        modalities: [...(model.input || [])],
+        modalities,
+        audioSupport: audioSupportOf(model.id, model.name, modalities),
       });
     }
   }
@@ -228,6 +265,7 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
       api: 'openai-completions',
       apiKey: officialApiKey,
       modalities: [...OFFICIAL_DEFAULT_MODALITIES],
+      audioSupport: audioSupportOf(OFFICIAL_DEFAULT_MODEL, OFFICIAL_DEFAULT_MODEL, OFFICIAL_DEFAULT_MODALITIES),
     });
   }
 
@@ -246,7 +284,8 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
         providerName: defaultCandidate.providerName,
         model: defaultCandidate.modelId,
         modelName: defaultCandidate.modelName,
-        supportsAudio: supportsAudio(defaultCandidate.modalities),
+        supportsAudio: defaultCandidate.audioSupport !== 'none',
+        audioSupport: defaultCandidate.audioSupport,
         inputs: defaultCandidate.modalities,
       }
     : {
@@ -255,18 +294,21 @@ export function buildSpeechCatalog(config: SyncedAgentModelConfig, keys: Record<
         model: defaultModelId,
         modelName: defaultModelId,
         supportsAudio: false,
+        audioSupport: 'none',
         inputs: [],
       };
 
   const audioCandidates = candidates
     .filter(
       (item) =>
-        supportsAudio(item.modalities) &&
+        item.audioSupport !== 'none' &&
         Boolean(item.apiKey) &&
         Boolean(item.baseUrl) &&
         item.api === 'openai-completions'
     )
     .sort((a, b) => {
+      // 明确声明音频的排在「按模型名推断」前面；同类里默认提供商优先
+      if (a.audioSupport !== b.audioSupport) return a.audioSupport === 'declared' ? -1 : 1;
       const sameProvider = Number(b.providerId === defaultProvider) - Number(a.providerId === defaultProvider);
       if (sameProvider) return sameProvider;
       return a.providerName.localeCompare(b.providerName, 'zh-Hans-CN');
@@ -287,8 +329,12 @@ function candidateEngine(candidate: SpeechModelCandidate): SpeechEngineOption {
     id: candidate.id,
     kind: 'model',
     label: `${candidate.providerName} · ${candidate.modelName}`,
-    detail: '内置 Agent 控制台里声明的音频模型',
+    detail:
+      candidate.audioSupport === 'declared'
+        ? '内置 Agent 控制台里声明了音频输入'
+        : '模型名表明支持音频（未声明；不支持时会自动回退本机识别）',
     available: true,
+    audioSupport: candidate.audioSupport,
   };
 }
 
@@ -301,7 +347,7 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
   const catalog = buildSpeechCatalog(config, keys);
   const defaultModel = catalog.defaultModel;
 
-  const engines: SpeechEngineOption[] = [];
+  const engines: SpeechEngineOption[] = catalog.audioCandidates.map(candidateEngine);
   if (local.available) {
     engines.push({
       id: SPEECH_LOCAL_ENGINE,
@@ -311,41 +357,54 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
       available: true,
     });
   }
-  for (const candidate of catalog.audioCandidates) engines.push(candidateEngine(candidate));
 
   const defaultLabel = defaultModel
     ? `${defaultModel.providerName} · ${defaultModel.modelName}`
     : '内置 Agent 默认模型';
+  const candidateLabel = (candidate: SpeechModelCandidate) =>
+    `你配置的「${candidate.providerName} · ${candidate.modelName}」`;
 
   let defaultEngine = '';
   let defaultEngineReason = '';
   const defaultId = catalog.defaultCandidate?.id || '';
-  // 只有同时满足「声明音频 + 地址/Key/协议可用」的默认模型才能真正发音频；
+  // 只有同时满足「能听音频 + 地址/Key/协议可用」的默认模型才能真正发音频；
   // 只声明了音频但协议不是 OpenAI 兼容 / 没 Key 时，不能算 configured。
   const usableDefault = defaultId
     ? catalog.audioCandidates.find((item) => item.id === defaultId) ?? null
     : null;
-  if (usableDefault && defaultModel?.supportsAudio) {
+  /** 默认模型为什么不能直接发音频（写进面板，用户能看懂） */
+  const whyDefaultUnusable = (() => {
+    if (!defaultModel) return '没有声明音频输入';
+    if (defaultModel.audioSupport === 'none') {
+      return defaultModel.inputs.length ? `只声明了 ${defaultModel.inputs.join(' / ')} 输入` : '没有声明音频输入';
+    }
+    if (!catalog.defaultCandidate) return '接口地址或 Key 还没配好';
+    if (catalog.defaultCandidate.api !== 'openai-completions') return '协议不是 OpenAI 兼容，发不了音频';
+    if (!catalog.defaultCandidate.apiKey) return '还没配置 API Key';
+    if (!catalog.defaultCandidate.baseUrl) return '还没配置接口地址';
+    return '当前配置不完整';
+  })();
+  const declared = catalog.audioCandidates.filter((item) => item.audioSupport === 'declared');
+  const inferred = catalog.audioCandidates.filter((item) => item.audioSupport === 'inferred');
+
+  if (usableDefault) {
     defaultEngine = usableDefault.id;
-    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」声明支持音频输入，录音直接发给它`;
+    defaultEngineReason =
+      usableDefault.audioSupport === 'declared'
+        ? `默认 Agent 模型「${defaultLabel}」声明支持音频输入，录音直接发给它`
+        : `默认 Agent 模型「${defaultLabel}」的模型名表明支持音频输入，录音直接发给它（未在控制台声明，不支持时会自动回退本机识别）`;
+  } else if (declared.length) {
+    // 用户配置过明确的音频模型：优先用它，不要静默落到识别质量受限的本机 SAPI
+    const candidate = declared[0];
+    defaultEngine = candidate.id;
+    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${whyDefaultUnusable}，改用${candidateLabel(candidate)}（已声明支持音频输入）`;
+  } else if (inferred.length) {
+    const candidate = inferred[0];
+    defaultEngine = candidate.id;
+    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${whyDefaultUnusable}，改用${candidateLabel(candidate)}（模型名表明支持音频）`;
   } else if (local.available) {
     defaultEngine = SPEECH_LOCAL_ENGINE;
-    const why = (() => {
-      if (!defaultModel) return '没有声明音频输入';
-      if (!defaultModel.supportsAudio) {
-        return defaultModel.inputs.length ? `只声明了 ${defaultModel.inputs.join(' / ')} 输入` : '没有声明音频输入';
-      }
-      if (!catalog.defaultCandidate) return '接口地址或 Key 还没配好';
-      if (catalog.defaultCandidate.api !== 'openai-completions') return '协议不是 OpenAI 兼容，发不了音频';
-      if (!catalog.defaultCandidate.apiKey) return '还没配置 API Key';
-      if (!catalog.defaultCandidate.baseUrl) return '还没配置接口地址';
-      return '当前配置不完整';
-    })();
-    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${why}，改用本机离线识别`;
-  } else if (catalog.audioCandidates.length) {
-    const candidate = catalog.audioCandidates[0];
-    defaultEngine = candidate.id;
-    defaultEngineReason = `本机离线识别不可用，改用你配置的「${candidate.providerName} · ${candidate.modelName}」`;
+    defaultEngineReason = `默认 Agent 模型「${defaultLabel}」${whyDefaultUnusable}，没有可用的音频模型，改用本机离线识别（不联网，但准确率受系统语言包限制）`;
   }
 
   const hint = defaultEngine
@@ -369,6 +428,9 @@ export async function speechStatus(options: SpeechStatusOptions = {}): Promise<S
 /** 模型没配好（不是上游故障）：路由据此回 409，前端提示去配置 */
 export class SpeechUnavailableError extends Error {}
 
+/** 上游明确拒绝音频输入：只有「按模型名推断」的引擎会自动回退本机识别 */
+export class SpeechAudioUnsupportedError extends Error {}
+
 export interface TranscribeOptions {
   /** 用户在菜单里选的引擎 id；缺省用自动选择结果 */
   engine?: string;
@@ -380,6 +442,12 @@ export interface TranscribeOptions {
   candidate?: SpeechModelCandidate;
   /** 测试注入的引擎解析结果 */
   status?: SpeechStatus;
+  /** 测试注入的模型配置（缺省读本机 dsh 配置） */
+  config?: SyncedAgentModelConfig;
+  /** 测试注入的凭据（缺省读 dsh 凭据文件） */
+  keys?: Record<string, string>;
+  /** 测试注入的本机识别实现 */
+  localTranscribe?: (wav: Buffer) => Promise<{ text: string; culture: string }>;
 }
 
 export interface TranscribeResult {
@@ -389,6 +457,8 @@ export interface TranscribeResult {
   engineLabel: string;
   model: string;
   provider: string;
+  /** 需要让用户知道的情况（自动回退、本机识别结果过短），界面在插入后提示 */
+  warning?: string;
 }
 
 /** 取 WAV 的时长（解析 fmt 的 byteRate 与 data 块大小；坏文件返回 0） */
@@ -422,6 +492,13 @@ export function isWavBuffer(buffer: Buffer): boolean {
 
 function joinUrl(base: string, suffix: string): string {
   return `${base.replace(/\/+$/, '')}${suffix}`;
+}
+
+/** 上游是不是在说「我不收音频」（400/422 且报文提到 audio / input_audio / modalities） */
+function audioUnsupported(status: number, rawBody: string): boolean {
+  if (status !== 400 && status !== 422) return false;
+  const lower = String(rawBody || '').toLowerCase();
+  return lower.includes('input_audio') || lower.includes('audio') || lower.includes('modalities');
 }
 
 /** 把上游错误压缩成一句可操作的中文（原始报文只留短片段，绝不带凭据） */
@@ -637,7 +714,9 @@ export async function transcribeWithModel(
   try {
     if (!response.ok) {
       const raw = await response.text().catch(() => '');
-      throw new Error(speechUpstreamError(response.status, raw));
+      const message = speechUpstreamError(response.status, raw);
+      if (audioUnsupported(response.status, raw)) throw new SpeechAudioUnsupportedError(message);
+      throw new Error(message);
     }
     const raw = await readTranscription(response);
     const cleaned = cleanTranscript(raw);
@@ -682,7 +761,35 @@ export function noSpeechMessage(rms?: number): string {
 }
 
 /**
- * 转写一段 WAV 录音：按用户选择的引擎（或自动选择结果）走本机离线识别 / 模型。
+ * 本机 SAPI 对长录音只回几个字：明确提示结果可能不准，别让用户以为「就是这两个字」。
+ * 阈值取 5 秒 / 4 个字：短录音说「好」「可以」是正常的，不打扰。
+ */
+export function localShortTranscriptWarning(durationSec: number, text: string): string | undefined {
+  const chars = Array.from(String(text || '').replace(/\s+/g, '')).length;
+  if (durationSec < 5 || chars > 4) return undefined;
+  return `本机离线识别只认出 ${chars} 个字，可能不准确：在语音菜单里换用你配置的音频模型，或靠近麦克风再说一次`;
+}
+
+/** 本机离线识别：静音先拦、结果清洗、过短给提示 */
+async function transcribeWithLocal(audio: Buffer, options: TranscribeOptions = {}): Promise<TranscribeResult> {
+  const level = wavAudioLevel(audio);
+  if (level && level.rms < SPEECH_SILENT_RMS) throw new Error(silentRecordingMessage(level.rms));
+  const run = options.localTranscribe ?? transcribeLocalWav;
+  const { text } = await run(audio);
+  const cleaned = cleanTranscript(text);
+  if (!cleaned) throw new Error(noSpeechMessage(level?.rms));
+  return {
+    text: cleaned,
+    engine: SPEECH_LOCAL_ENGINE,
+    engineLabel: '本机离线识别',
+    model: '',
+    provider: '',
+    warning: localShortTranscriptWarning(wavDurationSec(audio), cleaned),
+  };
+}
+
+/**
+ * 转写一段 WAV 录音：按用户选择的引擎（或自动选择结果）走模型 / 本机离线识别。
  * 没配好抛 SpeechUnavailableError（路由回 409），上游失败抛带可读中文的 Error（路由回 502）。
  */
 export async function transcribeAudio(
@@ -692,29 +799,34 @@ export async function transcribeAudio(
   if (options.candidate) return transcribeWithModel(audio, options.candidate, options);
   const status = options.status ?? (await speechStatus());
   if (!status.configured) throw new SpeechUnavailableError(status.hint);
-  const wanted =
-    options.engine && status.engines.some((engine) => engine.id === options.engine)
-      ? options.engine
-      : status.defaultEngine;
-  if (wanted === SPEECH_LOCAL_ENGINE) {
-    const level = wavAudioLevel(audio);
-    if (level && level.rms < SPEECH_SILENT_RMS) throw new Error(silentRecordingMessage(level.rms));
-    const { text } = await transcribeLocalWav(audio);
-    const cleaned = cleanTranscript(text);
-    if (!cleaned) throw new Error(noSpeechMessage(level?.rms));
-    return {
-      text: cleaned,
-      engine: SPEECH_LOCAL_ENGINE,
-      engineLabel: '本机离线识别',
-      model: '',
-      provider: '',
-    };
-  }
-  const config = currentModelConfig();
-  const keys = currentKeys(bundledDshHome(), config);
+  const auto = !options.engine || !status.engines.some((engine) => engine.id === options.engine);
+  const wanted = auto ? status.defaultEngine : options.engine!;
+  if (wanted === SPEECH_LOCAL_ENGINE) return transcribeWithLocal(audio, options);
+
+  const config = options.config ?? currentModelConfig();
+  const keys = options.keys ?? currentKeys(bundledDshHome(), config);
   const candidate = buildSpeechCatalog(config, keys).audioCandidates.find((item) => item.id === wanted);
   if (!candidate) {
     throw new SpeechUnavailableError('选中的语音模型已经不可用了：请回语音输入菜单重新选择，或改用本机离线识别');
   }
-  return transcribeWithModel(audio, candidate, options);
+  try {
+    return await transcribeWithModel(audio, candidate, options);
+  } catch (error) {
+    // 按模型名推断的引擎可能其实不收音频：自动模式下回退本机，避免语音输入直接失败。
+    // 用户手动指定的引擎不回退，尊重选择并把上游原因原样给他。
+    if (
+      auto
+      && candidate.audioSupport === 'inferred'
+      && error instanceof SpeechAudioUnsupportedError
+      && status.localAvailable
+    ) {
+      const fallback = await transcribeWithLocal(audio, options);
+      const label = `${candidate.providerName} · ${candidate.modelName}`;
+      return {
+        ...fallback,
+        warning: `「${label}」不支持音频输入，已自动改用本机离线识别${fallback.warning ? `；${fallback.warning}` : ''}`,
+      };
+    }
+    throw error;
+  }
 }
