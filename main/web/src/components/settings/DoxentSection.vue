@@ -123,7 +123,8 @@
           {{ syncDetail }}完成后这里会自动变成已绑定，无需再扫码。
         </span>
         <span v-else-if="waiting">已打开浏览器：在页面里完成登录，这里会自动变成已绑定。</span>
-        <span v-else-if="bindFailed">上次绑定没有完成：{{ errorText || '可查看下方官方 CLI 状态后重试' }}</span>
+        <!-- 失败原因只在顶部状态条与失败弹框各展示一次，这里不再重复整段（长原因会串三遍） -->
+        <span v-else-if="bindFailed">上次绑定没有完成，点「重试绑定」可重新走一遍流程。</span>
         <span v-else>点「绑定办公本」会装官方技能并生成本人的登录链接，在浏览器里扫码 / 登录即可。</span>
       </div>
       <div class="setting-actions">
@@ -179,7 +180,8 @@
       </div>
     </div>
 
-    <p v-if="errorText" class="setting-note tone-warn">{{ errorText }}</p>
+    <!-- 绑定任务的失败原因已经在顶部状态条里；这里只留「请求级」错误（下载运行时、解绑等） -->
+    <p v-if="errorText && !bindFailed" class="setting-note tone-warn">{{ errorText }}</p>
     <p v-else-if="!pythonOk && !runtimeBusy" class="setting-note tone-warn">
       <template v-if="runtime?.supported">
         官方客户端是 Python 脚本（meta.json 要求 3.8+）：点上方「下载 Python 运行时」由 Engram 安装一份共用解释器
