@@ -38,6 +38,72 @@ export function localSpeechPlatformSupported(): boolean {
   return process.platform === 'win32';
 }
 
+export interface WavAudioLevel {
+  /** 平均振幅（0..1，满幅 = 1） */
+  rms: number;
+  /** 峰值（0..1） */
+  peak: number;
+  channels: number;
+  sampleRate: number;
+  bits: number;
+}
+
+/**
+ * 量一段 WAV 的音量（只认 PCM；解析失败 / 非 PCM 返回 null）。
+ *
+ * 为什么要量：语音输入真正常见的故障不是「识别不准」，而是麦克风根本没采到声音
+ * （选错设备、被静音、远程串流用的虚拟麦克风）。这时 SAPI 只返回空串，界面只能报
+ * 「没有识别到语音」，用户会以为是识别引擎坏了、反复重试。先量音量就能直接说清原因。
+ */
+export function wavAudioLevel(wav: Buffer): WavAudioLevel | null {
+  if (wav.length < 44) return null;
+  if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let offset = 12;
+  let format = 0;
+  let channels = 0;
+  let sampleRate = 0;
+  let bits = 0;
+  let dataOffset = 0;
+  let dataSize = 0;
+  while (offset + 8 <= wav.length) {
+    const id = wav.toString('ascii', offset, offset + 4);
+    const size = wav.readUInt32LE(offset + 4);
+    if (id === 'fmt ' && offset + 24 <= wav.length) {
+      format = wav.readUInt16LE(offset + 8);
+      channels = wav.readUInt16LE(offset + 10);
+      sampleRate = wav.readUInt32LE(offset + 12);
+      bits = wav.readUInt16LE(offset + 22);
+    } else if (id === 'data') {
+      dataOffset = offset + 8;
+      dataSize = Math.min(size, wav.length - dataOffset);
+      break;
+    }
+    offset += 8 + size + (size % 2);
+  }
+  if (format !== 1 || !channels || !bits || !dataSize) return null;
+  const bytes = bits / 8;
+  if (![1, 2, 3, 4].includes(bytes)) return null;
+  const frames = Math.floor(dataSize / (bytes * channels));
+  if (!frames) return null;
+  const sample = (at: number): number => {
+    if (bits === 8) return (wav.readUInt8(at) - 128) / 128;
+    if (bits === 16) return wav.readInt16LE(at) / 32768;
+    if (bits === 24) return wav.readIntLE(at, 3) / 8388608;
+    return wav.readInt32LE(at) / 2147483648;
+  };
+  let sum = 0;
+  let peak = 0;
+  for (let frame = 0; frame < frames; frame += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      const value = sample(dataOffset + (frame * channels + channel) * bytes);
+      sum += value * value;
+      const abs = Math.abs(value);
+      if (abs > peak) peak = abs;
+    }
+  }
+  return { rms: Math.sqrt(sum / (frames * channels)), peak, channels, sampleRate, bits };
+}
+
 interface RunResult {
   stdout: string;
   stderr: string;

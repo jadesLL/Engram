@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAssistantAccess } from '../assistant/access.js';
+import { wavAudioLevel } from '../lib/localSpeech.js';
 import {
   SPEECH_MAX_AUDIO_BYTES,
   SPEECH_MAX_DURATION_SEC,
@@ -62,7 +63,17 @@ export async function speechRoutes(app: FastifyInstance) {
         .send({ error: `录音太长了（${Math.round(duration)} 秒，上限 ${SPEECH_MAX_DURATION_SEC} 秒），请分段录` });
     }
 
-    req.log.info({ bytes: audio.length, durationSec: Math.round(duration), engine: engine || 'auto' }, 'speech transcribe');
+    // 只记体积/时长/音量档，不记音频内容；音量用来区分「麦克风没采到声音」和「识别不出来」
+    const level = wavAudioLevel(audio);
+    req.log.info(
+      {
+        bytes: audio.length,
+        durationSec: Math.round(duration),
+        levelPct: level ? Math.round(level.rms * 1000) / 10 : null,
+        engine: engine || 'auto',
+      },
+      'speech transcribe'
+    );
     try {
       return await transcribeAudio(audio, { engine });
     } catch (error: any) {

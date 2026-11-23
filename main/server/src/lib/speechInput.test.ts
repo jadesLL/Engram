@@ -2,14 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SPEECH_MAX_AUDIO_BYTES,
+  SPEECH_SILENT_RMS,
   SpeechUnavailableError,
   buildSpeechCatalog,
   cleanTranscript,
   isWavBuffer,
   speechStatus,
+  transcribeAudio,
   transcribeWithModel,
   wavDurationSec,
 } from './speechInput.js';
+import { wavAudioLevel } from './localSpeech.js';
 import type { SyncedAgentModelConfig } from './agentModelConfig.js';
 
 /**
@@ -53,8 +56,8 @@ const noAudio: SyncedAgentModelConfig = {
   keys: {},
 };
 
-/** 造一段 16k 单声道 PCM16 WAV（sec 秒静音），只用于体积/时长校验 */
-function makeWav(sec: number): Buffer {
+/** 造一段 16k 单声道 PCM16 WAV（sec 秒；amplitude=0 即静音） */
+function makeWav(sec: number, amplitude = 0): Buffer {
   const sampleRate = 16000;
   const samples = Math.round(sec * sampleRate);
   const dataSize = samples * 2;
@@ -72,6 +75,9 @@ function makeWav(sec: number): Buffer {
   buffer.writeUInt16LE(16, 34);
   buffer.write('data', 36, 'ascii');
   buffer.writeUInt32LE(dataSize, 40);
+  if (amplitude) {
+    for (let i = 0; i < samples; i += 1) buffer.writeInt16LE(i % 2 ? amplitude : -amplitude, 44 + i * 2);
+  }
   return buffer;
 }
 
@@ -255,4 +261,72 @@ test('模型不支持音频：给出勾音频 / 换本机识别的提示', async
     () => transcribeWithModel(makeWav(1), candidate, { fetchImpl }),
     /勾上音频输入.*本机离线识别|本机离线识别/
   );
+});
+
+test('音量检测：静音判为静音，正常波形能算出平均振幅', () => {
+  const silent = wavAudioLevel(makeWav(1));
+  assert.ok(silent);
+  assert.equal(silent.rms, 0);
+  assert.equal(silent.peak, 0);
+  assert.equal(silent.sampleRate, 16000);
+  assert.equal(silent.channels, 1);
+  assert.ok(SPEECH_SILENT_RMS > 0);
+
+  const tone = wavAudioLevel(makeWav(1, 16384));
+  assert.ok(tone);
+  assert.ok(Math.abs(tone.rms - 0.5) < 0.01);
+  assert.ok(Math.abs(tone.peak - 0.5) < 0.01);
+});
+
+test('录音几乎是静音：不跑本机识别，直接提示检查麦克风', async () => {
+  const status = await speechStatus({
+    config: textDefault,
+    keys: textDefault.keys,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'local');
+  await assert.rejects(
+    () => transcribeAudio(makeWav(2), { status }),
+    (error: any) => {
+      assert.match(error.message, /几乎没有声音/);
+      assert.match(error.message, /麦克风/);
+      return true;
+    }
+  );
+});
+
+test('默认模型声明音频但协议不是 OpenAI 兼容：不选它，回退本机识别', async () => {
+  const anthropic: SyncedAgentModelConfig = {
+    version: 1,
+    official: {},
+    providers: {
+      claude: {
+        displayName: 'Claude',
+        api: 'anthropic-messages',
+        baseURL: 'https://claude.example.com',
+        models: [{ id: 'claude-sonnet', input: ['text', 'audio'] }],
+      },
+    },
+    default: { provider: 'claude', model: 'claude-sonnet' },
+    keys: { CLAUDE_API_KEY: 'test-key' },
+  };
+  const status = await speechStatus({
+    config: anthropic,
+    keys: anthropic.keys,
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'local');
+  assert.match(status.defaultEngineReason, /协议不是 OpenAI 兼容/);
+  assert.deepEqual(status.engines.map((engine) => engine.id), ['local'], '点了会失败的模型不该进菜单');
+});
+
+test('默认模型声明音频但没 Key：回退本机识别，理由写清缺 Key', async () => {
+  const status = await speechStatus({
+    config: { ...audioDefault, keys: {} },
+    keys: {},
+    local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
+  });
+  assert.equal(status.defaultEngine, 'local');
+  assert.match(status.defaultEngineReason, /还没配置 API Key/);
+  assert.ok(status.engines.some((engine) => engine.id === status.defaultEngine));
 });
