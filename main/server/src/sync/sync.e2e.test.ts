@@ -1115,6 +1115,48 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     await flags(nodeB, { settings: true, knowledge: true });
     await waitFor('重新开启补齐知识库并保留较新的本机设置', async () => (await pageContent(nodeB, isolatedPage)) === '这份页面暂不同步' && (await settingsOf(hub)).search_synonyms === '本机独立=保留');
 
+    // 专用语音识别（ASR）配置走同一条偏好管道（「设置」分类）：接口地址 / 模型 / **API Key**
+    // 都要跨端，状态接口只给 hasKey、任何响应都不出现 Key 明文。这里直接读各自库里的
+    // speech_asr_config 验证 Key 原文真的传过去了，而不是只看「已配置」。
+    const asrOf = async (inst: Instance) =>
+      (await (await api(inst, 'GET', '/api/speech/asr-config')).json()) as any;
+    const storedAsr = (inst: Instance): any =>
+      withDb(inst.dataDir, (conn) => {
+        const row = conn.prepare(`SELECT value FROM settings WHERE key = 'speech_asr_config'`).get() as
+          | { value?: string }
+          | undefined;
+        try { return row?.value ? JSON.parse(row.value) : null; } catch { return null; }
+      });
+    const hubAsrKey = `sk-e2e-asr-hub-${crypto.randomUUID().slice(0, 8)}`;
+    const memberAsrKey = `sk-e2e-asr-member-${crypto.randomUUID().slice(0, 8)}`;
+    const asrPut = await api(hub, 'PUT', '/api/speech/asr-config', {
+      protocol: 'dashscope-audio',
+      baseUrl: 'https://dashscope.aliyuncs.com',
+      model: 'qwen-audio-3.1-asr-flash',
+      name: 'E2E 百炼 ASR',
+      apiKey: hubAsrKey,
+    });
+    assert.ok(asrPut.ok, '中枢保存专用 ASR 配置成功');
+    const hubAsr = await asrOf(hub);
+    assert.equal(hubAsr.config.configured, true);
+    assert.equal(hubAsr.config.hasKey, true);
+    assert.equal(JSON.stringify(hubAsr).includes(hubAsrKey), false, 'ASR 配置接口不回显 Key');
+    await waitFor('成员端收到中枢同步的 ASR 配置（含 Key）', async () => {
+      const member = await asrOf(nodeB);
+      return member.config.configured === true
+        && member.config.model === 'qwen-audio-3.1-asr-flash'
+        && member.config.hasKey === true
+        && storedAsr(nodeB)?.apiKey === hubAsrKey;
+    });
+    // 反向：成员换 Key → 中枢收到（接口不回显，直接校验落库原文）
+    assert.ok((await api(nodeB, 'PUT', '/api/speech/asr-config', { apiKey: memberAsrKey })).ok);
+    await waitFor('中枢收到成员端更新的 ASR Key', async () => {
+      const stored = storedAsr(hub);
+      return stored?.apiKey === memberAsrKey
+        && stored?.model === 'qwen-audio-3.1-asr-flash'
+        && stored?.name === 'E2E 百炼 ASR';
+    });
+
     // 内置 Agent 模型配置（preference agent_model_config）跨端互推：
     // 中枢写本机 dsh 配置 → GET video-config 触发镜像 → 成员端合并后落盘；再反向推一次。
     // 每个 worker 的 DSH_HOME 都在自己的临时 DATA_DIR 下，不碰真实用户数据目录。

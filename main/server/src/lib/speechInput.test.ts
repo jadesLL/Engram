@@ -51,8 +51,22 @@ const textDefault: SyncedAgentModelConfig = {
   keys: { DASHSCOPE_API_KEY: 'test-key' },
 };
 
-/** 同一个 Omni 模型，但控制台里没填 input 能力（真实机器的常见状态） */
+/** 同一个 Omni 模型，但控制台里没填 input 能力（真实机器的常见状态）；换个非视频预置的模型 id */
 const undeclaredOmni: SyncedAgentModelConfig = {
+  ...textDefault,
+  providers: {
+    dashscope: {
+      ...textDefault.providers.dashscope,
+      models: [{ id: 'qwen-omni-turbo', name: 'qwen-omni-turbo' }],
+    },
+  },
+};
+
+/**
+ * 用户机器上的真实状态：视频理解播种进控制台的 dashscope + qwen3.8-omni-flash，
+ * 没有声明 input 能力。它是视频预置模型，不该出现在「识别引擎」里。
+ */
+const seededVideoModel: SyncedAgentModelConfig = {
   ...textDefault,
   providers: {
     dashscope: {
@@ -71,7 +85,7 @@ const audioDefault: SyncedAgentModelConfig = {
 /** 默认模型本身是 Omni，但没声明 input */
 const inferredDefault: SyncedAgentModelConfig = {
   ...undeclaredOmni,
-  default: { provider: 'dashscope', model: 'qwen3.8-omni-flash' },
+  default: { provider: 'dashscope', model: 'qwen-omni-turbo' },
 };
 
 /** 只有文本模型、没有任何音频模型 */
@@ -161,7 +175,7 @@ test('音频能力：声明优先，没声明时按模型名推断', () => {
 
   // 真实机器的常见状态：控制台只填了 id/name，没有 input 能力
   const inferred = buildSpeechCatalog(undeclaredOmni, undeclaredOmni.keys);
-  assert.deepEqual(inferred.audioCandidates.map((item) => item.id), ['model:dashscope:qwen3.8-omni-flash']);
+  assert.deepEqual(inferred.audioCandidates.map((item) => item.id), ['model:dashscope:qwen-omni-turbo']);
   assert.equal(inferred.audioCandidates[0].audioSupport, 'inferred');
   assert.equal(inferred.defaultModel?.supportsAudio, false, '默认模型仍是纯文本');
 
@@ -223,10 +237,46 @@ test('引擎自动选择：没声明 input 的 Omni 也能按模型名选中', a
     keys: undeclaredOmni.keys,
     local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
   });
-  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen-omni-turbo');
   assert.match(status.defaultEngineReason, /模型名表明支持音频/);
   assert.equal(status.engines.find((engine) => engine.kind === 'model')?.audioSupport, 'inferred');
   assert.match(status.engines.find((engine) => engine.kind === 'model')?.detail || '', /不支持时会自动回退本机识别/);
+});
+
+test('视频理解预置模型 qwen3.8-omni-flash：没声明音频时不进识别引擎', async () => {
+  const catalog = buildSpeechCatalog(seededVideoModel, seededVideoModel.keys);
+  assert.deepEqual(catalog.audioCandidates, [], '只凭名字里的 omni 不能把视频预置模型当语音引擎');
+
+  // 真实用户场景：已配专用 ASR + 本机识别，菜单里不再出现 qwen3.8-omni-flash
+  const status = await speechStatus({
+    config: seededVideoModel,
+    keys: seededVideoModel.keys,
+    asr: asrConfig,
+    local: { available: true, detail: 'SenseVoice 本地模型，离线可用', engine: 'sensevoice' },
+  });
+  assert.equal(status.defaultEngine, 'asr');
+  assert.deepEqual(status.engines.map((engine) => engine.id), ['asr', 'local']);
+  assert.equal(
+    status.engines.some((engine) => engine.label.includes('qwen3.8-omni-flash')),
+    false,
+    '识别引擎菜单里不出现视频预置模型'
+  );
+
+  // 控制台里显式声明音频输入时仍然认可：显式声明优先于「预置模型不猜」
+  const declaredVideo = buildSpeechCatalog(
+    {
+      ...seededVideoModel,
+      providers: {
+        dashscope: {
+          ...seededVideoModel.providers.dashscope,
+          models: [{ id: 'qwen3.8-omni-flash', name: 'qwen3.8-omni-flash', input: ['text', 'audio'] }],
+        },
+      },
+    },
+    seededVideoModel.keys
+  );
+  assert.deepEqual(declaredVideo.audioCandidates.map((item) => item.id), ['model:dashscope:qwen3.8-omni-flash']);
+  assert.equal(declaredVideo.audioCandidates[0].audioSupport, 'declared');
 });
 
 test('默认模型本身是没声明的 Omni：直接用它', async () => {
@@ -235,7 +285,7 @@ test('默认模型本身是没声明的 Omni：直接用它', async () => {
     keys: inferredDefault.keys,
     local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
   });
-  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen-omni-turbo');
   assert.match(status.defaultEngineReason, /默认 Agent 模型.*模型名表明支持音频输入/);
 });
 
@@ -476,7 +526,7 @@ test('按模型名推断的引擎不支持音频：自动模式回退本机并�
     keys: undeclaredOmni.keys,
     local: { available: true, detail: 'Windows 语音识别（zh-CN）' },
   });
-  assert.equal(status.defaultEngine, 'model:dashscope:qwen3.8-omni-flash');
+  assert.equal(status.defaultEngine, 'model:dashscope:qwen-omni-turbo');
   const fetchImpl = (async () =>
     new Response(JSON.stringify({ error: { message: 'input_audio is not supported by this model' } }), {
       status: 400,
@@ -517,7 +567,7 @@ test('手动指定按模型名推断的引擎：不回退，保留上游错误',
       status,
       config: undeclaredOmni,
       keys: undeclaredOmni.keys,
-      engine: 'model:dashscope:qwen3.8-omni-flash',
+      engine: 'model:dashscope:qwen-omni-turbo',
       fetchImpl,
       localTranscribe: async () => {
         localCalls += 1;
