@@ -90,6 +90,35 @@ test('agentNodeCandidates：进程自身（Electron）即使出现在 PATH 里�
   assert.deepEqual(candidates, []);
 });
 
+test('agentNodeCandidates：process.execPath 被改指真实 Node 后，默认仍把该 Node 当候选（语音面板回归）', () => {
+  // ensureAgentNodeRuntime 成功后会覆盖 process.execPath；此时默认参数不能再拿「当前 execPath」
+  // 当进程自身排除，否则真实 Node 会被自己排除掉，语音面板报「未找到可运行内置 Agent 的 Node.js 20+」。
+  const isWin = process.platform === 'win32';
+  const fakeNode = path.resolve(isWin ? 'C:/engram/node/node.exe' : '/opt/engram/bin/node');
+  const originalExecPath = process.execPath;
+  Object.defineProperty(process, 'execPath', {
+    value: fakeNode,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  try {
+    const candidates = agentNodeCandidates({
+      env: { ENGRAM_NODE_BIN: fakeNode, PATH: '' } as NodeJS.ProcessEnv,
+      platform: isWin ? 'win32' : 'linux',
+      exists: () => true,
+    });
+    assert.deepEqual(candidates, [{ path: fakeNode, source: 'env' }]);
+  } finally {
+    Object.defineProperty(process, 'execPath', {
+      value: originalExecPath,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+});
+
 test('nativePathForPlainNode：app.asar → app.asar.unpacked（仅当真实文件存在）', () => {
   const asarPath = 'C:/Program Files/Engram/resources/app.asar/server/node_modules/@deepseek-ai/dsh/lib/bin.js';
   const unpacked = 'C:/Program Files/Engram/resources/app.asar.unpacked/server/node_modules/@deepseek-ai/dsh/lib/bin.js';

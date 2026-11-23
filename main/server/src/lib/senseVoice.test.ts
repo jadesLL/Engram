@@ -38,6 +38,8 @@ test('状态查询不会偷偷下载：未准备时是 missing/error，不会进
   }
   assert.ok(status.downloadedBytes >= 0 && status.downloadedBytes <= SENSEVOICE_TOTAL_BYTES);
   assert.ok(status.platform.length > 0);
+  // 测试进程本身就是真实 Node：nodeAvailable 必须为 true（Electron 模式由 ensureAgentNodeRuntime 解析）
+  assert.equal(status.nodeAvailable, true);
 });
 
 test('空闲 worker 重复停止是幂等的', () => {

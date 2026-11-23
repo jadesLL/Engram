@@ -35,6 +35,16 @@ import { execFileSync } from 'node:child_process';
 /** dsh 官方要求 Node >= 20（@deepseek-ai/dsh 的 engines） */
 export const MIN_NODE_MAJOR = 20;
 
+/**
+ * 启动本进程的可执行文件（Electron 形态下就是 Engram.exe）。
+ *
+ * 必须在模块加载时抓一次：ensureAgentNodeRuntime() 成功后会故意把 process.execPath 改指真实
+ * Node（聊天 SDK 只认 process.execPath），之后再拿「当前的 process.execPath」当「进程自身」
+ * 排除，就会把刚解析到的真实 Node 排除掉——2026-11-23 语音设置面板报「未找到可运行内置
+ * Agent 的 Node.js 20+」即由此而来（nodeAvailable 恒为 false，模型下载好了也用不了）。
+ */
+const launcherExecPath = process.execPath;
+
 /** 便携 Node 相对 %LOCALAPPDATA% 的路径（install-engram.ps1 的默认安装根，与 desktop 侧同一份约定） */
 export const PORTABLE_NODE_REL = ['engram', 'node', 'node.exe'];
 
@@ -65,7 +75,7 @@ export interface AgentNodeOptions {
   resourcesPath?: string;
   /** 进程自带的 versions（默认 process.versions） */
   processVersions?: NodeJS.ProcessVersions;
-  /** 进程自身可执行文件（Electron 模式下不能当 Node 用） */
+  /** 启动本进程的可执行文件（Electron 模式下不能当 Node 用）；默认取模块加载时的 process.execPath */
   execPath?: string;
   /** 探测候选版本的函数（单测注入；默认真跑 `node -p process.versions.node`） */
   probe?: (file: string) => string | null;
@@ -120,7 +130,8 @@ export function agentNodeCandidates(options: AgentNodeOptions = {}): NodeCandida
   const env = options.env ?? process.env;
   const exists = options.exists ?? fs.existsSync;
   const platform = options.platform ?? process.platform;
-  const execPath = options.execPath ?? process.execPath;
+  // 不能用 process.execPath：它可能已被 ensureAgentNodeRuntime 改指真实 Node（见 launcherExecPath）
+  const execPath = options.execPath ?? launcherExecPath;
   const binary = nodeBinaryName(platform);
   const seen = new Set<string>();
   const out: NodeCandidate[] = [];
