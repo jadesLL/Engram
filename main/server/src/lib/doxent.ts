@@ -7,6 +7,7 @@ import {
   type DoxentAccountDisplay,
   type DoxentCredentialOptions,
 } from './doxentCredentials.js';
+import { ensureAgentNodeRuntime } from '../assistant/agentNode.js';
 import { managedPythonInterpreter } from './pythonRuntime.js';
 
 /**
@@ -582,6 +583,52 @@ export interface DoxentApiOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/**
+ * 官方 CLI 的 Windows 自解压安装器会把机器上找到的 node.exe 复制成 doxent-cli-runtime.exe
+ * （2MB 的安装包里并没有 87MB 的 Node 运行时）。安装版机器通常没有系统 Node，但 Engram
+ * 一定有一份可用的真实 Node（安装包 resources/node、源码模式的便携/系统 Node、Docker 里
+ * 跑 server 的那个），必须显式交给官方客户端；否则解压阶段只会释放 JS，随后报
+ * `Doxent CLI 解压失败或缺少 Node/JS`（2026-11-24 客户机绑定失败的根因）。
+ */
+export function withDoxentNodeEnv(
+  env: NodeJS.ProcessEnv,
+  nodePath?: string | null,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { ...env };
+  const file = String(nodePath || '').trim();
+  // 用户显式指定的 DOXENT_NODE 优先，不覆盖
+  if (!file || next.DOXENT_NODE) return next;
+  const pathImpl = platform === 'win32' ? path.win32 : path.posix;
+  const separator = platform === 'win32' ? ';' : ':';
+  const dir = pathImpl.dirname(file);
+  if (!dir || dir === '.') return next;
+  const current = next.PATH || next.Path || '';
+  const entries = current
+    .split(separator)
+    .map((entry) => entry.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+  const same = (a: string, b: string): boolean =>
+    platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  next.DOXENT_NODE = file;
+  if (!entries.some((entry) => same(entry, dir))) {
+    // Windows 的 env 键名大小写不敏感：先删别名再写 PATH，避免同一变量两份拼写
+    delete next.Path;
+    next.PATH = current ? dir + separator + current : dir;
+  }
+  return next;
+}
+
+/** 当前进程可用的真实 Node（安装包 resources/node / 便携 / 系统 / Docker 的 node） */
+function doxentNodeRuntimePath(): string | null {
+  try {
+    const status = ensureAgentNodeRuntime();
+    return status.ok && status.path ? status.path : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 跑官方客户端的一个 CLI 动作（--cli-action login / login-status / logout） */
 async function runDoxentApiAction(action: string, options: DoxentApiOptions): Promise<DoxentRunResult> {
   const home = options.home;
@@ -589,13 +636,16 @@ async function runDoxentApiAction(action: string, options: DoxentApiOptions): Pr
   if (!python.available) throw new Error(python.error || '未找到可用的 Python');
   const script = path.join(doxentSkillRoot(home), DOXENT_API_SCRIPT);
   if (!fs.existsSync(script)) throw new Error('技能未安装：' + script);
-  const env: NodeJS.ProcessEnv = {
-    ...(options.env ?? process.env),
-    // 官方客户端按 UTF-8 输出中文状态与登录区块；Windows 控制台默认 GBK 会把它们写坏
-    PYTHONIOENCODING: 'utf-8',
-    PYTHONUTF8: '1',
-    DOXENT_SKILL_ROOT: doxentSkillRoot(home),
-  };
+  const env: NodeJS.ProcessEnv = withDoxentNodeEnv(
+    {
+      ...(options.env ?? process.env),
+      // 官方客户端按 UTF-8 输出中文状态与登录区块；Windows 控制台默认 GBK 会把它们写坏
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+      DOXENT_SKILL_ROOT: doxentSkillRoot(home),
+    },
+    doxentNodeRuntimePath(),
+  );
   const timeout = options.timeoutMs ?? ACTION_TIMEOUT_MS;
   return runProcess(
     python.command || 'python3',
@@ -715,8 +765,8 @@ export function describeDoxentLoginFailure(input: DoxentLoginFailureInput): Doxe
       kind: 'extract',
       exception,
       message:
-        '官方 CLI 解压失败：官方客户端没能释放运行文件，常见原因是安全软件拦截或安装目录没有写权限。' +
-        '请检查安全软件拦截记录或 %LOCALAPPDATA%\\Doxent\\CoreCLI 的权限后重试。' +
+        '官方 CLI 解压失败：官方安装器需要机器上的 Node.js 才能释放运行文件，也可能被安全软件拦截或安装目录没有写权限。' +
+        'Engram 会自动把内置 Node 交给官方客户端；仍失败时请检查安全软件拦截记录或 %LOCALAPPDATA%\\Doxent\\CoreCLI 的权限后重试。' +
         detail,
     };
   }

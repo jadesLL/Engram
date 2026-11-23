@@ -31,6 +31,7 @@ import {
   startDoxentBind,
   stopDoxentCliForCredentialSync,
   waitDoxentBindSettled,
+  withDoxentNodeEnv,
   type DoxentCliFailureKind,
   type DoxentCliState,
 } from './doxent.js';
@@ -272,6 +273,48 @@ test('doxentPythonCandidates：显式指定 → Engram 共享运行时 → 系�
   const plain = doxentPythonCandidates({}, { managed: null });
   assert.ok(plain.length >= 2);
   assert.ok(plain.every((item) => item.source === 'system'));
+});
+
+/* ------------------------------------------------------------------ 官方 CLI 的 Node 运行时 */
+
+test('withDoxentNodeEnv：Windows 上把内置 Node 注入 PATH 与 DOXENT_NODE（安装器靠它释放运行时）', () => {
+  const env = withDoxentNodeEnv(
+    { PATH: 'C:\\Windows\\System32', DOXENT_CLI_INSTALL_DIR: 'C:\\tmp' },
+    'C:\\app\\resources\\node\\node.exe',
+    'win32',
+  );
+  assert.equal(env.DOXENT_NODE, 'C:\\app\\resources\\node\\node.exe');
+  assert.equal(env.PATH, 'C:\\app\\resources\\node;C:\\Windows\\System32');
+  assert.equal(env.DOXENT_CLI_INSTALL_DIR, 'C:\\tmp', '其它环境变量不能丢');
+});
+
+test('withDoxentNodeEnv：已在 PATH / 用户显式指定 / 没有 Node 时不动环境', () => {
+  // Windows 路径大小写不敏感：同一个目录写成大写字面量也不能重复注入
+  const already = withDoxentNodeEnv(
+    { PATH: 'C:\\App\\Resources\\Node;C:\\Windows' },
+    'c:\\app\\resources\\node\\node.exe',
+    'win32',
+  );
+  assert.equal(already.PATH, 'C:\\App\\Resources\\Node;C:\\Windows');
+  assert.equal(already.DOXENT_NODE, 'c:\\app\\resources\\node\\node.exe');
+
+  const pinned = withDoxentNodeEnv(
+    { DOXENT_NODE: 'D:\\custom\\node.exe', PATH: 'C:\\Windows' },
+    'C:\\app\\node.exe',
+    'win32',
+  );
+  assert.equal(pinned.DOXENT_NODE, 'D:\\custom\\node.exe', '用户显式指定优先');
+  assert.equal(pinned.PATH, 'C:\\Windows');
+
+  const none = withDoxentNodeEnv({ PATH: '/usr/bin' }, null, 'linux');
+  assert.equal(none.PATH, '/usr/bin');
+  assert.equal(none.DOXENT_NODE, undefined);
+});
+
+test('withDoxentNodeEnv：POSIX 用冒号分隔（Docker 里 server 自身就是一份 Node）', () => {
+  const env = withDoxentNodeEnv({ PATH: '/usr/bin' }, '/usr/local/bin/node', 'linux');
+  assert.equal(env.DOXENT_NODE, '/usr/local/bin/node');
+  assert.equal(env.PATH, '/usr/local/bin:/usr/bin');
 });
 
 /* ------------------------------------------------------------------ 官方 CLI 状态/安装锁 */
