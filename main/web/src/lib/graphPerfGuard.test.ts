@@ -38,3 +38,24 @@ test('图谱性能：物理未走步且无变化时不重绘，标签网格化',
   assert.match(graph, /createLabelGrid\(96\)/, '标签避让没有走网格');
   assert.match(graph, /measureLabel\(bctx, text, fs, bold\)/, '标签宽度没有缓存测量结果');
 });
+
+/**
+ * 第二轮拖拽优化（2026-11-24）：真实库里「本页关联」会带出实体与死链，几百上千节点时
+ * 拖拽仍然是逐帧整屏重绘。同机 A/B 实测过：把画布改不透明、压暗节点按 alpha 分桶、
+ * 标签改成精灵贴图，在这台机器上都比原写法更慢，已退回；这里只锁住实测有效的三条——
+ * 屏幕坐标一帧算一次、视口外连边与节点整条跳过、大图收敛帧数封顶。
+ */
+test('图谱性能：每帧只算一次屏幕坐标，视口外的连边与节点整条跳过', () => {
+  assert.match(graph, /for \(const n of visible\) \{ n\.sx = n\.x \* view\.s \+ view\.x/, '没有每帧只算一次屏幕坐标');
+  assert.match(graph, /两端都在视口外就整条跳过/, '连边缺少视口裁剪');
+  assert.match(
+    graph,
+    /if \(n\.sx < -24 \|\| n\.sx > W \+ 24 \|\| n\.sy < -24 \|\| n\.sy > H \+ 24\) continue;/,
+    '压暗节点没有跳过视口外的节点',
+  );
+});
+
+test('图谱性能：大图收敛帧上限收紧，不再空转十几秒', () => {
+  assert.match(graph, /const tickBudget = \(\) => \(visible\.length > 400 \? 360/, '大图缺少收敛帧上限');
+  assert.match(graph, /simTicks >= tickBudget\(\)/, '收敛判定没有用大图帧上限');
+});

@@ -21,7 +21,8 @@ const graph = fs.readFileSync(path.join(here, '..', 'views', 'GraphView.vue'), '
 test('图谱焦点：非关联节点按 dim 逐帧缓动压暗', () => {
   assert.match(graph, /dim: number;/, '节点缺少 dim 状态');
   assert.match(graph, /for \(const n of visible\) n\.dim = ease\(/, '节点压暗没有逐帧缓动');
-  assert.match(graph, /bctx\.globalAlpha = 1 - DIM_NODE \* n\.dim/, '节点透明度没有跟随 dim');
+  assert.match(graph, /1 - DIM_NODE \* n\.dim/, '节点透明度没有跟随 dim');
+  assert.match(graph, /bctx\.globalAlpha = 1 - DIM_NODE \* n\.dim/, '压暗节点没有按节点透明度绘制');
   assert.match(graph, /bctx\.globalAlpha = 1 - DIM_EDGE \* focusMix/, '连边没有随焦点淡入淡出');
   assert.doesNotMatch(graph, /globalAlpha = relatedIds && !relatedIds\.has\(n\.id\) \? 0\.24 : 1/, '压暗又退回一次性赋值');
 });
