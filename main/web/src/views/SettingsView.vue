@@ -210,6 +210,13 @@
         >
           <DoxentSection />
         </SettingsGroup>
+        <SettingsGroup
+          anchor="peripheral-feishu"
+          title="飞书多维表格"
+          hint="接入飞书自建应用，粘贴多维表格链接把整表记录拉成原始资料，可手动或定时更新"
+        >
+          <FeishuBitableSection />
+        </SettingsGroup>
       </section>
 
       <section
@@ -312,10 +319,11 @@ const StoragePanel = defineAsyncComponent(() => import('../components/settings/S
 const DataPanel = defineAsyncComponent(() => import('../components/settings/DataPanel.vue'));
 const DataDangerSection = defineAsyncComponent(() => import('../components/settings/DataDangerSection.vue'));
 const SearchPanel = defineAsyncComponent(() => import('../components/settings/SearchPanel.vue'));
-/* 外设接入：语音输入（本机 SenseVoice 模型 / 引擎 / 麦克风）与办公本绑定。
-   两者都按需加载，首次进入「外设接入」大类时才取 chunk。 */
+/* 外设接入：语音输入（本机 SenseVoice 模型 / 引擎 / 麦克风）、办公本绑定与飞书多维表格。
+   三者都按需加载，首次进入「外设接入」大类时才取 chunk。 */
 const SpeechInputPanel = defineAsyncComponent(() => import('../components/settings/SpeechInputPanel.vue'));
 const DoxentSection = defineAsyncComponent(() => import('../components/settings/DoxentSection.vue'));
+const FeishuBitableSection = defineAsyncComponent(() => import('../components/settings/FeishuBitableSection.vue'));
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { hiddenSettingsAnchors } from '../lib/settingsNavVisibility';
 import {

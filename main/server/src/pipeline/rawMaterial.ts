@@ -28,8 +28,14 @@ function ensureDirectory(absPath: string): void {
   }
 }
 
+/** 资料 frontmatter「来源」的展示标签（默认「Agent调研」；外部数据源接入传自己的名字） */
+function sourceLabelOf(value: unknown): string {
+  const label = typeof value === 'string' ? value.trim().slice(0, 20) : '';
+  return label || 'Agent调研';
+}
+
 /** Create one new Agent-researched Markdown source. Existing paths, including trashed paths, are never replaced. */
-export function createRawMaterial(input: { path: string; content: string }): { path: string; id: string; title: string } {
+export function createRawMaterial(input: { path: string; content: string; sourceLabel?: string }): { path: string; id: string; title: string } {
   const supplied = String(input.path || '').trim().replace(/\\/g, '/');
   if (!supplied || supplied.startsWith('/') || /^[a-z]:/i.test(supplied)) {
     throw new RawMaterialWriteError(`path 必须是 ${RAW_ROOT}/ 下的相对路径`);
@@ -73,7 +79,7 @@ export function createRawMaterial(input: { path: string; content: string }): { p
   }
   const abs = safeJoin(rel);
   const title = path.posix.basename(rel).replace(/\.md$/i, '');
-  const file = matter.stringify(`${content.trimEnd()}\n`, { '标题': title, '来源': ['Agent调研'] });
+  const file = matter.stringify(`${content.trimEnd()}\n`, { '标题': title, '来源': [sourceLabelOf(input.sourceLabel)] });
   let fd: number;
   try {
     fd = fs.openSync(abs, 'wx');
@@ -105,7 +111,7 @@ export function createRawMaterial(input: { path: string; content: string }): { p
  * 不新增文件、不改文件名与路径（文件名里的日期保持原样），正文整段替换、frontmatter 更新时间；
  * 普通原始资料不会被调用方选中，这里也只接受 原始资料/文档/ 下已登记为页面的 Markdown。
  */
-export function overwriteRawMaterial(input: { path: string; content: string }): { path: string; id: string; title: string } {
+export function overwriteRawMaterial(input: { path: string; content: string; sourceLabel?: string }): { path: string; id: string; title: string } {
   const supplied = String(input.path || '').trim().replace(/\\/g, '/');
   if (!supplied || supplied.startsWith('/') || /^[a-z]:/i.test(supplied)) {
     throw new RawMaterialWriteError('path 必须是 原始资料/ 下的相对路径');
@@ -138,7 +144,7 @@ export function overwriteRawMaterial(input: { path: string; content: string }): 
   data['标题'] = title;
   data['更新日期'] = new Date().toISOString();
   const sources = Array.isArray(data['来源']) ? data['来源'].map(String) : [];
-  data['来源'] = Array.from(new Set([...sources, 'Agent调研']));
+  data['来源'] = Array.from(new Set([...sources, sourceLabelOf(input.sourceLabel)]));
   atomicWrite(abs, matter.stringify(`${content.trimEnd()}\n`, data));
   noteAppWrite(abs);
   const meta = syncPageFile(rel);

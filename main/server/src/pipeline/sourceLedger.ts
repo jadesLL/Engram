@@ -61,6 +61,25 @@ export function beginSourceVersion(path: string, contentHash: string): SourceVer
 }
 
 /**
+ * 来源内容被整篇替换后把「已提炼」标记打回待办。
+ *
+ * 典型调用方是外部数据源同步（飞书多维表格重新拉取覆盖同一份原始资料）：
+ * 旧正文已经不在了，基于旧正文校验过的证据引文也可能失效；如果继续保留 active 版本 /
+ * 贡献，提炼清单会一直认为这份资料已处理，新数据永远进不了知识库，证据抽屉还会展示
+ * 旧引文。这里只退出账本，不删页面、不删历史行（版本与贡献都留档，状态转 superseded/0）。
+ */
+export function resetSourceDistillation(path: string): void {
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE page_contributions SET active=0 WHERE source_version_id IN (
+         SELECT id FROM source_versions WHERE path=?
+       )`
+    ).run(path);
+    db.prepare(`UPDATE source_versions SET status='superseded' WHERE path=? AND status='active'`).run(path);
+  })();
+}
+
+/**
  * 该来源路径是否已被提炼过：存在 status='active' 的来源版本，或任一 active 页面贡献。
  * 提炼提交成功即把版本置为 active（agentWrite），这是「已提炼」的权威记录；
  * 贡献单独列出是因为同步对端可能只有版本行——产物页面被删除/从未同步时贡献挂不上页

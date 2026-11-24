@@ -67,7 +67,7 @@ test('单职责大类（顺序即导航顺序；2026-11-18 新增「外设接入
       interface: ['account-appearance', 'data-synonyms'],
       data: ['data-location', 'data-backup', 'storage-trash', 'storage-assets', 'data-danger'],
       sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
-      peripheral: ['peripheral-speech', 'peripheral-doxent'],
+      peripheral: ['peripheral-speech', 'peripheral-doxent', 'peripheral-feishu'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
       agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
