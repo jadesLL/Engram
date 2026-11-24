@@ -219,6 +219,30 @@ export function setCursor(seq: number): void {
   if (seq > getCursor()) setSetting('sync_cursor', String(seq));
 }
 
+/**
+ * 换中枢 / 解除绑定：游标归零。
+ *
+ * cursor 是本端对「某个中枢的事件序号」的记忆，序号只在同一中枢内可比。换到 seq
+ * 更小的新中枢后仍拿旧游标去问 changes?since=，新中枢只会回 0 条，直播 op 也会被
+ * `seq <= cursor` 丢掉——界面仍显示「已连接」，实时同步却永久不工作。
+ */
+export function resetCursor(): void {
+  setSetting('sync_cursor', '0');
+}
+
+/**
+ * 换中枢 / 解除绑定：把页面同步基线与三方合并历史清掉。
+ *
+ * sync_revision / page_revisions / page_body_hashes 都来自旧中枢；新中枢的 revision
+ * 从 1 开始，旧基线会让对账把本机当成「已同步过的旧稿」直接推上去，或按旧祖先
+ * 做错误的三方合并。清掉后下一轮按新中枢全量对齐（空中枢则以本机内容播种）。
+ */
+export function resetSyncBaselines(): void {
+  db.prepare(`UPDATE pages SET sync_revision = 0`).run();
+  db.prepare(`DELETE FROM page_revisions`).run();
+  db.prepare(`DELETE FROM page_body_hashes`).run();
+}
+
 // ---------- 同步群组成员（中枢端） ----------
 
 export interface SyncPeer {

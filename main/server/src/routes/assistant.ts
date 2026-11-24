@@ -34,7 +34,7 @@ import * as repo from '../assistant/repository.js';
 import type { InterfaceContext } from '../assistant/prompts.js';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { customerResearchRetryTask, bindCustomerResearchRetry, CustomerResearchError } from '../research/customerResearch.js';
-import { recordSessionDelete } from '../sync/index.js';
+import { recordSessionChange, recordSessionDelete } from '../sync/index.js';
 import { collectSessionChatAttachments, deleteChatAttachments } from '../lib/chatAttachments.js';
 
 const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
@@ -244,7 +244,11 @@ export async function assistantRoutes(app: FastifyInstance) {
     const id = (req.params as any).id;
     if (!repo.getSession(id)) return reply.code(404).send({ error: '会话不存在' });
     const body = (req.body || {}) as { title?: string };
-    if (typeof body.title === 'string') repo.renameSession(id, body.title);
+    if (typeof body.title === 'string') {
+      repo.renameSession(id, body.title);
+      // 改名也是会话内容变化：对账只补推「中枢没有的会话」，不通知一次就永远到不了别端
+      recordSessionChange(id);
+    }
     return { ok: true, session: repo.getSession(id) };
   });
 
@@ -387,6 +391,10 @@ export async function assistantRoutes(app: FastifyInstance) {
     if (!content) return reply.code(400).send({ error: '没有可沉淀的内容' });
     const result = await saveChat({ content, identifier: snap.session.title, project: '内置 Agent' });
     repo.updateRun(runId, { ingestedPath: result.path });
+    // 沉淀链接是本机后补字段：不 bump 会话时间、也不通知同步的话，别端永远看不到；
+    // 下一次对账还可能拿中枢旧快照把本机的 ingested_path 清掉。
+    repo.touchSession(run.sessionId);
+    recordSessionChange(run.sessionId);
     return { ok: true, meta: result };
   });
 

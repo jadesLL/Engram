@@ -704,15 +704,43 @@ class SyncEngine(
                 db.evidence(target)?.let { payload.put("evidence", it) }
                 val ack = postJson("/api/sync/push", payload)
                 if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); return }
+                if (ack.optBoolean("deleted")) {
+                    // 中枢已删除这页：这次只是迟到旧稿，删掉本端副本，不能把它写回去
+                    db.deleteSyncedPath(target)
+                    db.bumpContentRevision()
+                    db.log(
+                        "info",
+                        "push-deleted-stale",
+                        "页面在中枢已被删除，本次迟到推送已丢弃并删除本端副本",
+                        toJson(mapOf("kind" to SyncOpText.KIND_PAGE, "path" to target)),
+                    )
+                    return
+                }
                 val revision = ack.optInt("revision")
                 val authoritative = ack.optString("content", raw)
-                db.writeSyncedPage(target, authoritative, revision)
-                recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
-                // 本端内容与中枢回执不同 = 中枢做过合并：本端已被写回，日志里必须有一句解释
-                if (authoritative != raw) {
-                    if (ack.optString("merge") == "stale") recordPushStale(target, ack, raw, authoritative, revision)
-                    else recordPushMerged(target, ack, raw, authoritative, revision)
+                // 推送请求在途时用户可能又保存了一次：不能拿请求前的正文覆盖新编辑。
+                // 没有合并时新编辑正是基于推送的那一版，可以推进基线；中枢做过合并时
+                // 不能推进，否则下一次推送会把合并版当共同祖先，顶掉别端的合并内容。
+                val current = db.rawPage(target)
+                if (current == null || current != raw) {
+                    if (current != null && authoritative == raw) db.setPageRevision(target, revision)
+                    db.log(
+                        "info",
+                        "push-kept-local",
+                        if (current == null) "页面在推送途中已被删除，本次回执不再写回"
+                        else "页面在推送途中又有新编辑，本次回执未覆盖本机正文（下一次保存会继续推送）",
+                        toJson(mapOf("kind" to SyncOpText.KIND_PAGE, "path" to target, "revision" to revision)),
+                    )
+                } else {
+                    db.writeSyncedPage(target, authoritative, revision)
+                    db.bumpContentRevision()
+                    // 本端内容与中枢回执不同 = 中枢做过合并：本端已被写回，日志里必须有一句解释
+                    if (authoritative != raw) {
+                        if (ack.optString("merge") == "stale") recordPushStale(target, ack, raw, authoritative, revision)
+                        else recordPushMerged(target, ack, raw, authoritative, revision)
+                    }
                 }
+                recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
             }
             "file" -> {
                 val file = db.file(target)

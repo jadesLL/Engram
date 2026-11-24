@@ -38,6 +38,7 @@ import {
   hubConfigured,
   probeLinkChannel,
   reconcile,
+  resetClientRuntime,
   resetLinkBinding,
   startClient,
   stopClientAndWait,
@@ -51,7 +52,16 @@ import {
   type DualStackConfig,
   type HostFamilyStatus,
 } from './dualStack.js';
-import { currentNodeId, currentRevision, getPageRevision, getPageSyncRevision, listPeers, type SyncKind } from './store.js';
+import {
+  currentNodeId,
+  currentRevision,
+  getPageRevision,
+  getPageSyncRevision,
+  listPeers,
+  resetCursor,
+  resetSyncBaselines,
+  type SyncKind,
+} from './store.js';
 import { clearLearnedDeviceLabel, deviceLabel, deviceLabelSource, type DeviceLabelSource } from './deviceLabel.js';
 
 /**
@@ -234,10 +244,10 @@ export function recordBoardChange(): void {
 export function recordSessionDelete(sessionId: string): void {
   try {
     if (!sessionId || isSystemSession(sessionId)) return;
-    deleteSessionWithTombstone(sessionId, currentNodeId());
+    const deletedAt = deleteSessionWithTombstone(sessionId, currentNodeId());
     if (!syncAllowed('session', sessionId)) return;
     if (hubConfigured()) {
-      if (syncConfigEnabled()) enqueueLocalChange('session', sessionId, undefined, true);
+      if (syncConfigEnabled()) enqueueLocalChange('session', sessionId, undefined, true, deletedAt);
       return;
     }
     commitLocalChange('session', sessionId, '', true);
@@ -270,6 +280,9 @@ export function applyEnvSyncRole(): void {
 export function currentRole(): SyncRole {
   const role = getSetting('sync_role');
   if (role === 'hub') return 'hub';
+  // 显式退出就是退出：旧版本解除绑定只写了 role=none、留下了 hub_url，
+  // 只看 hub_url 会让设备永远被当成成员，扫码重新配对也被 409 挡住。
+  if (role === 'none') return 'none';
   if (role === 'member' || hubConfigured()) return 'member';
   return 'none';
 }
@@ -384,8 +397,21 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   if (input.prefer_lan !== undefined) configureLinkPreferLan(Boolean(input.prefer_lan));
   // 角色切换：hub=本设备作为中枢（停止成员客户端）；none=不参与同步；member=绑定中枢
   if (input.role === 'hub' || input.role === 'none') {
+    // 只在「确实在退出/切换成员关系」时清绑定与基线：设置页保存中枢配置也会走到
+    // 这个分支，若每次都清，会把中枢本机的合并历史一起抹掉、下一轮再做无谓的全量对齐。
+    const wasMember = currentRole() === 'member' || Boolean(getSetting('sync_hub_url'));
     setSetting('sync_role', input.role);
     setSetting('sync_enabled', '0');
+    if (wasMember) {
+      // 退出成员关系必须把地址/令牌一起清掉：currentRole() 旧口径只要看到 hub_url 就当成员，
+      // 解除绑定后扫码重新配对会被 409 挡住；残留的绑定也会让中枢角色误判为成员。
+      setSetting('sync_hub_url', '');
+      setSetting('sync_hub_token', '');
+      resetLinkBinding();
+      resetCursor();
+      resetSyncBaselines();
+      resetClientRuntime();
+    }
     // 换角色就丢掉上一段关系里学来的成员名：否则以中枢身份运行时，本机会一直顶着
     // 「某个成员设备的名字」当自己的名字（中枢应该显示为「中枢」）
     clearLearnedDeviceLabel();
@@ -422,11 +448,19 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   };
   // 换绑定（地址或令牌真的变了）作废学来的成员名：新中枢配的成员名由新中枢重新下发。
   // 值没变时不动作——设置页「保存修改」会把原值再发一遍，清掉会让本机名短暂退回主机名
-  const rebinding = (input.hub_url !== undefined && url.replace(/\/+$/, '') !== before.url)
-    || (input.hub_token !== undefined && String(input.hub_token).trim() !== before.token);
+  const urlChanged = input.hub_url !== undefined && url.replace(/\/+$/, '') !== before.url;
+  const tokenChanged = input.hub_token !== undefined && String(input.hub_token).trim() !== before.token;
+  const rebinding = urlChanged || tokenChanged;
   if (rebinding) clearLearnedDeviceLabel();
-  // 换中枢了：上一个中枢通告的内网地址必须丢掉，否则会拿旧网段去探新中枢
-  if (rebinding) resetLinkBinding();
+  // 换中枢了：上一个中枢通告的内网地址、事件游标、页面基线与合并历史都必须丢掉。
+  // 游标序号只在同一个中枢内可比；页面 sync_revision / 祖先快照同样来自旧中枢。
+  // 只换令牌（同一中枢）不动游标与本地待推队列，避免把离线删除/改名弄丢。
+  if (urlChanged) {
+    resetLinkBinding();
+    resetCursor();
+    resetSyncBaselines();
+    resetClientRuntime();
+  }
   setSetting('sync_enabled', input.enabled ? '1' : '0');
   if (input.hub_url !== undefined) setSetting('sync_hub_url', url.replace(/\/+$/, ''));
   if (input.hub_token !== undefined) setSetting('sync_hub_token', String(input.hub_token).trim());
