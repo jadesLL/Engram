@@ -172,7 +172,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'peripheral',
     label: '外设接入',
-    desc: '把麦克风、办公本这类外部设备接进来：语音输入选识别引擎与本机模型，办公本绑定后 Agent 可调阅资料。',
+    desc: '把麦克风、办公本、飞书多维表格这类外部设备与数据源接进来：语音输入选识别引擎与本机模型，办公本绑定后 Agent 可调阅资料，多维表格可拉取到原始资料。',
     icon: 'plug',
     groups: [
       // 语音输入（2026-11-23）：本机 SenseVoice 模型下载 / 识别引擎 / 麦克风 / 测试。
@@ -184,6 +184,10 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       // 下拉里，分组名保持中性。绑定要在这台机器装技能、起官方 CLI、开本机浏览器完成登录，
       // 同属 owner 级管理面，所以挂 agent（手机恒 false；手机上只显示上面的语音输入分组）。
       { id: 'peripheral-doxent', label: '办公本接入', icon: 'book-open', need: 'agent' },
+      // 飞书多维表格（2026-11）：填 App ID / Secret 与表格链接，服务端按需 / 定时把整表记录
+      // 拉成 原始资料/文档/飞书多维表格/ 下的 Markdown。凭据落在中枢本机、拉取也在服务器执行，
+      // 手机没有这条路径（Secret 也不同步），因此和办公本一样挂 agent，手机上整组隐藏。
+      { id: 'peripheral-feishu', label: '飞书多维表格', icon: 'excel', need: 'agent' },
     ],
   },
   {

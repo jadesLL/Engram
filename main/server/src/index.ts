@@ -46,6 +46,8 @@ import { pruneChatAttachments } from './lib/chatAttachments.js';
 import { agentToolRoutes } from './routes/agentTools.js';
 import { assetRoutes } from './routes/assets.js';
 import { doxentRoutes } from './routes/doxent.js';
+import { feishuRoutes } from './routes/feishu.js';
+import { startFeishuSyncScheduler } from './lib/feishuBitableSync.js';
 import { pythonRuntimeRoutes } from './routes/pythonRuntime.js';
 import { mediaRoutes } from './routes/media.js';
 import { speechRoutes } from './routes/speech.js';
@@ -187,6 +189,8 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   // Agent 工具面（CLI + skill 的 REST 后端）：/api/agent/*，替代已删除的 /mcp 端点
   await app.register(agentToolRoutes);
   await app.register(doxentRoutes);
+  // 飞书多维表格接入（设置 → 外设接入）：owner 级凭据 + 手动/定时拉取到原始资料
+  await app.register(feishuRoutes);
   // 共享 Python 运行时（设置页一键下载；办公本等 Python 接入共用同一份解释器）
   await app.register(pythonRuntimeRoutes);
 
@@ -249,6 +253,8 @@ async function runBackgroundStartup(app: FastifyInstance): Promise<void> {
   await step('vault-watch', () => { startVaultWatch(); });
   // DDNS 直连域名维护（未配置则完全静默跳过；纯定时器）
   await step('ddns', () => startDdnsScheduler());
+  // 飞书多维表格自动同步（未配置 / 没开自动同步时每分钟空转一次，读取配置即返回）
+  await step('feishu-bitable', () => { startFeishuSyncScheduler(); });
   // 多端同步：配置了 hub 连接则启动同步客户端（首次接入自动全量对账）。
   // 失败仅日志、不阻断本机使用：同步状态面板已有 bootstrapping / 上次错误状态。
   await step('sync-init', () => initSync());
