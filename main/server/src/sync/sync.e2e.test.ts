@@ -802,6 +802,20 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     ) as { value: string } | undefined;
     assert.equal(cDeviceName?.value, 'C 电脑', '成员端要对齐中枢配置里的成员名');
 
+    // 已有会话的改名/后补字段也要能补推：B 端本地更新时间比中枢新时，对账不能只看
+    // 「中枢有没有这个 id」就直接跳过（旧实现下改永远到不了别端）。
+    const renamedAt = new Date(Date.now() + 60_000).toISOString();
+    withDb(nodeB.dataDir, (conn) => {
+      conn.prepare(`UPDATE assistant_sessions SET title = '端到端会话（改名）', updated_at = ? WHERE id = 'e2e-session'`).run(renamedAt);
+    });
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('B 端改名补推到中枢', async () => withDb(hub.dataDir, (conn) =>
+      conn.prepare(`SELECT title FROM assistant_sessions WHERE id = 'e2e-session'`).get()?.title === '端到端会话（改名）'
+    ), 60_000);
+    await waitFor('C 端收到改名后的会话', async () => withDb(nodeC.dataDir, (conn) =>
+      conn.prepare(`SELECT title FROM assistant_sessions WHERE id = 'e2e-session'`).get()?.title === '端到端会话（改名）'
+    ), 60_000);
+
     // 看板：成员端这份先推上去（全端唯一一份，键恒为 default）
     withDb(nodeB.dataDir, (conn) => {
       const stamp = new Date().toISOString();

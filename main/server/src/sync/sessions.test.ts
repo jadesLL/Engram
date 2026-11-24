@@ -186,6 +186,122 @@ test('清单指纹随内容变化：对账靠它判断这个会话要不要拉',
   assert.notEqual(sessions.sessionFingerprint('s-normal'), before);
 });
 
+test('清单指纹只统计会同步的消息：思考段与运行中轮次不会把会话永久判成“变了”', () => {
+  newSession('s-fp-clean');
+  newMessage('m-fp-u', 's-fp-clean', 'r-fp', 'user', '问题', '{}', at(1));
+  newMessage('m-fp-a', 's-fp-clean', 'r-fp', 'assistant', '答案', '{}', at(2));
+  newRun('r-fp', 's-fp-clean', 'm-fp-u', 'completed');
+  const before = sessions.sessionFingerprint('s-fp-clean');
+
+  // 思考段不跨端：它变了也不该让对端判断「会话有更新」
+  newMessage('m-fp-think', 's-fp-clean', 'r-fp', 'assistant', '想了很久', '{"kind":"reasoning"}', at(3));
+  assert.equal(sessions.sessionFingerprint('s-fp-clean'), before, '思考段不参与指纹');
+
+  // 正在跑的轮次（含它的消息）也不跨端
+  newMessage('m-fp-live-u', 's-fp-clean', 'r-fp-live', 'user', '正在聊', '{}', at(4));
+  newRun('r-fp-live', 's-fp-clean', 'm-fp-live-u', 'running');
+  assert.equal(sessions.sessionFingerprint('s-fp-clean'), before, '运行中的轮次不参与指纹');
+
+  // 收口后消息才进入同步面：这时指纹必须变，对端才会来拉
+  db.prepare(`UPDATE assistant_runs SET status='completed', completed_at=? WHERE id='r-fp-live'`).run(at(5));
+  assert.notEqual(sessions.sessionFingerprint('s-fp-clean'), before, '收口后消息参与指纹');
+});
+
+test('超过 800 条消息：截断后轮次只带能挂上消息的那些，接收端不再撞外键，hash 也能收敛', () => {
+  const longAt = (n: number) => new Date(Date.parse(ISO) + n * 1000).toISOString();
+  newSession('s-long');
+  for (let i = 1; i <= 801; i++) {
+    newMessage(`m-long-${i}`, 's-long', i === 1 ? 'r-long' : null, i === 1 ? 'user' : 'assistant', `内容-${i}`, '{}', longAt(i));
+  }
+  newRun('r-long', 's-long', 'm-long-1', 'completed');
+
+  const snapshot = sessions.collectSessionSnapshot('s-long')!;
+  assert.equal(snapshot.messages.length, 800);
+  assert.equal(snapshot.messages[0].id, 'm-long-2', '保留最近 800 条');
+  assert.deepEqual(snapshot.runs, [], '用户消息被截掉的旧轮次不再带出（否则接收端外键失败）');
+  assert.equal(snapshot.truncated, true);
+  const sourceHash = sessions.snapshotHash(snapshot);
+
+  // 模拟一台全新接收端：没有这些消息/轮次，只能靠快照落库
+  db.prepare(`DELETE FROM assistant_sessions WHERE id='s-long'`).run();
+  const merged = sessions.mergeSessionSnapshot(snapshot, 'node-a', '设备A');
+  assert.equal(merged.messages, 800);
+  const back = sessions.collectSessionSnapshot('s-long')!;
+  assert.equal(back.messages.length, 800);
+  assert.equal(sessions.snapshotHash(back), sourceHash, '截断标记不再进 hash：两端算出的快照 hash 必须一致');
+});
+
+test('截断边界落在助手回复上：孤儿回复不进快照，接收端清单指纹保持一致', () => {
+  const longAt = (n: number) => new Date(Date.parse(ISO) + n * 1000).toISOString();
+  newSession('s-orphan');
+  // 第 1、2 条属于同一个轮次；最近 800 条从第 2 条（助手回复）开始，
+  // 提问消息被截掉——这条回复不能再单独带出去。
+  newMessage('m-orphan-1', 's-orphan', 'r-orphan', 'user', '问题', '{}', longAt(1));
+  newMessage('m-orphan-2', 's-orphan', 'r-orphan', 'assistant', '答案', '{}', longAt(2));
+  for (let i = 3; i <= 801; i++) {
+    newMessage(`m-orphan-${i}`, 's-orphan', null, 'assistant', `内容-${i}`, '{}', longAt(i));
+  }
+  newRun('r-orphan', 's-orphan', 'm-orphan-1', 'completed', { assistantMessageId: 'm-orphan-2' });
+
+  const sourceFp = sessions.sessionFingerprint('s-orphan');
+  const snapshot = sessions.collectSessionSnapshot('s-orphan')!;
+  assert.equal(snapshot.messages.length, 799, '提问被截断时，连它的助手回复一起丢掉');
+  assert.equal(snapshot.messages[0].id, 'm-orphan-3');
+  assert.deepEqual(snapshot.runs, []);
+
+  // 全新接收端落库后，自己再算清单指纹必须与来源一致；否则每 15 分钟都会重拉
+  db.prepare(`DELETE FROM assistant_sessions WHERE id='s-orphan'`).run();
+  sessions.mergeSessionSnapshot(snapshot, 'node-a', '设备A');
+  assert.equal(sessions.sessionFingerprint('s-orphan'), sourceFp, '接收端指纹必须与来源一致，否则每轮对账重复拉');
+  assert.equal(
+    sessions.snapshotHash(sessions.collectSessionSnapshot('s-orphan')!),
+    sessions.snapshotHash(snapshot),
+    '接收端再收集的快照 hash 也必须一致'
+  );
+});
+
+test('旧快照不覆盖本机后补的沉淀链接：run 按 updated_at 收敛', () => {
+  newSession('s-ingest');
+  newMessage('m-ing-u', 's-ingest', 'r-ing', 'user', '问题', '{}', at(1));
+  newMessage('m-ing-a', 's-ingest', 'r-ing', 'assistant', '答案', '{}', at(2));
+  newRun('r-ing', 's-ingest', 'm-ing-u', 'completed', { assistantMessageId: 'm-ing-a' });
+  const hubSnapshot = sessions.collectSessionSnapshot('s-ingest')!;
+
+  // 本机点了「沉淀」：run 的 updated_at 更新、ingested_path 落库（真实路径见 routes/assistant.ts）
+  db.prepare(`UPDATE assistant_runs SET ingested_path=?, updated_at=? WHERE id='r-ing'`).run(
+    '原始资料/对话/沉淀.md',
+    '2026-01-01T01:00:00.000Z'
+  );
+  // 下一次对账拉回中枢那份旧快照
+  sessions.mergeSessionSnapshot(hubSnapshot, 'hub', '中枢');
+  const run = db.prepare(`SELECT ingested_path, updated_at FROM assistant_runs WHERE id='r-ing'`).get() as any;
+  assert.equal(run.ingested_path, '原始资料/对话/沉淀.md', '旧的空值不能清掉本机已沉淀链接');
+  assert.equal(run.updated_at, '2026-01-01T01:00:00.000Z', '旧快照不能把 run 的更新时间拉回去');
+});
+
+test('会话复活时清掉墓碑：否则清单与墓碑同时命中，新设备永远跳过', () => {
+  newSession('s-revive');
+  db.prepare(`INSERT INTO assistant_session_tombstones(session_id, deleted_at, node_id) VALUES('s-revive', ?, 'node-a')`).run(
+    '2026-01-01T00:00:00.000Z'
+  );
+  const revived = {
+    session: {
+      id: 's-revive',
+      title: '复活',
+      summary: '',
+      archived: 0,
+      titleSource: 'user',
+      createdAt: ISO,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    },
+    messages: [],
+    runs: [],
+  };
+  sessions.mergeSessionSnapshot(revived, 'node-b', '设备B');
+  assert.ok(!sessions.listSessionTombstones().some((item) => item.sessionId === 's-revive'), '复活后墓碑必须删除');
+  assert.ok(sessions.sessionManifest().some((item) => item.id === 's-revive'));
+});
+
 test('看板最新者胜：更新的覆盖旧的，旧的不覆盖新的', () => {
   const older = {
     id: 'default',
@@ -274,6 +390,44 @@ test('中枢收到会话删除：进墓碑，后续旧快照推不回来', () =>
   assert.equal(db.prepare('SELECT id FROM assistant_sessions WHERE id = ?').get('s-rm'), undefined);
 });
 
+test('会话删除广播带删除时刻：对端才能判断本机是否有更新的内容', () => {
+  newSession('s-rm-bc');
+  const received: any[] = [];
+  const off = hub.addNodeSubscriber({
+    peerId: 'peer-bc',
+    send: (event, data) => { if (event === 'sync') received.push(data); },
+  });
+  try {
+    hub.applyPush(
+      { node_id: 'node-c', kind: 'session', target: 's-rm-bc', deleted: true, deleted_at: '2026-01-02T00:00:00.000Z' },
+      'peer-1'
+    );
+  } finally {
+    off();
+  }
+  assert.equal(received.length, 1);
+  assert.equal(received[0].kind, 'session');
+  assert.equal(received[0].deleted, true);
+  assert.equal(received[0].deleted_at, '2026-01-02T00:00:00.000Z', '删除时刻必须随实时广播下发');
+});
+
+test('过期删除不能删掉更新后的会话：按 deleted_at 裁决', () => {
+  newSession('s-rm-new', { updatedAt: '2026-01-02T00:00:00.000Z' });
+  const staleDelete = hub.applyPush(
+    { node_id: 'node-c', kind: 'session', target: 's-rm-new', deleted: true, deleted_at: '2026-01-01T00:00:00.000Z' },
+    'peer-1'
+  );
+  assert.equal(Number(staleDelete.seq), 0);
+  assert.ok(db.prepare('SELECT id FROM assistant_sessions WHERE id = ?').get('s-rm-new'), '删除晚于本端新内容时应保留');
+
+  const freshDelete = hub.applyPush(
+    { node_id: 'node-c', kind: 'session', target: 's-rm-new', deleted: true, deleted_at: '2026-01-03T00:00:00.000Z' },
+    'peer-1'
+  );
+  assert.ok(Number(freshDelete.seq) > 0);
+  assert.equal(db.prepare('SELECT id FROM assistant_sessions WHERE id = ?').get('s-rm-new'), undefined);
+});
+
 test('中枢收到看板推送：旧的看不回发号（LWW 在服务端就拦住）', () => {
   const older = {
     id: 'default',
@@ -291,7 +445,7 @@ test('中枢收到看板推送：旧的看不回发号（LWW 在服务端就拦�
   assert.equal(Number(again.seq), 0);
 });
 
-test('本地看板载荷：带设备身份与生成时刻（界面显示「上次更新时间 / 来自哪台设备」）', () => {
+test('本地看板载荷：带设备身份与生成时刻（界面显示「上次更新时间 / 来自哪台设备」）', async () => {
   setSetting('task_board_session_id', 's-board-src');
   newSession('s-board-src', { title: '任务看板', systemKey: 'task_board' });
   newMessage('m-bu', 's-board-src', 'r-bu', 'user', '生成下周的活');
@@ -307,6 +461,12 @@ test('本地看板载荷：带设备身份与生成时刻（界面显示「上�
   assert.ok(payload.nodeId, '带本机节点 id');
   assert.ok(payload.nodeLabel, '带本机设备名');
   assert.equal(payload.id, 'default');
+  // 写入时刻必须稳定：用 now() 会让同一份看板每轮对账都“比上次新”，本机永远赢 tie-break
+  assert.equal(payload.updatedAt, payload.generatedAt, 'updatedAt 与 generatedAt 同值，重复收集不变');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  const again = sessions.collectBoardPayload()!;
+  assert.equal(again.updatedAt, payload.updatedAt, '同一份答案重复收集的写入时刻不变');
+  assert.equal(sessions.boardWins(again, payload), false, '同一份看板不会被判成“本机更新”');
 });
 
 // ---------------------------------------------------------------------------

@@ -47,6 +47,72 @@ const TITLE_LIMIT = 120;
 /** 非终态轮次：这些轮次的内容不参与同步（「正在对话」不同步） */
 const ACTIVE_RUN_STATUSES = ['running', 'queued'];
 
+/**
+ * 参与同步的消息过滤条件（与 collectSessionSnapshot 完全同口径）：
+ *  - 思考段（metadata.kind=reasoning）不跨端；
+ *  - 正在跑/排队中的轮次消息不跨端；
+ *  - 孤儿 run（run_id 有值但 assistant_runs 里没有）也不跨端——快照只认终态轮次。
+ *
+ * 清单指纹必须只数这批消息：接收端永远拿不到被排除的思考段，若指纹把它们算进去，
+ * 每个带思考段的会话每轮对账都会判成「变了」，反复拉全量快照。
+ */
+const SYNCABLE_RUN_STATUS_SQL = ACTIVE_RUN_STATUSES.map((status) => `'${status}'`).join(', ');
+const SYNCABLE_MESSAGE_WHERE = `
+  COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.kind') END, '') <> 'reasoning'
+  AND (COALESCE(m.run_id, '') = '' OR (r.status IS NOT NULL AND r.status NOT IN (${SYNCABLE_RUN_STATUS_SQL})))
+`;
+
+/**
+ * 清单指纹的消息聚合 CTE，必须与 collectSessionSnapshot 的落盘集合**逐条一致**：
+ *  1. syncable：终态轮次 / 无轮次消息，排除思考段；
+ *  2. kept：每个会话只留最近 SESSION_MESSAGE_LIMIT 条；
+ *  3. kept_runs：提问消息还在 kept 里的轮次——截断掉提问的轮次不跨端（接收端缺提问消息，
+ *     带过去会撞外键）；
+ *  4. final：再排除「轮次已被丢掉、只剩助手回复」的孤儿消息。
+ *
+ * 任何一步和快照收集不一致，接收端算出的 hash 就永远对不上，每 15 分钟重复拉一次。
+ */
+function syncableAggregateCtes(partition: string, sessionFilter = ''): string {
+  return `WITH syncable AS (
+      SELECT m.session_id AS sid, m.id AS mid, m.run_id AS run_id,
+             r.user_message_id AS user_message_id, m.created_at AS created_at,
+             LENGTH(m.content) AS len,
+             ROW_NUMBER() OVER (${partition} ORDER BY m.created_at DESC, m.id DESC) AS rn
+      FROM assistant_messages m
+      LEFT JOIN assistant_runs r ON r.id = m.run_id
+      WHERE ${sessionFilter}${SYNCABLE_MESSAGE_WHERE}
+    ),
+    kept AS (
+      SELECT sid, mid, run_id, user_message_id, created_at, len
+      FROM syncable WHERE rn <= ?
+    ),
+    kept_runs AS (
+      SELECT DISTINCT k.sid AS sid, k.run_id AS run_id
+      FROM kept k
+      JOIN kept u ON u.sid = k.sid AND u.mid = k.user_message_id
+      WHERE COALESCE(k.run_id, '') <> ''
+    ),
+    final AS (
+      SELECT k.sid AS sid, k.len AS len, k.created_at AS created_at
+      FROM kept k
+      WHERE COALESCE(k.run_id, '') = ''
+         OR EXISTS (SELECT 1 FROM kept_runs kr WHERE kr.sid = k.sid AND kr.run_id = k.run_id)
+    ),
+    agg AS (
+      SELECT sid, COUNT(*) AS n, COALESCE(SUM(len), 0) AS bytes,
+             COALESCE(MAX(created_at), '') AS last_at
+      FROM final GROUP BY sid
+    )`;
+}
+
+/** 单会话的可同步消息聚合（与快照同一个窗口：最近 SESSION_MESSAGE_LIMIT 条可同步消息） */
+function syncableMessageStats(sessionId: string): { n: number; bytes: number; last_at: string } {
+  return db
+    .prepare(`${syncableAggregateCtes('', 'm.session_id = ? AND ')}
+      SELECT n, bytes, last_at FROM agg`)
+    .get(sessionId, SESSION_MESSAGE_LIMIT) as any;
+}
+
 export interface SessionSnapshotSession {
   id: string;
   title: string;
@@ -184,28 +250,39 @@ export function collectSessionSnapshot(sessionId: string): SessionSnapshot | nul
       (!message.run_id || terminalRunIds.has(String(message.run_id))) && !isReasoning(str(message.metadata))
   );
   const truncated = kept.length > SESSION_MESSAGE_LIMIT;
-  const messages = (truncated ? kept.slice(-SESSION_MESSAGE_LIMIT) : kept).map((message) => ({
-    id: str(message.id),
-    runId: str(message.run_id),
-    role: str(message.role),
-    content: str(message.content),
-    metadata: str(message.metadata) || '{}',
-    createdAt: str(message.created_at),
-  }));
-  const runs = runRows.map((run) => ({
-    id: str(run.id),
-    userMessageId: str(run.user_message_id),
-    assistantMessageId: str(run.assistant_message_id),
-    status: str(run.status),
-    stepCount: Number(run.step_count || 0),
-    context: str(run.context) || '{}',
-    usage: str(run.usage),
-    error: str(run.error),
-    ingestedPath: str(run.ingested_path),
-    createdAt: str(run.created_at),
-    updatedAt: str(run.updated_at),
-    completedAt: str(run.completed_at),
-  }));
+  const windowed = truncated ? kept.slice(-SESSION_MESSAGE_LIMIT) : kept;
+  const windowIds = new Set(windowed.map((message) => str(message.id)));
+  // 轮次必须能挂到快照里的用户消息上：截断掉的那批老消息在接收端不存在，
+  // 硬带上会撞 assistant_runs.user_message_id 的外键，整个会话都落不了库。
+  const runs = runRows
+    .filter((run) => windowIds.has(str(run.user_message_id)))
+    .map((run) => ({
+      id: str(run.id),
+      userMessageId: str(run.user_message_id),
+      assistantMessageId: str(run.assistant_message_id),
+      status: str(run.status),
+      stepCount: Number(run.step_count || 0),
+      context: str(run.context) || '{}',
+      usage: str(run.usage),
+      error: str(run.error),
+      ingestedPath: str(run.ingested_path),
+      createdAt: str(run.created_at),
+      updatedAt: str(run.updated_at),
+      completedAt: str(run.completed_at),
+    }));
+  // 提问消息被截断、只剩助手回复的孤儿消息也不能带：接收端没有那条轮次，
+  // 再收集时会把它们过滤掉，hash 与清单永远对不上，每轮对账都重复拉一次。
+  const keptRunIds = new Set(runs.map((run) => run.id));
+  const messages = windowed
+    .filter((message) => !message.run_id || keptRunIds.has(String(message.run_id)))
+    .map((message) => ({
+      id: str(message.id),
+      runId: str(message.run_id),
+      role: str(message.role),
+      content: str(message.content),
+      metadata: str(message.metadata) || '{}',
+      createdAt: str(message.created_at),
+    }));
 
   return {
     session: {
@@ -232,7 +309,6 @@ function projectionOf(snapshot: SessionSnapshot): string {
       r.id, r.userMessageId, r.assistantMessageId, r.status, r.stepCount,
       r.context, r.usage, r.error, r.ingestedPath, r.createdAt, r.updatedAt, r.completedAt,
     ]),
-    t: snapshot.truncated ? 1 : 0,
   });
 }
 
@@ -278,14 +354,11 @@ function fingerprintOf(session: {
 export function sessionFingerprint(sessionId: string): string {
   const row = db
     .prepare(
-      `SELECT s.id, s.title, s.updated_at, s.archived, s.title_source,
-              (SELECT COUNT(*) FROM assistant_messages m WHERE m.session_id = s.id) AS n,
-              (SELECT COALESCE(SUM(LENGTH(m.content)), 0) FROM assistant_messages m WHERE m.session_id = s.id) AS bytes,
-              (SELECT COALESCE(MAX(m.created_at), '') FROM assistant_messages m WHERE m.session_id = s.id) AS last_at
-       FROM assistant_sessions s WHERE s.id = ?`
+      `SELECT id, title, updated_at, archived, title_source FROM assistant_sessions WHERE id = ?`
     )
     .get(sessionId) as any;
-  return row ? fingerprintOf(row) : '';
+  if (!row) return '';
+  return fingerprintOf({ ...row, ...syncableMessageStats(sessionId) });
 }
 
 /** 本端某会话的更新时间（用于和远端墓碑比较：本端副本更旧就该被删）；不存在返回空串 */
@@ -312,6 +385,11 @@ export function upsertSessionTombstone(sessionId: string, nodeId: string, delete
   ).run(sessionId, deletedAt, nodeId);
 }
 
+/** 会话被更新的快照复活：墓碑必须一起删，否则清单与墓碑同时命中，其他设备永远跳过。 */
+export function removeSessionTombstone(sessionId: string): void {
+  db.prepare(`DELETE FROM assistant_session_tombstones WHERE session_id = ?`).run(sessionId);
+}
+
 /** 该会话在本端已被删（且删除时间不早于给定版本）→ 不应被远端快照复活 */
 export function isLocallyDeleted(sessionId: string, updatedAt: string): boolean {
   const row = db
@@ -325,9 +403,10 @@ export function isLocallyDeleted(sessionId: string, updatedAt: string): boolean 
  * 本端删掉一个会话并留下墓碑（级联清子表交给 repository，与手动删除同一套）。
  * 删除动作本身也要广播：否则对端手里的副本会在对账时把会话推回来。
  */
-export function deleteSessionWithTombstone(sessionId: string, nodeId: string): void {
+export function deleteSessionWithTombstone(sessionId: string, nodeId: string, deletedAt = now()): string {
   repo.deleteSession(sessionId);
-  upsertSessionTombstone(sessionId, nodeId);
+  upsertSessionTombstone(sessionId, nodeId, deletedAt);
+  return deletedAt;
 }
 
 /**
@@ -406,13 +485,20 @@ export function mergeSessionSnapshot(
          assistant_message_id = excluded.assistant_message_id,
          step_count = excluded.step_count,
          error = excluded.error,
-         ingested_path = excluded.ingested_path,
+         -- 沉淀链接只在别端明确带来新路径时才覆盖：旧快照里的空值不能把本机刚点出来的
+         -- 「已沉淀」清掉（截图/导入等本机后补字段都走这一条）。
+         ingested_path = CASE WHEN COALESCE(excluded.ingested_path, '') <> ''
+                              THEN excluded.ingested_path ELSE assistant_runs.ingested_path END,
          usage = excluded.usage,
          updated_at = excluded.updated_at,
-         completed_at = excluded.completed_at`
+         completed_at = excluded.completed_at
+       WHERE excluded.updated_at >= assistant_runs.updated_at`
     );
+    const hasMessage = db.prepare(`SELECT 1 FROM assistant_messages WHERE id = ?`);
     for (const run of snapshot.runs || []) {
-      // 轮次挂的提问消息必须先在（FK user_message_id → assistant_messages）；快照按时间序已保证
+      // 轮次挂的提问消息必须先在（FK user_message_id → assistant_messages）。正常快照按时间序
+      // 一定满足；旧端/手工构造的快照若把用户消息截掉了，跳过这一轮而不是让整份会话回滚。
+      if (!run.userMessageId || !hasMessage.get(run.userMessageId)) continue;
       upsertRun.run({
         id: run.id,
         sessionId: session.id,
@@ -429,6 +515,10 @@ export function mergeSessionSnapshot(
         completedAt: run.completedAt || null,
       });
     }
+    // 快照比墓碑新：会话被“复活”了，墓碑必须一起清掉，否则清单和墓碑会同时返回同一个 id，
+    // 其他设备对账时按墓碑直接跳过，永远拉不到这份复活后的会话。放在事务末尾：合并失败时
+    // 墓碑不能先丢，否则下一次旧快照就挡不住了。
+    removeSessionTombstone(session.id);
   })();
 
   return { created, messages: (snapshot.messages || []).length, runs: (snapshot.runs || []).length };
@@ -463,16 +553,16 @@ function localBoardSessionId(): string {
 export function sessionManifest(): SessionManifestEntry[] {
   const rows = db
     .prepare(
-      `SELECT s.id, s.title, s.updated_at, s.archived, s.title_source, s.origin_node_id, s.origin_node_label,
-              (SELECT COUNT(*) FROM assistant_messages m WHERE m.session_id = s.id) AS n,
-              (SELECT COALESCE(SUM(LENGTH(m.content)), 0) FROM assistant_messages m WHERE m.session_id = s.id) AS bytes,
-              (SELECT COALESCE(MAX(m.created_at), '') FROM assistant_messages m WHERE m.session_id = s.id) AS last_at
+      `${syncableAggregateCtes('PARTITION BY m.session_id')}
+       SELECT s.id, s.title, s.updated_at, s.archived, s.title_source, s.origin_node_id, s.origin_node_label,
+              COALESCE(a.n, 0) AS n, COALESCE(a.bytes, 0) AS bytes, COALESCE(a.last_at, '') AS last_at
        FROM assistant_sessions s
+       LEFT JOIN agg a ON a.sid = s.id
        WHERE COALESCE(s.system_key, '') = ''
        ORDER BY s.updated_at DESC
        LIMIT ?`
     )
-    .all(SESSION_MANIFEST_LIMIT) as any[];
+    .all(SESSION_MESSAGE_LIMIT, SESSION_MANIFEST_LIMIT) as any[];
   return rows.map((row) => ({
     id: str(row.id),
     title: str(row.title).slice(0, TITLE_LIMIT),
@@ -505,7 +595,10 @@ export function collectBoardPayload(): BoardPayload | null {
     windowEnd: local.windowEnd,
     nodeId: currentNodeId(),
     nodeLabel: deviceLabel(),
-    updatedAt: now(),
+    // 必须是稳定值：用 now() 会让同一份看板每次收集都“比上次更新”，
+    // 对账时本机永远赢 tie-break，于是每 15 分钟重推一次、中枢每轮广播一次。
+    // 与 /api/tasks/board 的展示口径一致：写入时间就是答案生成时间。
+    updatedAt: local.generatedAt,
   };
 }
 

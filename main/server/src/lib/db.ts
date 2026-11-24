@@ -811,6 +811,19 @@ export function migrate() {
   // 旧库增量加列（CREATE TABLE IF NOT EXISTS 不会给既有表补列）；旧行 hash 为空，
   // 成员端走「无条件拉一次」的兼容路径。
   ensureColumn('sync_oplog', 'hash', `TEXT NOT NULL DEFAULT ''`);
+  // 成员端待推送 outbox：page/file/delete/move 落库，进程重启后仍能补推。
+  // 旧实现只有内存数组，离线删除/改名后重启就丢，下一次对账会把旧路径从中枢拉回来。
+  db.prepare(`CREATE TABLE IF NOT EXISTS sync_pending_ops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    old_path TEXT NOT NULL DEFAULT '',
+    deleted INTEGER NOT NULL DEFAULT 0,
+    deleted_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  )`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_sync_pending_ops_target
+              ON sync_pending_ops(kind, target)`).run();
   // 每页版本快照（保留最近若干版）：三方合并的祖先来源
   db.prepare(`CREATE TABLE IF NOT EXISTS page_revisions (
     path TEXT NOT NULL,

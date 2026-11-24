@@ -17,6 +17,7 @@ import {
   commitFileChange,
   connectedPeerIds,
   readPageRaw,
+  removeNodeSubscribers,
   writeRawFileStream,
   sha256,
   type PushApplyResult,
@@ -202,6 +203,23 @@ function peerView(peer: SyncPeer) {
 function enrichReplayOp(op: SyncOp, compact = false, pageHashes?: Map<string, string>) {
   if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
   if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
+  // 会话：oplog 只存 kind/target/hash。删除 op 必须在这里补上 deleted/deleted_at，
+  // 否则成员重连回放会把「删除」当成快照更新去拉 404，删除最长要等 15 分钟对账才生效。
+  if (op.kind === 'session') {
+    const tombstone = listSessionTombstones().find((item) => item.sessionId === op.target);
+    const snapshot = collectSessionSnapshot(op.target);
+    if (tombstone && !snapshot) {
+      return { ...op, deleted: true, deleted_at: tombstone.deletedAt };
+    }
+    return snapshot
+      ? { ...op, hash: snapshotHash(snapshot), messages: snapshot.messages.length }
+      : op;
+  }
+  // 看板：内容很小，回放直接带当前那份（oplog 不存载荷，否则离线成员重连后看板不更新）
+  if (op.kind === 'board') {
+    const board = readSyncedBoard();
+    return board ? { ...op, board } : op;
+  }
   // 客户调研记录：正文由客户端按 op.hash 按需拉 /api/sync/research，补拉 op 里不塞报告正文
   // （删除也走同一条链路：快照里带 deleted=1 的墓碑，成员拉取后删掉本端记录）
   if (op.kind === 'research') return op;
@@ -397,6 +415,9 @@ export async function syncRoutes(app: FastifyInstance) {
     if (!peer) return reply.code(404).send({ error: '成员不存在' });
     const token = `lsync_${crypto.randomBytes(24).toString('hex')}`;
     db.prepare(`UPDATE sync_peers SET token = ? WHERE id = ?`).run(token, id);
+    // 旧 token 立即失效不能只管新请求：已建立的 SSE 长连接也要断，否则被移除设备
+    // 会继续收到页面正文、看板与设置（含 Key）广播。
+    removeNodeSubscribers(peer.id);
     logSyncEvent('warn', 'peer-token-reset', {
       detail: `已重置成员「${peer.name}」的绑定令牌（旧令牌立即失效，该设备需要重新绑定）`,
       scope: 'hub',
@@ -411,6 +432,8 @@ export async function syncRoutes(app: FastifyInstance) {
     const peer = getPeer(id);
     if (!peer) return reply.code(404).send({ error: '成员不存在' });
     revokePeer(id);
+    // 令牌置 revoked 只挡住新请求；长连接不主动断，被移除设备会一直收到广播。
+    removeNodeSubscribers(peer.id);
     logSyncEvent('warn', 'peer-removed', {
       detail: `已移除成员「${peer.name}」（该设备的令牌立即失效，不再参与同步）`,
       scope: 'hub',
@@ -488,7 +511,17 @@ export async function syncRoutes(app: FastifyInstance) {
     }
     const peerId = peer?.id || String(query.node_id || 'owner-client');
     const stream = sse(reply);
-    const unsubscribe = addNodeSubscriber({ peerId, send: stream.send });
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    const unsubscribe = addNodeSubscriber({
+      peerId,
+      send: stream.send,
+      // 撤权时中枢主动关流：close 由 removeNodeSubscribers 调用
+      close: () => {
+        if (keepalive) clearInterval(keepalive);
+        keepalive = null;
+        try { stream.close(); } catch { /* 已关闭 */ }
+      },
+    });
     // 注册与重放之间没有 await：补拉结束到建立订阅之间的提交必定由这段重放覆盖，
     // 后续提交则由订阅接住，不能漏掉重连期间生成的冲突副本。
     if (since !== undefined) {
@@ -502,14 +535,15 @@ export async function syncRoutes(app: FastifyInstance) {
       if (needsResync(since)) stream.send('sync-scope-changed', {});
     }
     // 15s：低于常见反代上游读超时（Lucky 默认 30s），留一倍余量避免心跳与超时同刻竞争
-    const keepalive = setInterval(() => {
+    keepalive = setInterval(() => {
       try {
         (reply.raw as import('node:http').ServerResponse).write(': ping\n\n');
       } catch { /* 断开时由 close 清理 */ }
     }, 15_000);
     keepalive.unref();
     req.raw.on('close', () => {
-      clearInterval(keepalive);
+      if (keepalive) clearInterval(keepalive);
+      keepalive = null;
       unsubscribe();
       try { stream.close(); } catch { /* 已关闭 */ }
       if (peer) {
@@ -524,7 +558,9 @@ export async function syncRoutes(app: FastifyInstance) {
   });
 
   /** 成员推送变更（page/delete/move） */
-  app.post('/api/sync/push', { preHandler: requireSyncAccess }, async (req, reply) => {
+  // 会话快照可能带 800 条消息，全局 10MB bodyLimit 会让长会话直接 413（而客户端把
+  // 413 判成永久失败）。同步推送单独放宽到 32MB；普通接口仍保持 10MB。
+  app.post('/api/sync/push', { preHandler: requireSyncAccess, bodyLimit: 32 * 1024 * 1024 }, async (req, reply) => {
     const push = req.body as PushPayload;
     try {
       const result = await applyPush(push, req.syncPeer?.id || 'owner');
