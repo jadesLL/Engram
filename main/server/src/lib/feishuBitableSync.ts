@@ -29,8 +29,15 @@ import {
   serializeFeishuBitableConfig,
   type FeishuBitableConfig,
   type FeishuBitableSource,
+  type FeishuOauthBinding,
 } from './feishuBitableConfig.js';
-import { describeFeishuError, fetchBitableTable, renderBitableMarkdown } from './feishuBitable.js';
+import {
+  FeishuApiError,
+  describeFeishuError,
+  fetchBitableTable,
+  refreshFeishuOauthToken,
+  renderBitableMarkdown,
+} from './feishuBitable.js';
 
 /** 资料 frontmatter 里「来源」的展示标签（也是识别自动同步文件的依据） */
 export const FEISHU_SOURCE_LABEL = '飞书多维表格';
@@ -71,6 +78,14 @@ export function readFeishuConfig(): FeishuBitableConfig {
 
 export function saveFeishuConfig(config: FeishuBitableConfig): void {
   setSetting(FEISHU_CONFIG_KEY, serializeFeishuBitableConfig(config));
+}
+
+/** 读-改-写整份配置（OAuth 回调 / 解绑 / 凭据变更用；读与写在同一次同步里完成） */
+export function updateFeishuConfig(updater: (config: FeishuBitableConfig) => void): FeishuBitableConfig {
+  const config = readFeishuConfig();
+  updater(config);
+  saveFeishuConfig(config);
+  return config;
 }
 
 /**
@@ -161,6 +176,82 @@ export interface FeishuSyncDeps {
   now?: () => number;
 }
 
+/** 刷新失败里只有「令牌真的失效」才清绑定；网络抖动等保留授权，下次再试 */
+const OAUTH_INVALID_CODES = new Set([
+  20002, 20003, 20004, 20009, 20037, 20068,
+  99991661, 99991663, 99991664, 99991668,
+]);
+
+/** 刷新 user_access_token 的并发合流：refresh_token 一次性使用，绝不允许并发刷新 */
+let oauthRefreshInflight: Promise<FeishuOauthBinding> | null = null;
+
+/**
+ * 同步 / 搜索 / 添加数据源前解析身份：
+ *  - 没绑定 OAuth → 返回 undefined（走应用身份 tenant_access_token，兼容旧配置）；
+ *  - 绑定且 access_token 未过期 → 直接返回；
+ *  - 过期 → 单飞刷新并写回配置；刷新失败清掉绑定，让设置页提示重新授权。
+ */
+export async function ensureFeishuAccessToken(
+  config: FeishuBitableConfig,
+  deps: FeishuSyncDeps = {},
+): Promise<string | undefined> {
+  const binding = config.oauth;
+  if (!binding) {
+    if (config.oauthRequired) {
+      throw new FeishuApiError('飞书账号授权已失效：请重新点「飞书授权」', { code: 20037 });
+    }
+    return undefined;
+  }
+  const clock = deps.now ?? Date.now;
+  const now = clock();
+  if (binding.expiresAt > now + 60_000) return binding.accessToken;
+
+  if (binding.refreshExpiresAt && binding.refreshExpiresAt <= now) {
+    updateFeishuConfig((current) => {
+      current.oauth = null;
+      current.oauthRequired = true;
+    });
+    throw new FeishuApiError('飞书授权已过期（refresh_token 到期）：请重新点「飞书授权」', { code: 20037 });
+  }
+
+  if (!oauthRefreshInflight) {
+    oauthRefreshInflight = refreshFeishuOauthToken(
+      { appId: config.appId, appSecret: config.appSecret, fetchImpl: deps.fetchImpl, now: deps.now },
+      { apiBase: config.apiBase, refreshToken: binding.refreshToken },
+    )
+      .then((tokens) => {
+        const next: FeishuOauthBinding = {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt: tokens.expiresAt,
+          refreshExpiresAt: tokens.refreshExpiresAt || binding.refreshExpiresAt,
+          grantedAt: binding.grantedAt || now,
+        };
+        updateFeishuConfig((current) => {
+          current.oauth = next;
+          current.oauthRequired = false;
+        });
+        return next;
+      })
+      .catch((error) => {
+        // 只有令牌真的失效才清绑定并标记「必须重新授权」；
+        // 网络抖动 / 飞书 5xx 保留授权，下次同步继续用 refresh_token 重试
+        if (error instanceof FeishuApiError && OAUTH_INVALID_CODES.has(error.code)) {
+          updateFeishuConfig((current) => {
+            current.oauth = null;
+            current.oauthRequired = true;
+          });
+        }
+        throw error;
+      })
+      .finally(() => {
+        oauthRefreshInflight = null;
+      });
+  }
+  const refreshed = await oauthRefreshInflight;
+  return refreshed.accessToken;
+}
+
 async function runSync(id: string, deps: FeishuSyncDeps = {}): Promise<FeishuSyncLiveState> {
   const clock = deps.now ?? Date.now;
   const startedAt = clock();
@@ -192,8 +283,15 @@ async function runSync(id: string, deps: FeishuSyncDeps = {}): Promise<FeishuSyn
   });
 
   try {
+    const accessToken = await ensureFeishuAccessToken(config, deps);
     const table = await fetchBitableTable(
-      { appId: config.appId, appSecret: config.appSecret, fetchImpl: deps.fetchImpl, now: deps.now },
+      {
+        appId: config.appId,
+        appSecret: config.appSecret,
+        accessToken,
+        fetchImpl: deps.fetchImpl,
+        now: deps.now,
+      },
       {
         apiBase: source.apiBase,
         appToken: source.appToken,

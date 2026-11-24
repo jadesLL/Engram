@@ -104,6 +104,8 @@ function addSource() {
     appId: 'cli_test',
     appSecret: 'secret',
     apiBase: 'https://open.feishu.cn',
+    oauth: null,
+    oauthRequired: false,
     sources: [source],
   });
   return source;
@@ -198,4 +200,91 @@ test('飞书权限不足：状态 error，lastError 给可执行提示，文件�
   assert.equal(updated.lastStatus, 'error');
   assert.match(updated.lastError, /协作者/);
   assert.equal(updated.lastSyncAt, FIXED_NOW + 120_000, '失败不推进最近成功时间');
+});
+
+/** 按 URL 路由的 fetch 桩（OAuth token / 数据接口混在一起时用） */
+function routeFetch(handler: (call: { url: string; init?: RequestInit }) => Response): {
+  fetchImpl: typeof fetch;
+  calls: Array<{ url: string; init?: RequestInit }>;
+} {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const call = { url: String(input), init };
+    calls.push(call);
+    return handler(call);
+  }) as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+test('OAuth 拉取：access token 过期自动 refresh，数据请求带新令牌', async () => {
+  syncModule.updateFeishuConfig((config) => {
+    config.oauth = {
+      accessToken: 'u-old',
+      refreshToken: 'r-old',
+      expiresAt: FIXED_NOW - 1,
+      refreshExpiresAt: FIXED_NOW + 86_400_000,
+      grantedAt: FIXED_NOW - 7_200_000,
+    };
+  });
+  const source = syncModule.readFeishuConfig().sources[0];
+  const { fetchImpl, calls } = routeFetch((call) => {
+    if (call.url.includes('/authen/v2/oauth/token')) {
+      return jsonResponse({
+        code: 0,
+        access_token: 'u-new',
+        expires_in: 7200,
+        refresh_token: 'r-new',
+        refresh_token_expires_in: 604800,
+      });
+    }
+    if (call.url.includes('/tables?')) {
+      return jsonResponse({ code: 0, data: { items: [{ table_id: 'tblABC12', name: '客户台账' }] } });
+    }
+    if (call.url.includes('/fields?')) {
+      return jsonResponse({ code: 0, data: { items: [{ field_name: '客户名称', type: 1 }] } });
+    }
+    if (call.url.includes('/records?')) {
+      return jsonResponse({ code: 0, data: { items: [{ record_id: 'r1', fields: { 客户名称: '甲公司' } }] } });
+    }
+    return jsonResponse({ code: 999404, msg: 'unexpected ' + call.url });
+  });
+  const state = await syncModule.syncFeishuSource(source.id, {
+    fetchImpl,
+    now: () => FIXED_NOW + 60_000,
+  });
+  assert.equal(state.state, 'ok');
+  const refreshCall = calls.find((call) => call.url.includes('/authen/v2/oauth/token'));
+  assert.ok(refreshCall);
+  assert.equal(JSON.parse(String(refreshCall.init?.body)).grant_type, 'refresh_token');
+  const recordCall = calls.find((call) => call.url.includes('/records?'));
+  assert.ok(recordCall);
+  assert.equal((recordCall.init?.headers as Record<string, string>).Authorization, 'Bearer u-new');
+  const saved = syncModule.readFeishuConfig();
+  assert.equal(saved.oauth?.accessToken, 'u-new');
+  assert.equal(saved.oauth?.refreshToken, 'r-new');
+});
+
+test('OAuth 刷新令牌过期：报「重新授权」并清掉绑定，不写资料', async () => {
+  syncModule.updateFeishuConfig((config) => {
+    config.oauth = {
+      accessToken: 'u-old',
+      refreshToken: 'r-old',
+      expiresAt: FIXED_NOW - 1,
+      refreshExpiresAt: FIXED_NOW - 1,
+      grantedAt: FIXED_NOW - 100_000_000,
+    };
+  });
+  const source = syncModule.readFeishuConfig().sources[0];
+  const abs = path.join(temp, 'brain', source.filePath);
+  const beforeBytes = fs.readFileSync(abs, 'utf8');
+  const state = await syncModule.syncFeishuSource(source.id, {
+    fetchImpl: routeFetch(() => jsonResponse({ code: 0, data: {} })).fetchImpl,
+    now: () => FIXED_NOW + 120_000,
+  });
+  assert.equal(state.state, 'error');
+  assert.match(state.message, /重新授权/);
+  assert.equal(fs.readFileSync(abs, 'utf8'), beforeBytes);
+  const saved = syncModule.readFeishuConfig();
+  assert.equal(saved.oauth, null);
+  assert.equal(saved.oauthRequired, true, '失效后标记必须重新授权，不能偷偷回退到应用身份');
 });

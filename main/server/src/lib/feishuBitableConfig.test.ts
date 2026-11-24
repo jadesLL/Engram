@@ -8,8 +8,11 @@ import {
   feishuFileName,
   feishuFilePath,
   feishuSourceMarker,
+  isFeishuAppToken,
   newFeishuSource,
   normalizeFeishuCredentials,
+  normalizeFeishuOauth,
+  normalizeFeishuOrigin,
   parseFeishuBitableConfig,
   parseFeishuBitableUrl,
   parseFeishuSourceMarker,
@@ -177,19 +180,80 @@ test('normalizeFeishuCredentials：Secret 可留空沿用，App ID 必须非空'
   assert.equal(normalizeFeishuCredentials({ appId: 'a\u0000b', appSecret: 's' }), null);
 });
 
-test('feishuConfigForClient：只暴露 App ID 与 hasSecret，绝不带 Secret', () => {
+test('feishuConfigForClient：只暴露 App ID / hasSecret / OAuth 状态，绝不带令牌', () => {
   const view = feishuConfigForClient({
     appId: 'cli_xxx',
     appSecret: 'top-secret',
     apiBase: 'https://open.feishu.cn',
+    oauth: {
+      accessToken: 'user-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1764007200000,
+      refreshExpiresAt: 1764600000000,
+      grantedAt: 1764000000000,
+    },
+    oauthRequired: false,
     sources: [],
   });
-  assert.deepEqual(Object.keys(view).sort(), ['apiBase', 'appId', 'configured', 'hasSecret', 'sources']);
+  assert.deepEqual(Object.keys(view).sort(), ['apiBase', 'appId', 'configured', 'hasSecret', 'oauth', 'sources']);
   assert.equal(view.configured, true);
   assert.equal(view.hasSecret, true);
-  assert.equal(JSON.stringify(view).includes('top-secret'), false);
+  assert.deepEqual(view.oauth, {
+    bound: true,
+    required: false,
+    expiresAt: 1764007200000,
+    refreshExpiresAt: 1764600000000,
+    grantedAt: 1764000000000,
+  });
+  const json = JSON.stringify(view);
+  assert.equal(json.includes('top-secret'), false);
+  assert.equal(json.includes('user-token'), false);
+  assert.equal(json.includes('refresh-token'), false);
 
   const empty = feishuConfigForClient(emptyFeishuConfig());
   assert.equal(empty.configured, false);
   assert.equal(empty.hasSecret, false);
+  assert.equal(empty.oauth.bound, false);
+  assert.equal(empty.oauth.required, false);
+});
+
+test('OAuth 绑定：缺 access/refresh 丢弃，过期时间保留，序列化可往返', () => {
+  assert.equal(normalizeFeishuOauth(null), null);
+  assert.equal(normalizeFeishuOauth({ accessToken: 'a', refreshToken: '' }), null);
+  assert.equal(normalizeFeishuOauth({ accessToken: 'a', refreshToken: 'r' }), null, '缺 expiresAt 视为无效');
+
+  const binding = normalizeFeishuOauth({
+    accessToken: 'a',
+    refreshToken: 'r',
+    expiresAt: 123,
+    refreshExpiresAt: 456,
+    grantedAt: 1,
+  });
+  assert.deepEqual(binding, {
+    accessToken: 'a',
+    refreshToken: 'r',
+    expiresAt: 123,
+    refreshExpiresAt: 456,
+    grantedAt: 1,
+  });
+
+  const config = {
+    ...emptyFeishuConfig(),
+    appId: 'cli_xxx',
+    appSecret: 'secret',
+    oauth: binding,
+  };
+  assert.deepEqual(parseFeishuBitableConfig(serializeFeishuBitableConfig(config)), config);
+});
+
+test('app_token / origin 校验：只认飞书与 Lark 域名', () => {
+  assert.equal(isFeishuAppToken('bascnCMII2ORej2RItqpZZUNMIe'), true);
+  assert.equal(isFeishuAppToken('tblxI2tWaxP5dG7p'), false);
+  assert.equal(isFeishuAppToken('short'), false);
+  assert.equal(isFeishuAppToken('has space'), false);
+
+  assert.equal(normalizeFeishuOrigin('https://abc.feishu.cn/'), 'https://abc.feishu.cn');
+  assert.equal(normalizeFeishuOrigin('https://acme.larksuite.com'), 'https://acme.larksuite.com');
+  assert.equal(normalizeFeishuOrigin('https://example.com'), null);
+  assert.equal(normalizeFeishuOrigin('not a url'), null);
 });

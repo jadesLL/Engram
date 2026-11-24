@@ -26,6 +26,11 @@ const REQUEST_TIMEOUT_MS = 20_000;
 export interface FeishuRequestContext {
   appId: string;
   appSecret: string;
+  /**
+   * 已授权的 user_access_token：有值时所有 Open API 请求都用用户身份，
+   * 不再取 tenant_access_token（OAuth 授权后读的是用户本人可见的表格）。
+   */
+  accessToken?: string;
   /** 测试注入；缺省 globalThis.fetch */
   fetchImpl?: typeof fetch;
   /** 测试注入；缺省 Date.now */
@@ -225,6 +230,10 @@ async function authorizedRequest(
   path: string,
   init: { method?: string; body?: unknown } = {},
 ): Promise<Record<string, unknown>> {
+  // 用户令牌由同步层负责刷新；这里直接用，失效时交给上层提示重新授权
+  if (ctx.accessToken) {
+    return feishuRequest(ctx, apiBase, ctx.accessToken, path, init);
+  }
   const token = await fetchTenantAccessToken(ctx, apiBase);
   try {
     return await feishuRequest(ctx, apiBase, token, path, init);
@@ -240,6 +249,192 @@ async function authorizedRequest(
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/** 飞书账号授权要申请的 scope（用户身份）：读多维表格、知识库节点、搜索云文档、可刷新 */
+export const FEISHU_OAUTH_SCOPES = 'bitable:app:readonly wiki:wiki:readonly search:docs:read offline_access';
+
+/** OAuth 授权页与 token 端点都在 accounts 域（国内飞书 / 国际 Lark 各一套） */
+export function feishuAccountsBase(apiBase: string): string {
+  return apiBase.includes('larksuite.com') ? 'https://accounts.larksuite.com' : 'https://accounts.feishu.cn';
+}
+
+/** 飞书授权页链接：浏览器跳过去登录/同意，回调带 code + state 回来 */
+export function buildFeishuAuthorizeUrl(input: {
+  apiBase: string;
+  appId: string;
+  redirectUri: string;
+  state: string;
+  scope?: string;
+}): string {
+  const params = new URLSearchParams({
+    client_id: input.appId,
+    response_type: 'code',
+    redirect_uri: input.redirectUri,
+    scope: input.scope ?? FEISHU_OAUTH_SCOPES,
+    state: input.state,
+  });
+  return `${feishuAccountsBase(input.apiBase)}/open-apis/authen/v1/authorize?${params.toString()}`;
+}
+
+export interface FeishuOauthTokenResult {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  refreshExpiresAt: number;
+}
+
+interface OauthTokenBody {
+  grant_type: 'authorization_code' | 'refresh_token';
+  client_id: string;
+  client_secret: string;
+  code?: string;
+  redirect_uri?: string;
+  refresh_token?: string;
+}
+
+async function requestOauthToken(
+  ctx: FeishuRequestContext,
+  apiBase: string,
+  body: OauthTokenBody,
+): Promise<FeishuOauthTokenResult> {
+  let response: Response;
+  try {
+    response = await fetchOf(ctx)(`${apiBase}/open-apis/authen/v2/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new FeishuApiError(
+      `无法连接飞书账号授权服务：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const payload = (await readJson(response)) as Record<string, unknown> | null;
+  const code = Number(payload?.code ?? 0);
+  const accessToken = str(payload?.access_token);
+  if (!response.ok || code !== 0 || !accessToken) {
+    const detail = str(payload?.error_description) || str(payload?.error) || str(payload?.msg)
+      || `HTTP ${response.status}`;
+    throw new FeishuApiError(`飞书账号授权失败：${detail}`, { code, httpStatus: response.status });
+  }
+  const refreshToken = str(payload?.refresh_token);
+  if (!refreshToken) {
+    throw new FeishuApiError(
+      '飞书没有返回 refresh_token：请在应用权限里开通 offline_access，并在「安全设置」打开「刷新 user_access_token」后重新授权',
+    );
+  }
+  const now = nowOf(ctx);
+  const expiresIn = Number(payload?.expires_in ?? 7200);
+  const refreshExpiresIn = Number(payload?.refresh_token_expires_in ?? 0);
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt: now + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 7200) * 1000,
+    refreshExpiresAt: Number.isFinite(refreshExpiresIn) && refreshExpiresIn > 0
+      ? now + refreshExpiresIn * 1000
+      : 0,
+  };
+}
+
+/** 授权码 → user_access_token + refresh_token（授权码 5 分钟有效、只能用一次） */
+export function exchangeFeishuOauthCode(
+  ctx: FeishuRequestContext,
+  input: { apiBase: string; code: string; redirectUri: string },
+): Promise<FeishuOauthTokenResult> {
+  return requestOauthToken(ctx, input.apiBase, {
+    grant_type: 'authorization_code',
+    client_id: ctx.appId,
+    client_secret: ctx.appSecret,
+    code: input.code,
+    redirect_uri: input.redirectUri,
+  });
+}
+
+/** 刷新 user_access_token：refresh_token 一次性使用，成功后旧值立即失效 */
+export function refreshFeishuOauthToken(
+  ctx: FeishuRequestContext,
+  input: { apiBase: string; refreshToken: string },
+): Promise<FeishuOauthTokenResult> {
+  return requestOauthToken(ctx, input.apiBase, {
+    grant_type: 'refresh_token',
+    client_id: ctx.appId,
+    client_secret: ctx.appSecret,
+    refresh_token: input.refreshToken,
+  });
+}
+
+export interface FeishuBitableSearchHit {
+  title: string;
+  appToken: string;
+  /** 结果链接（可能为空；展示用） */
+  url: string;
+}
+
+function originOfDocUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname.toLowerCase()}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 按名字搜索当前用户可见的多维表格（不需要粘贴链接）。
+ *
+ * 老版搜索接口 `suite/docs-api/search/object` 必须用用户身份（user_access_token），
+ * 需要 search:docs:read；返回的 bitable 直接是 app_token，wiki 节点再换成实际多维表格。
+ */
+export async function searchBitableDocs(
+  ctx: FeishuRequestContext,
+  input: { apiBase: string; query: string },
+): Promise<FeishuBitableSearchHit[]> {
+  if (!ctx.accessToken) {
+    throw new FeishuApiError('搜索多维表格需要先完成飞书账号授权');
+  }
+  const query = String(input.query || '').trim();
+  if (!query) return [];
+  const data = await authorizedRequest(ctx, input.apiBase, '/open-apis/suite/docs-api/search/object', {
+    method: 'POST',
+    body: { search_key: query, count: 20, offset: 0, docs_types: ['bitable', 'wiki'] },
+  });
+  const items = Array.isArray(data.items) ? data.items : [];
+  const hits: FeishuBitableSearchHit[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const raw = (item ?? {}) as Record<string, unknown>;
+    const docsType = str(raw.docs_type) || str(raw.type);
+    const token = str(raw.docs_token) || str(raw.token);
+    const title = str(raw.title) || token;
+    const url = str(raw.url) || str(raw.docs_url);
+    if (!token) continue;
+    let appToken = '';
+    if (docsType === 'bitable' && !/^wik/i.test(token)) {
+      appToken = token;
+    } else if (docsType === 'bitable' || docsType === 'wiki') {
+      try {
+        const resolved = await resolveBitableApp(ctx, {
+          kind: 'wiki',
+          token,
+          tableId: '',
+          viewId: '',
+          origin: originOfDocUrl(url),
+          apiBase: input.apiBase,
+        });
+        appToken = resolved.appToken;
+      } catch {
+        // 不是多维表格的知识库节点（普通文档/表格）直接跳过
+        continue;
+      }
+    }
+    if (!appToken || seen.has(appToken)) continue;
+    seen.add(appToken);
+    hits.push({ title, appToken, url });
+  }
+  return hits;
 }
 
 function num(value: unknown): number {
@@ -427,8 +622,23 @@ export function describeFeishuError(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
   }
   const raw = error.message || '';
+  if (/search:docs:read/.test(raw)) {
+    return '应用缺少搜索云文档权限（search:docs:read）：请到飞书开放平台「权限管理」开通后重新授权；也可以先用「高级：用表格链接添加」';
+  }
+  if (error.code === 20003 || error.code === 20004) {
+    return `飞书授权码无效或已过期（5 分钟内有效且只能用一次）：请重新点「飞书授权」（飞书返回：${raw}）`;
+  }
+  if (error.code === 20037) {
+    return '飞书授权已过期（超过 365 天未重新授权）：请重新点「飞书授权」';
+  }
+  if (error.code === 20068 || error.code === 99991679) {
+    return `飞书账号没有授予所需权限：请确认应用已开通 bitable:app:readonly / wiki:wiki:readonly / search:docs:read / offline_access，并重新授权（飞书返回：${raw}）`;
+  }
+  if (error.code === 20009) {
+    return '飞书应用未安装或不可用：请确认应用已发布、且授权账号属于该企业（飞书返回：' + raw + '）';
+  }
   if (error.code === 99991672) {
-    return '飞书应用缺少多维表格权限：请在飞书开放平台为应用开通「查看、评论和导出多维表格」（bitable:app:readonly），并把应用添加为该多维表格的协作者后重试';
+    return '飞书应用缺少多维表格权限：请在飞书开放平台为应用开通「查看、评论和导出多维表格」（bitable:app:readonly）；用应用身份拉取时还要把应用加为该多维表格的协作者';
   }
   if (error.code === 1254003) {
     return '应用无权访问这个多维表格：请在多维表格右上角「…」→ 添加文档应用，把飞书应用加为协作者后重试';
