@@ -59,7 +59,24 @@ export interface FeishuBitableConfig {
   appSecret: string;
   /** 最近一次使用的 Open API 基址（凭据测试时自动识别国内 / 国际站） */
   apiBase: string;
+  /**
+   * 飞书账号 OAuth 授权结果（user_access_token + refresh_token）。
+   * 只落中枢本机 settings：不进 /api/settings、不随多端同步、日志与前端都拿不到原文。
+   */
+  oauth: FeishuOauthBinding | null;
+  /** 曾经授权过但令牌刷新失败：拉取时直接提示重新授权，不偷偷回退到应用身份 */
+  oauthRequired: boolean;
   sources: FeishuBitableSource[];
+}
+
+export interface FeishuOauthBinding {
+  accessToken: string;
+  refreshToken: string;
+  /** user_access_token 过期时间（ms） */
+  expiresAt: number;
+  /** refresh_token 过期时间（ms；0 = 未知） */
+  refreshExpiresAt: number;
+  grantedAt: number;
 }
 
 /** 允许的 Open API 基址（不接受用户随便填主机，避免凭据外发） */
@@ -68,7 +85,24 @@ export const FEISHU_API_BASES = ['https://open.feishu.cn', 'https://open.larksui
 export const DEFAULT_FEISHU_API_BASE = 'https://open.feishu.cn';
 
 export function emptyFeishuConfig(): FeishuBitableConfig {
-  return { appId: '', appSecret: '', apiBase: DEFAULT_FEISHU_API_BASE, sources: [] };
+  return {
+    appId: '',
+    appSecret: '',
+    apiBase: DEFAULT_FEISHU_API_BASE,
+    oauth: null,
+    oauthRequired: false,
+    sources: [],
+  };
+}
+
+/** 前端可见的 OAuth 状态：只有「绑没绑 + 何时过期」，绝不含令牌 */
+export interface FeishuOauthForClient {
+  bound: boolean;
+  /** 曾经授权过但已失效，需要重新授权 */
+  required: boolean;
+  expiresAt: number;
+  refreshExpiresAt: number;
+  grantedAt: number;
 }
 
 /** 前端可见的配置：没有任何密钥字段 */
@@ -77,6 +111,7 @@ export interface FeishuConfigForClient {
   appId: string;
   hasSecret: boolean;
   apiBase: string;
+  oauth: FeishuOauthForClient;
   sources: FeishuBitableSource[];
 }
 
@@ -287,12 +322,60 @@ export function parseFeishuBitableConfig(value: unknown): FeishuBitableConfig {
   const sources = Array.isArray(raw.sources)
     ? raw.sources.map(normalizeSource).filter((item): item is FeishuBitableSource => item !== null)
     : [];
+  const oauth = normalizeFeishuOauth(raw.oauth);
   return {
     appId: text(raw.appId, APP_ID_MAX),
     appSecret: text(raw.appSecret, APP_SECRET_MAX),
     apiBase: normalizeFeishuApiBase(raw.apiBase) ?? DEFAULT_FEISHU_API_BASE,
+    oauth,
+    oauthRequired: raw.oauthRequired === true && !oauth,
     sources,
   };
+}
+
+/** OAuth 令牌上限：飞书 access/refresh token 约 1–2KB，预留 4KB 以上 */
+const OAUTH_TOKEN_MAX = 8192;
+
+/**
+ * 解析 OAuth 绑定：缺 access/refresh 任一项即视为未绑定。
+ * 令牌过期不在这里拒绝——刷新逻辑在同步层，过期但可刷新的绑定必须保留。
+ */
+export function normalizeFeishuOauth(value: unknown): FeishuOauthBinding | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const accessToken = text(raw.accessToken, OAUTH_TOKEN_MAX);
+  const refreshToken = text(raw.refreshToken, OAUTH_TOKEN_MAX);
+  if (!accessToken || !refreshToken) return null;
+  const expiresAt = positiveInt(raw.expiresAt);
+  if (!expiresAt) return null;
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt,
+    refreshExpiresAt: positiveInt(raw.refreshExpiresAt),
+    grantedAt: positiveInt(raw.grantedAt),
+  };
+}
+
+/** app_token（base 直链里的 token）形态校验：搜索选表时客户端直接给 token */
+export function isFeishuAppToken(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const token = value.trim();
+  // 数据表 / 视图 ID 是 tbl… / vew…，不是 app_token
+  return TOKEN_RE.test(token) && !/^(tbl|vew)/i.test(token);
+}
+
+/** 文档站点 origin 只接受飞书 / Lark 域名（来源链接展示与拼接用） */
+export function normalizeFeishuOrigin(value: unknown): string | null {
+  const candidate = typeof value === 'string' ? value.trim().replace(/\/+$/, '') : '';
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    if (!openApiBaseFor(url.hostname)) return null;
+    return `${url.protocol}//${url.hostname.toLowerCase()}`;
+  } catch {
+    return null;
+  }
 }
 
 /** 只接受白名单里的 Open API 基址 */
@@ -333,6 +416,16 @@ export function serializeFeishuBitableConfig(config: FeishuBitableConfig): strin
     appId: config.appId,
     appSecret: config.appSecret,
     apiBase: normalizeFeishuApiBase(config.apiBase) ?? DEFAULT_FEISHU_API_BASE,
+    oauth: config.oauth
+      ? {
+          accessToken: config.oauth.accessToken,
+          refreshToken: config.oauth.refreshToken,
+          expiresAt: config.oauth.expiresAt,
+          refreshExpiresAt: config.oauth.refreshExpiresAt,
+          grantedAt: config.oauth.grantedAt,
+        }
+      : null,
+    oauthRequired: Boolean(config.oauthRequired && !config.oauth),
     sources: config.sources.map((source) => ({
       id: source.id,
       name: source.name,
@@ -354,13 +447,20 @@ export function serializeFeishuBitableConfig(config: FeishuBitableConfig): strin
   });
 }
 
-/** 前端可见视图：永远不带 appSecret */
+/** 前端可见视图：永远不带 appSecret / accessToken / refreshToken */
 export function feishuConfigForClient(config: FeishuBitableConfig): FeishuConfigForClient {
   return {
     configured: Boolean(config.appId && config.appSecret),
     appId: config.appId,
     hasSecret: Boolean(config.appSecret),
     apiBase: config.apiBase,
+    oauth: {
+      bound: Boolean(config.oauth),
+      required: Boolean(config.oauthRequired && !config.oauth),
+      expiresAt: config.oauth?.expiresAt ?? 0,
+      refreshExpiresAt: config.oauth?.refreshExpiresAt ?? 0,
+      grantedAt: config.oauth?.grantedAt ?? 0,
+    },
     sources: config.sources,
   };
 }

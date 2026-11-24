@@ -213,7 +213,7 @@
         <SettingsGroup
           anchor="peripheral-feishu"
           title="飞书多维表格"
-          hint="接入飞书自建应用，粘贴多维表格链接把整表记录拉成原始资料，可手动或定时更新"
+          hint="接入飞书应用授权后搜索并选择多维表格，把整表记录拉成原始资料，可手动或定时更新"
         >
           <FeishuBitableSection />
         </SettingsGroup>

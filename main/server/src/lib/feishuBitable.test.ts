@@ -1,16 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  FEISHU_OAUTH_SCOPES,
   FeishuApiError,
   bitableCellText,
+  buildFeishuAuthorizeUrl,
   clearFeishuTokenCache,
   describeFeishuError,
+  exchangeFeishuOauthCode,
   fetchBitableTable,
   fetchTenantAccessToken,
   formatFeishuDateTime,
   listBitableTables,
+  refreshFeishuOauthToken,
   renderBitableMarkdown,
   resolveBitableApp,
+  searchBitableDocs,
 } from './feishuBitable.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -367,4 +372,161 @@ test('describeFeishuError：权限类错误都翻成用户能照做的中文', (
   assert.match(describeFeishuError(new FeishuApiError('wrong token', { code: 1254003 })), /添加文档应用/);
   assert.match(describeFeishuError(new FeishuApiError('bad node', { code: 91402 })), /wiki:wiki:readonly/);
   assert.match(describeFeishuError(new Error('普通错误')), /普通错误/);
+});
+
+test('buildFeishuAuthorizeUrl：账号域 + scope + 回调地址都进授权链接', () => {
+  const url = new URL(buildFeishuAuthorizeUrl({
+    apiBase: 'https://open.feishu.cn',
+    appId: 'cli_auth',
+    redirectUri: 'http://127.0.0.1:18180/api/feishu/oauth/callback',
+    state: 'state-123',
+  }));
+  assert.equal(url.origin, 'https://accounts.feishu.cn');
+  assert.equal(url.pathname, '/open-apis/authen/v1/authorize');
+  assert.equal(url.searchParams.get('client_id'), 'cli_auth');
+  assert.equal(url.searchParams.get('response_type'), 'code');
+  assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:18180/api/feishu/oauth/callback');
+  assert.equal(url.searchParams.get('state'), 'state-123');
+  assert.equal(url.searchParams.get('scope'), FEISHU_OAUTH_SCOPES);
+
+  const lark = new URL(buildFeishuAuthorizeUrl({
+    apiBase: 'https://open.larksuite.com',
+    appId: 'cli_lark',
+    redirectUri: 'https://example.com/api/feishu/oauth/callback',
+    state: 's',
+  }));
+  assert.equal(lark.origin, 'https://accounts.larksuite.com');
+});
+
+test('exchangeFeishuOauthCode：code 换 user_access_token + refresh_token', async () => {
+  const { fetchImpl, calls } = stubFetch(() => jsonResponse({
+    code: 0,
+    access_token: 'u-token',
+    expires_in: 7200,
+    refresh_token: 'r-token',
+    refresh_token_expires_in: 604800,
+    token_type: 'Bearer',
+  }));
+  const tokens = await exchangeFeishuOauthCode(
+    { appId: 'cli_oauth', appSecret: 'secret', fetchImpl, now: () => FIXED_NOW },
+    {
+      apiBase: 'https://open.feishu.cn',
+      code: 'code-1',
+      redirectUri: 'http://127.0.0.1:18180/api/feishu/oauth/callback',
+    },
+  );
+  assert.equal(tokens.accessToken, 'u-token');
+  assert.equal(tokens.refreshToken, 'r-token');
+  assert.equal(tokens.expiresAt, FIXED_NOW + 7200 * 1000);
+  assert.equal(tokens.refreshExpiresAt, FIXED_NOW + 604800 * 1000);
+  assert.match(calls[0].url, /\/open-apis\/authen\/v2\/oauth\/token$/);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+    grant_type: 'authorization_code',
+    client_id: 'cli_oauth',
+    client_secret: 'secret',
+    code: 'code-1',
+    redirect_uri: 'http://127.0.0.1:18180/api/feishu/oauth/callback',
+  });
+});
+
+test('exchangeFeishuOauthCode：没有 refresh_token 时明确提示 offline_access', async () => {
+  const { fetchImpl } = stubFetch(() => jsonResponse({
+    code: 0,
+    access_token: 'u-token',
+    expires_in: 7200,
+  }));
+  await assert.rejects(
+    () => exchangeFeishuOauthCode(
+      { appId: 'cli_oauth', appSecret: 'secret', fetchImpl, now: () => FIXED_NOW },
+      { apiBase: 'https://open.feishu.cn', code: 'c', redirectUri: 'http://x/api/feishu/oauth/callback' },
+    ),
+    /offline_access/,
+  );
+});
+
+test('refreshFeishuOauthToken：grant_type=refresh_token，一次换新', async () => {
+  const { fetchImpl, calls } = stubFetch(() => jsonResponse({
+    code: 0,
+    access_token: 'u-new',
+    expires_in: 7200,
+    refresh_token: 'r-new',
+    refresh_token_expires_in: 604800,
+  }));
+  const tokens = await refreshFeishuOauthToken(
+    { appId: 'cli_oauth', appSecret: 'secret', fetchImpl, now: () => FIXED_NOW },
+    { apiBase: 'https://open.feishu.cn', refreshToken: 'r-old' },
+  );
+  assert.equal(tokens.accessToken, 'u-new');
+  assert.equal(tokens.refreshToken, 'r-new');
+  assert.equal(JSON.parse(String(calls[0].init?.body)).grant_type, 'refresh_token');
+  assert.equal(JSON.parse(String(calls[0].init?.body)).refresh_token, 'r-old');
+});
+
+test('用户令牌拉表：不取 tenant token，Authorization 用 user_access_token', async () => {
+  const { fetchImpl, calls } = stubFetch((call) => {
+    if (call.url.includes('/tables?')) {
+      return jsonResponse({ code: 0, data: { items: [{ table_id: 'tblABC12', name: '客户台账' }] } });
+    }
+    if (call.url.includes('/fields?')) {
+      return jsonResponse({ code: 0, data: { items: [{ field_name: '名称', type: 1 }] } });
+    }
+    if (call.url.includes('/records?')) {
+      return jsonResponse({ code: 0, data: { items: [{ record_id: 'r1', fields: { 名称: '甲' } }] } });
+    }
+    return jsonResponse({ code: 999404, msg: 'unexpected ' + call.url });
+  });
+  const table = await fetchBitableTable(
+    { appId: 'cli_user', appSecret: 'secret', accessToken: 'u-token', fetchImpl },
+    { apiBase: 'https://open.feishu.cn', appToken: 'bascnABC12345', tableId: 'tblABC12' },
+  );
+  assert.equal(table.records.length, 1);
+  assert.equal(calls.some((call) => call.url.includes('tenant_access_token')), false);
+  const headers = calls[0].init?.headers as Record<string, string>;
+  assert.equal(headers.Authorization, 'Bearer u-token');
+});
+
+test('searchBitableDocs：bitable 直出、wiki 换算，非表格跳过并去重', async () => {
+  const { fetchImpl, calls } = stubFetch((call) => {
+    if (call.url.includes('/suite/docs-api/search/object')) {
+      return jsonResponse({
+        code: 0,
+        data: {
+          items: [
+            { docs_token: 'bascnAAA111', docs_type: 'bitable', title: '客户台账' },
+            { docs_token: 'wikcnBBB222', docs_type: 'wiki', title: '知识库里的表' },
+            { docs_token: 'doccnCCC333', docs_type: 'docx', title: '普通文档' },
+            { docs_token: 'bascnAAA111', docs_type: 'bitable', title: '客户台账（重复）' },
+          ],
+        },
+      });
+    }
+    if (call.url.includes('/wiki/v2/spaces/get_node')) {
+      return jsonResponse({ code: 0, data: { node: { obj_type: 'bitable', obj_token: 'bascnBBB222' } } });
+    }
+    if (call.url.includes('/bitable/v1/apps/bascnBBB222')) {
+      return jsonResponse({ code: 0, data: { app: { name: '知识库应用' } } });
+    }
+    return jsonResponse({ code: 999404, msg: 'unexpected ' + call.url });
+  });
+  const hits = await searchBitableDocs(
+    { appId: 'cli_search', appSecret: 'secret', accessToken: 'u-token', fetchImpl },
+    { apiBase: 'https://open.feishu.cn', query: '台账' },
+  );
+  assert.deepEqual(hits.map((hit) => hit.appToken), ['bascnAAA111', 'bascnBBB222']);
+  assert.deepEqual(hits.map((hit) => hit.title), ['客户台账', '知识库里的表']);
+  const searchCall = calls.find((call) => call.url.includes('/suite/docs-api/search/object'));
+  assert.ok(searchCall);
+  const headers = searchCall.init?.headers as Record<string, string>;
+  assert.equal(headers.Authorization, 'Bearer u-token');
+  assert.deepEqual(JSON.parse(String(searchCall.init?.body)).docs_types, ['bitable', 'wiki']);
+});
+
+test('searchBitableDocs：未授权用户令牌时拒绝', async () => {
+  await assert.rejects(
+    () => searchBitableDocs({ appId: 'cli_search', appSecret: 'secret' }, {
+      apiBase: 'https://open.feishu.cn',
+      query: '台账',
+    }),
+    /飞书账号授权/,
+  );
 });
