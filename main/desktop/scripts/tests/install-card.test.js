@@ -53,8 +53,10 @@ assert.ok(installAt > appExitAt, '安装器必须在主进程退出之后才启�
 assert.ok(script.includes('$appPid = 4242'), '主进程 PID 必须传给卡片');
 
 // 4. 安装器同步等待，所有用户走 UAC；当前用户不走
-assert.ok(script.includes('-Wait -PassThru'), '安装器必须用 Start-Process -Wait 同步等待');
-assert.ok(script.includes('-Verb RunAs'), '所有用户安装必须以管理员启动');
+assert.ok(script.includes('Wait = $true; PassThru = $true'), '安装器必须用 Start-Process 同步等待（Wait + PassThru）');
+assert.ok(script.includes('$exeArgs.Verb = "RunAs"'), '所有用户安装必须以管理员启动');
+// 参数为空时不能传 -ArgumentList ''：Start-Process 会直接抛「参数为 Null 或空」（2026-11-25 实测）
+assert.ok(script.includes('if ($argLine) { $exeArgs.ArgumentList = $argLine }'), '空参数必须整段省掉 ArgumentList');
 assert.ok(script.includes("$installerArgs = '/S /allusers'"), '静默参数必须完整传给安装器');
 assert.ok(script.includes('$elevate = $true'), '所有用户安装必须置 elevate');
 const perUser = installCard.buildScript({
@@ -112,5 +114,11 @@ assert.ok(script.includes('function Find-InstalledExe'), '必须按注册表/标
 assert.ok(script.includes('InstallLocation'), '必须读注册表的 InstallLocation');
 assert.ok(script.includes('正在启动新版 Engram'), '安装成功要有「正在启动新版」这一步');
 assert.ok(script.includes('VersionInfo.ProductVersion'), '必须用安装后的版本号兜底确认装没装上');
+
+// 9. 排障日志：脚本启动与顶层终止错误必须落日志（否则失败只剩下一个退出码）
+assert.ok(script.includes('script start (pid '), '脚本一启动就要写日志，证明 PowerShell 真的执行了');
+assert.ok(script.indexOf('script start (pid ') < script.indexOf('Add-Type -TypeDefinition'), '启动日志必须在 Add-Type 之前');
+assert.ok(script.includes('FATAL: '), '顶层终止错误必须落日志');
+assert.ok(script.includes('trap {'), '需要 trap 捕获终止错误');
 
 console.log('  ✓ 安装监督卡：ready/go 握手 + 等待主进程退出 + 管理员/当前用户 + 切换安装位置 + 失败兜底');
