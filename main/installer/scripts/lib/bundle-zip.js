@@ -55,8 +55,15 @@ function findBundleZip({
   return '';
 }
 
-/** 界面用：内置包是否可用、包名与大小（MB） */
-function bundleInfo({ resourcesPath = '', dirname = '', exists, readdir, stat = fs.statSync } = {}) {
+/** 界面用：内置包是否可用、包名、大小（MB）、包版本与提交（来自打包回执 <zip>.json） */
+function bundleInfo({
+  resourcesPath = '',
+  dirname = '',
+  exists = fs.existsSync,
+  readdir = fs.readdirSync,
+  stat = fs.statSync,
+  readFile = fs.readFileSync,
+} = {}) {
   const zip = findBundleZip({ resourcesPath, dirname, exists, readdir, stat });
   if (!zip) return { available: false };
   let sizeMB = 0;
@@ -65,7 +72,20 @@ function bundleInfo({ resourcesPath = '', dirname = '', exists, readdir, stat = 
   } catch {
     /* 读不到大小不影响安装 */
   }
-  return { available: true, name: path.basename(zip), sizeMB };
+  // 打包回执（pack-prebuilt-bundle.ps1 写在 zip 旁）带版本号与提交号：界面要能告诉客户
+  // 「装的是哪一版」，也让「拿旧包打新安装器」在界面上立刻露出来。
+  let version = '';
+  let commit = '';
+  let offline = false;
+  try {
+    const receipt = JSON.parse(readFile(zip + '.json', 'utf8'));
+    version = typeof receipt.version === 'string' ? receipt.version : '';
+    commit = typeof receipt.commit === 'string' ? receipt.commit : '';
+    offline = Boolean(receipt.offline);
+  } catch {
+    /* 没有回执（旧包/手工放的包）：只显示文件名与大小 */
+  }
+  return { available: true, name: path.basename(zip), sizeMB, version, commit, offline };
 }
 
 module.exports = { bundleDirs, findBundleZip, bundleInfo };

@@ -57,7 +57,7 @@ const PREBUILT_MANIFEST = '.engram-prebuilt.json';
  * @param {string} appRoot main/ 根目录
  * @param {(p: string) => boolean} [exists]
  * @param {(p: string, enc: string) => string} [readFile]
- * @returns {{ commit: string, builtAt: string, mode: string, bundle: string } | null}
+ * @returns {{ commit: string, builtAt: string, version: string, mode: string, bundle: string, offline: boolean } | null}
  */
 function readPrebuiltManifest(appRoot, exists = fs.existsSync, readFile = fs.readFileSync) {
   if (!appRoot) return null;
@@ -68,16 +68,22 @@ function readPrebuiltManifest(appRoot, exists = fs.existsSync, readFile = fs.rea
     return null;
   }
   try {
-    const data = JSON.parse(readFile(file, 'utf8'));
+    // 必须容忍 BOM：安装标记由 PowerShell 5.1 的 Set-Content -Encoding UTF8 写出，它默认带
+    // BOM（EF BB BF），而 JSON.parse 见到 BOM 直接抛异常——2026-11-26 实测：全新预构建安装里
+    // 「提交」「构建时间」显示成「—」，就是因为这里降级成了空对象。同时容忍首尾空白。
+    const raw = String(readFile(file, 'utf8')).replace(/^\uFEFF/, '').trim();
+    const data = JSON.parse(raw);
     const text = (v) => (typeof v === 'string' ? v.trim() : '');
     return {
       commit: text(data.commit),
       builtAt: text(data.builtAt),
+      version: text(data.version),
       mode: text(data.mode) || 'prebuilt',
       bundle: text(data.bundle),
+      offline: Boolean(data.offline),
     };
   } catch {
-    return { commit: '', builtAt: '', mode: 'prebuilt', bundle: '' };
+    return { commit: '', builtAt: '', version: '', mode: 'prebuilt', bundle: '', offline: false };
   }
 }
 

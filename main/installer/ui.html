@@ -285,9 +285,14 @@
         bundleMode = true;
         document.body.classList.add('bundle');
         $('bundle-step').style.display = '';
+        const verText = info.version ? `v${info.version}` : '';
+        const commitText = info.commit ? `，提交 ${info.commit.slice(0, 7)}` : '';
+        const assetsText = info.offline
+          ? '；已预置语音模型与 Python 运行时，装完即可离线使用'
+          : '';
         $('bundle-msg').textContent =
-          `已内置运行环境（${info.name}，约 ${info.sizeMB} MB）：直接解压安装，不联网、不用凭据、不构建。` +
-          '已有安装会被覆盖，数据目录与设置保持不变。';
+          `已内置运行环境${verText ? ' ' + verText : ''}（${info.name}，约 ${info.sizeMB} MB${commitText}）：` +
+          `直接解压安装，不联网、不装依赖、不构建${assetsText}。已有安装会被覆盖，知识库数据与设置保持不变。`;
         $('head-sub').textContent = '安装包自带运行环境：一键解压部署，免联网、免构建。数据目录与现有安装共用。';
         $('next-btn').style.display = 'none';
         $('start-btn').style.display = '';
@@ -295,9 +300,11 @@
         $('meta-left').textContent = '准备就绪';
         // 文案与上面静态 HTML 的 done-tip 一致；用 DOM 构造换行，不拼 HTML 字符串
         const tip = $('done-tip');
-        tip.textContent = 'Engram 已启动并创建了桌面快捷方式。';
+        tip.textContent = info.version
+          ? `Engram ${'v' + info.version} 已启动并创建了桌面快捷方式。`
+          : 'Engram 已启动并创建了桌面快捷方式。';
         tip.appendChild(document.createElement('br'));
-        tip.appendChild(document.createTextNode('本机为预构建安装：以后更新请重新运行新版安装器。'));
+        tip.appendChild(document.createTextNode('以后要更新到新版，重新运行最新安装器覆盖安装即可（知识库数据保留）。'));
         return;
       }
       // 默认不填任何地址（用户要求）：仓库地址一律由用户自己填

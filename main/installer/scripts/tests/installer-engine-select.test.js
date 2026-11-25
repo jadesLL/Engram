@@ -23,8 +23,8 @@ check('识别 # ENGINE_VERSION: 2', engine.parseEngineVersion('# ENGINE_VERSION:
 check('容忍缩进与 CRLF', engine.parseEngineVersion('\r\n  # ENGINE_VERSION: 12\r\n') === 12);
 check('错误值按 1 兜底', engine.parseEngineVersion('# ENGINE_VERSION: abc\n') === 1);
 check('null 输入返回 null', engine.parseEngineVersion(null) === null);
-check('部署脚本声明了 ENGINE_VERSION 2',
-  engine.parseEngineVersion(ps1Text) === 2,
+check('部署脚本声明了 ENGINE_VERSION 3',
+  engine.parseEngineVersion(ps1Text) === 3,
   'got ' + engine.parseEngineVersion(ps1Text));
 check('部署脚本的引擎版本高于旧引擎', engine.parseEngineVersion(ps1Text) > engine.LEGACY_ENGINE_VERSION);
 

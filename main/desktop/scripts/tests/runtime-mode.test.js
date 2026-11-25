@@ -108,6 +108,26 @@ test('预构建安装标记：读到提交号与打包时间，缺失时返回 n
   assert.equal(runtimeMode.readPrebuiltManifest(''), null);
 });
 
+test('预构建标记带 BOM 时仍能读出提交与版本（PowerShell 写出的文件默认带 BOM）', () => {
+  // 2026-11-26 实测：安装器用 PowerShell 5.1 的 Set-Content -Encoding UTF8 写标记，它默认加 BOM
+  // （EF BB BF）；JSON.parse 见到 BOM 直接抛，界面就把「提交」「构建时间」显示成「—」。
+  const root = tmpdir('prebuilt-bom');
+  const body = JSON.stringify({
+    mode: 'prebuilt',
+    version: '1.5.21',
+    commit: '0f47449040c28705f125e3b1b1c8dfd157a3f0a2',
+    builtAt: '2026-11-26T03:14:34+08:00',
+    bundle: 'engram-prebuilt-win-x64.zip',
+    offline: true,
+  });
+  fs.writeFileSync(path.join(root, '.engram-prebuilt.json'), '﻿' + body);
+  const info = runtimeMode.readPrebuiltManifest(root);
+  assert.equal(info.commit, '0f47449040c28705f125e3b1b1c8dfd157a3f0a2');
+  assert.equal(info.version, '1.5.21');
+  assert.equal(info.builtAt, '2026-11-26T03:14:34+08:00');
+  assert.equal(info.offline, true);
+});
+
 test('预构建标记内容损坏时仍按预构建处理（没有 .git 的事实不会因 JSON 坏而改变）', () => {
   const root = tmpdir('prebuilt-bad');
   fs.writeFileSync(path.join(root, '.engram-prebuilt.json'), '{ not json');

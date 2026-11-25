@@ -34,8 +34,8 @@ function check(name, ok, extra = '') {
 // ---------- 1) 静态分流 ----------
 check('脚本声明了 -BundleZip 参数', text.includes('[string]$BundleZip'));
 check(
-  '有包时发 bundle 步骤表（只有 3 步）',
-  text.includes("'##STEPS:bundle=解压预构建环境;shortcut=创建桌面快捷方式;launch=启动 Engram'"),
+  '有包时发 bundle 步骤表（解压 → 离线资源 → 快捷方式 → 启动）',
+  text.includes("'##STEPS:bundle=解压预构建环境;assets=安装离线资源;shortcut=创建桌面快捷方式;launch=启动 Engram'"),
 );
 check('没有包时仍发源码模式步骤表', text.includes("'##STEPS:git=检测 Git 环境;node=准备便携 Node.js"));
 check('预构建分支调 Install-FromBundle', text.includes('Install-FromBundle $bundleZip $InstallDir $repoDir $mainDir'));
