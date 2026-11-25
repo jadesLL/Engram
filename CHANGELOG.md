@@ -25,7 +25,7 @@
 
 ### 内部
 
-- [平台影响: none] 新增安装卡片启动器中转脚本与单测（`desktop/lib/install-card-launcher.js`、`scripts/tests/install-card-launcher.test.js`），并让安装卡片脚本把「已启动」与顶层错误写进安装日志，下次排障能直接看到 PowerShell 是否真的执行过。
+- [平台影响: none] 新增安装卡片启动器中转脚本与单测（`desktop/lib/install-card-launcher.js`、`scripts/tests/install-card-launcher.test.js`），并让安装卡片脚本把「已启动」与顶层错误写进安装日志，下次排障能直接看到 PowerShell 是否真的执行过。交接方式按平台取（Windows 用 `cmd /c start`，其他平台退到 `sh` 后台化），保证 Docker verify 的 Linux 容器能跑这条单测。
 
 ## v1.5.20（2026-11-24）
 

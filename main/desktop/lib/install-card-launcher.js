@@ -44,18 +44,10 @@ function buildPowerShellArgs(script) {
   return ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script];
 }
 
-/** 引号包裹（cmd 的 start 需要），内部引号按 cmd 规则不转义 */
-function quoteForCmd(text) {
-  return `"${String(text ?? '')}"`;
-}
-
-/**
- * 交给 cmd start 的完整命令行。
- * 与 update-handoff-launcher.js 一致：整条命令用 `"${cmd}"` 包裹并置 windowsVerbatimArguments，
- * 否则 Node 的参数转义会让 cmd 解析错位、start 静默不启（实测）。
- */
-function buildStartCommandLine(powershell, args) {
-  return `start "" ${powershell} ${args.map((a) => (a.includes(' ') ? quoteForCmd(a) : a)).join(' ')}`;
+/** 含空白就加双引号（Windows 与 POSIX 都接受的双引号形态；本参数集里没有需要转义的特殊字符） */
+function quoteIfNeeded(text) {
+  const s = String(text ?? '');
+  return /\s/.test(s) ? `"${s}"` : s;
 }
 
 /** 拆 `"C:\Program Files\...\ps.exe"` 这类带引号的命令（测试用 ENGRAM_CARD_POWERSHELL 换栈） */
@@ -67,13 +59,52 @@ function splitCommandLine(command) {
   return tokens;
 }
 
+/**
+ * PowerShell 的完整命令行（可执行文件 + 参数，已按需加引号）。
+ * ENGRAM_CARD_POWERSHELL 允许带引号的整条命令（测试用 Node 桩），先拆再拼。
+ */
+function buildPowerShellCommandLine(
+  script,
+  powershellCommand = process.env.ENGRAM_CARD_POWERSHELL || 'powershell.exe',
+) {
+  const [exe, ...prefixArgs] = splitCommandLine(powershellCommand);
+  return [exe || 'powershell.exe', ...prefixArgs, ...buildPowerShellArgs(script)].map(quoteIfNeeded).join(' ');
+}
+
+/**
+ * 交给 cmd 的 start 命令行。
+ * 与 update-handoff-launcher.js 一致：整条命令用 `"${cmd}"` 包裹并置 windowsVerbatimArguments，
+ * 否则 Node 的参数转义会让 cmd 解析错位、start 静默不启（实测）。
+ */
+function buildStartCommandLine(powerShellCmdLine) {
+  return `start "" ${powerShellCmdLine}`;
+}
+
+/**
+ * 本平台的交接方式。
+ *
+ * - Windows：`cmd /c start ""` —— 唯一验证过「父进程退出后卡片仍存活」的形态（见头注释）。
+ * - 其他平台：Docker verify 的 Linux 容器会跑本模块的单测，那里没有 cmd.exe。用 `sh -c '… &'`
+ *   后台化并把 stdio 断开，语义同样是「交给独立进程、本进程立即退出」。生产不会走这条：
+ *   整条安装链只在 win32 启用（main.js 的平台判定）。
+ */
+function buildHandoffSpec(powerShellCmdLine, platform = process.platform) {
+  if (platform === 'win32') {
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', `"${buildStartCommandLine(powerShellCmdLine)}"`],
+      verbatim: true,
+    };
+  }
+  return { command: 'sh', args: ['-c', `{ ${powerShellCmdLine} ; } >/dev/null 2>&1 &`], verbatim: false };
+}
+
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const script = args.script || '';
   const logPath = args.log || '';
-  const pidFile = args.pid || '';
   const readyFile = args.ready || '';
   const timeoutMs = Number(args.timeout) > 0 ? Number(args.timeout) : DEFAULT_READY_TIMEOUT_MS;
 
@@ -91,14 +122,15 @@ function main() {
     process.exit(3);
   }
 
-  const [exe, ...prefixArgs] = splitCommandLine(process.env.ENGRAM_CARD_POWERSHELL || 'powershell.exe');
-  const cmdLine = buildStartCommandLine(exe || 'powershell.exe', [...prefixArgs, ...buildPowerShellArgs(script)]);
+  const spec = buildHandoffSpec(buildPowerShellCommandLine(script));
+  appendLog(`handoff: ${spec.command} ${spec.args.join(' ')}`);
+
   let child;
   try {
-    child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmdLine}"`], {
+    child = spawn(spec.command, spec.args, {
       detached: true,
       stdio: 'ignore',
-      windowsVerbatimArguments: true,
+      windowsVerbatimArguments: spec.verbatim,
     });
   } catch (e) {
     appendLog(`spawn failed: ${(e && e.message) || String(e)}`);
@@ -109,10 +141,10 @@ function main() {
     appendLog(`spawn error: ${(e && e.message) || String(e)}`);
     process.exit(3);
   });
-  child.once('spawn', () => appendLog(`handoff cmd started pid=${child.pid}`));
+  child.once('spawn', () => appendLog(`handoff started pid=${child.pid}`));
   child.once('exit', (code) => {
     cmdExit = code === null ? 1 : code;
-    appendLog(`handoff cmd exit ${cmdExit}`);
+    appendLog(`handoff exit ${cmdExit}`);
   });
   child.unref();
 
@@ -123,9 +155,9 @@ function main() {
       appendLog('card ready, launcher exit');
       process.exit(0);
     }
-    // cmd 自己失败（start 没起来）才算交接失败；cmd 正常退出后卡片在独立进程里跑，继续等 ready
+    // 交接进程自己失败（start 没起来）才算失败；它正常退出后卡片在独立进程里跑，继续等 ready
     if (cmdExit !== null && cmdExit !== 0) {
-      appendLog(`handoff cmd failed: code=${cmdExit}`);
+      appendLog(`handoff failed: code=${cmdExit}`);
       process.exit(5);
     }
     if (Date.now() >= deadline) {
@@ -142,7 +174,10 @@ if (require.main === module) main();
 module.exports = {
   parseArgs,
   buildPowerShellArgs,
+  buildPowerShellCommandLine,
   buildStartCommandLine,
+  buildHandoffSpec,
   splitCommandLine,
+  quoteIfNeeded,
   DEFAULT_READY_TIMEOUT_MS,
 };

@@ -6,10 +6,11 @@
 // （实测矩阵：ignore/pipe/文件句柄、加不加 windowsHide 全在 240ms 内 code=0）。修复是把拉起
 // 交给本中转脚本，用 `cmd /c start` 把卡片交接给独立进程（与源码更新启动器同款，唯一验证过在
 // 父进程退出后仍存活的形态）。这里锁住那几个「错了就静默失败」的约定：
-//   1) 命令行必须是 `start "" <powershell> … -File <脚本>`，且整条命令再包一层引号；
-//   2) 宁可让卡片跑起来也不许走 detached 直拉 powershell（那正是事故形态）；
-//   3) 卡片写出 ready 就退出（常驻会锁安装目录），超时/缺脚本非零退出让主进程兜底；
-//   4) 用 ENGRAM_CARD_POWERSHELL 换成桩进程时，真的能交接拉起并把参数传到。
+//   1) 命令行必须是 `start "" <powershell> … -File <脚本>`，整条命令再包一层引号；
+//   2) 卡片写出 ready 就退出（常驻会锁安装目录），超时/缺脚本非零退出让主进程兜底；
+//   3) 用 ENGRAM_CARD_POWERSHELL 换成桩进程时，真的能交接拉起并把参数传到。
+// 注意：本测试在 Docker verify 的 Linux 容器里也跑（那里没有 cmd.exe），所以交接形态的断言
+// 按平台取 buildHandoffSpec，端到端部分只依赖 node + sh。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -19,7 +20,16 @@ const launcher = require('../../lib/install-card-launcher');
 
 // 1. 参数解析：只认固定 flag，不接收位置参数（防止被塞任意命令）
 assert.deepEqual(
-  launcher.parseArgs(['--script', 'C:\\a b\\card.ps1', '--log', 'C:\\a b\\install.log', '--pid', 'C:\\a b\\card.pid', '--ready', 'C:\\a b\\ready']),
+  launcher.parseArgs([
+    '--script',
+    'C:\\a b\\card.ps1',
+    '--log',
+    'C:\\a b\\install.log',
+    '--pid',
+    'C:\\a b\\card.pid',
+    '--ready',
+    'C:\\a b\\ready',
+  ]),
   {
     script: 'C:\\a b\\card.ps1',
     log: 'C:\\a b\\install.log',
@@ -38,13 +48,31 @@ assert.deepEqual(
   'PowerShell 参数必须带 -WindowStyle Hidden（start 交接会新建控制台）',
 );
 
-// 3. 命令行：必须是 cmd 的 start 交接（不是普通 spawn），带空格的路径要加引号
-const cmdLine = launcher.buildStartCommandLine('powershell.exe', ['-NoProfile', '-File', 'C:\\a b\\card.ps1']);
-assert.ok(cmdLine.startsWith('start "" powershell.exe '), '必须用 start "" 交接（2026-11-25 事故：直拉 powershell 秒退）');
-assert.ok(cmdLine.includes('"C:\\a b\\card.ps1"'), '带空格的路径必须加引号，否则 -File 只收到一半');
-assert.equal(launcher.buildStartCommandLine('powershell.exe', ['-NoProfile']), 'start "" powershell.exe -NoProfile');
+// 3. 完整命令行：带空格的路径要加引号，否则 cmd/PowerShell 只收到一半
+const psLine = launcher.buildPowerShellCommandLine('C:\\a b\\card.ps1', 'powershell.exe');
+assert.equal(
+  psLine,
+  'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\\a b\\card.ps1"',
+  'PowerShell 命令行必须带引号包住带空格的脚本路径',
+);
+const custom = launcher.buildPowerShellCommandLine('C:\\x\\card.ps1', '"C:\\Program Files\\Node\\node.exe" "C:\\fake.js"');
+assert.ok(custom.startsWith('"C:\\Program Files\\Node\\node.exe" '), 'ENGRAM_CARD_POWERSHELL 的可执行文件必须保留（带空格就要带引号）');
+assert.ok(custom.includes('C:\\fake.js'), 'ENGRAM_CARD_POWERSHELL 的前缀参数必须保留在前');
+assert.ok(custom.endsWith('-File C:\\x\\card.ps1'), '卡片脚本始终排在最后，不被前缀参数顶掉');
 
-// 4. 拆带引号的命令（测试换栈用）
+// 4. 交接形态：Windows 必须是 cmd 的 start（2026-11-25 事故：直拉 powershell 秒退），其他平台退到 sh
+const win = launcher.buildHandoffSpec('powershell.exe -NoProfile', 'win32');
+assert.equal(win.command, 'cmd.exe', 'Windows 必须用 cmd 交接');
+assert.deepEqual(win.args, ['/d', '/s', '/c', '"start "" powershell.exe -NoProfile"'], 'start 命令必须整体再加一层引号');
+assert.equal(win.verbatim, true, 'cmd 交接必须用 windowsVerbatimArguments，否则 Node 转义会让 start 静默不启');
+assert.ok(launcher.buildStartCommandLine('powershell.exe -NoProfile').startsWith('start "" '), '必须用 start "" 交接');
+
+const posix = launcher.buildHandoffSpec('powershell.exe -NoProfile', 'linux');
+assert.equal(posix.command, 'sh', '非 Windows 平台没有 cmd.exe，必须退到 sh');
+assert.ok(posix.args[0] === '-c' && posix.args[1].includes('&'), 'sh 交接必须后台化（交给独立进程后立即返回）');
+assert.equal(posix.verbatim, false);
+
+// 5. 拆带引号的命令（测试换栈用）
 assert.deepEqual(launcher.splitCommandLine('"C:\\Program Files\\Node\\node.exe" "C:\\x\\fake.js"'), [
   'C:\\Program Files\\Node\\node.exe',
   'C:\\x\\fake.js',
@@ -52,7 +80,7 @@ assert.deepEqual(launcher.splitCommandLine('"C:\\Program Files\\Node\\node.exe" 
 assert.deepEqual(launcher.splitCommandLine('powershell.exe'), ['powershell.exe']);
 assert.deepEqual(launcher.splitCommandLine(''), []);
 
-// 5. 端到端：用 Node 自己冒充 PowerShell（ENGRAM_CARD_POWERSHELL），验证交接、ready 与退出码
+// 6. 端到端：用 Node 自己冒充 PowerShell（ENGRAM_CARD_POWERSHELL），验证交接、ready 与退出码
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-card-launcher-'));
 const launcherFile = path.join(__dirname, '..', '..', 'lib', 'install-card-launcher.js');
 try {
@@ -69,7 +97,7 @@ try {
     'utf8',
   );
   const cardScript = path.join(tmp, 'install-card.ps1');
-  fs.writeFileSync(cardScript, "Write-Output 'card'\n", 'utf8');
+  fs.writeFileSync(cardScript, "// fake card\n", 'utf8');
   const logFile = path.join(tmp, 'install.log');
   const pidFile = path.join(tmp, 'card.pid');
   const fakePsCommand = `"${process.execPath}" "${fakePs}"`;
@@ -91,16 +119,16 @@ try {
   assert.ok(passed.includes('-File'), '卡片脚本必须经 -File 传入');
   assert.ok(passed.includes('install-card.ps1'), '传给 -File 的必须是卡片脚本路径');
   const log = fs.readFileSync(logFile, 'utf8');
-  assert.ok(log.includes('handoff cmd started pid='), '日志必须记录交接拉起（排障用）');
+  assert.ok(log.includes('handoff started pid='), '日志必须记录交接拉起（排障用）');
   assert.ok(log.includes('card ready'), '日志必须记录 ready 握手');
 
-  // 6. 卡片一直画不出来：中转超时非零退出，主进程据此走安装向导兜底（而不是静默退出应用）
+  // 7. 卡片一直画不出来：中转超时非零退出，主进程据此走安装向导兜底（而不是静默退出应用）
   fs.rmSync(readyFile, { force: true });
   const timedOut = runLauncher({ FAKE_PS_NO_READY: '1' }, ['--timeout', '800']);
   assert.equal(timedOut.status, 6, 'ready 超时必须非零退出（6）');
   assert.ok(fs.readFileSync(logFile, 'utf8').includes('timeout waiting for card ready'), '超时必须落日志');
 
-  // 7. 脚本不存在时非零退出，绝不空跑
+  // 8. 脚本不存在时非零退出，绝不空跑
   const missing = spawnSync(process.execPath, [launcherFile, '--script', path.join(tmp, 'nope.ps1')], {
     encoding: 'utf8',
     timeout: 20_000,
