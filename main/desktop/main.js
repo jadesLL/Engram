@@ -1778,8 +1778,9 @@ function installHandshakeDir(pid = process.pid) {
   return dir;
 }
 
-/** 卡片必须在这么长时间内画出窗口：主进程收到 ready 才退出，否则视为启动失败 */
-const INSTALL_CARD_READY_TIMEOUT_MS = 6_000;
+/** 卡片必须在这么长时间内画出窗口：主进程收到 ready 才退出，否则视为启动失败。
+ *  经中转进程 + PowerShell 冷启动 + Add-Type 编译，正常 1–3 秒；15 秒是慢机器/杀软扫描的上限。 */
+const INSTALL_CARD_READY_TIMEOUT_MS = 15_000;
 
 function waitForPath(target, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -1793,17 +1794,41 @@ function waitForPath(target, timeoutMs) {
   });
 }
 
-/** 杀掉没画出窗口的 PowerShell 卡片：它还在等 go，杀掉后绝不会擅自开始安装 */
-function killInstallCard(child) {
-  if (!child) return;
+/** 把卡片启动器复制到握手目录：安装包里 lib/ 在 asar 内，run-as-node 的中转进程要用真实文件。
+ *  源码模式与安装包都走这条路（asars 的 fs 读取由主进程完成，目标始终是真实路径）。 */
+function stageInstallCardLauncher(dir) {
+  const source = path.join(__dirname, 'lib', 'install-card-launcher.js');
+  const target = path.join(dir, 'install-card-launcher.js');
+  fs.copyFileSync(source, target);
+  return target;
+}
+
+/** 卡片写下的自身 PID（经 cmd start 交接后父进程拿不到 PID，只能读文件） */
+function readInstallCardPid(dir) {
   try {
-    child.kill('SIGKILL');
+    const pid = Number(fs.readFileSync(path.join(dir, 'card.pid'), 'utf8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
   } catch {
-    /* 已退出 */
+    return 0;
   }
-  if (child.pid) {
+}
+
+/** 杀掉没画出窗口的卡片：中转进程 + 它交出去的 PowerShell 一起收掉，卡片绝不会擅自开始安装 */
+function killInstallCard(child, dir) {
+  const pids = new Set();
+  if (child?.pid) pids.add(child.pid);
+  const cardPid = dir ? readInstallCardPid(dir) : 0;
+  if (cardPid) pids.add(cardPid);
+  if (child) {
     try {
-      execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      child.kill('SIGKILL');
+    } catch {
+      /* 已退出 */
+    }
+  }
+  for (const pid of pids) {
+    try {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
     } catch {
       /* taskkill 不可用 */
     }
@@ -1836,6 +1861,12 @@ function openInstallerWizard(file) {
  * 只要 ready 没出现（PowerShell 被策略拦、进程秒退），这里返回失败且**主进程不退出**，
  * 调用方改走安装向导兜底或把错误显示出来。
  *
+ * **卡片不能由 GUI 主进程直接 spawn**（2026-11-25 用户报「安装进度窗口提前退出（code=0）」根因）：
+ * spawn('powershell.exe', …, { detached: true }) 在本机实测**一行脚本都不执行就 240ms 内以 0 退出**
+ * （ignore/pipe/文件句柄、加不加 windowsHide 都一样），并非「PowerShell 被策略拦住」。
+ * 必须 fork 一个 Node 中转（lib/install-card-launcher.js），由它用 `cmd /c start` 把卡片交接给
+ * 独立进程——这也是卸载/源码更新启动器唯一验证过能存活的形态。
+ *
  * @param {object} opts 传给 installCard.buildScript 的参数
  * @param {() => void} [onReady] ready 之后、放行之前执行（写 config 必须在卡片开始安装前完成）
  * @returns {Promise<{ok: boolean, error?: string, dir?: string, logFile?: string, pid?: number}>}
@@ -1845,8 +1876,10 @@ async function launchInstallCard(opts, onReady) {
   const readyFile = path.join(dir, installCard.CARD_READY_FILE);
   const goFile = path.join(dir, installCard.CARD_GO_FILE);
   const logFile = path.join(dir, 'install.log');
+  const pidFile = path.join(dir, 'card.pid');
   fs.rmSync(readyFile, { force: true });
   fs.rmSync(goFile, { force: true });
+  fs.rmSync(pidFile, { force: true });
   let script;
   try {
     script = installCard.buildScript({
@@ -1856,6 +1889,7 @@ async function launchInstallCard(opts, onReady) {
       readyFile,
       goFile,
       logFile,
+      pidFile,
     });
   } catch (e) {
     return { ok: false, error: describeError(e) };
@@ -1867,10 +1901,15 @@ async function launchInstallCard(opts, onReady) {
     // 没有 BOM 时 Windows PowerShell 5.1 会按 ANSI 读中文，解析直接崩。
     const scriptFile = path.join(dir, 'install-card.ps1');
     fs.writeFileSync(scriptFile, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, 'utf8')]));
-    child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptFile], {
+    const launcherFile = stageInstallCardLauncher(dir);
+    // fork（Electron 的 run-as-node）而不是 spawn powershell：见函数头注释。detached 保证
+    // app.quit 之后中转仍能完成拉起；中转等卡片写出 ready 就退出（此时安装还没开始），
+    // 不会在安装期间占住安装目录。
+    child = fork(launcherFile, ['--script', scriptFile, '--log', logFile, '--pid', pidFile, '--ready', readyFile], {
       detached: true,
       stdio: 'ignore',
     });
+    child.unref();
   } catch (e) {
     return { ok: false, error: describeError(e) };
   }
@@ -1879,11 +1918,18 @@ async function launchInstallCard(opts, onReady) {
       ok ? { ok: true } : { ok: false, error: '安装进度窗口没有及时出现' },
     ),
     new Promise((resolve) => child.once('error', (e) => resolve({ ok: false, error: '无法启动安装进度窗口：' + describeError(e) }))),
-    new Promise((resolve) => child.once('exit', (code) => resolve({ ok: false, error: `安装进度窗口提前退出（code=${code}）` }))),
+    // 中转进程在卡片 ready 后以 0 退出；非零才是它自己失败（脚本缺失、交接 cmd 起不来）。
+    new Promise((resolve) =>
+      child.once('exit', (code) => {
+        if (code) resolve({ ok: false, error: `安装进度窗口启动失败（code=${code}）` });
+      }),
+    ),
   ]);
+  // 失败信息必须带上日志路径：卡片起不来时日志里才有「PowerShell 跑没跑过」的证据，
+  // 否则用户只能看到一个 code=0，无从判断（2026-11-25 报障就是这样）。
   if (!outcome.ok) {
-    killInstallCard(child);
-    return { ...outcome, dir, logFile };
+    killInstallCard(child, dir);
+    return { ...outcome, dir, logFile, error: `${outcome.error}。安装日志：${logFile}` };
   }
   try {
     onReady?.();
@@ -1893,10 +1939,10 @@ async function launchInstallCard(opts, onReady) {
   try {
     fs.writeFileSync(goFile, 'go');
   } catch (e) {
-    killInstallCard(child);
+    killInstallCard(child, dir);
     return { ok: false, error: '无法通知安装窗口开始安装：' + describeError(e), dir, logFile };
   }
-  return { ok: true, dir, logFile, pid: child.pid };
+  return { ok: true, dir, logFile, pid: readInstallCardPid(dir) || child.pid };
 }
 
 /** 静默安装 + 自动重启：安装监督卡负责「等应用退出 → /S 安装 → 拉起新版」整条链。
@@ -2008,7 +2054,12 @@ async function beginScopeMigration(file, version) {
   );
   if (!card.ok) {
     clearScopeMigration();
-    return { ok: false, error: card.error || '安装进度窗口没有启动，切换已取消' };
+    // 卡片起不来时给一条能走通的手动路径：切换必须先卸掉所有用户安装，直接跑安装包会被
+    // NSIS 的「已有所有用户安装」分支装回 Program Files，白跑一趟。
+    const manual =
+      `如仍无法自动切换，可手动完成：在 Windows「设置 → 应用 → 已安装的应用」卸载 Engram（不要勾选删除数据），` +
+      `再运行安装包「${path.basename(file)}」（会自动装到当前用户目录，知识库数据不受影响）。`;
+    return { ok: false, error: `${card.error || '安装进度窗口没有启动'}。${manual}` };
   }
   log(`scope migration: card ready, old=${scope.installDir}, log=${card.logFile}`);
   setTimeout(() => app.quit(), 400);
