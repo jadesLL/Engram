@@ -57,6 +57,8 @@ const installCard = require('./lib/install-card');
 const installScope = require('./lib/install-scope');
 // 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
 const uninstallGuard = require('./scripts/lib/uninstall-guard');
+// 应用内卸载的目标解析：源码安装根 / 安装包自带卸载器 / 无（单测见 desktop/scripts/tests/uninstall-mode.test.js）
+const uninstallMode = require('./lib/uninstall-mode');
 // 整棵进程树的收尾（Windows taskkill /T + tasklist 轮询），单测见 scripts/tests/process-tree.test.js。
 // 只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，它们占着安装目录里的文件，
 // 覆盖安装时旧版卸载器改名失败 → 用户看到 "Failed to uninstall old application files...: 2"。
@@ -3077,9 +3079,12 @@ async function runSourceUpdate() {
   return { ok: true, restarting: true };
 }
 
-// ---------- 源码模式卸载：设置页「卸载」→ uninstall-engram.ps1 → 应用退出 ----------
-// 仅源码安装形态可用：进程可执行文件位于源码版安装根（%LOCALAPPDATA%\engram）下；
-// ENGRAM_INSTALL_DIR 供隔离测试/自定义安装位置显式指定。安装包形态走 NSIS 卸载器，不显示该功能。
+// ---------- 应用内卸载：设置页「卸载 Engram」→ 卸载器 → 应用退出 ----------
+// 两种安装形态共用这一个入口，只是卸载器不同（见 lib/uninstall-mode.js）：
+//   源码模式（进程可执行文件位于 %LOCALAPPDATA%\engram 下）→ 随源码带的 uninstall-engram.ps1；
+//   安装包形态（NSIS）→ 安装目录里的「Uninstall Engram.exe」（与系统「已安装的应用」同一个）。
+// ENGRAM_INSTALL_DIR 供隔离测试/自定义安装位置显式指定。
+// 2026-11-26 用户报「卸载消失了」：旧实现只认源码安装根，安装版用户整组看不到入口。
 function sourceInstallRoot() {
   if (process.env.ENGRAM_INSTALL_DIR) return process.env.ENGRAM_INSTALL_DIR;
   const local = process.env.LOCALAPPDATA || '';
@@ -3087,6 +3092,18 @@ function sourceInstallRoot() {
   const root = path.join(local, 'engram');
   const prefix = root.toLowerCase() + path.sep;
   return process.execPath.toLowerCase().startsWith(prefix) ? root : '';
+}
+
+/**
+ * 本次运行的卸载目标：源码安装根 / 安装包卸载器 / 无（便携版、win-unpacked 开发目录）。
+ * 只按「exe 落在哪」判定，不看 PACKAGED——品牌启动器 Engram.exe 改名不影响这里的路径判定，
+ * 而 asar 判定（PACKAGED）要求 resources\app.asar 存在，两者指向同一个安装目录。
+ */
+function uninstallTarget() {
+  return uninstallMode.resolveTarget({
+    sourceRoot: sourceInstallRoot(),
+    installDir: path.dirname(app.getPath('exe')),
+  });
 }
 
 // 交接等待上限：launcher 起来、校验脚本、拉起 PowerShell 正常在 1 秒内完成；8 秒还没见到
@@ -3130,11 +3147,161 @@ async function waitUninstallStarted(statusFile) {
   return { ok: false, error: '卸载进程 ' + Math.round(UNINSTALL_START_TIMEOUT_MS / 1000) + ' 秒内没有启动，详见日志：' + uninstallLogFile() };
 }
 
-ipcMain.handle('desktop-source-uninstall-state', () => ({ available: Boolean(sourceInstallRoot()) }));
+ipcMain.handle('desktop-source-uninstall-state', () => {
+  const target = uninstallTarget();
+  return {
+    available: target.mode !== 'none',
+    // 'source' = 源码安装根（uninstall-engram.ps1）；'packaged' = 安装包自带卸载器
+    mode: target.mode,
+  };
+});
+
+/**
+ * 安装包形态的卸载随身脚本：等主进程退出 → 跑安装目录里的 NSIS 卸载器 → 写结果。
+ *
+ * 为什么不在主进程里直接 spawn 卸载器：GUI 进程直接 spawn 会空句柄静默秒退（源码模式卸载与
+ * 安装卡片都踩过同一个坑，见 uninstall-launcher.js / install-card-launcher.js 的头注释）。
+ * 这里复用安装卡片验证过的形态：主进程 fork 中转（scripts/lib 里的启动器）→ `cmd /c start`
+ * 交出 PowerShell → 本脚本常驻。ready 文件证明脚本真的跑起来了，主进程才退出——否则就是
+ * 2026-11-06 那个「退出了但什么都没卸」。
+ */
+function packagedUninstallScript(opts) {
+  const q = (value) => "'" + String(value).replace(/'/g, "''") + "'";
+  const { appPid, uninstaller, statusFile, readyFile, logFile, deleteData } = opts;
+  return [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    `$appPid = ${Number(appPid) || 0}`,
+    `$uninstaller = ${q(uninstaller)}`,
+    `$statusFile = ${q(statusFile)}`,
+    `$readyFile = ${q(readyFile)}`,
+    `$logFile = ${q(logFile)}`,
+    `$deleteData = ${deleteData ? '$true' : '$false'}`,
+    'function Write-Status($obj) {',
+    '  try { $obj | ConvertTo-Json -Compress | Set-Content -LiteralPath $statusFile -Encoding UTF8 } catch {}',
+    '}',
+    'function Write-Log([string]$line) {',
+    '  try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " " + $line) -Encoding UTF8 } catch {}',
+    '}',
+    // ready：脚本确实执行到了（不是 start 交接失败、也不是被策略拦下）
+    'try { Set-Content -LiteralPath $readyFile -Value ([string]$PID) -Encoding ASCII } catch {}',
+    'Write-Log ("uninstall script start (pid " + $PID + ")")',
+    // 等应用退出：主进程在此之前已停掉内嵌 server，但进程本身要等这里放行后才退。
+    // 卸载器自带的 CHECK_APP_RUNNING 会去弹「Engram 正在运行」，不能让用户看到那一步。
+    '$deadline = (Get-Date).AddSeconds(60)',
+    'while ((Get-Date) -lt $deadline) {',
+    '  if ($appPid -le 0) { break }',
+    '  if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) { break }',
+    '  Start-Sleep -Milliseconds 200',
+    '}',
+    'if (-not (Test-Path -LiteralPath $uninstaller)) {',
+    '  Write-Log ("missing uninstaller: " + $uninstaller)',
+    '  Write-Status @{ phase = "error"; error = "找不到安装版卸载程序：$uninstaller" }',
+    '  exit 3',
+    '}',
+    '$argList = @()',
+    'if ($deleteData) { $argList += "--delete-app-data" }',
+    'try {',
+    // 有参数才传 -ArgumentList：Start-Process 在 -ArgumentList @() 时会抛
+    // 「参数为 Null、为空」的参数验证错误（2026-11-26 真机实测，不删数据这条默认路径直接起不来）
+    '  if ($argList.Count -gt 0) {',
+    '    $proc = Start-Process -FilePath $uninstaller -ArgumentList $argList -PassThru',
+    '  } else {',
+    '    $proc = Start-Process -FilePath $uninstaller -PassThru',
+    '  }',
+    '} catch {',
+    '  Write-Log ("start failed: " + $_.Exception.Message)',
+    '  Write-Status @{ phase = "error"; error = ("无法启动卸载程序：" + $_.Exception.Message) }',
+    '  exit 4',
+    '}',
+    'Write-Log ("uninstaller started pid=" + $proc.Id)',
+    'Write-Status @{ phase = "running"; pid = $proc.Id }',
+    '$proc.WaitForExit()',
+    'Write-Log ("uninstaller exit " + $proc.ExitCode)',
+    'Write-Status @{ phase = "done"; code = $proc.ExitCode }',
+    'exit $proc.ExitCode',
+  ].join('\r\n');
+}
+
+/**
+ * 安装包形态卸载：停内嵌服务 → 交给随身脚本等应用退出 → 跑 NSIS 卸载器（非静默，用户能看到进度）。
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+async function beginPackagedUninstall(target, deleteData) {
+  const dir = path.join(app.getPath('temp'), `engram-uninstall-${process.pid}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const readyFile = path.join(dir, 'ready.txt');
+  const statusFile = uninstallGuard.statusPath(app.getPath('temp'));
+  const logFile = uninstallLogFile();
+  fs.rmSync(readyFile, { force: true });
+  uninstallGuard.writeStatus(statusFile, { phase: 'launching' });
+  const scriptFile = path.join(dir, 'uninstall-packaged.ps1');
+  // 没有 BOM 时 Windows PowerShell 5.1 会按 ANSI 读中文，解析直接崩（安装卡片同一坑）
+  fs.writeFileSync(
+    scriptFile,
+    Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(
+        packagedUninstallScript({
+          appPid: process.pid,
+          uninstaller: target.uninstaller,
+          statusFile,
+          readyFile,
+          logFile,
+          deleteData,
+        }),
+        'utf8',
+      ),
+    ]),
+  );
+  // 停掉内嵌服务整棵进程树（server + 内置 Agent 的 node.exe 孙进程），否则 NSIS 卸载器
+  // 删目录时这些文件仍被占用，用户会看到「Failed to uninstall ... : 2」
+  const treeFreed = await stopLocalTree();
+  if (!treeFreed) log('[uninstall] 进程树未完全退出，继续卸载（卸载器会重试删目录）');
+  let child;
+  try {
+    const launcherFile = stageInstallCardLauncher(dir);
+    child = fork(launcherFile, ['--script', scriptFile, '--log', logFile, '--ready', readyFile], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch (e) {
+    return { ok: false, error: '无法启动卸载程序：' + describeError(e) };
+  }
+  const ready = await waitForPath(readyFile, INSTALL_CARD_READY_TIMEOUT_MS);
+  if (!ready) {
+    const s = uninstallGuard.readStatus(statusFile);
+    if (child?.pid) {
+      try {
+        execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      } catch {
+        /* taskkill 不可用 */
+      }
+    }
+    const reason = s?.error || '卸载程序没有及时启动';
+    log('[uninstall] ' + reason + '（日志：' + logFile + '）');
+    return { ok: false, error: reason + '。卸载日志：' + logFile };
+  }
+  return { ok: true };
+}
 
 ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
-  const root = sourceInstallRoot();
-  if (!root) return { ok: false, error: '未识别出源码版安装目录；安装包形态请在系统「添加或删除程序」中卸载' };
+  const target = uninstallTarget();
+  if (target.mode === 'none') {
+    return {
+      ok: false,
+      error: '未找到可用的卸载程序（便携版与开发目录不提供应用内卸载）',
+    };
+  }
+  if (target.mode === 'packaged') {
+    log('[uninstall] 安装包形态：交给安装版卸载器 ' + target.uninstaller);
+    const r = await beginPackagedUninstall(target, Boolean(deleteData));
+    if (!r.ok) return r;
+    log('[uninstall] 卸载程序已拉起，应用退出；进度日志：' + uninstallLogFile());
+    app.exit(0);
+    return { ok: true };
+  }
+  const root = target.installDir;
   const script = path.join(root, 'Engram', 'main', 'scripts', 'uninstall-engram.ps1');
   if (!fs.existsSync(script)) return { ok: false, error: '未找到卸载脚本：' + script };
   // 先写卸载标记：期间用户再点图标会被启动守卫挡下，避免新实例锁住正在被删的安装目录。
