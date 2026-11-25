@@ -4,7 +4,7 @@
 // 换上新引擎后安装器仍跑旧克隆脚本，继续报同一条 Unknown command: "file"。
 // 改为按引擎版本取高者；版本相同仍优先克隆，保留「引擎随 git pull 热更新、不必重打 exe」的好处。
 //
-// 版本标记写在部署脚本头部注释： # ENGINE_VERSION: 2（没有标记的旧引擎按 1 处理）。
+// 版本标记写在部署脚本头部注释： # ENGINE_VERSION: 3（没有标记的旧引擎按 1 处理）。
 const fs = require('node:fs');
 
 const ENGINE_VERSION_RE = /^\s*#\s*ENGINE_VERSION:\s*(\d+)\s*$/m;

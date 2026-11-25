@@ -192,6 +192,9 @@ function startInstall({ user, pass, repoUrl } = {}) {
   // 故按脚本里有没有该参数决定用预构建模式还是退回源码模式
   if (bundle && engineText.includes('BundleZip')) {
     args.push('-BundleZip', bundle);
+    // 正式安装器必须「有包才装」：引擎带 -RequireBundle 时，找不到内置包会直接失败，
+    // 而不是悄悄退回「git clone + pnpm install + 本机构建」。旧引擎没有这个开关，不传。
+    if (engineText.includes('$RequireBundle')) args.push('-RequireBundle');
   } else if (repoUrl) {
     args.push('-RepoUrl', repoUrl);
   }
