@@ -28,7 +28,7 @@
 ### 内部
 
 - [平台影响: none] 安装引擎 `install-engram.ps1` 升到 ENGINE_VERSION 3：新增 `-RequireBundle`（正式安装器没有内置环境包时直接失败，绝不退回 git clone + 装依赖 + 本机构建）、新增包完整性门禁（源码/构建产物/Electron 运行时/服务端依赖/便携 Node/依赖记录缺一即在解压前拒绝）、预构建安装离线落位便携 Node 与可选离线资源（只补缺失文件、不覆盖用户已有内容）。
-- [平台影响: none] 新增 `scripts/build-customer-installer.ps1`：打环境包 → 打 portable exe → 解包自检 exe 内确实带包且 sha256 / 版本 / 提交与本次源码一致；`pack-prebuilt-bundle.ps1` 补随包 Node、better-sqlite3 ABI 校验、包清单版本字段与 `zip.json` 回执；安装器界面显示内置包版本与提交、新增 `electron-builder.customer.json`（客户安装器不再带源码模式专用的 Node/pnpm 运行时）；新增 `installer-offline-contract.test.js` 并接入 `pnpm test`。
+- [平台影响: none] 新增 `scripts/build-customer-installer.ps1`：打环境包 → 打 portable exe → 解包自检 exe 内确实带包且 sha256 / 版本 / 提交与本次源码一致；`pack-prebuilt-bundle.ps1` 补随包 Node、better-sqlite3 ABI 校验、包清单版本字段与 `zip.json` 回执；安装器界面显示内置包版本与提交；安装器 exe 改为在仓库外的独立 staging 目录打包（pnpm workspace 的符号链接会让 electron-builder 26 读不出依赖树，报 No JSON content found in output），且不再带源码模式专用的 Node/pnpm 运行时；发布前发现并修掉包清单 BOM 导致「提交 / 构建时间」显示成「—」的问题（PowerShell 5.1 的 Set-Content -Encoding UTF8 默认加 BOM，JSON.parse 直接抛）；新增 `installer-offline-contract.test.js` 并接入 `pnpm test`。
 
 ## v1.5.21（2026-11-25）
 

@@ -19,8 +19,10 @@
 # 「装完就能跑」的全部运行物：已构建产物 + Electron 运行时 + desktop/server 运行时依赖 +
 # 便携 Node（内置 Agent 与外部 CLI 都靠它）。缺任何一块，安装命令会在解压前就失败
 # （install-engram.ps1 的 Get-BundleMissingParts）。
-# 可选离线资源（语音模型 / Python 共享运行时）从 -OfflineDataDir 复制：本机已有的才带，不带就
-# 只是「首次使用时按界面提示下载」，不影响安装与启动。
+# 可选离线资源（语音模型约 240MB / Python 共享运行时约 21MB）默认**不**打进包：它们只决定
+# 「离线语音、办公本首次使用是否需要点一次下载」，却会让安装包体积翻倍、NSIS 压缩时间翻几倍
+# （2026-11-26 实测：带上后 590MB 包压成 exe 要 10 分钟以上）。确实要「装完什么都不用点」时加
+# -IncludeOfflineAssets，从 -OfflineDataDir（默认本机数据目录）复制本机已有资源。
 param(
   [string]$RuntimeSource = (Join-Path $env:LOCALAPPDATA 'engram\Engram\main'),
   [string]$OfflineDataDir = (Join-Path $env:APPDATA '@engram\desktop\data'),
@@ -28,6 +30,7 @@ param(
   [string]$Out = '',
   [string]$WorkDir = '',
   [switch]$SkipBuild,
+  [switch]$IncludeOfflineAssets,
   [switch]$SkipOfflineAssets,
   [switch]$KeepWork
 )
@@ -49,6 +52,10 @@ function Assert-Path([string]$p, [string]$what) {
 function Assert-Robocopy([int]$code, [string]$what) {
   if ($code -ge 8) { Die "$what 失败（robocopy 退出码 $code）" }
 }
+# Windows 自带 bsdtar 的绝对路径。不能裸调 'tar.exe'：从 Git Bash / 装了 Git 的环境里启动
+# PowerShell 时 PATH 上有 msys 版 GNU tar，它把 'C:\...' 当远程主机（"Cannot connect to C"）。
+$tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path -LiteralPath $tarExe)) { $tarExe = 'tar.exe' }
 
 Say '校验运行时来源（已跑通的源码模式安装目录）'
 Assert-Path (Join-Path $RuntimeSource 'node_modules') '工作区依赖'
@@ -91,7 +98,7 @@ $tarFile = Join-Path $WorkDir 'src.tar'
 if ($LASTEXITCODE -ne 0) { Die 'git archive 失败' }
 # docs/screenshots 里几张中文名的 PNG 会让 Windows 自带 bsdtar 报 "Invalid empty pathname" 并把
 # 退出码打成非零；那个目录运行期用不到，整目录跳过，随后按关键文件存在性判定成败
-& tar.exe -xf $tarFile -C $src --exclude 'main/docs/screenshots/*'
+& $tarExe -xf $tarFile -C $src --exclude 'main/docs/screenshots/*'
 $tarCode = $LASTEXITCODE
 Remove-Item -LiteralPath $tarFile -Force
 Assert-Path (Join-Path $srcMain 'package.json') '解出的 main/package.json'
@@ -157,7 +164,7 @@ Assert-Path (Join-Path $srvDst 'better-sqlite3\package.json') '包内 better-sql
 
 # 原生模块的 ABI 必须与包内 Electron 一致：不一致的包装到客户机上就是「本地服务启动失败」
 # （v1.3.0 事故）。打包阶段直接挡下，比等客户报障再查便宜得多。
-$electronVer = (Get-Content -LiteralPath (Join-Path $elDst 'package.json') -Raw | ConvertFrom-Json).version
+$electronVer = (Get-Content -LiteralPath (Join-Path $elDst 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 & node (Join-Path $srcMain 'desktop\scripts\verify-packaged-abi.js') `
   --binding (Join-Path $srvDst 'better-sqlite3\build\Release\better_sqlite3.node') `
   --electron-version $electronVer
@@ -172,7 +179,7 @@ if ($nodeDstCheck -ne $nodeVer) { Die "包内 node.exe 版本不符：期望 v$n
 
 # 可选离线资源：只带「装完立刻能用」的运行物，且只带模型/运行时本体——
 # 绝不带 dsh 下的 .credentials.yaml、会话、workspace 等用户数据（那是客户自己的，不是安装包内容）。
-if (-not $SkipOfflineAssets -and (Test-Path -LiteralPath $OfflineDataDir)) {
+if ($IncludeOfflineAssets -and -not $SkipOfflineAssets -and (Test-Path -LiteralPath $OfflineDataDir)) {
   $offlineDst = Join-Path $bundle 'offline'
   $offlineAssets = @(
     @{ src = 'dsh\speech-to-text\sensevoice\models'; dst = 'dsh\speech-to-text\sensevoice\models'; what = '语音识别模型（SenseVoice）' },
@@ -219,8 +226,8 @@ console.log('[pack] 依赖记录已写入');
 & node $recJs $bundleMain
 if ($LASTEXITCODE -ne 0) { Die '写入依赖记录失败' }
 
-$electronVer = (Get-Content -LiteralPath (Join-Path $elDst 'package.json') -Raw | ConvertFrom-Json).version
-$appVersion = (Get-Content -LiteralPath (Join-Path $bundleMain 'desktop\package.json') -Raw | ConvertFrom-Json).version
+$electronVer = (Get-Content -LiteralPath (Join-Path $elDst 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+$appVersion = (Get-Content -LiteralPath (Join-Path $bundleMain 'desktop\package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 if (-not $appVersion) { Die '读不到 desktop/package.json 的版本号（包清单必须带版本，安装器据此说明装的是哪一版）' }
 $offline = Join-Path $bundle 'offline'
 $offlineIncluded = (Test-Path -LiteralPath $offline) -and @(Get-ChildItem -LiteralPath $offline -Recurse -File -Force).Count -gt 0
@@ -235,7 +242,8 @@ $manifest = [ordered]@{
   offline    = $offlineIncluded
   packer     = 'scripts/pack-prebuilt-bundle.ps1'
 }
-($manifest | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $bundleMain '.engram-prebuilt.json') -Encoding UTF8
+[System.IO.File]::WriteAllText((Join-Path $bundleMain '.engram-prebuilt.json'), ($manifest | ConvertTo-Json -Depth 4),
+  (New-Object System.Text.UTF8Encoding($false)))
 
 # 5) 打包：bsdtar（Windows 10 自带）写 zip，比 Compress-Archive 快一个数量级
 Say '压缩为 zip'
@@ -243,7 +251,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Out) | Out-Null
 if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Force }
 $tarArgs = @('-a', '-cf', $Out, '-C', $bundle, 'main')
 if ($offlineIncluded) { $tarArgs += 'offline' }
-& tar.exe @tarArgs
+& $tarExe @tarArgs
 if ($LASTEXITCODE -ne 0) { Die '压缩失败（tar -a -cf）' }
 
 $zip = Get-Item -LiteralPath $Out
@@ -271,7 +279,8 @@ $receipt = [ordered]@{
   offline    = $offlineIncluded
   fileCount  = $fileCount
 }
-($receipt | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath ($Out + '.json') -Encoding UTF8
+[System.IO.File]::WriteAllText(($Out + '.json'), ($receipt | ConvertTo-Json -Depth 4),
+  (New-Object System.Text.UTF8Encoding($false)))
 
 if (-not $KeepWork) {
   Say '清理临时工作目录'

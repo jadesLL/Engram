@@ -384,6 +384,13 @@ function Restore-OldRepo([string]$repoDir, [string]$oldRepo) {
   Move-Item -LiteralPath $oldRepo -Destination $repoDir -ErrorAction SilentlyContinue
 }
 
+# 写 UTF-8（无 BOM）JSON：PS 5.1 的 Set-Content -Encoding UTF8 默认带 BOM，而读取方是 JSON.parse
+# （desktop 主进程读 .engram-prebuilt.json、安装器读 zip.json 回执），带 BOM 会直接解析失败
+# （2026-11-26 实测：全新安装里「提交」「构建时间」显示成「—」就是这个原因）。
+function Write-Utf8NoBom([string]$path, [string]$text) {
+  [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 # 数据目录（知识库 / 设置 / 下载的运行时）：与安装包版共用，默认 %APPDATA%\@engram\desktop。
 # 设置页可以把知识库改到别的盘（config.json 的 dataDir），离线资源（语音模型 / Python 运行时）
 # 跟着知识库走，所以这里按同一份 config.json 解析，避免把 240MB 模型塞进错误的目录。
@@ -440,7 +447,11 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
   if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue }
   New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
   StepLog '解压中（约 1GB，视磁盘速度需要一两分钟）'
-  $code = Invoke-Logged 'tar.exe' @('-xf', $zipPath, '-C', $stageRoot)
+  # 用 Windows 自带 bsdtar 的绝对路径：装了 Git for Windows 的机器上 PATH 里还有 msys 版 GNU tar，
+  # 它把 'C:\...' 当远程主机（"Cannot connect to C: resolve failed"），裸调 'tar.exe' 会解不出来。
+  $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+  if (-not (Test-Path -LiteralPath $tarExe)) { $tarExe = 'tar.exe' }
+  $code = Invoke-Logged $tarExe @('-xf', $zipPath, '-C', $stageRoot)
   if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $stageRoot 'main'))) {
     StepLog '（tar.exe 解压不可用，改用 Expand-Archive）'
     Expand-Archive -LiteralPath $zipPath -DestinationPath $stageRoot -Force
@@ -526,7 +537,7 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
       foreach ($prop in $bundleManifest.PSObject.Properties) { $obj[$prop.Name] = $prop.Value }
     }
     $obj['mode'] = 'prebuilt'
-    ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $manifest -Encoding UTF8
+    Write-Utf8NoBom $manifest ($obj | ConvertTo-Json -Depth 4)
   } catch {
     StepLog "（安装标记写入失败，忽略：$($_.Exception.Message)）"
   }

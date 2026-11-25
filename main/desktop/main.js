@@ -2561,6 +2561,8 @@ async function gitIdentity() {
       commitDate: (prebuilt.builtAt || '').slice(0, 10),
       dirty: false,
       prebuilt: true,
+      // 包清单里的版本号：安装后应用版本行与包一致的可读证据（见 .engram-prebuilt.json）
+      ...(prebuilt.version ? { prebuiltVersion: prebuilt.version } : {}),
     };
     log(
       '[identity] 预构建安装（' +

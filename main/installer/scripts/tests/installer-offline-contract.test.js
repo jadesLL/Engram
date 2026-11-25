@@ -55,8 +55,15 @@ for (const required of [
 }
 check(
   '缺件在解压覆盖之前就失败（先查后解压）',
-  ps1.indexOf('Get-BundleMissingParts $zipPath') < ps1.indexOf("Invoke-Logged 'tar.exe' @('-xf'"),
+  ps1.indexOf('Get-BundleMissingParts $zipPath') < ps1.indexOf("Invoke-Logged $tarExe @('-xf'"),
 );
+// Windows 自带 bsdtar 必须走绝对路径：装了 Git for Windows 时 PATH 上的 msys GNU tar 会把
+// 'C:\...' 当远程主机（"Cannot connect to C: resolve failed"），2026-11-26 打包实测踩到。
+check(
+  '解压用 System32 的 bsdtar 绝对路径（避开 Git 的 GNU tar）',
+  ps1.includes("'System32\\tar.exe'"),
+);
+check('打包器同样用 System32 的 bsdtar', pack.includes("'System32\\tar.exe'"));
 
 // ---------- 3) 离线落位：便携 Node + 可选资源 ----------
 check('预构建安装从包内安装便携 Node', ps1.includes("$bundleNode = Join-Path $mainDir 'node\\node.exe'"));
@@ -75,24 +82,57 @@ check('打包器校验 Node 版本 >= 20', pack.includes("-lt 20"));
 check('打包器校验 better-sqlite3 ABI 与 Electron 一致', pack.includes('verify-packaged-abi.js') && pack.includes('--electron-version'));
 check('包清单写版本号', pack.includes('version    = $appVersion'));
 check('打包器写回执（versions/sha256/offline）', pack.includes("($Out + '.json')"));
-check('离线资源只带模型/运行时本体（不带用户凭据与数据）', pack.includes("src = 'dsh\\speech-to-text\\sensevoice\\models'") && !pack.includes("src = 'dsh';"));
+check(
+  '离线资源只带模型/运行时本体（不带用户凭据与数据）',
+  pack.includes("src = 'dsh\\speech-to-text\\sensevoice\\models'") &&
+    pack.includes("src = 'runtime\\python'") &&
+    !pack.includes("src = 'dsh';"),
+);
+// 可选资源默认不打包：它只影响「首次使用要不要点一次下载」，却让安装包体积接近翻倍、
+// NSIS 压缩时间翻几倍（2026-11-26 实测 590MB 包压成 exe 要 10 分钟以上）。
+check(
+  '可选离线资源默认不打进包（需显式 -IncludeOfflineAssets）',
+  pack.includes('$IncludeOfflineAssets -and -not $SkipOfflineAssets') &&
+    build.includes("if ($IncludeOfflineAssets) { $packArgs += '-IncludeOfflineAssets' }"),
+);
 
 check('一键构建脚本存在并调打包器', build.includes('pack-prebuilt-bundle.ps1'));
-check('构建脚本用客户专用 electron-builder 配置', build.includes('electron-builder.customer.json'));
 check('构建脚本自检 exe 内确实带包', build.includes("resources\\prebuilt") && build.includes('没有内置环境包'));
 check('构建脚本自检引擎带 -RequireBundle', build.includes('$RequireBundle'));
 check('构建脚本校验包版本/提交与源码一致', build.includes('与源码版本') && build.includes('与源码提交'));
+// 不能在 workspace 成员目录直接打：installer/node_modules 全是 pnpm 符号链接，electron-builder 26
+// 的 npm 依赖收集器读不了（"No JSON content found in output"）。与公开安装器发布脚本同一条路：
+// 复制到仓库外临时目录 + 生成无 BOM 的 package.json 再打包。
+check(
+  '构建在仓库外 staging 打包（workspace 符号链接会让 electron-builder 读不了依赖树）',
+  build.includes('engram-installer-build-') && build.includes("Join-Path $stage 'package.json'"),
+);
+check(
+  'staging 配置带内置包与部署引擎',
+  build.includes("from = 'install-engram.ps1'") && build.includes("from = 'resources/prebuilt'"),
+);
+check('staging 配置不带 runtime（源码模式才需要）', !build.includes("to = 'runtime'"));
+check('staging 配置显式传 electronVersion（外部 config 不继承 build 段）', build.includes('electronVersion = $electronVersion'));
+check('staging 配置打 portable exe', build.includes("target = @(@{ target = 'portable'"));
+check('staging package.json 声明 packageManager（否则 electron-builder 回退 npm ENOENT）', build.includes("packageManager  = 'pnpm@10.20.0'"));
+check(
+  'staging package.json 写无 BOM UTF-8（@electron/rebuild 用 JSON.parse）',
+  build.includes('New-Object System.Text.UTF8Encoding($false)'),
+);
+check('安装器产物回收到 installer/dist', build.includes('Copy-Item -LiteralPath $exePath -Destination $installedExe'));
 
-const customerConfigPath = path.join(installerDir, 'electron-builder.customer.json');
-check('客户配置存在', fs.existsSync(customerConfigPath));
-if (fs.existsSync(customerConfigPath)) {
-  const cfg = JSON.parse(fs.readFileSync(customerConfigPath, 'utf8'));
-  const froms = (cfg.extraResources || []).map((e) => String(e.from).replace(/\\/g, '/'));
-  check('客户配置带 prebuilt', froms.includes('resources/prebuilt'));
-  check('客户配置带部署引擎', froms.includes('../scripts/install-engram.ps1'));
-  check('客户配置不带 runtime（源码模式才需要）', !froms.includes('resources/runtime'));
-  check('客户配置打 portable exe', JSON.stringify(cfg.win.target).includes('portable'));
-}
+// 包清单与回执必须写成无 BOM UTF-8：读取方是 JSON.parse（desktop 主进程 / bundleInfo / 发布脚本），
+// PowerShell 5.1 的 Set-Content -Encoding UTF8 会加 BOM，带 BOM 会解析失败（2026-11-26 实测：
+// 全新安装里「提交」「构建时间」显示成「—」）。
+check(
+  '包清单无 BOM 写出（pack）',
+  pack.includes("UTF8Encoding($false)") || pack.includes('Write-Utf8NoBom'),
+);
+check('安装标记无 BOM 写出（引擎）', ps1.includes('function Write-Utf8NoBom') && ps1.includes('Write-Utf8NoBom $manifest'));
+check(
+  '安装标记不再用带 BOM 的 Set-Content',
+  !/Set-Content -LiteralPath \$manifest/.test(ps1),
+);
 
 // ---------- 5) GUI：强制要求内置包 ----------
 check('GUI 在引擎支持时传 -RequireBundle', gui.includes("args.push('-RequireBundle')"));

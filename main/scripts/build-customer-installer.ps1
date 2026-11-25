@@ -23,6 +23,9 @@ param(
   [string]$OutDir = '',
   [string]$RepoUrl = '',
   [string]$OfflineDataDir = (Join-Path $env:APPDATA '@engram\desktop\data'),
+  # 可选离线资源（语音模型 + Python 运行时）默认不带：会让安装包从约 500MB 涨到 850MB，
+  # 压缩时间翻几倍。要「装完连语音/办公本都不用点下载」时加这个开关。
+  [switch]$IncludeOfflineAssets,
   [switch]$SkipOfflineAssets,
   [switch]$KeepWork
 )
@@ -93,6 +96,7 @@ $packArgs = @(
   '-Out', $bundleZip,
   '-OfflineDataDir', $OfflineDataDir
 )
+if ($IncludeOfflineAssets) { $packArgs += '-IncludeOfflineAssets' }
 if ($SkipOfflineAssets) { $packArgs += '-SkipOfflineAssets' }
 if ($KeepWork) { $packArgs += '-KeepWork' }
 & powershell.exe @packArgs
@@ -110,14 +114,71 @@ if (-not $env:ELECTRON_BUILDER_CACHE) {
 }
 # 客户安装器用专用配置：不带 resources/runtime（源码模式才需要 Node zip + pnpm），
 # 只带内置环境包与部署引擎。环境包已含 node.exe 与全部运行时依赖。
-Push-Location $installerDir
+# electronVersion / electronDist 必须显式传：--config 指定外部文件后不再继承 installer/package.json
+# 的 build 段，缺了 electron-builder 会报 "Cannot compute electron version from installed node modules"。
+$electronVersion = (Get-Content -LiteralPath (Join-Path $mainDir 'desktop\node_modules\electron\package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+
+# 不能在仓库里的 installer/ 直接打：它是 pnpm workspace 成员，node_modules 全是符号链接，
+# electron-builder 26 的 npm 依赖收集器解析不了那种结构（"No JSON content found in output"）。
+# 与公开安装器发布脚本同一条路：把安装器源码 + 内置包复制到仓库外的独立目录再打包。
+$stage = Join-Path $env:TEMP ('engram-installer-build-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $stage | Out-Null
+Say "安装器 staging：$stage"
+foreach ($item in @('main.js', 'preload.js', 'ui.html', 'brand')) {
+  Copy-Item -LiteralPath (Join-Path $installerDir $item) -Destination $stage -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $stage 'scripts\lib') | Out-Null
+Copy-Item -LiteralPath (Join-Path $installerDir 'scripts\lib\*.js') -Destination (Join-Path $stage 'scripts\lib') -Force
+# 部署引擎与内置包：extraResources 的相对路径按 staging 目录重写
+New-Item -ItemType Directory -Force -Path (Join-Path $stage 'resources\prebuilt') | Out-Null
+Copy-Item -LiteralPath (Join-Path $mainDir 'scripts\install-engram.ps1') -Destination (Join-Path $stage 'install-engram.ps1') -Force
+Copy-Item -LiteralPath $bundleZip -Destination (Join-Path $stage 'resources\prebuilt') -Force
+Copy-Item -LiteralPath ($bundleZip + '.json') -Destination (Join-Path $stage 'resources\prebuilt') -Force
+New-Item -ItemType Directory -Force -Path (Join-Path $stage 'node_modules') | Out-Null
+
+$stageConfig = [ordered]@{
+  appId           = 'com.engram.installer'
+  productName     = 'Engram Source Setup'
+  electronVersion = $electronVersion
+  electronDist    = (Join-Path $mainDir 'desktop\node_modules\electron\dist').Replace('\', '/')
+  asar            = $false
+  directories     = @{ output = 'dist' }
+  files           = @('main.js', 'preload.js', 'ui.html', 'brand/*.svg', 'scripts/lib/**/*.js')
+  extraResources  = @(
+    @{ from = 'install-engram.ps1'; to = 'install-engram.ps1' },
+    @{ from = 'resources/prebuilt'; to = 'prebuilt' }
+  )
+  win             = @{
+    target = @(@{ target = 'portable'; arch = @('x64') })
+    icon   = (Join-Path $mainDir 'desktop\build\icon.png').Replace('\', '/')
+  }
+  portable        = @{ artifactName = 'Engram-source-setup.exe' }
+}
+$stagePackage = [ordered]@{
+  name            = '@engram/installer-customer'
+  version         = $appVersion
+  private         = $true
+  description     = 'Engram customer installer (bundled offline environment)'
+  main            = 'main.js'
+  # electron-builder 26 默认用 npm 枚举依赖树；本机只有 pnpm，不声明会报 spawn npm ENOENT
+  packageManager  = 'pnpm@10.20.0'
+  dependencies    = @{}
+  devDependencies = @{}
+}
+# 必须写「无 BOM」的 UTF-8：@electron/rebuild 用 JSON.parse 读它，带 BOM 会直接报 Unexpected token
+[System.IO.File]::WriteAllText((Join-Path $stage 'package.json'), ($stagePackage | ConvertTo-Json -Depth 6),
+  (New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllText((Join-Path $stage 'electron-builder.json'), ($stageConfig | ConvertTo-Json -Depth 8),
+  (New-Object System.Text.UTF8Encoding($false)))
+
+Push-Location $stage
 try {
-  & node $builderCli --win portable --config (Join-Path $installerDir 'electron-builder.customer.json') `
-    "--config.electronDist=$((Join-Path $mainDir 'desktop\node_modules\electron\dist').Replace('\', '/'))"
+  & node $builderCli --win portable --config (Join-Path $stage 'electron-builder.json')
   if ($LASTEXITCODE -ne 0) { Die "electron-builder 失败（退出码 $LASTEXITCODE）" }
 } finally { Pop-Location }
 
-$exePath = Join-Path $installerDir 'dist\Engram-source-setup.exe'
+$exePath = Join-Path $stage 'dist\Engram-source-setup.exe'
 Assert-Path $exePath '安装器 exe'
 $exe = Get-Item -LiteralPath $exePath
 $exeSha = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
@@ -153,6 +214,9 @@ Say ("自检通过：exe 内置包 v{0}（sha256 {1}…），引擎带 -RequireB
 
 # 回执：安装器 + 包一份，交给发版归档
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+# 安装器产物同时放回 installer/dist（固定位置，发布脚本默认读这里）
+$installedExe = Join-Path $OutDir $exe.Name
+if ($installedExe -ne $exePath) { Copy-Item -LiteralPath $exePath -Destination $installedExe -Force }
 $installerReceipt = [ordered]@{
   installer  = $exe.Name
   version    = $appVersion
@@ -173,10 +237,12 @@ $installerReceipt = [ordered]@{
 }
 ($installerReceipt | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $OutDir 'Engram-source-setup.exe.json') -Encoding UTF8
 Remove-Item -LiteralPath $peek -Recurse -Force -ErrorAction SilentlyContinue
+# staging 里的包副本与中间产物删掉（正式包留在 installer/resources/prebuilt）
+if (-not $KeepWork) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host ''
 Write-Host '✓ 客户安装器已生成（离线：不 clone、不装依赖、不构建）' -ForegroundColor Green
-Write-Host ("  安装器  {0}" -f $exePath)
+Write-Host ("  安装器  {0}" -f $installedExe)
 Write-Host ("  大小    {0:N1} MB；sha256 {1}" -f ($exe.Length / 1MB), $exeSha)
 Write-Host ("  内置包  {0}（v{1}，提交 {2}，sha256 {3}）" -f $bundleReceipt.bundle, $bundleReceipt.version, $bundleReceipt.commit.Substring(0, 7), $bundleReceipt.sha256)
 Write-Host ("  离线资源 {0}" -f $(if ($bundleReceipt.offline) { '已内置（语音模型 / Python 运行时）' } else { '未内置（首次使用时按提示下载）' }))
