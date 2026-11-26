@@ -3284,10 +3284,18 @@ async function runSourceUpdate() {
       // （发布产物不携带测试与其中的内网地址 fixture；typecheck 仍用 tsconfig.json 覆盖测试）
     ]), ['-p', 'tsconfig.build.json'], path.join(appRootDir, 'server'), appendUpdateLog);
     setUpdateStep('构建 web（vite）…');
-    await forkStep(resolveToolEntry([
+    const viteEntry = resolveToolEntry([
       path.join('web', 'node_modules', 'vite', 'bin', 'vite.js'),
       path.join('node_modules', 'vite', 'bin', 'vite.js'),
-    ]), ['build'], path.join(appRootDir, 'web'), appendUpdateLog);
+    ]);
+    try {
+      await forkStep(viteEntry, ['build'], path.join(appRootDir, 'web'), appendUpdateLog);
+    } catch (e) {
+      // 本机安全软件偶发抢锁 esbuild 的临时文件（remove ...: Access is denied）：退回「不压缩、
+      // 不降级语法」的构建，产物可直接运行、只是体积大一些——比整次更新失败好（2026-11-27 本机实测）。
+      appendUpdateLog('> 默认构建失败（可能是安全软件锁住 esbuild 临时文件），改用未压缩构建重试');
+      await forkStep(viteEntry, ['build', '--minify false', '--target esnext'], path.join(appRootDir, 'web'), appendUpdateLog);
+    }
   } catch (e) {
     const msg = describeError(e);
     failUpdateProgress('更新失败：' + msg);
