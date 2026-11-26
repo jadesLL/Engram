@@ -341,6 +341,7 @@ function Get-BundleMissingParts([string]$path) {
     @{ name = 'main/desktop/server/node_modules/better-sqlite3/package.json'; what = '服务端运行时依赖' },
     @{ name = 'main/node/node.exe'; what = '便携 Node' },
     @{ name = 'main/pnpm/pnpm.cjs'; what = '便携 pnpm' },
+    @{ name = 'main/pnpm/worker.js'; what = '便携 pnpm 完整发行包（worker.js）' },
     @{ name = 'main/desktop/server/node_modules/.engram-deps.json'; what = '运行时依赖记录' },
     @{ name = 'main/.engram-prebuilt.json'; what = '包清单' }
   )

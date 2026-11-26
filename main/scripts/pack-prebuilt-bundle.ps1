@@ -82,31 +82,36 @@ if ($LASTEXITCODE -ne 0 -or -not $nodeVer) { Die "取不到 Node 版本：$bundl
 if ([int]($nodeVer -split '\.')[0] -lt 20) { Die "打包机 Node 版本过低（v$nodeVer）：需要 20+" }
 Say "随包 Node：$bundleNodeSource（v$nodeVer）"
 
-# 随包 pnpm：版本以 install-engram.ps1 里的 $pnpmVer 为唯一事实源（10.20.0），装完后直接可用
+# 随包 pnpm：版本以 install-engram.ps1 里的 $pnpmVer 为唯一事实源（10.20.0），装完后直接可用。
+# 必须整份发行包（dist 下所有文件）：只带 pnpm.cjs 会缺 worker.js，首次应用内更新补齐开发依赖时
+# `pnpm install` 会崩在「Worker pnpm#N exited with code 1」（2026-11-26 用户实测）。
 $installPs1Text = Get-Content -LiteralPath (Join-Path $RepoRoot 'main\scripts\install-engram.ps1') -Raw -Encoding UTF8
 $pinnedPnpmVer = '10.20.0'
 if ($installPs1Text -match "\`$pnpmVer\s*=\s*'([^']+)'") { $pinnedPnpmVer = $Matches[1] }
-$bundlePnpmCjs = ''
+$bundlePnpmDist = ''
 foreach ($candidate in @(
-    (Join-Path $RepoRoot 'main\node_modules\pnpm\dist\pnpm.cjs'),
-    (Join-Path $RepoRoot 'main\node_modules\pnpm\bin\pnpm.cjs'),
-    (Join-Path $RepoRoot 'main\installer\resources\runtime\pnpm\pnpm.cjs'),
-    (Join-Path $RuntimeSource 'node_modules\pnpm\dist\pnpm.cjs'),
-    (Join-Path $env:LOCALAPPDATA 'engram\pnpm\pnpm.cjs'))) {
+    (Join-Path $RepoRoot 'main\node_modules\pnpm\dist'),
+    (Join-Path $RepoRoot 'main\installer\resources\runtime\pnpm'),
+    (Join-Path $RuntimeSource 'node_modules\pnpm\dist'),
+    (Join-Path $env:LOCALAPPDATA 'engram\pnpm'))) {
   if (-not $candidate -or -not (Test-Path -LiteralPath $candidate)) { continue }
+  $candidateCjs = Join-Path $candidate 'pnpm.cjs'
+  if (-not (Test-Path -LiteralPath $candidateCjs)) { continue }
+  # 缺 worker.js 的发行包不能进包：装到客户机上每个 install 都会崩
+  if (-not (Test-Path -LiteralPath (Join-Path $candidate 'worker.js'))) { continue }
   # PS 5.1 在 $ErrorActionPreference='Stop' 下把子进程任何 stderr（如 Node 的 UNDICI 代理提示）当成终止错误，
   # 临时降为 Continue 再读取版本号。
   $savedEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    $gotPnpmVer = (& $bundleNodeSource $candidate -v 2>$null | Select-Object -First 1)
+    $gotPnpmVer = (& $bundleNodeSource $candidateCjs -v 2>$null | Select-Object -First 1)
   } finally {
     $ErrorActionPreference = $savedEap
   }
-  if ("$gotPnpmVer".Trim() -eq $pinnedPnpmVer) { $bundlePnpmCjs = $candidate; break }
+  if ("$gotPnpmVer".Trim() -eq $pinnedPnpmVer) { $bundlePnpmDist = $candidate; break }
 }
-Assert-Path $bundlePnpmCjs "随包 pnpm $pinnedPnpmVer（pnpm.cjs）"
-Say "随包 pnpm：$bundlePnpmCjs（v$pinnedPnpmVer）"
+Assert-Path $bundlePnpmDist "随包 pnpm $pinnedPnpmVer 完整发行包（含 worker.js）"
+Say "随包 pnpm：$bundlePnpmDist（v$pinnedPnpmVer，整份 dist）"
 
 $cleanRepoUrl = if ($RepoUrl -and $RepoUrl.Trim()) { ($RepoUrl.Trim() -replace '^(https?://)[^/@\s]+@', '$1') } else { '' }
 
@@ -283,10 +288,12 @@ Copy-Item -LiteralPath $bundleNodeSource -Destination (Join-Path $nodeDst 'node.
 $nodeDstCheck = (& (Join-Path $nodeDst 'node.exe') -v) -replace '^v', ''
 if ($nodeDstCheck -ne $nodeVer) { Die "包内 node.exe 版本不符：期望 v$nodeVer，实际 v$nodeDstCheck" }
 
-Say "装配便携 pnpm（$pinnedPnpmVer，供首次应用内更新补齐开发依赖）"
+Say "装配便携 pnpm（$pinnedPnpmVer，整份发行包，供首次应用内更新补齐开发依赖）"
 $pnpmDst = Join-Path $bundleMain 'pnpm'
 New-Item -ItemType Directory -Force -Path $pnpmDst | Out-Null
-Copy-Item -LiteralPath $bundlePnpmCjs -Destination (Join-Path $pnpmDst 'pnpm.cjs') -Force
+Copy-Item -Path (Join-Path $bundlePnpmDist '*') -Destination $pnpmDst -Recurse -Force
+Assert-Path (Join-Path $pnpmDst 'pnpm.cjs') "包内便携 pnpm（pnpm.cjs）"
+Assert-Path (Join-Path $pnpmDst 'worker.js') "包内便携 pnpm 完整发行包（worker.js）"
 $pnpmCmdText = @(
   '@ECHO OFF',
   'SETLOCAL',

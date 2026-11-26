@@ -2,9 +2,13 @@
 // 安装器「内置运行时」准备器（打包前执行一次；产物是二进制，不进 Git）。
 //
 //   resources/runtime/node-v<ver>-win-x64.zip        官方便携 Node zip（校验 ZIP 头 + 实际版本）
-//   resources/runtime/pnpm/pnpm.cjs + pnpm.cmd + pnpm.ps1   pnpm <ver>（node 直接跑，无需 npm）
+//   resources/runtime/pnpm/                       pnpm <ver> 完整发行包（dist 下所有文件：
+//                                                 pnpm.cjs + worker.js + templates/vendor…）
+//                                                 + pnpm.cmd + pnpm.ps1 启动壳
 //   resources/runtime/manifest.json                  版本、大小与 sha256，便于排查
 //
+// pnpm 必须整份落盘：只复制 pnpm.cjs 会缺同目录的 worker.js，`pnpm install` 会在解包/链接阶段
+// 以「Worker pnpm#N exited with code 1」崩溃（2026-11-26 用户实测，安装器落盘的便携 pnpm 即如此）。
 // 版本号唯一事实源是 scripts/install-engram.ps1 里的 $nodeVer / $pnpmVer：这里解析后使用，不另立一份，
 // 避免「安装器内置版本」和「脚本期望版本」漂移。pnpm 优先用 main/node_modules/pnpm（仓库共享副本，
 // 固定 10.20.0）；缺失或版本不符时才从 npmmirror 下载对应 tarball。
@@ -104,27 +108,42 @@ function pnpmVersionOf(cjsPath) {
   }
 }
 
-// 优先用仓库共享副本（main/node_modules/pnpm，版本必须与 pin 一致），否则下载 pnpm tarball 取 dist/pnpm.cjs
-function preparePnpmCjs(ver, force) {
+// pnpm 发行包目录里必须在的文件（缺 worker.js 时 install 必崩，见文件头）
+const PNPM_REQUIRED = ['pnpm.cjs', 'worker.js'];
+
+/** 整份复制 pnpm 发行包（dist 下所有文件）。只复制 pnpm.cjs 会缺 worker.js。 */
+function copyPnpmDist(srcDir, outDir) {
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.cpSync(srcDir, outDir, { recursive: true });
+}
+
+/** 发行包是否完整可跑：pnpm.cjs 版本正确 + worker.js 在位 */
+function pnpmRuntimeOk(dir, ver) {
+  const cjs = path.join(dir, 'pnpm.cjs');
+  if (!fs.existsSync(cjs)) return false;
+  if (!PNPM_REQUIRED.every((f) => fs.existsSync(path.join(dir, f)))) return false;
+  return pnpmVersionOf(cjs) === ver;
+}
+
+// 优先用仓库共享副本（main/node_modules/pnpm/dist），否则下载 pnpm tarball 取整份 dist/
+function preparePnpmRuntime(ver, force) {
   const outDir = path.join(RUNTIME_DIR, 'pnpm');
   const target = path.join(outDir, 'pnpm.cjs');
-  if (fs.existsSync(target) && !force && pnpmVersionOf(target) === ver) return { source: 'existing' };
+  if (!force && pnpmRuntimeOk(outDir, ver)) return { source: 'existing' };
   let source = '';
   const envCjs = process.env.ENGRAM_RUNTIME_PNPM_CJS;
   if (envCjs && fs.existsSync(envCjs) && pnpmVersionOf(envCjs) === ver) {
     source = 'env:' + envCjs;
-    fs.mkdirSync(outDir, { recursive: true });
-    fs.copyFileSync(envCjs, target);
+    copyPnpmDist(path.dirname(envCjs), outDir);
   } else {
     const localPkgDir = path.join(MAIN_DIR, 'node_modules', 'pnpm');
-    const localCjs = path.join(localPkgDir, 'dist', 'pnpm.cjs');
-    if (fs.existsSync(localCjs) && fs.existsSync(path.join(localPkgDir, 'package.json'))) {
+    const localDist = path.join(localPkgDir, 'dist');
+    if (fs.existsSync(path.join(localDist, 'worker.js')) && fs.existsSync(path.join(localPkgDir, 'package.json'))) {
       let localVer = '';
       try { localVer = JSON.parse(fs.readFileSync(path.join(localPkgDir, 'package.json'), 'utf8')).version || ''; } catch (e) { localVer = ''; }
-      if (localVer === ver) {
+      if (localVer === ver && pnpmRuntimeOk(localDist, ver)) {
         source = 'main/node_modules/pnpm@' + localVer;
-        fs.mkdirSync(outDir, { recursive: true });
-        fs.copyFileSync(localCjs, target);
+        copyPnpmDist(localDist, outDir);
       }
     }
   }
@@ -138,12 +157,9 @@ function preparePnpmCjs(ver, force) {
         "const fs=require('fs');",
         "fetch('" + NPM_MIRROR + "/pnpm/-/pnpm-" + ver + ".tgz').then(async r=>{if(!r.ok)throw new Error('HTTP '+r.status);fs.writeFileSync(process.argv[1],Buffer.from(await r.arrayBuffer()));}).catch(e=>{console.error(e.message);process.exit(1)});",
       ].join(''), tgz], { stdio: 'inherit' });
-      execFileSync('tar', ['-xzf', tgz, '-C', tmp, 'package/dist/pnpm.cjs'], { stdio: 'inherit' });
-      const extracted = path.join(tmp, 'package', 'dist', 'pnpm.cjs');
-      if (!fs.existsSync(extracted)) throw new Error('pnpm tarball 内缺少 package/dist/pnpm.cjs');
-      if (pnpmVersionOf(extracted) !== ver) throw new Error('下载到的 pnpm.cjs 版本不是 ' + ver);
-      fs.mkdirSync(outDir, { recursive: true });
-      fs.copyFileSync(extracted, target);
+      // 整份 dist 一起解开：worker.js / templates / vendor 都在里面
+      execFileSync('tar', ['-xzf', tgz, '-C', tmp, 'package/dist'], { stdio: 'inherit' });
+      copyPnpmDist(path.join(tmp, 'package', 'dist'), outDir);
       source = 'download';
     } finally {
       try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (e) { /* 忽略 */ }
@@ -151,6 +167,9 @@ function preparePnpmCjs(ver, force) {
     }
   }
   if (!fs.existsSync(target)) throw new Error('pnpm.cjs 准备失败');
+  if (!fs.existsSync(path.join(outDir, 'worker.js'))) {
+    throw new Error('pnpm 发行包不完整（缺 worker.js）：不能只复制 pnpm.cjs，install 会崩在 worker 池');
+  }
   const got = pnpmVersionOf(target);
   if (got !== ver) throw new Error('内置 pnpm.cjs 版本不符：期望 ' + ver + '，实际 ' + (got || '无法运行'));
   return { source };
@@ -227,6 +246,9 @@ function checkRuntime() {
   const cjs = path.join(RUNTIME_DIR, 'pnpm', 'pnpm.cjs');
   if (!fs.existsSync(cjs)) problems.push('缺少 pnpm/pnpm.cjs');
   else if (pnpmVersionOf(cjs) !== pnpm) problems.push('pnpm.cjs 版本不符（期望 ' + pnpm + '）');
+  if (!fs.existsSync(path.join(RUNTIME_DIR, 'pnpm', 'worker.js'))) {
+    problems.push('缺少 pnpm/worker.js（发行包不完整：pnpm install 会崩在 worker 池）');
+  }
   for (const f of ['pnpm.cmd', 'pnpm.ps1']) {
     if (!fs.existsSync(path.join(RUNTIME_DIR, 'pnpm', f))) problems.push('缺少 pnpm/' + f);
   }
@@ -259,13 +281,16 @@ async function main() {
   console.log('内置运行时目标：Node v' + node + ' + pnpm ' + pnpm);
   const nodeInfo = await prepareNodeZip(node, force);
   writePnpmLaunchers();
-  const pnpmInfo = preparePnpmCjs(pnpm, force);
+  const pnpmInfo = preparePnpmRuntime(pnpm, force);
   const zip = path.join(RUNTIME_DIR, nodeZipName(node));
   const cjs = path.join(RUNTIME_DIR, 'pnpm', 'pnpm.cjs');
+  const worker = path.join(RUNTIME_DIR, 'pnpm', 'worker.js');
   const manifest = {
     generatedAt: new Date().toISOString(),
     node: { version: node, file: nodeZipName(node), size: fs.statSync(zip).size, sha256: sha256(zip), source: nodeInfo.source },
     pnpm: { version: pnpm, file: 'pnpm/pnpm.cjs', size: fs.statSync(cjs).size, sha256: sha256(cjs), source: pnpmInfo.source },
+    // worker.js 与主程序同版本成套：manifest 里留档，安装器自检与排查都靠它
+    pnpmWorker: { file: 'pnpm/worker.js', size: fs.statSync(worker).size, sha256: sha256(worker) },
   };
   writeManifest(manifest);
   if (!checkRuntime()) process.exit(1);

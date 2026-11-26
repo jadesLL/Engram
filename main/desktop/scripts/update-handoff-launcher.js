@@ -15,10 +15,12 @@ const argv = process.argv.slice(2);
 let root = '';
 let appRoot = '';
 let skipPull = false;
+let silentStart = false;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--root' && argv[i + 1]) root = argv[++i];
   else if (argv[i] === '--app-root' && argv[i + 1]) appRoot = argv[++i];
   else if (argv[i] === '--skip-pull') skipPull = true;
+  else if (argv[i] === '--silent-start') silentStart = true;
 }
 // 更新脚本路径由安装根（或 appRoot）推导并校验存在，不接收外部传入的任意命令参数
 const script = root
@@ -30,16 +32,20 @@ if (!script || !fs.existsSync(script)) process.exit(2);
 
 // 经临时 .cmd 转一道：把带引号的脚本路径、日志落盘（Start-Transcript：窗口照常显示的同时
 // 整段落进日志，含 Write-Host 与子命令输出）都写进文件里，避免往 `start` 命令里塞嵌套引号
-// （cmd 的引号规则会让 start 静默跑错命令，实测）。失败时窗口会关掉，日志留原因。
+// （cmd 的引号规则会让 start 静默跑错命令，实测）。失败时窗口暂时留住原因（脚本已把应用重新
+// 拉起），用户按任意键再关窗口，不会「什么都没看到就消失」。
 const bat = path.join(os.tmpdir(), 'engram-source-update.cmd');
 const log = path.join(root || os.tmpdir(), 'engram-update-handoff.log');
-const psInvoke = skipPull ? `& '${script}' -SkipPull` : `& '${script}'`;
+const psInvoke = [skipPull ? `& '${script}' -SkipPull` : `& '${script}'`, silentStart ? '-SilentStart' : '']
+  .filter(Boolean)
+  .join(' ');
 fs.writeFileSync(
   bat,
   [
     '@echo off',
     `echo Engram update log: ${log}`,
     `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '${log}' -Append | Out-Null; try { ${psInvoke} } finally { Stop-Transcript | Out-Null }"`,
+    'if errorlevel 1 (echo. & echo 更新没有完成：Engram 已尝试重新启动，原因见上面的红字与日志。 & pause)',
     '',
   ].join('\r\n'),
   'utf8',

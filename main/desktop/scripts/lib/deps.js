@@ -250,8 +250,12 @@ function resolvePnpmEntry(appRoot) {
     candidates.push(path.join(root, 'pnpm', 'bin', 'pnpm.cjs'));
     candidates.push(path.join(root, 'pnpm', 'bin', 'pnpm'));
   }
-  const hit = candidates.find((p) => fs.existsSync(p));
-  if (hit) return hit;
+  const existing = candidates.filter((p) => fs.existsSync(p));
+  // 优先完整发行包：安装器旧版只落 pnpm.cjs（缺 worker.js），直接跑会以
+  // 「Worker pnpm#N exited with code 1」崩溃且没有任何可读原因（2026-11-26 用户实测）。
+  const complete = existing.find((p) => pnpmRuntimeComplete(p));
+  if (complete) return complete;
+  if (existing.length) return existing[0];
   // 兜底（仅 Windows）：问系统 pnpm 的 shim 在哪，再从它的目录推 JS 入口，覆盖自定义 prefix
   if (process.platform === 'win32') {
     try {
@@ -267,6 +271,81 @@ function resolvePnpmEntry(appRoot) {
     }
   }
   return null;
+}
+
+/**
+ * pnpm 入口实际执行的目录。npm 包的 `bin/pnpm.cjs` 只是薄壳：它加载 `../dist/pnpm.cjs`，
+ * 真正的发行包在 `dist/` 下；安装器落盘的 `%LOCALAPPDATA%\engram\pnpm\pnpm.cjs` 本身就是 dist 版。
+ */
+function pnpmEntryDir(entry) {
+  const binDir = path.resolve(path.dirname(entry));
+  const distDir = path.join(binDir, '..', 'dist');
+  try {
+    if (fs.existsSync(path.join(distDir, 'pnpm.cjs'))) return path.resolve(distDir);
+  } catch {
+    /* 目录不可读时按入口同目录处理 */
+  }
+  return binDir;
+}
+
+/**
+ * pnpm 运行时是否完整：10.x 把 worker 池脚本放在真正执行的 pnpm.cjs 同目录（worker.js）。
+ * 缺了它，`pnpm install` 会在链接/解包阶段崩溃（Worker exited with code 1），任何依赖同步
+ * 都会失败。安装器与预构建包都必须整份落 dist，不能只复制 pnpm.cjs。
+ */
+function pnpmRuntimeComplete(entry) {
+  if (!entry) return false;
+  try {
+    return fs.existsSync(path.join(pnpmEntryDir(entry), 'worker.js'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 尽力修复不完整的 pnpm 运行时：从本机其它 pnpm 发行包里补 worker.js。
+ * 只在两边的 pnpm.cjs 大小完全一致（= 同一发行包）时复制，避免把不匹配版本的 worker 塞进去
+ * （worker 与主程序之间的消息协议随版本变化）。
+ * @returns {boolean} 是否已可用（原本完整 / 补成功）
+ */
+function repairPnpmRuntime(entry, appRoot) {
+  if (!entry) return false;
+  if (pnpmRuntimeComplete(entry)) return true;
+  const targetDir = pnpmEntryDir(entry);
+  let targetSize = 0;
+  try {
+    targetSize = fs.statSync(path.join(targetDir, 'pnpm.cjs')).size;
+  } catch {
+    return false;
+  }
+  const sources = [path.join(appRoot, 'node_modules', 'pnpm', 'dist')];
+  const store = path.join(appRoot, 'node_modules', '.pnpm');
+  try {
+    for (const name of fs.readdirSync(store)) {
+      if (/^pnpm@/.test(name)) sources.push(path.join(store, name, 'node_modules', 'pnpm', 'dist'));
+    }
+  } catch {
+    /* 无 .pnpm 存储 */
+  }
+  if (process.env.LOCALAPPDATA) {
+    const engramRoot = path.join(process.env.LOCALAPPDATA, 'engram');
+    sources.push(path.join(engramRoot, 'pnpm-home', 'node_modules', 'pnpm', 'dist'));
+    sources.push(path.join(engramRoot, 'node', 'node_modules', 'pnpm', 'dist'));
+  }
+  if (process.env.APPDATA) sources.push(path.join(process.env.APPDATA, 'npm', 'node_modules', 'pnpm', 'dist'));
+  for (const src of sources) {
+    try {
+      if (path.resolve(src) === targetDir) continue;
+      const worker = path.join(src, 'worker.js');
+      if (!fs.existsSync(worker)) continue;
+      if (fs.statSync(path.join(src, 'pnpm.cjs')).size !== targetSize) continue;
+      fs.copyFileSync(worker, path.join(targetDir, 'worker.js'));
+      return true;
+    } catch {
+      /* 换下一个来源 */
+    }
+  }
+  return false;
 }
 
 /**
@@ -299,6 +378,9 @@ module.exports = {
   workspaceBuildToolsOk,
   workspaceBootstrapPending,
   resolvePnpmEntry,
+  pnpmEntryDir,
+  pnpmRuntimeComplete,
+  repairPnpmRuntime,
   lockfileRegistry,
   readRecord,
   writeRecord,

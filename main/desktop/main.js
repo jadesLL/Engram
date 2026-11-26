@@ -68,6 +68,11 @@ const uninstallMode = require('./lib/uninstall-mode');
 // 只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，它们占着安装目录里的文件，
 // 覆盖安装时旧版卸载器改名失败 → 用户看到 "Failed to uninstall old application files...: 2"。
 const processTree = require('./scripts/lib/process-tree');
+// 标题栏窗口按钮由谁绘制：新前端产物自绘，旧产物（更新半途失败）回退原生 titleBarOverlay。
+// 见 lib/window-chrome.js；单测在 scripts/tests/window-chrome.test.js。
+const windowChrome = require('./lib/window-chrome');
+// 源码更新重启参数（保留/丢弃 --silent-start、丢弃 engram:// 深链），单测见 scripts/tests/relaunch-args.test.js
+const relaunchArgsLib = require('./lib/relaunch-args');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -75,6 +80,12 @@ const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
 // 本次启动是否来自开机自启（登录项命令里带 --silent-start）：是则只驻留托盘、不显示主窗。
 // Windows 上 Electron 的 wasOpenedAtLogin / openAsHidden 只在 macOS 有效，只能靠显式标记判定。
 const SILENT_START = loginItemLib.isSilentStart(process.argv);
+
+// 窗口按钮由谁画：web 产物声明了自绘（web/dist/desktop-shell.json）就隐藏原生标题栏按钮；
+// 旧产物没有这份声明（源码更新中断时 git 已更新壳、web 还没重建）就回退 Windows 原生
+// titleBarOverlay，否则新旧错位会让窗口一个按钮都没有（2026-11-26 用户实测）。
+const SELF_DRAWN_WINDOW_CONTROLS =
+  windowChrome.resolveWindowControlsMode(path.join(__dirname, 'web', 'dist')) === 'self-drawn';
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
@@ -358,7 +369,7 @@ function splashPage(title, desc, status) {
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
     '</style></head><body>' +
-    splashWindowControlsHtml() +
+    (SELF_DRAWN_WINDOW_CONTROLS ? splashWindowControlsHtml() : '') +
     '<div class="wrap">' +
     logoSvg('logo') +
     `<h1>${title}</h1><p class="desc">${desc}</p>` +
@@ -380,7 +391,7 @@ function errorPage(title, lines) {
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
     '</style></head><body>' +
-    splashWindowControlsHtml() +
+    (SELF_DRAWN_WINDOW_CONTROLS ? splashWindowControlsHtml() : '') +
     '<div class="wrap">' +
     '<div class="err-icon">!</div>' +
     `<h1 style="font-size:24px;letter-spacing:1px;">${escHtml(title)}</h1>` +
@@ -398,11 +409,16 @@ function setSplashStatus(text) {
     .catch(() => {});
 }
 
-// 主进程侧页面底色跟随：切换窗口背景色（窗口控制按钮在标题栏内自绘）
+// 主进程侧页面底色跟随：切换窗口背景色；回退原生窗口按钮时（旧 web 产物）同步按钮区配色，
+// 否则原生按钮背后的矩形会和标头差一档色（深浅主题都成立）。自绘模式下按钮随 CSS 变量变色。
 function applyPageChrome(bg) {
+  const dark = bg === SPLASH_BG;
   try {
     if (win && !win.isDestroyed()) {
       win.setBackgroundColor(bg);
+      if (!SELF_DRAWN_WINDOW_CONTROLS && typeof win.setTitleBarOverlay === 'function') {
+        win.setTitleBarOverlay({ color: bg, symbolColor: dark ? '#e6e9f0' : '#37352f' });
+      }
     }
   } catch {
     /* 非 Windows 或窗口不可用时忽略 */
@@ -437,6 +453,10 @@ function openExternally(url) {
 }
 
 function createWindow({ silent = false } = {}) {
+  // 版本错位诊断：更新中断时桌面壳已更新、web 产物还是旧的，这行日志能直接看出走了回退
+  log(
+    `[window] 标题栏按钮：${SELF_DRAWN_WINDOW_CONTROLS ? '网页自绘' : '原生 titleBarOverlay（web 产物为旧版，回退）'}`,
+  );
   win = new BrowserWindow({
     // 开机自启：窗口照常创建并加载（托盘图标可直接唤起），但先不显示 —— 静默驻留托盘
     show: !silent,
@@ -448,10 +468,14 @@ function createWindow({ silent = false } = {}) {
     autoHideMenuBar: true,
     // 源码模式窗口/任务栏图标（electron.exe 自带的是 Electron 默认图标）；打包版 exe 已内嵌图标
     icon: windowIcon(),
-    // 标题栏融合进应用：隐藏系统标题栏但保留 Windows 原生边框/圆角/阴影/分屏；
-    // 窗口控制按钮（最小化 / 最大化 / 关闭）由标题栏内自绘（不再使用原生 titleBarOverlay，
-    // 否则不透明 WCO 会遮盖标题栏底边线并在弹窗暗色遮罩上保持高亮）。
+    // 标题栏融合进应用：隐藏系统标题栏但保留 Windows 原生边框/圆角/阴影/分屏。
+    // 新版 web 产物在标题栏内自绘窗口按钮（不用不透明 WCO：它会遮盖标题栏底边线并在弹窗遮罩上
+    // 保持高亮）；旧产物没有自绘能力（源码更新中断造成壳/前端版本错位），回退原生 titleBarOverlay
+    // 按钮，保证任何版本组合下窗口都还能最小化 / 关闭。判定见 lib/window-chrome.js。
     titleBarStyle: 'hidden',
+    ...(SELF_DRAWN_WINDOW_CONTROLS
+      ? {}
+      : { titleBarOverlay: { color: '#fbfaf6', symbolColor: '#1f1e1b', height: 46 } }),
     backgroundColor: '#f7f7f5',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1170,8 +1194,24 @@ ipcMain.handle('window-close', () => {
 });
 ipcMain.handle('window-is-maximized', () => Boolean(win && !win.isDestroyed() && win.isMaximized()));
 
-// 兼容旧调用：已改用标题栏内自绘窗口控制按钮，不再启用原生 titleBarOverlay
-ipcMain.handle('set-title-bar-overlay', () => true);
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+// 主题切换时同步原生窗口按钮（WCO）配色：只在回退模式（旧 web 产物依赖原生按钮）生效；
+// 自绘模式下按钮直接继承 CSS 变量，主进程不需要参与。
+ipcMain.handle('set-title-bar-overlay', (_e, opts) => {
+  if (SELF_DRAWN_WINDOW_CONTROLS) return true;
+  try {
+    if (win && !win.isDestroyed() && typeof win.setTitleBarOverlay === 'function') {
+      const color = String(opts?.color || '').trim();
+      const symbolColor = String(opts?.symbolColor || '').trim();
+      if (!HEX_COLOR_RE.test(color) || !HEX_COLOR_RE.test(symbolColor)) return false;
+      win.setTitleBarOverlay({ color, symbolColor });
+    }
+  } catch (e) {
+    log('set-title-bar-overlay failed: ' + (e && e.message ? e.message : e));
+  }
+  return true;
+});
 
 // 数据保存位置查询与更改
 ipcMain.handle('get-data-dir', () => {
@@ -2588,6 +2628,8 @@ function handOffSourceUpdate(options = {}) {
     const root = sourceInstallRoot();
     const args = root ? ['--root', root] : ['--app-root', appRootDir];
     if (options.skipPull) args.push('--skip-pull');
+    // 静默启动（开机自启到托盘）的实例更新后要回到托盘，不能把主窗弹出来
+    if (options.silentStart) args.push('--silent-start');
     const child = fork(path.join(__dirname, 'scripts', 'update-handoff-launcher.js'), args, {
       detached: true,
       stdio: 'ignore',
@@ -3216,7 +3258,7 @@ async function runSourceUpdate() {
         ? '> 运行时升级要先退出应用：将打开「Engram 更新」窗口完成，完成后自动启动'
         : '> 首次更新需补齐开发依赖（仅此一次，后续应用内直接更新）：将打开「Engram 更新」窗口完成，完成后自动启动',
     );
-    if (!(await handOffSourceUpdate({ skipPull: true }))) {
+    if (!(await handOffSourceUpdate({ skipPull: true, silentStart: SILENT_START }))) {
       failUpdateProgress('无法启动更新脚本，请手动运行 ' + scriptRel);
       showMainWindow();
       return {
@@ -3275,8 +3317,8 @@ async function runSourceUpdate() {
   }
   setUpdateStep('完成，正在启动新版本…');
   appendUpdateLog('> 更新完成');
-  const relaunchArgs = process.argv.slice(1).filter((arg) => arg !== '--silent-start' && !String(arg).startsWith('engram://'));
-  app.relaunch({ args: relaunchArgs });
+  // 静默启动的实例更新后继续回托盘；engram:// 深链不带过去（见 lib/relaunch-args.js）
+  app.relaunch({ args: relaunchArgsLib.relaunchArgsForSourceUpdate(process.argv, { silentStart: SILENT_START }) });
   app.exit(0);
   return { ok: true, restarting: true };
 }

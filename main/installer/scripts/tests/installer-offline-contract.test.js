@@ -17,6 +17,7 @@ const installerDir = path.join(__dirname, '..', '..');
 const mainDir = path.join(installerDir, '..');
 const ps1 = fs.readFileSync(path.join(mainDir, 'scripts', 'install-engram.ps1'), 'utf8');
 const pack = fs.readFileSync(path.join(mainDir, 'scripts', 'pack-prebuilt-bundle.ps1'), 'utf8');
+const prep = fs.readFileSync(path.join(installerDir, 'scripts', 'prepare-runtime.js'), 'utf8');
 const build = fs.readFileSync(path.join(mainDir, 'scripts', 'build-customer-installer.ps1'), 'utf8');
 const gui = fs.readFileSync(path.join(installerDir, 'main.js'), 'utf8');
 const ui = fs.readFileSync(path.join(installerDir, 'ui.html'), 'utf8');
@@ -49,6 +50,7 @@ for (const required of [
   'main/desktop/server/node_modules/better-sqlite3/package.json',
   'main/node/node.exe',
   'main/pnpm/pnpm.cjs',
+  'main/pnpm/worker.js',
   'main/desktop/server/node_modules/.engram-deps.json',
   'main/.engram-prebuilt.json',
 ]) {
@@ -106,6 +108,14 @@ check(
 );
 
 check('一键构建脚本存在并调打包器', build.includes('pack-prebuilt-bundle.ps1'));
+// 2026-11-26 事故：安装器只把 pnpm.cjs 落进便携 pnpm，缺同目录 worker.js →
+// 首次应用内更新 `pnpm install` 崩在「Worker pnpm#N exited with code 1」，
+// 更新半途而废（壳已更新、web 未重建），窗口连最小化/关闭都没了。
+check('运行时准备器整份复制 pnpm dist（含 worker.js）', prep.includes('copyPnpmDist') && prep.includes("'worker.js'"));
+check('运行时准备器校验 pnpm 发行包完整（缺 worker.js 直接失败）', /缺少 pnpm\/worker\.js/.test(prep) || prep.includes("path.join(outDir, 'worker.js')"));
+check('打包器只接受带 worker.js 的 pnpm 发行包', pack.includes("Join-Path $candidate 'worker.js'"));
+check('打包器整份复制 pnpm 发行包', pack.includes("Copy-Item -Path (Join-Path $bundlePnpmDist '*')"));
+check('包完整性门禁要求 main/pnpm/worker.js', Boolean(missingFn) && missingFn[0].includes('main/pnpm/worker.js'));
 check('构建脚本自检 exe 内确实带包', build.includes("resources\\prebuilt") && build.includes('没有内置环境包'));
 check('构建脚本自检包内含 .git/HEAD 与 pnpm 且无凭据', build.includes('.git/HEAD') && build.includes('main/pnpm/pnpm.cjs') && build.includes('安装器内置包的 .git/config 包含凭据'));
 check('构建脚本自检引擎带 -RequireBundle', build.includes('$RequireBundle'));
