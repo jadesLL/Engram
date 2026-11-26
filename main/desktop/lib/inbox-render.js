@@ -24,6 +24,45 @@ const LOAD_STATE_EXPR =
 const SNAPSHOT_EXPR =
   '({ html: document.documentElement ? document.documentElement.outerHTML : "", title: document.title || "", url: location.href })';
 
+function isPrivateIpv4(parts) {
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function isDisallowedHost(hostname) {
+  const host = String(hostname || '').replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')
+    || host === 'metadata.google.internal' || host.startsWith('metadata.')) {
+    return true;
+  }
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    const parts = v4.slice(1).map(Number);
+    if (parts.every((n) => n >= 0 && n <= 255)) return isPrivateIpv4(parts);
+  }
+  if (host === '::' || host === '::1') return true;
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (mapped) {
+    const hi = parseInt(mapped[1], 16);
+    const lo = parseInt(mapped[2], 16);
+    return isPrivateIpv4([(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff]);
+  }
+  const mappedDot = /^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (mappedDot) {
+    return isPrivateIpv4(mappedDot.slice(1).map(Number));
+  }
+  if (host.includes(':')) {
+    const first = host.split(':')[0];
+    if (first && (/^f[cd]/i.test(first) || /^fe[89ab]/i.test(first))) return true;
+  }
+  return false;
+}
+
 function assertRenderableUrl(raw) {
   let parsed;
   try {
@@ -36,6 +75,9 @@ function assertRenderableUrl(raw) {
   }
   if (parsed.username || parsed.password) {
     throw new Error('网页地址不能携带用户名或密码');
+  }
+  if (isDisallowedHost(parsed.hostname)) {
+    throw new Error('不允许抓取本机、私网或元数据地址');
   }
   return parsed.toString();
 }

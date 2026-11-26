@@ -54,7 +54,7 @@ class EngramLocalServer private constructor(private val context: Context) {
     /** 本机网络状态：有没有 IPv6 出口 + 切换网络时通知同步引擎重探（见 DeviceNetwork.kt） */
     private val deviceNetwork = DeviceNetwork(context)
     private val sync = SyncEngine(db, secrets, deviceNetwork)
-    private val agent = AgentBridge(db, secrets)
+    private val agent = AgentBridge(db, secrets) { sync.currentActiveBase() }
     init {
         deviceNetwork.setListener { sync.onNetworkChanged() }
         // 后台宽限窗口开/关 → 后台同步前台服务（[SyncGraceService]）：窗口内不让系统冻结进程
@@ -81,7 +81,7 @@ class EngramLocalServer private constructor(private val context: Context) {
             // 只有单个 WebView 客户端；避免默认按 CPU 核数创建多组调度线程与缓冲区。
             connectionGroupSize = 1
             workerGroupSize = 1
-            callGroupSize = 2
+            callGroupSize = 4
             connectionIdleTimeoutSeconds = 5
         }) {
             install(StatusPages) {
@@ -1131,7 +1131,7 @@ class EngramLocalServer private constructor(private val context: Context) {
     private suspend fun ApplicationCall.proxyHub(method: String, path: String, requestBody: String? = null) {
         if (!authorize()) return
         if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
-        val remote = agent.request(method, path, requestBody)
+        val remote = withContext(Dispatchers.IO) { agent.request(method, path, requestBody) }
         if (remote.status == 401) return error(HUB_TOKEN_REJECTED, HttpStatusCode.BadGateway)
         // 窄代理写成功（转换/入库/记灵感/客户调研保存等）后立刻排一轮同步：中枢产出的
         // 新文件与状态没有 SSE 推送，只能靠同步轮回流本机；不触发就要等下一次前台事件。
@@ -1139,7 +1139,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         val type = runCatching { ContentType.parse(remote.contentType) }.getOrDefault(ContentType.Application.Json)
         response.header(HttpHeaders.CacheControl, "no-store")
         response.header(HttpHeaders.ContentLength, remote.body.size.toString())
-        respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
+        withContext(Dispatchers.IO) {
+            respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
+        }
     }
 
     /**
@@ -1158,47 +1160,52 @@ class EngramLocalServer private constructor(private val context: Context) {
         if (!authorize()) return
         if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
         val boundary = "----EngramAndroid${UUID.randomUUID().toString().replace("-", "")}"
-        val remote = agent.openMultipart(targetPath, boundary)
+        val remote = withContext(Dispatchers.IO) { agent.openMultipart(targetPath, boundary) }
         try {
             remote.doOutput = true
             remote.setChunkedStreamingMode(64 * 1024)
-            remote.outputStream.buffered(64 * 1024).use { output ->
-                receiveMultipart(formFieldLimit = MultipartLimits.HUB_UPLOAD_BYTES).forEachPart { part ->
-                    when (part) {
-                        is PartData.FormItem -> {
-                            // 阈值放到文件口径后，表单字段（dir / sourceUrl）自己守一道小上限
-                            val value = part.value.toByteArray(Charsets.UTF_8)
-                            require(value.size <= MultipartLimits.HUB_FIELD_BYTES) { "表单字段「${part.name.orEmpty()}」过长" }
-                            writeMultipartHeader(output, boundary, part.name.orEmpty().ifBlank { "dir" }, null, null)
-                            output.write(value)
-                            output.write(MULTIPART_CRLF)
+            val (status, bytes) = withContext(Dispatchers.IO) {
+                remote.outputStream.buffered(64 * 1024).use { output ->
+                    receiveMultipart(formFieldLimit = MultipartLimits.HUB_UPLOAD_BYTES).forEachPart { part ->
+                        when (part) {
+                            is PartData.FormItem -> {
+                                // 阈值放到文件口径后，表单字段（dir / sourceUrl）自己守一道小上限
+                                val value = part.value.toByteArray(Charsets.UTF_8)
+                                require(value.size <= MultipartLimits.HUB_FIELD_BYTES) { "表单字段「${part.name.orEmpty()}」过长" }
+                                writeMultipartHeader(output, boundary, part.name.orEmpty().ifBlank { "dir" }, null, null)
+                                output.write(value)
+                                output.write(MULTIPART_CRLF)
+                            }
+                            is PartData.FileItem -> {
+                                writeMultipartHeader(
+                                    output,
+                                    boundary,
+                                    part.name.orEmpty().ifBlank { defaultField },
+                                    sanitizeFileName(part.originalFileName ?: "file"),
+                                    part.contentType?.toString(),
+                                )
+                                part.provider().toInputStream().use { input -> input.copyTo(output, 64 * 1024) }
+                                output.write(MULTIPART_CRLF)
+                            }
+                            else -> Unit
                         }
-                        is PartData.FileItem -> {
-                            writeMultipartHeader(
-                                output,
-                                boundary,
-                                part.name.orEmpty().ifBlank { defaultField },
-                                sanitizeFileName(part.originalFileName ?: "file"),
-                                part.contentType?.toString(),
-                            )
-                            part.provider().toInputStream().use { input -> input.copyTo(output, 64 * 1024) }
-                            output.write(MULTIPART_CRLF)
-                        }
-                        else -> Unit
+                        part.dispose()
                     }
-                    part.dispose()
+                    output.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
                 }
-                output.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+                val code = remote.responseCode
+                val source = if (code in 200..299) remote.inputStream else remote.errorStream
+                val payload = source?.use { it.readBytesLimited(MAX_HUB_JSON_BYTES) } ?: ByteArray(0)
+                code to payload
             }
-            val status = remote.responseCode
-            val source = if (status in 200..299) remote.inputStream else remote.errorStream
-            val bytes = source?.use { it.readBytesLimited(MAX_HUB_JSON_BYTES) } ?: ByteArray(0)
             // 收集箱上传成功（中枢已落盘）同样立刻排一轮同步：文件与转换状态都要靠同步轮拉回本机。
             // 语音转写这类一次性请求没有新增内容，调用方传 triggerSync=false 跳过。
             if (status in 200..299 && triggerSync) sync.request(false)
             response.header(HttpHeaders.CacheControl, "no-store")
             response.header(HttpHeaders.ContentLength, bytes.size.toString())
-            respondOutputStream(ContentType.Application.Json, HttpStatusCode.fromValue(status)) { write(bytes) }
+            withContext(Dispatchers.IO) {
+                respondOutputStream(ContentType.Application.Json, HttpStatusCode.fromValue(status)) { write(bytes) }
+            }
         } finally {
             remote.disconnect()
         }
@@ -1210,17 +1217,21 @@ class EngramLocalServer private constructor(private val context: Context) {
         if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
         val path = request.queryParameters["path"].orEmpty()
         if (path.isBlank()) return error("缺少 path", HttpStatusCode.BadRequest)
-        val remote = agent.stream("/api/inbox/download?path=${encoded(path)}", "application/octet-stream")
+        val remote = withContext(Dispatchers.IO) { agent.stream("/api/inbox/download?path=${encoded(path)}", "application/octet-stream") }
         val connection = remote.connection
         try {
             if (remote.status !in 200..299) {
-                val message = connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
+                val message = withContext(Dispatchers.IO) {
+                    connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
+                }
                 return error(message.ifBlank { "中枢返回 HTTP ${remote.status}" }, HttpStatusCode.fromValue(remote.status))
             }
             response.header(HttpHeaders.ContentDisposition, connection.getHeaderField(HttpHeaders.ContentDisposition) ?: "attachment")
             response.header(HttpHeaders.CacheControl, "no-store")
-            respondOutputStream(ContentType.Application.OctetStream) {
-                connection.inputStream.use { input -> input.copyTo(this, 64 * 1024) }
+            withContext(Dispatchers.IO) {
+                respondOutputStream(ContentType.Application.OctetStream) {
+                    connection.inputStream.use { input -> input.copyTo(this, 64 * 1024) }
+                }
             }
         } finally {
             connection.disconnect()
@@ -1229,7 +1240,7 @@ class EngramLocalServer private constructor(private val context: Context) {
 
     private suspend fun ApplicationCall.proxyAgent(method: String, path: String, requestBody: String? = null) {
         if (!authorize()) return
-        val remote = agent.request(method, path, requestBody)
+        val remote = withContext(Dispatchers.IO) { agent.request(method, path, requestBody) }
         if (remote.status == 401) return error(
             "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机 Agent 的版本。",
             HttpStatusCode.BadGateway,
@@ -1237,12 +1248,14 @@ class EngramLocalServer private constructor(private val context: Context) {
         val type = runCatching { ContentType.parse(remote.contentType) }.getOrDefault(ContentType.Application.Json)
         response.header(HttpHeaders.CacheControl, "no-store")
         response.header(HttpHeaders.ContentLength, remote.body.size.toString())
-        respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
+        withContext(Dispatchers.IO) {
+            respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
+        }
     }
 
     private suspend fun ApplicationCall.proxyAgentEvents(path: String) {
         if (!authorize()) return
-        val remote = agent.stream(path)
+        val remote = withContext(Dispatchers.IO) { agent.stream(path) }
         val connection = remote.connection
         try {
             if (remote.status !in 200..299) {
@@ -1250,19 +1263,23 @@ class EngramLocalServer private constructor(private val context: Context) {
                     "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机 Agent 的版本。",
                     HttpStatusCode.BadGateway,
                 )
-                val message = connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
+                val message = withContext(Dispatchers.IO) {
+                    connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
+                }
                 return error(message.ifBlank { "Docker Agent 返回 HTTP ${remote.status}" }, HttpStatusCode.fromValue(remote.status))
             }
             response.header(HttpHeaders.CacheControl, "no-cache")
             response.header(HttpHeaders.Connection, "keep-alive")
-            respondOutputStream(ContentType.Text.EventStream) {
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(8 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        write(buffer, 0, count)
-                        flush()
+            withContext(Dispatchers.IO) {
+                respondOutputStream(ContentType.Text.EventStream) {
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(8 * 1024)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            write(buffer, 0, count)
+                            flush()
+                        }
                     }
                 }
             }

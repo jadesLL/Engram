@@ -7,12 +7,27 @@ const fs = require('node:fs');
 const { probeRepo } = require('./scripts/lib/repo-probe.js');
 const { findBundleZip, bundleInfo: bundleInfoOf } = require('./scripts/lib/bundle-zip.js');
 const { pickEngine } = require('./scripts/lib/engine.js');
+const { normalizeRepoUrl } = require('./scripts/lib/repo-url.js');
+
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+  process.exit(0);
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+}
 
 let win = null;
 let child = null;
 let pollTimer = null;
 let installTimer = null;
 let processed = 0; // 已消费的日志字符数
+let pollingLog = false;
 
 // 安装步骤（克隆 / 装依赖 / 构建）有界超时：慢机器可以慢，但不能无限挂着不动。
 // 超时按「取消」同款方式结束整棵进程树，并给界面一个明确的失败原因。
@@ -83,7 +98,7 @@ function killProcessTree(pid) {
   if (!pid) return;
   if (process.platform === 'win32') {
     // execFile（不经 shell）：参数里的 pid 是数字，不引入注入面
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {
       /* 进程可能已退出、或权限不足：这里不中断取消流程 */
     });
     return;
@@ -129,16 +144,23 @@ function handleLine(line) {
   }
 }
 
+function consumeLogText(text) {
+  if (!text || text.length <= processed) return;
+  // 只消费完整行；Add-Content 按行追加，正常以 \n 结尾（正在写入的半行留待下次）
+  let usable = text;
+  if (!usable.endsWith('\n')) usable = usable.slice(0, usable.lastIndexOf('\n') + 1);
+  if (usable.length <= processed) return;
+  const fresh = usable.slice(processed);
+  processed = usable.length;
+  for (const line of fresh.split('\n')) handleLine(line);
+}
+
 function pollLog(logFile) {
+  if (pollingLog) return;
+  pollingLog = true;
   fs.readFile(logFile, 'utf8', (err, text) => {
-    if (err || !text || text.length <= processed) return;
-    // 只消费完整行；Add-Content 按行追加，正常以 \n 结尾（正在写入的半行留待下次）
-    let usable = text;
-    if (!usable.endsWith('\n')) usable = usable.slice(0, usable.lastIndexOf('\n') + 1);
-    if (usable.length <= processed) return;
-    const fresh = usable.slice(processed);
-    processed = usable.length;
-    for (const line of fresh.split('\n')) handleLine(line);
+    pollingLog = false;
+    if (!err) consumeLogText(text);
   });
 }
 
@@ -196,7 +218,12 @@ function startInstall({ user, pass, repoUrl } = {}) {
     // 而不是悄悄退回「git clone + pnpm install + 本机构建」。旧引擎没有这个开关，不传。
     if (engineText.includes('$RequireBundle')) args.push('-RequireBundle');
   } else if (repoUrl) {
-    args.push('-RepoUrl', repoUrl);
+    const checked = normalizeRepoUrl(repoUrl);
+    if (!checked.ok) {
+      send('fail', { msg: checked.message });
+      return;
+    }
+    args.push('-RepoUrl', checked.url);
   }
   const ps = spawn('powershell.exe', args, { env, windowsHide: true });
   child = ps;
@@ -220,7 +247,11 @@ function startInstall({ user, pass, repoUrl } = {}) {
 
   ps.on('exit', (code) => {
     clearInstallTimers();
-    pollLog(logFile); // 兜底消费缓冲期内的剩余行
+    try {
+      consumeLogText(fs.readFileSync(logFile, 'utf8')); // 同步兜底消费缓冲期内的剩余行，不与定时器竞态
+    } catch {
+      /* 日志文件可能尚未写出 */
+    }
     child = null;
     send('exit', { code });
   });
@@ -251,6 +282,14 @@ app.whenReady().then(() => {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, navUrl) => {
+    const uiUrl = 'file://' + path.join(__dirname, 'ui.html').replace(/\\/g, '/').toLowerCase();
+    const norm = String(navUrl || '').replace(/\\/g, '/').toLowerCase();
+    if (!norm.startsWith('file:///') || !norm.endsWith('/ui.html')) {
+      if (norm !== uiUrl) event.preventDefault();
+    }
   });
   win.loadFile('ui.html');
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {

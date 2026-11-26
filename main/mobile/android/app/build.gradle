@@ -11,7 +11,8 @@ if (desktopPackageJson.exists()) {
 def appVersionParts = appVersionName.tokenize('.')
 def appVersionCode = 1
 if (appVersionParts.size() >= 3) {
-    appVersionCode = (appVersionParts[0] as Integer) * 1000000 + (appVersionParts[1] as Integer) * 1000 + (appVersionParts[2] as Integer)
+    def patchPart = appVersionParts[2].split('-')[0]
+    appVersionCode = (appVersionParts[0] as Integer) * 1000000 + (appVersionParts[1] as Integer) * 1000 + (patchPart as Integer)
 }
 
 // 签名：本地用 key.properties（不入库），CI 用环境变量注入

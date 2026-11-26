@@ -370,14 +370,19 @@ async function resolveDouyinAwemeId(
     const hit = /\/video\/(\d{6,})/.exec(current) || (location ? /\/video\/(\d{6,})/.exec(location) : null);
     if (hit) return hit[1];
     if (!location) break;
+    let parsedNext: URL;
     try {
-      current = new URL(location, current).toString();
+      parsedNext = new URL(location, current);
+      current = parsedNext.toString();
     } catch {
       break;
     }
     const next = /\/video\/(\d{6,})/.exec(current);
     if (next) return next[1];
-    if (!/douyin\.com|iesdouyin\.com/i.test(current)) break;
+    if (
+      (parsedNext.protocol !== 'http:' && parsedNext.protocol !== 'https:')
+      || !/(^|\.)(douyin|iesdouyin)\.com$/i.test(parsedNext.hostname)
+    ) break;
   }
   return '';
 }

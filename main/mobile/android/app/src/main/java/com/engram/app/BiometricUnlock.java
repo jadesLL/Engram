@@ -44,7 +44,7 @@ import org.json.JSONObject;
 public class BiometricUnlock {
 
     /** 设备凭据（API 23-27 的钥匙串验证）用 startActivityForResult 打开，MainActivity 负责转发结果 */
-    public static final int REQUEST_CREDENTIAL = 18183;
+    public static final int REQUEST_CREDENTIAL = 18184;
 
     private static final String SECRET_NAME = "unlock_password";
     private static final String BRIDGE_NAME = "EngramBiometric";

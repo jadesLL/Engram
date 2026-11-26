@@ -418,7 +418,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
     }
     const hash = getSetting('password_hash');
-    if (!hash || !password || !bcrypt.compareSync(password, hash)) {
+    if (!hash || !password || !(await bcrypt.compare(password, hash))) {
       return reply.code(401).send({ error: '密码错误' });
     }
     if (!zipBuffer || !zipBuffer.length) {
@@ -471,7 +471,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/wipe', async (req, reply) => {
     const { password } = (req.body || {}) as { password?: string };
     const hash = getSetting('password_hash');
-    if (!hash || !password || !bcrypt.compareSync(password, hash)) {
+    if (!hash || !password || !(await bcrypt.compare(password, hash))) {
       return reply.code(401).send({ error: '密码错误' });
     }
     const { result, cancelledJobs } = await withJobsStopped(() => wipeKnowledgeData({ rebuild: false }));
@@ -486,7 +486,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/wipe-ai-logs', async (req, reply) => {
     const { password } = (req.body || {}) as { password?: string };
     const hash = getSetting('password_hash');
-    if (!hash || !password || !bcrypt.compareSync(password, hash)) {
+    if (!hash || !password || !(await bcrypt.compare(password, hash))) {
       return reply.code(401).send({ error: '密码错误' });
     }
     const { result, cancelledJobs } = await withJobsStopped(wipeAiLogsAndRelations);
