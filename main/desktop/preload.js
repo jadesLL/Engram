@@ -48,8 +48,18 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 收集箱「渲染后抓取」：服务端抓到空壳（正文由 JS 渲染）时，用隐藏窗口把页面渲染出来。
   // 返回 { html, title, url }；失败时 reject（超时/加载失败），网页端按原错误提示。
   renderInboxUrl: (url) => ipcRenderer.invoke('inbox-render-url', url),
-  // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
+  // 同步窗口控制按钮配色（兼容旧调用；新版由标题栏内自绘按钮随 CSS 变量变色）
   setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
+  // ---------- 窗口控制（标题栏自绘最小化 / 最大化 / 关闭） ----------
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
+  windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  onWindowMaximizeChange: (cb) => {
+    const listener = (_e, maximized) => cb(Boolean(maximized));
+    ipcRenderer.on('window-maximize-change', listener);
+    return () => ipcRenderer.removeListener('window-maximize-change', listener);
+  },
   // 本机图标外观：窗口 / 任务栏 / 托盘 / 已有快捷方式同时切换。
   setIconAppearance: (appearance) => ipcRenderer.invoke('set-icon-appearance', appearance),
   // ---------- 桌面端自更新 ----------

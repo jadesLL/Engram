@@ -127,11 +127,10 @@ export const useAppStore = defineStore('app', {
       document.documentElement.classList.toggle('dark', this.dark);
       localStorage.setItem('theme', this.theme);
       void Promise.resolve(this.applyIconAppearance()).catch(() => {});
-      // 桌面端：窗口控制按钮（标题栏融合条 WCO）配色跟随主题，取值直接来自 CSS 变量。
-      // 底色用 --win-titlebar-bg 而不是 --bg：46px 页眉本身是卡片色，原生按钮区必须同色，
-      // 否则按钮背后的矩形会和标头差一档色（深浅主题都成立）。
+      // 旧版桌面壳未自绘窗口按钮时，原生按钮区（WCO）配色跟随 --win-titlebar-bg；
+      // 新版标题栏内自绘按钮直接继承 CSS 变量，无需同步主进程。
       const wd = (window as any).wikiDesktop;
-      if (wd?.setTitleBarOverlay) {
+      if (wd?.setTitleBarOverlay && !wd?.windowClose) {
         const cs = getComputedStyle(document.documentElement);
         wd.setTitleBarOverlay({
           color: cs.getPropertyValue('--win-titlebar-bg').trim() || cs.getPropertyValue('--bg').trim(),

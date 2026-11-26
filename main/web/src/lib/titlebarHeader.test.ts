@@ -74,18 +74,30 @@ test('同步胶囊：未配置隐藏，各档短文案与色调', () => {
   assert.equal(updating?.tone, 'busy');
 });
 
-test('标头高度三处一致：CSS 变量 / 反缩放 / Electron overlay', () => {
+test('标头高度与自绘窗口控制按钮：CSS / 反缩放 / Electron 接线一致', () => {
   const css = read('styles/main.css');
   assert.match(css, /html\.desktop-frame \{ --win-titlebar-h: 46px; \}/, 'CSS 标题栏高度不是 46px');
   assert.match(css, /calc\(46px \* var\(--ui-zoom-inverse/, '反缩放没有按 46px 计算');
-  assert.match(
-    readMain('desktop/main.js'),
-    /titleBarOverlay: \{ color: '#fbfaf6', symbolColor: '#1f1e1b', height: 46 \}/,
-    'Electron 原生按钮区高度/底色没跟 46px 页眉对齐',
-  );
+  assert.match(css, /\.win-titlebar\.has-win-controls\s*\{[^}]*padding-right:\s*0;/, '启用自绘按钮时未清除右侧预留空白');
+  assert.match(css, /\.win-ctrl-btn\s*\{[^}]*width:\s*46px;[^}]*border-radius:\s*0;/s, '自绘窗口按钮缺少 46px 宽或直角矩形样式');
+  assert.match(css, /\.win-ctrl-btn\.win-ctrl-close:hover\s*\{[^}]*background:\s*#c42b1c;/, '关闭按钮缺少红色悬停态');
+
+  const desktopMain = readMain('desktop/main.js');
+  assert.match(desktopMain, /titleBarStyle:\s*'hidden'/, 'Electron 主窗口未设置 titleBarStyle: hidden');
+  assert.doesNotMatch(desktopMain, /titleBarOverlay:/, '不应再启用原生 titleBarOverlay（会遮盖标题栏底线并在弹窗遮罩上高亮）');
+  for (const channel of ['window-minimize', 'window-toggle-maximize', 'window-close', 'window-is-maximized']) {
+    assert.ok(desktopMain.includes(`'${channel}'`), `desktop/main.js 缺少窗口控制 IPC：${channel}`);
+  }
+  assert.ok(desktopMain.includes('window-maximize-change'), 'desktop/main.js 未同步最大化状态变更');
+  assert.ok(desktopMain.includes('splashWindowControlsHtml'), '启动页/错误页缺少自绘窗口控制按钮');
+
+  const preload = readMain('desktop/preload.js');
+  for (const method of ['windowMinimize', 'windowToggleMaximize', 'windowClose', 'windowIsMaximized', 'onWindowMaximizeChange']) {
+    assert.ok(preload.includes(`${method}:`), `desktop/preload.js 未暴露窗口控制方法：${method}`);
+  }
 });
 
-test('App 标题栏接线：品牌副行、当前页、同步胶囊、原生按钮留白', () => {
+test('App 标题栏接线：品牌副行、当前页、同步胶囊、自绘按钮与旧壳留白', () => {
   const app = read('App.vue');
   assert.match(app, /win-titlebar-brand-text/, '缺少品牌块（库名 + 页数）');
   assert.match(app, /app\.libraryPages/, '品牌副行没有接页数');
@@ -93,11 +105,13 @@ test('App 标题栏接线：品牌副行、当前页、同步胶囊、原生按�
   assert.match(app, /titlebarSyncChip\(sync\.status/, '同步胶囊没有接共享状态');
   assert.match(app, /class="win-titlebar-action"/, '缺少搜索 / 记灵感快捷入口');
   assert.match(app, /id="win-titlebar-slot"/, '更新入口挂载点丢了');
+  assert.match(app, /class="win-titlebar-controls"/, '缺少自绘窗口控制按钮容器');
+  assert.match(app, /win-ctrl-close/, '缺少自绘关闭按钮');
   assert.match(read('components/Sidebar.vue'), /app\.setLibraryPages\(/, '侧栏没有回填页面总数');
   assert.match(read('stores/app.ts'), /setLibraryPages\(count/, 'app store 缺少页面总数动作');
   const css = read('styles/main.css');
-  assert.match(css, /padding: 0 152px 0 14px;/, '没有给右侧原生窗口按钮留出安全区');
-  assert.match(read('stores/app.ts'), /--win-titlebar-bg/, '原生按钮区底色没有跟标头同色');
+  assert.match(css, /padding: 0 152px 0 14px;/, '没有为旧壳右侧原生窗口按钮保留回退安全区');
+  assert.match(read('stores/app.ts'), /--win-titlebar-bg/, '旧壳原生按钮区底色没有跟标头同色');
 });
 
 test('更新面板贴标题栏右缘展开，不越过窗口右边', () => {

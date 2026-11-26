@@ -171,7 +171,7 @@ type Box = TooltipBox;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-/** 桌面端 titleBarOverlay 是不透明原生色条、永远盖在 web 内容上，顶部安全区从标题栏下缘起算（main.css --win-titlebar-h） */
+/** 桌面端 46px 融合标题栏位于顶部，提示气泡安全区从标题栏下缘起算（main.css --win-titlebar-h） */
 function desktopTitlebarHeight(): number {
   if (!document.documentElement.classList.contains('desktop-frame')) return 0;
   const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--win-titlebar-h'));
