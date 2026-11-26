@@ -14,5 +14,14 @@ ENV ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
     ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 
 WORKDIR /work
+# 先装依赖再复制全部源码，使业务代码改动不破坏依赖层缓存。
+RUN corepack enable && corepack prepare pnpm@10.20.0 --activate \
+    && pnpm config set registry https://registry.npmmirror.com
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY server/package.json server/
+COPY web/package.json web/
+COPY desktop/package.json desktop/
+COPY installer/package.json installer/
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY . .
 RUN bash scripts/build-desktop-ci.sh

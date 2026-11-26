@@ -20,12 +20,11 @@
     "vue": "^3.5.13",
     "vue-router": "^4.5.0",
     "x-data-spreadsheet": "^1.1.9",
-    "xlsx": "^0.18.5"
+    "exceljs": "^4.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@vitejs/plugin-vue": "^5.2.1",
-    "less": "^4.8.1",
     "typescript": "~5.7.2",
     "vite": "^6.0.7",
     "vue-tsc": "^2.2.0"

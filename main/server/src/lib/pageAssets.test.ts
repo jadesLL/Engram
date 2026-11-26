@@ -67,7 +67,6 @@ before(async () => {
 
 beforeEach(() => {
   db.exec(`
-    DELETE FROM vec_chunks;
     DELETE FROM chunks;
     DELETE FROM edges;
     DELETE FROM pages_fts;
