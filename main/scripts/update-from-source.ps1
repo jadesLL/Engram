@@ -149,8 +149,25 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'server 构建失败' }
 
   Step '构建 web（vite）'
-  pnpm -C (Join-Path $appRoot 'web') run build
-  if ($LASTEXITCODE -ne 0) { throw 'web 构建失败' }
+  # 默认走压缩构建；本机安全软件偶发抢锁 esbuild 的临时文件（remove ...: Access is denied）时
+  # 换成「不压缩、不降级语法」的构建重试：产物可直接运行（体积大一些），更新不至于卡死
+  # （2026-11-27 本机实测：默认构建连续失败，加这两个开关即通过）。
+  $vite = @(
+    (Join-Path $appRoot 'web\node_modules\vite\bin\vite.js'),
+    (Join-Path $appRoot 'node_modules\vite\bin\vite.js')
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $vite) { throw 'web 构建失败：找不到 vite（工作区依赖未就绪）' }
+  Push-Location (Join-Path $appRoot 'web')
+  try {
+    node $vite build
+    $webBuildCode = $LASTEXITCODE
+    if ($webBuildCode -ne 0) {
+      Write-Host '（默认构建失败，可能是安全软件锁住了 esbuild 的临时文件；改用未压缩构建重试，功能不受影响）' -ForegroundColor Yellow
+      node $vite build --minify false --target esnext
+      $webBuildCode = $LASTEXITCODE
+    }
+  } finally { Pop-Location }
+  if ($webBuildCode -ne 0) { throw 'web 构建失败' }
 
   # 4) 组装 desktop 运行目录（复制产物 + 生成 desktop/server/package.json）
   Step '组装 desktop 运行目录（prepare-desktop）'
