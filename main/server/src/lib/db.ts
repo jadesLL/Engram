@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3';
-import * as sqliteVec from 'sqlite-vec';
 import { DB_FILE, ensureDirs } from '../config.js';
 import { deriveReportIdentity } from './reportIdentity.js';
 import { ftsSegment } from './fts.js';
@@ -14,29 +13,6 @@ db.pragma('busy_timeout = 5000');
 db.pragma('synchronous = NORMAL');
 db.pragma('temp_store = MEMORY');
 db.pragma('cache_size = -32000');
-// sqlite-vec：Electron asar 打包下 load 内部 require.resolve 返回 app.asar 虚拟路径，
-// better-sqlite3 的 loadExtension 直接走 native dlopen 不经 asar fs 转换会失败；
-// 转成 app.asar.unpacked 真实路径。非 asar 环境（Docker/dev）路径不含 app.asar，原样工作。
-{
-  let vecPath = (sqliteVec as any).getLoadablePath() as string;
-  if (vecPath.includes('app.asar') && !vecPath.includes('app.asar.unpacked')) {
-    vecPath = vecPath.replace(/app\.asar([\\/])/g, 'app.asar.unpacked$1');
-  }
-  db.loadExtension(vecPath);
-}
-
-/** 当前向量维度（随 embedding 模型配置变化；变化时需重建 vec 表与索引） */
-export function getVecDim(): number {
-  let row: { value: string } | undefined;
-  try {
-    row = db.prepare(`SELECT value FROM settings WHERE key = 'embedding_dim'`).get() as { value: string } | undefined;
-  } catch (error: any) {
-    if (String(error?.message || error).includes('no such table: settings')) return 1536;
-    throw error;
-  }
-  const dim = Number(row?.value);
-  return Number.isInteger(dim) && dim > 0 ? dim : 1536;
-}
 
 export function migrate() {
   const migrateSchema = db.transaction(() => {
@@ -867,7 +843,7 @@ export function migrate() {
   // 而广播里记的是成员 id——补设备名时两种 id 都要能认出来
   ensureColumn('sync_peers', 'node_id', `TEXT NOT NULL DEFAULT ''`);
 
-  ensureVecTable(getVecDim());
+  dropLegacyVecChunks();
 
   // ---------- FTS 分词版本迁移 ----------
   // 分词规则变化后存量索引与新查询口径不一致（bigram token 在旧单字索引中不存在，
@@ -998,21 +974,30 @@ function ensureColumn(table: string, column: string, definition: string) {
   if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-/** 创建/校验 vec0 虚表；维度变化时重建（调用方负责重建索引） */
-export function ensureVecTable(dim: number) {
-  if (!Number.isInteger(dim) || dim <= 0 || dim > 65536) throw new Error(`无效的 embedding 维度：${dim}`);
-  const existing = db
-    .prepare(`SELECT sql FROM sqlite_master WHERE name = 'vec_chunks' AND type = 'table'`)
-    .get() as { sql: string } | undefined;
-  if (existing) {
-    const m = existing.sql.match(/float\[(\d+)\]/);
-    if (m && Number(m[1]) !== dim) {
-      db.exec(`DROP TABLE vec_chunks`);
-      db.exec(`CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[${dim}])`);
+/** 清理历史版本遗留的 sqlite-vec 虚表与影子表；库缺失 vec0 扩展时按 writable_schema 摘除登记 */
+function dropLegacyVecChunks() {
+  const exists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE name = 'vec_chunks' AND type = 'table'`)
+    .get();
+  if (!exists) return;
+  try {
+    db.exec(`DROP TABLE IF EXISTS vec_chunks`);
+  } catch {
+    db.pragma('writable_schema = ON');
+    try {
+      db.prepare(`DELETE FROM sqlite_master WHERE name = 'vec_chunks' AND type = 'table'`).run();
+    } finally {
+      db.pragma('writable_schema = RESET');
     }
-    return;
+    const shadows = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'vec_chunks_%'`)
+      .all() as { name: string }[];
+    for (const { name } of shadows) {
+      if (/^vec_chunks_[A-Za-z0-9_]+$/.test(name)) {
+        db.exec(`DROP TABLE IF EXISTS "${name}"`);
+      }
+    }
   }
-  db.exec(`CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[${dim}])`);
 }
 
 // ---------- settings helpers ----------

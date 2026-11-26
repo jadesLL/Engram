@@ -50,6 +50,29 @@ jobs:
         shell: bash
         run: docker build --target verify -t engram:ci-verify main
 
+      - name: Android 单测（仅 main/mobile 改动时，若 runner 已缓存构建镜像）
+        shell: bash
+        run: |
+          if ! git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^main/mobile/'; then
+            echo "未改动 main/mobile，跳过 Android 单测"
+            exit 0
+          fi
+          if ! docker image inspect engram-android-builder:latest >/dev/null 2>&1; then
+            echo "runner 未预置 engram-android-builder:latest，跳过 Android 单测"
+            exit 0
+          fi
+          TAR_STAGE=$(mktemp -d)
+          trap 'rm -rf "$TAR_STAGE"' EXIT
+          cid="engram-ci-android-${GITHUB_RUN_ID:-local}"
+          docker rm -f "$cid" >/dev/null 2>&1 || true
+          docker create --name "$cid" engram-android-builder:latest \
+            bash -c 'cd /work/mobile/android && ./gradlew testDebugUnitTest --offline --no-daemon' >/dev/null
+          docker cp main/mobile/. "$cid":/work/mobile/
+          docker start -a "$cid"
+          rc=$?
+          docker rm -f "$cid" >/dev/null 2>&1 || true
+          exit "$rc"
+
       - name: 构建并推送主分支滚动镜像（:main）
         # 只在 main 分支推送上执行：:main 是发版前的测试通道，供测试部署跟踪
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -74,7 +74,6 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:8080',
-      '/mcp': 'http://localhost:8080',
     },
   },
   build: {
@@ -86,7 +85,7 @@ export default defineConfig({
           if (id.includes('pdfjs-dist')) return 'vendor-pdfjs';
           if (id.includes('vditor')) return 'vendor-vditor';
           if (id.includes('docx-preview') || id.includes('jszip')) return 'vendor-docx';
-          if (id.includes('x-data-spreadsheet') || id.includes(`${path.sep}xlsx${path.sep}`) || id.includes('/xlsx/')) return 'vendor-xlsx';
+          if (id.includes('x-data-spreadsheet') || id.includes('exceljs')) return 'vendor-xlsx';
           if (id.includes('pptx-preview')) return 'vendor-pptx';
           if (id.includes(`${path.sep}vue${path.sep}`) || id.includes('/vue/') || id.includes('vue-router') || id.includes('pinia') || id.includes('axios')) {
             return 'vendor-core';

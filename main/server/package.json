@@ -23,14 +23,13 @@
     "acme-client": "^5.4.0",
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^12.2.0",
+    "exceljs": "^4.4.0",
     "fastify": "^5.3.3",
     "gray-matter": "^4.0.3",
     "jszip": "^3.10.1",
     "mammoth": "^1.9.0",
     "pdfjs-dist": "6.2.108",
-    "sqlite-vec": "^0.1.6",
     "undici": "7.29.0",
-    "xlsx": "^0.18.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {

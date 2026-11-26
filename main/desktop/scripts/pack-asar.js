@@ -6,7 +6,7 @@
 //   2. desktop/server/node_modules 已装（prepare-desktop 生成 + pnpm install --prod --node-linker=hoisted）
 //   3. better-sqlite3 已由 @electron/rebuild 重编到 Electron ABI（desktop 的 rebuild 脚本，或 EB 内置）
 //   4. desktop/node/node.exe 已就绪（node scripts/prepare-node-runtime.js；内置 Agent 的 dsh 要用它跑）
-// 依赖 node-linker=hoisted：让 better-sqlite3/sqlite-vec/@napi-rs/canvas 为真实目录而非 pnpm symlink，
+// 依赖 node-linker=hoisted：让 better-sqlite3/@napi-rs/canvas 为真实目录而非 pnpm symlink，
 //   否则 @electron/asar 对 unpack 的 symlink 在 app.asar.unpacked 重建会因非管理员无 symlink 权限失败。
 const fs = require('node:fs');
 const path = require('node:path');
@@ -82,7 +82,7 @@ if (fs.existsSync(exeSrc) && !fs.existsSync(exeDst)) {
 // 3. asar 打包：server/** 整棵解包（对齐 package.json 的 asarUnpack "server/**"）。
 //    内置 Agent 的 dsh 由真实 Node 拉起，真实 Node 读不了 asar，所以 dsh 及其依赖必须落在
 //    app.asar.unpacked/server/…（desktop/package.json 的 extraResources 再带上 node.exe）。
-//    原生模块（better-sqlite3/sqlite-vec/@napi-rs/canvas）本来就在 server/** 里，一并解包。
+//    原生模块（better-sqlite3/@napi-rs/canvas）本来就在 server/** 里，一并解包。
 // 用 unpackDir（基于 relativePath 的 isUnpackedDir 能正确匹配）而非 unpack（其内部 minimatch 用绝对 filename 有 bug）；
 // 单个 brace pattern（minimatch 不接受数组）。
 (async () => {

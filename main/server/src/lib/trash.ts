@@ -386,9 +386,6 @@ function deletePageIndex(pageId: string) {
   const page = db.prepare(`SELECT deleted FROM pages WHERE id = ?`).get(pageId) as any;
   if (!page || page.deleted !== 1) return;
   const tx = db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE ref_type = 'page' AND ref_id = ?)`
-    ).run(pageId);
     db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id = ?`).run(pageId);
     db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(pageId);
     db.prepare(`DELETE FROM edges WHERE src_page = ? OR dst_page = ?`).run(pageId, pageId);
@@ -402,9 +399,6 @@ function deleteFileIndex(fileId: string) {
   const file = db.prepare(`SELECT deleted FROM files WHERE id = ?`).get(fileId) as any;
   if (!file || file.deleted !== 1) return;
   const tx = db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE ref_type = 'file' AND ref_id = ?)`
-    ).run(fileId);
     db.prepare(`DELETE FROM chunks WHERE ref_type = 'file' AND ref_id = ?`).run(fileId);
     db.prepare(`DELETE FROM files_fts WHERE file_id = ?`).run(fileId);
     db.prepare(`DELETE FROM files WHERE id = ? AND deleted = 1`).run(fileId);

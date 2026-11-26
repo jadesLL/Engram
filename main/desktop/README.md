@@ -43,7 +43,7 @@ pnpm build:desktop
 
 **Windows Defender 注意**：打包时 electron-builder 解压 electron 二进制，Defender 实时扫描可能锁定 `electron.exe` 致 `EPERM rename` 失败。构建前请关闭 Defender 实时扫描，或把构建目录加入 Defender 排除项。
 
-**asar 配置**：`desktop/package.json` 设 `asar: true`，配合 `asarUnpack` 解包 better-sqlite3 / sqlite-vec / @napi-rs/canvas 三个原生模块到 `app.asar.unpacked`。把上万 `node_modules` 散文件合并进单个 `app.asar`，使 NSIS 安装从逐文件写出变为单归档解压，安装速度显著提升。此前 `asar: false` 是为避免非管理员环境无法创建 symlink，但 `build:desktop` 用 `--shamefully-hoist` 产出扁平 node_modules、无 symlink，该顾虑不成立，已切回 `true`。**注意**：server 子进程必须以 `fork + ELECTRON_RUN_AS_NODE`（electron.exe 纯 Node 模式）启动才能读 asar，不可改 `spawn('node')`。
+**asar 配置**：`desktop/package.json` 设 `asar: true`，配合 `asarUnpack` 解包 better-sqlite3 / @napi-rs/canvas 原生模块到 `app.asar.unpacked`。把上万 `node_modules` 散文件合并进单个 `app.asar`，使 NSIS 安装从逐文件写出变为单归档解压，安装速度显著提升。此前 `asar: false` 是为避免非管理员环境无法创建 symlink，但 `build:desktop` 用 `--shamefully-hoist` 产出扁平 node_modules、无 symlink，该顾虑不成立，已切回 `true`。**注意**：server 子进程必须以 `fork + ELECTRON_RUN_AS_NODE`（electron.exe 纯 Node 模式）启动才能读 asar，不可改 `spawn('node')`。
 
 ## 技术说明
 
@@ -53,5 +53,5 @@ pnpm build:desktop
 - `scripts/prepare-desktop.js`：打包前复制 server/web 产物并生成 server 运行时依赖清单。
 - `scripts/lib/shortcut.js` + `scripts/ensure-branded-exe.js`：桌面快捷方式与「品牌化 Engram.exe」的共用逻辑（纯 Node，单测 `scripts/tests/shortcut.test.js`）。主进程的「重建桌面快捷方式」走 Electron 的 `shell.writeShortcutLink`（GUI 进程不能 spawn powershell：空句柄会静默秒退），PowerShell 安装/更新脚本则调 `ensure-branded-exe.js` 只做 exe 品牌化，快捷方式由 WScript.Shell 写。
 - `scripts/pack-asar.js` + `scripts/lib/asar-staging.js`：手动生成 `app.asar` / `app.asar.unpacked`（绕过 Defender 锁 electron.exe 导致的 rename EPERM）。staging 清单必须覆盖主进程的相对引入（`lib/`、`scripts/lib/`）——少一个，安装版一启动就报 `Cannot find module`，而源码模式与 Docker 验证都发现不了；由 `scripts/tests/asar-staging.test.js` 锁住，`desktop/package.json` 的 `build.files` 同步含 `scripts/lib/**`。
-- 原生模块：`better-sqlite3` 按 Electron ABI 重编；`sqlite-vec`（平台包 `sqlite-vec-windows-x64`）与 `@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
+- 原生模块：`better-sqlite3` 按 Electron ABI 重编，`@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
 - 桌面端默认关闭 ONLYOFFICE 在线编辑（`OFFICE_EDITOR_ENABLED=false`），Office 文件以本地预览或「用系统程序打开」替代。

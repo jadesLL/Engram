@@ -258,7 +258,7 @@ test('OAuth 拉取：access token 过期自动 refresh，数据请求带新令�
   assert.equal(JSON.parse(String(refreshCall.init?.body)).grant_type, 'refresh_token');
   const recordCall = calls.find((call) => call.url.includes('/records?'));
   assert.ok(recordCall);
-  assert.equal((recordCall.init?.headers as Record<string, string>).Authorization, 'Bearer u-new');
+  assert.equal((recordCall.init?.headers as Record<string, string> | undefined)?.Authorization, 'Bearer u-new');
   const saved = syncModule.readFeishuConfig();
   assert.equal(saved.oauth?.accessToken, 'u-new');
   assert.equal(saved.oauth?.refreshToken, 'r-new');

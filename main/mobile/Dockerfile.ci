@@ -53,7 +53,7 @@ COPY server/package.json ./server/
 COPY web/package.json ./web/
 COPY desktop/package.json ./desktop/
 COPY installer/package.json ./installer/
-RUN npm install -g pnpm@10 \
+RUN npm install -g pnpm@10.20.0 \
     && pnpm install --frozen-lockfile --ignore-scripts
 
 # Capacitor 仍使用独立锁文件，保持既有 Android 依赖链与签名升级链不变。

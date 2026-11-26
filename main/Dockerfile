@@ -7,8 +7,10 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY server/package.json server/
 COPY web/package.json web/
 COPY desktop/package.json desktop/
+COPY installer/package.json installer/
 # 构建阶段无需原生模块，跳过 install 脚本
 RUN pnpm install --frozen-lockfile --ignore-scripts
+COPY .oxlintrc.json ./
 # .npmrc 必须在依赖层之后复制：它是给宿主机/客户机 pnpm install 的下载镜像（electron、
 # better-sqlite3 postinstall），镜像内 verify 的单测会断言它在位；放前面会让依赖层每次失效
 COPY .npmrc ./
@@ -71,7 +73,8 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY server/package.json server/
 COPY web/package.json web/
 COPY desktop/package.json desktop/
-RUN pnpm install --prod --frozen-lockfile
+COPY installer/package.json installer/
+RUN pnpm --filter @engram/server... install --prod --frozen-lockfile
 # pnpm 默认拦截原生构建脚本，这里显式执行 better-sqlite3 的安装脚本
 #（prebuild-install 拉预编译二进制，失败则 node-gyp 源码编译）。
 # prebuild-install 默认从 GitHub releases 下载，受限网络下会长时间挂死，
@@ -100,9 +103,9 @@ RUN set -eu; \
     ls "$1/build/Release/better_sqlite3.node"
 CMD ["pnpm", "--filter", "@engram/server", "test"]
 
-# ---------- 一次完成构建、类型检查和测试 ----------
+# ---------- 一次完成代码检查、类型检查和测试 ----------
 FROM test AS verify
-RUN pnpm typecheck && pnpm test
+RUN pnpm lint && pnpm typecheck && pnpm test
 CMD ["node", "-e", "console.log('Engram verification passed')"]
 
 # ---------- 运行时 ----------
@@ -137,7 +140,7 @@ COPY server/package.json ./server/
 # 卷属主迁移不在这一个镜像能覆盖的范围内（审计项 2c：有破坏既有安装的风险就不改）。
 VOLUME /data
 EXPOSE 8080
-# 与 compose（docker-compose.yml / unc / nas / pull 同款配置）一致的容器内健康检查：
+# 与 compose（docker-compose.yml / nas / pull 同款配置）一致的容器内健康检查：
 # node 直连容器内 8080 的 /health，200 才算健康。镜像自带判定，部署侧漏配 healthcheck 时也可用。
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
   CMD node -e "require('http').get('http://localhost:8080/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
