@@ -79,10 +79,23 @@ export async function registerAgentConsoleProxy(app: FastifyInstance): Promise<v
         upstreamResponse.pipe(reply.raw);
       },
     );
+    upstream.setTimeout(60_000, () => {
+      upstream.destroy(new Error('控制台上游响应超时'));
+    });
+    const abortUpstream = () => {
+      if (!reply.raw.writableEnded) upstream.destroy();
+    };
+    raw.on('close', abortUpstream);
+    reply.raw.on('close', () => raw.off('close', abortUpstream));
     upstream.on('error', () => {
+      raw.off('close', abortUpstream);
       try {
-        reply.raw.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
-        reply.raw.end(JSON.stringify({ error: '控制台不可达' }));
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
+        }
+        if (!reply.raw.writableEnded) {
+          reply.raw.end(JSON.stringify({ error: '控制台不可达' }));
+        }
       } catch {
         /* 响应已开始 */
       }
@@ -116,7 +129,9 @@ export async function registerAgentConsoleProxy(app: FastifyInstance): Promise<v
       socket.pipe(upstream).pipe(socket);
     });
     upstream.on('error', () => socket.destroy());
+    upstream.on('close', () => socket.destroy());
     socket.on('error', () => upstream.destroy());
+    socket.on('close', () => upstream.destroy());
   });
 }
 

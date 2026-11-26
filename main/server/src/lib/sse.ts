@@ -1,5 +1,7 @@
 import { FastifyReply } from 'fastify';
 
+const SSE_HEARTBEAT_MS = 25_000;
+
 /** 启用 SSE：返回写入函数 */
 export function sse(reply: FastifyReply) {
   reply.hijack();
@@ -14,11 +16,29 @@ export function sse(reply: FastifyReply) {
   // flushHeaders + 立即写一条注释，保证连接在请求即刻建立。
   reply.raw.flushHeaders();
   reply.raw.write(': connected\n\n');
+  let closed = false;
+  const heartbeat = setInterval(() => {
+    if (closed || reply.raw.writableEnded || reply.raw.destroyed) return;
+    try {
+      reply.raw.write(': ping\n\n');
+    } catch {
+      /* 客户端已断开 */
+    }
+  }, SSE_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  const stopHeartbeat = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+  };
+  reply.raw.on('close', stopHeartbeat);
   return {
     send(event: string, data: unknown) {
+      if (closed) return;
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     },
     close() {
+      stopHeartbeat();
       reply.raw.end();
     },
   };

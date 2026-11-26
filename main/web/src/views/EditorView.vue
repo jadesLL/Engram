@@ -718,7 +718,7 @@ import DocumentTitle from '../components/DocumentTitle.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
-import HomeBoard from '../components/HomeBoard.vue';
+const HomeBoard = defineAsyncComponent(() => import('../components/HomeBoard.vue'));
 import PageOutline from '../components/PageOutline.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';

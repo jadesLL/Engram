@@ -80,11 +80,17 @@ export async function graphRoutes(app: FastifyInstance) {
       pageIds = new Set(
         (db
           .prepare(
-            `SELECT id FROM (
-               SELECT p.id AS id,
-                 (SELECT COUNT(*) FROM edges e WHERE e.rel='link' AND (e.src_page=p.id OR e.dst_page=p.id)) AS deg
-               FROM pages p WHERE p.deleted=0 AND p.path NOT LIKE 'AIWorks/%'
-             ) t ORDER BY deg DESC, id LIMIT 150`
+            `WITH deg AS (
+               SELECT page_id, SUM(cnt) AS d FROM (
+                 SELECT src_page AS page_id, COUNT(*) AS cnt FROM edges WHERE rel='link' GROUP BY src_page
+                 UNION ALL
+                 SELECT dst_page AS page_id, COUNT(*) AS cnt FROM edges WHERE rel='link' AND dst_page IS NOT NULL GROUP BY dst_page
+               ) GROUP BY page_id
+             )
+             SELECT p.id FROM pages p
+             LEFT JOIN deg ON deg.page_id = p.id
+             WHERE p.deleted=0 AND p.path NOT LIKE 'AIWorks/%'
+             ORDER BY COALESCE(deg.d, 0) DESC, p.id LIMIT 150`
           )
           .all() as any[]).map((r) => r.id)
       );

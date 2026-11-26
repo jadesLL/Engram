@@ -78,6 +78,22 @@ export default defineConfig({
     },
   },
   build: {
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 500,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('pdfjs-dist')) return 'vendor-pdfjs';
+          if (id.includes('vditor')) return 'vendor-vditor';
+          if (id.includes('docx-preview') || id.includes('jszip')) return 'vendor-docx';
+          if (id.includes('x-data-spreadsheet') || id.includes(`${path.sep}xlsx${path.sep}`) || id.includes('/xlsx/')) return 'vendor-xlsx';
+          if (id.includes('pptx-preview')) return 'vendor-pptx';
+          if (id.includes(`${path.sep}vue${path.sep}`) || id.includes('/vue/') || id.includes('vue-router') || id.includes('pinia') || id.includes('axios')) {
+            return 'vendor-core';
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

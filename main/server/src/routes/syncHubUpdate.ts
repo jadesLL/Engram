@@ -119,13 +119,18 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post('/api/sync/hub-update/apply', { preHandler: requireAuth }, async (_req, reply) => {
+  app.post('/api/sync/hub-update/apply', { preHandler: requireAuth }, async (req, reply) => {
     const hub = memberHub();
     if (!hub) return reply.code(400).send({ error: '尚未绑定多端同步：请在「设置 → 多端同步」绑定服务器后再使用远程更新' });
     if (applying) return reply.code(409).send({ error: '已有远程更新正在进行' });
     applying = true;
 
     const stream = sse(reply);
+    const controller = new AbortController();
+    const timeoutSignal = AbortSignal.timeout(10 * 60_000);
+    const onTimeout = () => controller.abort(timeoutSignal.reason);
+    timeoutSignal.addEventListener('abort', onTimeout, { once: true });
+    req.raw.on('close', () => controller.abort());
     // 中途页面关闭后 reply.raw 已销毁：写入失败不能再抛出打断等待流程
     const send = (event: string, data: unknown) => {
       try {
@@ -139,6 +144,7 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
       const res = await fetch(`${hub.url}/api/update/apply`, {
         method: 'POST',
         headers: { authorization: `Bearer ${hub.token}` },
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) {
         send('error', { error: hubErrorMessage(res.status, await readErrorBody(res)) });
@@ -172,6 +178,7 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
     } catch (e) {
       send('error', { error: describeError(e) });
     } finally {
+      timeoutSignal.removeEventListener('abort', onTimeout);
       applying = false;
       try {
         stream.close();

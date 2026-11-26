@@ -727,6 +727,10 @@ export function migrate() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_kind_status ON jobs(kind, status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_run_token ON jobs(run_token)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_updated_active ON pages(updated_at DESC) WHERE deleted = 0`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_files_updated_active ON files(updated_at DESC) WHERE deleted = 0`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_edges_rel_src ON edges(rel, src_page)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_edges_rel_dst ON edges(rel, dst_page)`);
   ensureColumn('reports', 'issue_key', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'fingerprint', `TEXT NOT NULL DEFAULT ''`);
   backfillReportIdentity();
@@ -815,6 +819,7 @@ export function migrate() {
   // 旧库增量加列（CREATE TABLE IF NOT EXISTS 不会给既有表补列）；旧行 hash 为空，
   // 成员端走「无条件拉一次」的兼容路径。
   ensureColumn('sync_oplog', 'hash', `TEXT NOT NULL DEFAULT ''`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_oplog_kind_target ON sync_oplog(kind, target)`);
   // 成员端待推送 outbox：page/file/delete/move 落库，进程重启后仍能补推。
   // 旧实现只有内存数组，离线删除/改名后重启就丢，下一次对账会把旧路径从中枢拉回来。
   db.prepare(`CREATE TABLE IF NOT EXISTS sync_pending_ops (
@@ -1011,17 +1016,26 @@ export function ensureVecTable(dim: number) {
 }
 
 // ---------- settings helpers ----------
+let getSettingStmt: Database.Statement | null = null;
+let setSettingStmt: Database.Statement | null = null;
+
 export function getSetting(key: string): string | undefined {
-  const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as
+  if (!getSettingStmt) {
+    getSettingStmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+  }
+  const row = getSettingStmt.get(key) as
     | { value: string }
     | undefined;
   return row?.value;
 }
 
 export function setSetting(key: string, value: string) {
-  db.prepare(
-    `INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run(key, value);
+  if (!setSettingStmt) {
+    setSettingStmt = db.prepare(
+      `INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    );
+  }
+  setSettingStmt.run(key, value);
 }
 
 export function now(): string {

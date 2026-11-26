@@ -35,7 +35,7 @@
     <!-- 结果列表 -->
     <div v-if="filteredHits.length" class="hits">
       <div class="hits-head faint small">共 {{ filteredHits.length }} 条结果 · 用时 {{ elapsedMs }}ms</div>
-      <div v-for="(h, i) in filteredHits" :key="hitKey(h, i)" class="hit" @click="openHit(h)">
+      <button v-for="(h, i) in filteredHits" :key="hitKey(h, i)" type="button" class="hit" @click="openHit(h)">
         <div class="hit-title">
           <span class="hit-name">{{ h.title }}</span>
           <span v-if="h.refType === 'file'" class="hit-badge file">原始资料</span>
@@ -47,7 +47,7 @@
         <div v-if="h.tags?.length" class="hit-tags">
           <span v-for="t in h.tags" :key="t">#{{ t }}</span>
         </div>
-      </div>
+      </button>
     </div>
     <AppEmptyState
       v-else-if="searched"
@@ -82,6 +82,7 @@ const router = useRouter();
 const touchPointer = useTouchPointer();
 
 const q = ref('');
+const executedQuery = ref('');
 const hits = ref<any[]>([]);
 const searched = ref(false);
 const searching = ref(false);
@@ -129,6 +130,7 @@ async function run() {
   try {
     const { data } = await api.get('/api/search', { params: { q: query } });
     if (!runSeq.isCurrent(seq)) return; // 已有更新的查询：这次结果作废
+    executedQuery.value = query;
     hits.value = data.hits;
     elapsedMs.value = Math.max(1, Math.round(performance.now() - started));
     searched.value = true;
@@ -167,13 +169,16 @@ function cleanSnippet(s: string): string {
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
-function snippetHtml(snippet: string): string {
-  const cleaned = escapeHtml(cleanSnippet(snippet));
-  const terms = q.value.trim().split(/\s+/).filter(Boolean).map((t) =>
+const highlightRegex = computed(() => {
+  const terms = executedQuery.value.trim().split(/\s+/).filter(Boolean).map((t) =>
     t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   );
-  if (!terms.length) return cleaned;
-  return cleaned.replace(new RegExp(`(${terms.join('|')})`, 'gi'), '<mark>$1</mark>');
+  return terms.length ? new RegExp(`(${terms.join('|')})`, 'gi') : null;
+});
+function snippetHtml(snippet: string): string {
+  const cleaned = escapeHtml(cleanSnippet(snippet));
+  if (!highlightRegex.value) return cleaned;
+  return cleaned.replace(highlightRegex.value, '<mark>$1</mark>');
 }
 
 function fromNow(iso: string): string {
@@ -268,6 +273,11 @@ onMounted(() => {
 /* 结果卡片 */
 .hits { display: flex; flex-direction: column; gap: 10px; }
 .hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   padding: 14px 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius);

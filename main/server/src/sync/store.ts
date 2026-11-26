@@ -150,6 +150,7 @@ let bodyHashesBackfilled = false;
 function ensurePageBodyHashes(): void {
   if (bodyHashesBackfilled) return;
   bodyHashesBackfilled = true;
+  if (getSetting('page_body_hashes_backfilled') === '1') return;
   try {
     const rows = db.prepare(`SELECT path, content, ts FROM page_revisions`).all() as {
       path: string;
@@ -162,6 +163,7 @@ function ensurePageBodyHashes(): void {
     );
     db.transaction(() => {
       for (const row of rows) insert.run(row.path, pageBodyHash(row.content), row.ts);
+      setSetting('page_body_hashes_backfilled', '1');
     })();
   } catch {
     // 老库还没跑迁移等异常：下次进程启动再试，不能阻塞同步
@@ -241,6 +243,8 @@ export function resetSyncBaselines(): void {
   db.prepare(`UPDATE pages SET sync_revision = 0`).run();
   db.prepare(`DELETE FROM page_revisions`).run();
   db.prepare(`DELETE FROM page_body_hashes`).run();
+  bodyHashesBackfilled = false;
+  setSetting('page_body_hashes_backfilled', '0');
 }
 
 // ---------- 同步群组成员（中枢端） ----------
@@ -284,19 +288,42 @@ export function revokePeer(id: string): void {
   db.prepare(`UPDATE sync_peers SET revoked = 1 WHERE id = ?`).run(id);
 }
 
-/** 成员活动上报：在线标记、节点设备名与节点 id、已应用水位 */
+const TOUCH_PEER_THROTTLE_MS = 30_000;
+const lastPeerTouch = new Map<string, { at: number; seq: number; nodeLabel: string; nodeId: string }>();
+
+/** 成员活动上报：在线标记、节点设备名与节点 id、已应用水位（纯心跳在节流窗口内跳过冗余写盘） */
 export function touchPeer(
   id: string,
   opts: { nodeLabel?: string; nodeId?: string; seq?: number } = {}
 ): void {
+  const prev = lastPeerTouch.get(id);
+  const nowMs = Date.now();
+  const nextLabel = opts.nodeLabel ?? '';
+  const nextNodeId = opts.nodeId ?? '';
+  if (
+    prev
+    && nowMs - prev.at < TOUCH_PEER_THROTTLE_MS
+    && (opts.seq === undefined || opts.seq <= prev.seq)
+    && (!nextLabel || nextLabel === prev.nodeLabel)
+    && (!nextNodeId || nextNodeId === prev.nodeId)
+  ) {
+    return;
+  }
   const peer = getPeer(id);
   if (!peer) return;
+  const nextSeq = Math.max(peer.last_seq, opts.seq ?? peer.last_seq);
   db.prepare(
     `UPDATE sync_peers SET last_seen_at = ?, last_seq = MAX(last_seq, ?),
        node_label = COALESCE(NULLIF(?, ''), node_label),
        node_id = COALESCE(NULLIF(?, ''), node_id)
      WHERE id = ?`
-  ).run(now(), opts.seq ?? peer.last_seq, opts.nodeLabel ?? '', opts.nodeId ?? '', id);
+  ).run(now(), nextSeq, nextLabel, nextNodeId, id);
+  lastPeerTouch.set(id, {
+    at: nowMs,
+    seq: nextSeq,
+    nodeLabel: nextLabel || prev?.nodeLabel || peer.node_label || '',
+    nodeId: nextNodeId || prev?.nodeId || peer.node_id || '',
+  });
 }
 
 /**
