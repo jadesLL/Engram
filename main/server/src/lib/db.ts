@@ -974,28 +974,37 @@ function ensureColumn(table: string, column: string, definition: string) {
   if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-/** 清理历史版本遗留的 sqlite-vec 虚表与影子表；库缺失 vec0 扩展时按 writable_schema 摘除登记 */
+/** 清理历史版本遗留的 sqlite-vec 虚表与影子表；库缺失 vec0 扩展时按 unsafeMode + writable_schema 摘除登记 */
 function dropLegacyVecChunks() {
   const exists = db
     .prepare(`SELECT 1 FROM sqlite_master WHERE name = 'vec_chunks' AND type = 'table'`)
     .get();
-  if (!exists) return;
-  try {
-    db.exec(`DROP TABLE IF EXISTS vec_chunks`);
-  } catch {
-    db.pragma('writable_schema = ON');
+  if (exists) {
     try {
-      db.prepare(`DELETE FROM sqlite_master WHERE name = 'vec_chunks' AND type = 'table'`).run();
-    } finally {
-      db.pragma('writable_schema = RESET');
-    }
-    const shadows = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'vec_chunks_%'`)
-      .all() as { name: string }[];
-    for (const { name } of shadows) {
-      if (/^vec_chunks_[A-Za-z0-9_]+$/.test(name)) {
-        db.exec(`DROP TABLE IF EXISTS "${name}"`);
+      db.exec(`DROP TABLE IF EXISTS vec_chunks`);
+    } catch {
+      // better-sqlite3 默认开启 SQLITE_DBCONFIG_DEFENSIVE，单靠 PRAGMA writable_schema = ON
+      // 不会生效（保持 0），删 sqlite_master 会直接抛 SQLITE_ERROR: table sqlite_master may not be modified。
+      // 必须短暂关闭防御模式，摘除无扩展的 vec0 虚表登记后立刻 RESET 并恢复防御模式。
+      db.unsafeMode(true);
+      try {
+        db.pragma('writable_schema = ON');
+        db.prepare(`DELETE FROM sqlite_master WHERE name = 'vec_chunks' AND type = 'table'`).run();
+      } finally {
+        try {
+          db.pragma('writable_schema = RESET');
+        } finally {
+          db.unsafeMode(false);
+        }
       }
+    }
+  }
+  const shadows = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'vec_chunks_%'`)
+    .all() as { name: string }[];
+  for (const { name } of shadows) {
+    if (/^vec_chunks_[A-Za-z0-9_]+$/.test(name)) {
+      db.exec(`DROP TABLE IF EXISTS "${name}"`);
     }
   }
 }
