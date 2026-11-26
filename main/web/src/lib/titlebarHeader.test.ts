@@ -84,7 +84,19 @@ test('标头高度与自绘窗口控制按钮：CSS / 反缩放 / Electron 接�
 
   const desktopMain = readMain('desktop/main.js');
   assert.match(desktopMain, /titleBarStyle:\s*'hidden'/, 'Electron 主窗口未设置 titleBarStyle: hidden');
-  assert.doesNotMatch(desktopMain, /titleBarOverlay:/, '不应再启用原生 titleBarOverlay（会遮盖标题栏底线并在弹窗遮罩上高亮）');
+  // 原生 titleBarOverlay 只能作为「旧前端产物」的兼容回退出现：它本身会遮盖标题栏底线并在
+  // 弹窗暗色遮罩上保持高亮，不能无条件启用；但完全去掉又会让更新半途失败（壳新、web 旧）的
+  // 窗口一个按钮都没有（2026-11-26 用户实测）。
+  assert.match(desktopMain, /SELF_DRAWN_WINDOW_CONTROLS/, '缺少「网页自绘 / 原生按钮」能力判定');
+  assert.match(
+    desktopMain,
+    /SELF_DRAWN_WINDOW_CONTROLS\s*\?\s*\{\}\s*:\s*\{\s*titleBarOverlay:/,
+    '原生 titleBarOverlay 只能出现在 SELF_DRAWN_WINDOW_CONTROLS 的回退分支里',
+  );
+  assert.ok(
+    fs.existsSync(path.join(repoMain, 'web', 'public', 'desktop-shell.json')),
+    '缺少 web 构建的能力声明 web/public/desktop-shell.json（新产物靠它声明自绘按钮）',
+  );
   for (const channel of ['window-minimize', 'window-toggle-maximize', 'window-close', 'window-is-maximized']) {
     assert.ok(desktopMain.includes(`'${channel}'`), `desktop/main.js 缺少窗口控制 IPC：${channel}`);
   }

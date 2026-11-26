@@ -57,6 +57,20 @@ function run(cmd, args, options = {}) {
 function pnpmInvoker() {
   const entry = deps.resolvePnpmEntry(appRoot);
   if (entry) {
+    // 旧版安装器只落了 pnpm.cjs、漏掉同目录的 worker.js：任何 install 都会崩在
+    // 「Worker pnpm#N exited with code 1」，且错误里看不出真实原因（2026-11-26 用户实测）。
+    // 先从本机其它完整发行包补一份；补不上就直接给出可操作的报错。
+    if (!deps.pnpmRuntimeComplete(entry) && deps.repairPnpmRuntime(entry, appRoot)) {
+      say(`pnpm 运行时缺 worker.js，已从本机完整发行包补到 ${deps.pnpmEntryDir(entry)}`);
+    }
+    if (!deps.pnpmRuntimeComplete(entry)) {
+      throw new Error(
+        'pnpm 运行时不完整（缺少 ' +
+          path.join(deps.pnpmEntryDir(entry), 'worker.js') +
+          '）：这是旧版安装器只复制 pnpm.cjs 造成的。请用新版安装器覆盖安装，' +
+          '或删除该 pnpm 目录后重新运行更新（安装器会落一份完整的 pnpm 发行包）。',
+      );
+    }
     const env = { ...process.env };
     if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
     return { label: entry, cmd: process.execPath, args: (a) => [entry, ...a], options: { env } };
