@@ -46,3 +46,54 @@ test('migrate 建立 pages(lower(title)) 表达式索引，标题匹配不再全
     `标题等值匹配应走表达式索引：${JSON.stringify(plan)}`
   );
 });
+
+/**
+ * 回归：移除 sqlite-vec 扩展后，存量数据库仍保留 vec_chunks 虚表及其影子表；
+ * better-sqlite3 默认开启 SQLITE_DBCONFIG_DEFENSIVE，单设 writable_schema = ON
+ * 不会生效，migrate() 会直接抛 SQLITE_ERROR: table sqlite_master may not be modified。
+ */
+test('migrate 能安全清理无 vec0 扩展的遗留 vec_chunks 虚表与影子表，并恢复防御模式', () => {
+  db.unsafeMode(true);
+  try {
+    db.pragma('writable_schema = ON');
+    db.prepare(
+      `INSERT INTO sqlite_master(type, name, tbl_name, rootpage, sql)
+       VALUES('table', 'vec_chunks', 'vec_chunks', 0, 'CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[1536])')`
+    ).run();
+  } finally {
+    try {
+      db.pragma('writable_schema = RESET');
+    } finally {
+      db.unsafeMode(false);
+    }
+  }
+
+  db.exec(`CREATE TABLE vec_chunks_info (key TEXT PRIMARY KEY, value ANY)`);
+  db.exec(`CREATE TABLE vec_chunks_chunks (chunk_id INTEGER PRIMARY KEY AUTOINCREMENT, size INTEGER NOT NULL, validity BLOB NOT NULL, rowids BLOB NOT NULL)`);
+  db.exec(`CREATE TABLE vec_chunks_rowids (rowid INTEGER PRIMARY KEY AUTOINCREMENT, id, chunk_id INTEGER, chunk_offset INTEGER)`);
+  db.exec(`CREATE TABLE vec_chunks_vector_chunks00 (rowid PRIMARY KEY, vectors BLOB NOT NULL)`);
+  db.prepare(`INSERT INTO vec_chunks_info(key, value) VALUES('test', '1')`).run();
+  db.prepare(`INSERT INTO vec_chunks_chunks(size, validity, rowids) VALUES(1, X'01', X'01')`).run();
+
+  migrate();
+
+  const leftover = db
+    .prepare(`SELECT name FROM sqlite_master WHERE name = 'vec_chunks' OR name LIKE 'vec_chunks_%'`)
+    .all() as Array<{ name: string }>;
+  assert.deepEqual(leftover, [], `应清理全部 vec_chunks 及影子表，残留: ${JSON.stringify(leftover)}`);
+
+  const integrity = db.pragma('integrity_check') as Array<{ integrity_check: string }>;
+  assert.deepEqual(integrity, [{ integrity_check: 'ok' }]);
+
+  assert.equal(db.pragma('writable_schema', { simple: true }), 0);
+  assert.throws(
+    () => {
+      db.pragma('writable_schema = ON');
+      db.prepare(`DELETE FROM sqlite_master WHERE name = 'nonexistent'`).run();
+    },
+    /may not be modified/
+  );
+
+  // 幂等：再次迁移无副作用
+  migrate();
+});
