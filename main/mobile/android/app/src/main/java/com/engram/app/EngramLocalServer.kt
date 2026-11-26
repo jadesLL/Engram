@@ -34,6 +34,10 @@ import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
+import java.nio.channels.Channels
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import java.net.URLDecoder
 import java.net.HttpURLConnection
 import java.net.URL
@@ -70,6 +74,7 @@ class EngramLocalServer private constructor(private val context: Context) {
     @Synchronized
     fun start() {
         if (engine != null) return
+        cleanupStaleArchives()
         // 网络在应用运行期间随时会换（Wi-Fi ↔ 蜂窝、VPN 开关）：监听默认网络变化，
         // 换网后清掉上一个网络学到的双栈状态并立即重探，不用等下一次手动同步
         deviceNetwork.register()
@@ -479,7 +484,7 @@ class EngramLocalServer private constructor(private val context: Context) {
                 "pdf" -> JSONObject().put("kind", "pdf").put("ext", ext).put("url", "/api/files/content?path=${encoded(path)}").put("extraction", db.extraction(path) ?: JSONObject.NULL)
                 "png", "jpg", "jpeg", "gif", "webp", "svg" -> JSONObject().put("kind", "image").put("url", "/api/files/content?path=${encoded(path)}").put("extraction", db.extraction(path) ?: JSONObject.NULL)
                 "md", "markdown" -> JSONObject().put("kind", "markdown").put("text", db.rawPage(path).orEmpty().substringAfter("\n---\n", db.rawPage(path).orEmpty()).trim())
-                "txt", "json", "log", "yaml", "yml", "csv" -> JSONObject().put("kind", "text").put("text", file.readText().take(200_000))
+                "txt", "json", "log", "yaml", "yml", "csv" -> JSONObject().put("kind", "text").put("text", db.readTextPreview(file, 200_000))
                 else -> JSONObject().put("kind", "unsupported").put("ext", ext)
             }
             call.json(response)
@@ -1372,7 +1377,10 @@ class EngramLocalServer private constructor(private val context: Context) {
             response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/${file.length()}")
             response.header(HttpHeaders.ContentLength, (range.last - range.first + 1).toString())
             respondOutputStream(type, HttpStatusCode.PartialContent) {
-                file.inputStream().use { input -> input.skip(range.first); copyCount(input, this, range.last - range.first + 1) }
+                FileChannel.open(file.toPath(), StandardOpenOption.READ).use { channel ->
+                    channel.position(range.first)
+                    copyCount(Channels.newInputStream(channel), this, range.last - range.first + 1)
+                }
             }
         } else {
             response.header(HttpHeaders.ContentLength, file.length().toString())
@@ -1389,21 +1397,47 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
     }
 
+    /** 启动时清理异常退出残留的导出备份包、恢复暂存与过期分享临时文件 */
+    private fun cleanupStaleArchives() {
+        val cutoff = System.currentTimeMillis() - 60 * 60 * 1000L
+        db.root.listFiles()?.forEach { f ->
+            if ((f.name.startsWith("backup-") && f.name.endsWith(".zip"))
+                || f.name.startsWith("restore-staging-")
+            ) {
+                runCatching { if (f.lastModified() < cutoff) f.deleteRecursively() }
+            }
+        }
+        context.cacheDir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("engram-share-") && f.lastModified() < cutoff) {
+                runCatching { f.delete() }
+            }
+        }
+    }
+
     private suspend fun ApplicationCall.serveAsset(requested: String) {
         val clean = requested.substringBefore('?').trimStart('/').takeIf { it.split('/').none { part -> part == ".." } } ?: "index.html"
         val candidate = "public/$clean"
-        val resolved = if (runCatching { context.assets.open(candidate).use { } }.isSuccess) candidate else "public/index.html"
-        val extension = resolved.substringAfterLast('.', "html")
-        val length = context.assets.open(resolved).use { it.available().toLong() }
-        response.header(HttpHeaders.ContentLength, length.toString())
-        if (resolved.startsWith("public/assets/") || resolved.startsWith("public/vendor/")) {
-            response.header(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
-        } else {
-            response.header(HttpHeaders.CacheControl, "no-cache")
+        var resolved = candidate
+        val opened: InputStream = runCatching { context.assets.open(candidate) }.getOrElse {
+            resolved = "public/index.html"
+            context.assets.open(resolved)
         }
-        // APK 内可能包含数 MB 的编辑器/PDF 资源。禁止 readBytes() 整块进堆，固定 64 KiB 流式发送。
-        respondOutputStream(mime(extension)) {
-            context.assets.open(resolved).use { input -> input.copyTo(this, 64 * 1024) }
+        try {
+            val extension = resolved.substringAfterLast('.', "html")
+            val length = opened.available().toLong()
+            response.header(HttpHeaders.ContentLength, length.toString())
+            if (resolved.startsWith("public/assets/") || resolved.startsWith("public/vendor/")) {
+                response.header(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
+            } else {
+                response.header(HttpHeaders.CacheControl, "no-cache")
+            }
+            // APK 内可能包含数 MB 的编辑器/PDF 资源。禁止 readBytes() 整块进堆，固定 64 KiB 流式发送。
+            respondOutputStream(mime(extension)) {
+                opened.use { input -> input.copyTo(this, 64 * 1024) }
+            }
+        } catch (error: Throwable) {
+            runCatching { opened.close() }
+            throw error
         }
     }
 

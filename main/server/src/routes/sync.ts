@@ -20,6 +20,7 @@ import {
   removeNodeSubscribers,
   writeRawFileStream,
   sha256,
+  cachedFileSha256,
   type PushApplyResult,
   type PushPayload,
 } from '../sync/hub.js';
@@ -200,16 +201,23 @@ function peerView(peer: SyncPeer) {
 }
 
 /** 补拉与订阅交接使用同一份载荷与分类门禁。 */
-function enrichReplayOp(op: SyncOp, compact = false, pageHashes?: Map<string, string>) {
+function enrichReplayOp(
+  op: SyncOp,
+  compact = false,
+  pageHashes?: Map<string, string>,
+  batchContext?: { tombstonesBySession?: Map<string, string>; board?: unknown | null }
+) {
   if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
   if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
   // 会话：oplog 只存 kind/target/hash。删除 op 必须在这里补上 deleted/deleted_at，
   // 否则成员重连回放会把「删除」当成快照更新去拉 404，删除最长要等 15 分钟对账才生效。
   if (op.kind === 'session') {
-    const tombstone = listSessionTombstones().find((item) => item.sessionId === op.target);
+    const deletedAt = batchContext?.tombstonesBySession
+      ? batchContext.tombstonesBySession.get(op.target)
+      : listSessionTombstones().find((item) => item.sessionId === op.target)?.deletedAt;
     const snapshot = collectSessionSnapshot(op.target);
-    if (tombstone && !snapshot) {
-      return { ...op, deleted: true, deleted_at: tombstone.deletedAt };
+    if (deletedAt && !snapshot) {
+      return { ...op, deleted: true, deleted_at: deletedAt };
     }
     return snapshot
       ? { ...op, hash: snapshotHash(snapshot), messages: snapshot.messages.length }
@@ -217,7 +225,7 @@ function enrichReplayOp(op: SyncOp, compact = false, pageHashes?: Map<string, st
   }
   // 看板：内容很小，回放直接带当前那份（oplog 不存载荷，否则离线成员重连后看板不更新）
   if (op.kind === 'board') {
-    const board = readSyncedBoard();
+    const board = batchContext?.board !== undefined ? batchContext.board : readSyncedBoard();
     return board ? { ...op, board } : op;
   }
   // 客户调研记录：正文由客户端按 op.hash 按需拉 /api/sync/research，补拉 op 里不塞报告正文
@@ -232,19 +240,18 @@ function enrichReplayOp(op: SyncOp, compact = false, pageHashes?: Map<string, st
     let hash = '';
     try {
       const abs = safeJoin(op.target);
-      gone = !fs.existsSync(abs);
-      if (!gone) {
-        const cached = pageHashes?.get(op.target);
-        if (cached !== undefined) {
-          hash = cached;
-        } else {
-          try {
-            hash = sha256(fs.readFileSync(abs));
-          } catch {
-            hash = ''; // 读不到就不带 hash：调用方照旧拉正文，不误判成「已同步」
-          }
-          pageHashes?.set(op.target, hash);
+      const cached = pageHashes?.get(op.target);
+      if (cached !== undefined) {
+        gone = cached === '';
+        hash = cached;
+      } else {
+        try {
+          hash = cachedFileSha256(abs);
+        } catch {
+          gone = !fs.existsSync(abs);
+          hash = ''; // 读不到就不带 hash：调用方照旧拉正文，不误判成「已同步」
         }
+        pageHashes?.set(op.target, hash);
       }
     } catch {
       gone = true; // 路径非法也等价于拉不到
@@ -663,9 +670,14 @@ export async function syncRoutes(app: FastifyInstance) {
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, Math.trunc(requestedLimit))) : 500;
     const compact = query.compact === '1' || query.compact === 'true';
     const ops = getOpsSince(since, limit) as SyncOp[];
-    // 同一批里同一路径可能重复（AIWorks 系统页每轮重写）：正文 hash 只读一次
+    // 同一批里同一路径可能重复（AIWorks 系统页每轮重写）：正文 hash 只读一次；会话墓碑与看板只查一次
     const pageHashes = new Map<string, string>();
-    const enriched = ops.map(op => enrichReplayOp(op, compact, pageHashes));
+    const hasSessionOp = ops.some((op) => op.kind === 'session');
+    const tombstonesBySession = hasSessionOp
+      ? new Map(listSessionTombstones().map((item) => [item.sessionId, item.deletedAt]))
+      : undefined;
+    const board = ops.some((op) => op.kind === 'board') ? readSyncedBoard() : undefined;
+    const enriched = ops.map(op => enrichReplayOp(op, compact, pageHashes, { tombstonesBySession, board }));
     if (req.syncPeer) touchPeer(req.syncPeer.id);
     return {
       ops: enriched,
@@ -831,6 +843,10 @@ function buildSnapshotEntries(): {
     mtime: number;
   }[] = [];
   const distilledPaths = distilledSourcePaths();
+  const pageRevisionByPath = new Map<string, number>();
+  for (const row of db.prepare(`SELECT path, sync_revision FROM pages`).all() as { path: string; sync_revision: number }[]) {
+    pageRevisionByPath.set(row.path, Number(row.sync_revision || 0));
+  }
   function walk(rel: string): void {
     const absDir = safeJoin(rel);
     let dirents: fs.Dirent[];
@@ -847,34 +863,38 @@ function buildSnapshotEntries(): {
       const childAbs = safeJoin(childRel);
       if (e.isDirectory()) {
         walk(childRel);
-      } else if (classifyBrainEntry(childRel) === 'page') {
-        let mtime = 0;
-        try { mtime = fs.statSync(childAbs).mtimeMs; } catch { /* 读取竞态：按最旧 */ }
-        const raw = fs.readFileSync(childAbs, 'utf8');
-        const revision = Number(
-          (db.prepare(`SELECT sync_revision FROM pages WHERE path = ?`).get(childRel) as
-            | { sync_revision: number }
-            | undefined)?.sync_revision || 0
-        );
-        entries.push({
-          kind: 'page',
-          path: childRel,
-          hash: sha256(Buffer.from(raw, 'utf8')),
-          revision,
-          distilled: distilledPaths.has(childRel),
-          mtime,
-        });
       } else {
+        let stat: fs.Stats | undefined;
         let mtime = 0;
-        try { mtime = fs.statSync(childAbs).mtimeMs; } catch { /* 读取竞态：按最旧 */ }
-        entries.push({
-          kind: 'file',
-          path: childRel,
-          hash: sha256(fs.readFileSync(childAbs)),
-          revision: 0,
-          distilled: distilledPaths.has(childRel),
-          mtime,
-        });
+        try {
+          stat = fs.statSync(childAbs);
+          mtime = stat.mtimeMs;
+        } catch { /* 读取竞态：按最旧 */ }
+        let hash = '';
+        try {
+          hash = cachedFileSha256(childAbs, stat);
+        } catch {
+          hash = sha256(Buffer.alloc(0));
+        }
+        if (classifyBrainEntry(childRel) === 'page') {
+          entries.push({
+            kind: 'page',
+            path: childRel,
+            hash,
+            revision: pageRevisionByPath.get(childRel) ?? 0,
+            distilled: distilledPaths.has(childRel),
+            mtime,
+          });
+        } else {
+          entries.push({
+            kind: 'file',
+            path: childRel,
+            hash,
+            revision: 0,
+            distilled: distilledPaths.has(childRel),
+            mtime,
+          });
+        }
       }
     }
   }

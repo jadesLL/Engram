@@ -241,6 +241,7 @@ import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
 import { useServerUpdateStore } from '../stores/serverUpdate';
 import { useDismissOnOutside } from '../lib/dismissOnOutside';
+import { useDialogFocus } from '../lib/dialogFocus';
 import {
   OUTCOME_HINTS,
   OUTCOME_LABELS,
@@ -299,6 +300,7 @@ useDismissOnOutside({
   close: closeSyncLogDrawer,
   priority: () => 40,
 });
+useDialogFocus(() => state.open, rootEl);
 /** 空闲时 5 秒一跳；同步进行中收到 2 秒——用户正盯着「这轮又改了什么」，5 秒太钝 */
 const AUTO_REFRESH_MS = 5000;
 const AUTO_REFRESH_BUSY_MS = 2000;

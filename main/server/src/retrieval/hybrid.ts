@@ -108,52 +108,74 @@ export async function hybridSearch(
     .all(fq, limit * 2) as { id: string; rank: number }[];
 
   const hits: SearchHit[] = [];
-  for (const r of ftsPages) {
-    const page = db
-      .prepare(`SELECT id, path, title, type, tags, updated_at FROM pages WHERE id = ? AND deleted = 0`)
-      .get(r.id) as any;
-    if (!page) continue;
-    const weight = derivedPageWeight(page.path);
-    if (weight === 0) continue;
-    const snippet = evidenceSnippet(readPage(page.path)?.content || '', query);
-    const ageDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
-    let tags: string[] = [];
-    try {
-      tags = JSON.parse(page.tags || '[]');
-    } catch { /* 标签解析失败不影响检索结果 */ }
-    hits.push({
-      refType: 'page',
-      refId: page.id,
-      title: page.title,
-      path: page.path,
-      heading: '',
-      snippet,
-      score: -r.rank * weight,
-      evidence: ['关键词'],
-      updated_at: page.updated_at,
-      type: page.type,
-      tags,
-      ageDays,
-    });
+  if (ftsPages.length) {
+    const pageIds = ftsPages.map((r) => r.id);
+    const pagePh = pageIds.map(() => '?').join(',');
+    const pageMap = new Map<string, any>();
+    for (const p of db
+      .prepare(`SELECT id, path, title, type, tags, updated_at FROM pages WHERE deleted = 0 AND id IN (${pagePh})`)
+      .all(...pageIds) as any[]) {
+      pageMap.set(p.id, p);
+    }
+    for (const r of ftsPages) {
+      const page = pageMap.get(r.id);
+      if (!page) continue;
+      const weight = derivedPageWeight(page.path);
+      if (weight === 0) continue;
+      const ageDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
+      let tags: string[] = [];
+      try {
+        tags = JSON.parse(page.tags || '[]');
+      } catch { /* 标签解析失败不影响检索结果 */ }
+      hits.push({
+        refType: 'page',
+        refId: page.id,
+        title: page.title,
+        path: page.path,
+        heading: '',
+        snippet: '',
+        score: -r.rank * weight,
+        evidence: ['关键词'],
+        updated_at: page.updated_at,
+        type: page.type,
+        tags,
+        ageDays,
+      });
+    }
   }
-  for (const r of ftsFiles) {
-    const file = db
-      .prepare(`SELECT id, path, name, text, updated_at FROM files WHERE id = ? AND deleted = 0`)
-      .get(r.id) as any;
-    if (!file) continue;
-    // 收集箱内容不参与检索（正常路径下它们没有 files 行，这里是双保险）
-    if (isInboxPath(file.path)) continue;
-    hits.push({
-      refType: 'file',
-      refId: file.id,
-      title: file.name,
-      path: file.path,
-      heading: '',
-      snippet: evidenceSnippet(String(file.text || ''), query),
-      score: -r.rank,
-      evidence: ['关键词'],
-      updated_at: file.updated_at,
-    });
+  if (ftsFiles.length) {
+    const fileIds = ftsFiles.map((r) => r.id);
+    const filePh = fileIds.map(() => '?').join(',');
+    const fileMap = new Map<string, any>();
+    for (const f of db
+      .prepare(`SELECT id, path, name, text, updated_at FROM files WHERE deleted = 0 AND id IN (${filePh})`)
+      .all(...fileIds) as any[]) {
+      fileMap.set(f.id, f);
+    }
+    for (const r of ftsFiles) {
+      const file = fileMap.get(r.id);
+      if (!file) continue;
+      // 收集箱内容不参与检索（正常路径下它们没有 files 行，这里是双保险）
+      if (isInboxPath(file.path)) continue;
+      hits.push({
+        refType: 'file',
+        refId: file.id,
+        title: file.name,
+        path: file.path,
+        heading: '',
+        snippet: evidenceSnippet(String(file.text || ''), query),
+        score: -r.rank,
+        evidence: ['关键词'],
+        updated_at: file.updated_at,
+      });
+    }
   }
-  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+  const top = hits.sort((a, b) => b.score - a.score).slice(0, limit);
+  // 只为最终命中的前 limit 个页面读盘裁摘要，避免为被截断或权重要剔除的候选做多余磁盘 I/O
+  for (const hit of top) {
+    if (hit.refType === 'page') {
+      hit.snippet = evidenceSnippet(readPage(hit.path)?.content || '', query);
+    }
+  }
+  return top;
 }

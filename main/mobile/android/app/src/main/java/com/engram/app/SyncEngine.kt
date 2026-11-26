@@ -950,7 +950,7 @@ class SyncEngine(
         val file = db.file(path)
         if (!file.exists() || !file.isFile) return@runCatching ""
         if (kind == "page" && db.pageIdByPath(path) == null) return@runCatching ""
-        sha256(file)
+        db.cachedFileSha256(path, file)
     }.getOrDefault("")
 
     /** 已被同批后一条 op 覆盖 / 内容未变：只推进水位，不再应用这一条 */
@@ -1155,7 +1155,7 @@ class SyncEngine(
                                 continue
                             }
                             val localFile = db.file(path)
-                            val localHash = if (localFile.exists()) sha256(localFile) else ""
+                            val localHash = if (localFile.exists()) db.cachedFileSha256(path, localFile) else ""
                             if (localHash == hash) {
                                 if (kind == "page" && db.pageRevision(path) != revision) {
                                     db.rawPage(path)?.let { db.writeSyncedPage(path, it, revision) }

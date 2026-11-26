@@ -261,11 +261,13 @@ function queueThumbnail(pageNumber: number, version = loadVersion) {
     .finally(() => pendingThumbnails.delete(pageNumber));
 }
 
-async function renderThumbnail(pageNumber: number, version: number) {
+const MAX_THUMBNAIL_URLS = 40;
+
+async function renderThumbnail(renderPageNumber: number, version: number) {
   if (version !== loadVersion || !pdfDocument) return;
   let page: Awaited<ReturnType<PDFDocumentProxy['getPage']>> | null = null;
   try {
-    page = await pdfDocument.getPage(pageNumber);
+    page = await pdfDocument.getPage(renderPageNumber);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 104 / base.width });
     const canvas = window.document.createElement('canvas');
@@ -276,7 +278,22 @@ async function renderThumbnail(pageNumber: number, version: number) {
       await page.render({ canvas, canvasContext: context, viewport }).promise;
       if (version === loadVersion) {
         const next = [...thumbnailUrls.value];
-        next[pageNumber - 1] = canvas.toDataURL('image/jpeg', 0.72);
+        next[renderPageNumber - 1] = canvas.toDataURL('image/jpeg', 0.72);
+        // 限制缩略图 data URL 缓存数量，超限时清理距当前页最远的条目以控制内存占用
+        let cachedCount = 0;
+        for (const item of next) if (item) cachedCount++;
+        if (cachedCount > MAX_THUMBNAIL_URLS) {
+          const anchorPage = pageNumber.value;
+          const evictOrder = next
+            .map((url, idx) => ({ idx, page: idx + 1, hasUrl: Boolean(url) }))
+            .filter((entry) => entry.hasUrl && entry.page !== renderPageNumber && entry.page !== anchorPage)
+            .sort((a, b) => Math.abs(b.page - anchorPage) - Math.abs(a.page - anchorPage));
+          for (const victim of evictOrder) {
+            if (cachedCount <= MAX_THUMBNAIL_URLS) break;
+            next[victim.idx] = '';
+            cachedCount--;
+          }
+        }
         thumbnailUrls.value = next;
       }
     }
@@ -409,7 +426,7 @@ watch(() => props.extractedPages, () => {
   searchTexts = null;
   searchMatches.value = [];
   searchIndex.value = -1;
-}, { deep: true });
+});
 watch(searchQuery, () => {
   searchMatches.value = [];
   searchIndex.value = -1;

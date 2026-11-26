@@ -514,7 +514,10 @@ export const useChatStore = defineStore('chat', {
       });
 
       source.addEventListener('snapshot', (event) => {
-        const snapshot = JSON.parse((event as MessageEvent).data) as ChatSnapshot;
+        let snapshot: ChatSnapshot;
+        try {
+          snapshot = JSON.parse((event as MessageEvent).data) as ChatSnapshot;
+        } catch { return; /* 忽略坏帧 */ }
         // 标题可能刚被自动更名：列表与快照都要跟上
         this.mergeSession(snapshot.session);
         if (!isActive()) return;
@@ -535,7 +538,10 @@ export const useChatStore = defineStore('chat', {
       });
       source.addEventListener('delta', (event) => {
         if (!isActive() || !this.snapshot) return;
-        const data = JSON.parse((event as MessageEvent).data);
+        let data: any;
+        try {
+          data = JSON.parse((event as MessageEvent).data);
+        } catch { return; /* 忽略坏帧 */ }
         this.statusText = '';
         let message = this.snapshot.messages.find((m) => m.id === data.messageId);
         if (!message) {

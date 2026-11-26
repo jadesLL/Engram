@@ -268,6 +268,7 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import '../styles/settings.css';
 import { useRoute } from 'vue-router';
 import Icon from '../components/Icon.vue';
 import DomainHead from '../components/settings/DomainHead.vue';

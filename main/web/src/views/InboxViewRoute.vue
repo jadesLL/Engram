@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
-import InboxView from './InboxView.vue';
-import MobileInbox from '../components/MobileInbox.vue';
+import { defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue';
+const InboxView = defineAsyncComponent(() => import('./InboxView.vue'));
+const MobileInbox = defineAsyncComponent(() => import('../components/MobileInbox.vue'));
 
 /**
  * 收集箱路由外壳：窄屏（Android WebView / 手机浏览器）走「清仓台」卡片视图，

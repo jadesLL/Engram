@@ -116,15 +116,34 @@ function broadcast(data: Record<string, unknown>, excludePeerId?: string): void 
   }
 }
 
+const MAX_FILE_HASH_CACHE = 5000;
+const fileHashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
+
 function sha256(buf: Buffer): string {
   return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/** 带 (mtimeMs, size) 缓存的文件哈希：未修改的文件跳过重复全量读盘与 SHA-256 计算 */
+function cachedFileSha256(absPath: string, preStat?: fs.Stats): string {
+  const st = preStat ?? fs.statSync(absPath);
+  const hit = fileHashCache.get(absPath);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+    return hit.hash;
+  }
+  const hash = sha256(fs.readFileSync(absPath));
+  if (fileHashCache.size >= MAX_FILE_HASH_CACHE) {
+    const oldest = fileHashCache.keys().next().value;
+    if (oldest !== undefined) fileHashCache.delete(oldest);
+  }
+  fileHashCache.set(absPath, { mtimeMs: st.mtimeMs, size: st.size, hash });
+  return hash;
 }
 
 /** 原子写页面文件并同步 DB 索引（同步链路专用：不经 writePage，避免再次触发本地变更通知） */
 function applyPageContent(relPath: string, raw: string): { id: string } | null {
   const abs = safeJoin(relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const temp = `${abs}.${Date.now()}.sync.tmp`;
+  const temp = `${abs}.${Date.now()}-${crypto.randomUUID()}.sync.tmp`;
   fs.writeFileSync(temp, raw);
   fs.renameSync(temp, abs);
   // 自己写的：文件系统监听据此跳过回声（本函数已经推过 page-changed）
@@ -149,9 +168,10 @@ function readPageRaw(relPath: string): string | null {
 function writeRawFile(relPath: string, buf: Buffer): void {
   const abs = safeJoin(relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const temp = `${abs}.${Date.now()}.sync.tmp`;
+  const temp = `${abs}.${Date.now()}-${crypto.randomUUID()}.sync.tmp`;
   fs.writeFileSync(temp, buf);
   fs.renameSync(temp, abs);
+  noteAppWrite(abs);
 }
 
 /** 原子流式写入同步文件；普通文件保留大小上限，调用方可为收集箱传 Infinity。 */
@@ -183,6 +203,7 @@ async function writeRawFileStream(relPath: string, source: Readable, maxBytes = 
       return false;
     }
     fs.renameSync(temp, abs);
+    noteAppWrite(abs);
     return true;
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -761,4 +782,4 @@ export function commitLocalChange(kind: SyncKind, target: string, oldPath = '', 
   return commit(kind, target, HUB_ACTOR, { oldPath, deleted });
 }
 
-export { writeRawFile, writeRawFileStream, sha256, applyPageContent, readPageRaw };
+export { writeRawFile, writeRawFileStream, sha256, cachedFileSha256, applyPageContent, readPageRaw };

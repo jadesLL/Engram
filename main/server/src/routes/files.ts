@@ -1,6 +1,9 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { pipeline as streamPipeline } from 'node:stream/promises';
 import matter from 'gray-matter';
 // JSZip 只在「下载/导出打包」时用：类型走 import type，实例在 handler 里动态 import
 // （benign：tsc 只保留类型，不会在启动 imports 阶段加载 jszip）
@@ -166,6 +169,26 @@ export async function fileRoutes(app: FastifyInstance) {
     // 「已提炼」一次查库打标：逐文件 isDistilledPath 是每行一次 EXISTS 子查询，
     // 资料多时整页要跑几百次（与 pipeline/rawFiles.ts 同一口径，语义完全一致）
     const distilled = distilledSourcePaths();
+    const pageIdByPath = new Map<string, string>();
+    for (const row of db.prepare(`SELECT id, path FROM pages WHERE deleted = 0`).all() as { id: string; path: string }[]) {
+      pageIdByPath.set(row.path, String(row.id));
+    }
+    const extractionByPath = new Map<string, any>();
+    for (const row of db
+      .prepare(
+        `SELECT f.path AS file_path, fe.* FROM file_extractions fe
+         JOIN files f ON f.id = fe.file_id
+         WHERE f.deleted = 0`
+      )
+      .all() as any[]) {
+      extractionByPath.set(String(row.file_path), row);
+    }
+    const hasTextByPath = new Set<string>();
+    for (const row of db
+      .prepare(`SELECT path FROM files WHERE deleted = 0 AND TRIM(text) <> ''`)
+      .all() as { path: string }[]) {
+      hasTextByPath.add(row.path);
+    }
     const pushEntry = (name: string, rel: string, legacy = false) => {
       // 历史遗留的散图（迁移没搬走的）同样不进侧栏
       if (isAssetFile(name)) return;
@@ -173,22 +196,11 @@ export async function fileRoutes(app: FastifyInstance) {
       let stat: fs.Stats;
       try { stat = fs.statSync(abs); } catch { return; }
       const ext = path.extname(name).slice(1).toLowerCase();
-      let pageId: string | undefined;
-      if (['md', 'markdown'].includes(ext)) {
-        const page = db.prepare(`SELECT id FROM pages WHERE path = ? AND deleted = 0`).get(rel) as any;
-        pageId = page?.id;
-      }
-      const extraction = db.prepare(
-        `SELECT fe.* FROM file_extractions fe
-         JOIN files f ON f.id=fe.file_id
-         WHERE f.path=? AND f.deleted=0`
-      ).get(rel) as any;
-      const indexed = extraction?.status ? undefined : db.prepare(
-        'SELECT text FROM files WHERE path=? AND deleted=0'
-      ).get(rel) as { text?: string } | undefined;
+      const pageId = ['md', 'markdown'].includes(ext) ? pageIdByPath.get(rel) : undefined;
+      const extraction = extractionByPath.get(rel);
       const readable = ['md', 'markdown'].includes(ext)
         || ['completed', 'partial'].includes(extraction?.status)
-        || (!extraction?.status && Boolean(indexed?.text?.trim()));
+        || (!extraction?.status && hasTextByPath.has(rel));
       out.push({
         name, path: rel, ext, size: stat.size,
         updated_at: stat.mtime.toISOString(),
@@ -294,115 +306,135 @@ export async function fileRoutes(app: FastifyInstance) {
 
   /** 上传文件到指定目录；Office/TXT 自动提取文本入索引，可整理格式立即进入 ingest。 */
   app.post('/api/files/upload', async (req, reply) => {
-    // 先收集全部 part（dir 字段可能排在文件之后）
+    // 先流式落临时盘收集全部 part（dir 字段可能排在文件之后），避免大上传把多文件同时留在内存
     const fields: Record<string, string> = {};
-    const incoming: { filename: string; buffer: Buffer }[] = [];
-    for await (const part of req.parts()) {
-      if (part.type === 'field') {
-        fields[part.fieldname] = String(part.value ?? '');
-      } else if (part.type === 'file' && part.filename) {
-        incoming.push({ filename: part.filename, buffer: await part.toBuffer() });
+    const incoming: { filename: string; tempPath: string; size: number }[] = [];
+    const cleanupTemps = () => {
+      for (const item of incoming) {
+        fs.rmSync(item.tempPath, { force: true });
       }
-    }
-    // 默认落「文档」二级目录（原始资料/文档）；显式传 dir 时按白名单校验
-    const dir = normalizeDir(fields.dir || '') || DEFAULT_RAW_DIR;
-    if (!isUploadDir(dir)) {
-      return reply.code(403).send({ error: '文件只能上传到「原始资料」的 文档 / 对话 / 灵感碎片 目录' });
-    }
-    // 图片不能作为独立资料上传：图片是某个 md 父项的私有资产，只能插进某个内容里
-    // （编辑器内粘贴/拖入，或拖到侧栏某个条目上）。裸图会让侧栏目录、提炼清单、
-    // 图谱全部多出一类没有归属的实体——正是本模型要消灭的形态。
-    const images = incoming.filter((file) => isAssetFile(path.basename(file.filename)));
-    if (images.length) {
-      return reply.code(400).send({
-        error: images.length === incoming.length
-          ? '图片不能单独上传：请把它拖到某个页面或 Markdown 资料上（或直接粘贴进正文），图片会作为该内容的资产保存'
-          : `以下图片不能单独上传，请拖到具体内容里：${images.map((f) => path.basename(f.filename)).join('、')}`,
-      });
-    }
-    const saved: any[] = [];
-    const duplicates: string[] = [];
-    for (const file of incoming) {
-      const buffer = file.buffer;
-      const safeName = path.basename(file.filename).replace(/[\\/:*?"<>|]/g, '-');
-      const rel = path.posix.join(dir, safeName);
-      // 同名文件已存在：跳过，不自动改名，记录后统一提示
-      if (fs.existsSync(safeJoin(rel))) {
-        duplicates.push(safeName);
-        continue;
+    };
+    try {
+      for await (const part of req.parts()) {
+        if (part.type === 'field') {
+          fields[part.fieldname] = String(part.value ?? '');
+        } else if (part.type === 'file' && part.filename) {
+          const tempPath = path.join(os.tmpdir(), `engram-upload-${process.pid}-${crypto.randomUUID()}`);
+          await streamPipeline(part.file, fs.createWriteStream(tempPath));
+          const size = fs.statSync(tempPath).size;
+          incoming.push({ filename: part.filename, tempPath, size });
+        }
       }
-      const abs = safeJoin(rel);
-      fs.mkdirSync(path.dirname(abs), { recursive: true });
-      fs.writeFileSync(abs, buffer);
-      // 自己写的：登记回声抑制；下面每个分支各推一次 SSE，侧栏目录立刻可见
-      noteAppWrite(abs);
-
-      const ext = path.posix.extname(safeName).slice(1).toLowerCase();
-      let indexed = false;
-      let pageId: string | undefined;
-      if (OFFICE_EXTS.has(ext)) {
+      // 默认落「文档」二级目录（原始资料/文档）；显式传 dir 时按白名单校验
+      const dir = normalizeDir(fields.dir || '') || DEFAULT_RAW_DIR;
+      if (!isUploadDir(dir)) {
+        return reply.code(403).send({ error: '文件只能上传到「原始资料」的 文档 / 对话 / 灵感碎片 目录' });
+      }
+      // 图片不能作为独立资料上传：图片是某个 md 父项的私有资产，只能插进某个内容里
+      // （编辑器内粘贴/拖入，或拖到侧栏某个条目上）。裸图会让侧栏目录、提炼清单、
+      // 图谱全部多出一类没有归属的实体——正是本模型要消灭的形态。
+      const images = incoming.filter((file) => isAssetFile(path.basename(file.filename)));
+      if (images.length) {
+        return reply.code(400).send({
+          error: images.length === incoming.length
+            ? '图片不能单独上传：请把它拖到某个页面或 Markdown 资料上（或直接粘贴进正文），图片会作为该内容的资产保存'
+            : `以下图片不能单独上传，请拖到具体内容里：${images.map((f) => path.basename(f.filename)).join('、')}`,
+        });
+      }
+      const saved: any[] = [];
+      const duplicates: string[] = [];
+      for (const file of incoming) {
+        const safeName = path.basename(file.filename).replace(/[\\/:*?"<>|]/g, '-');
+        const rel = path.posix.join(dir, safeName);
+        // 同名文件已存在：跳过，不自动改名，记录后统一提示
+        if (fs.existsSync(safeJoin(rel))) {
+          duplicates.push(safeName);
+          continue;
+        }
+        const abs = safeJoin(rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
         try {
-          // xlsx / mammoth 只有真的上传 Office 文件时才加载
-          const { officeToText } = await import('../pipeline/office.js');
-          const text = await officeToText(ext, buffer);
-          const fileId = upsertFileRecord(rel, text ?? '', buffer.length);
+          fs.renameSync(file.tempPath, abs);
+        } catch (err: any) {
+          if (err?.code === 'EXDEV') {
+            fs.copyFileSync(file.tempPath, abs);
+            fs.rmSync(file.tempPath, { force: true });
+          } else {
+            throw err;
+          }
+        }
+        // 自己写的：登记回声抑制；下面每个分支各推一次 SSE，侧栏目录立刻可见
+        noteAppWrite(abs);
+
+        const ext = path.posix.extname(safeName).slice(1).toLowerCase();
+        let indexed = false;
+        let pageId: string | undefined;
+        if (OFFICE_EXTS.has(ext)) {
+          try {
+            // xlsx / mammoth 只有真的上传 Office 文件时才加载
+            const { officeToText } = await import('../pipeline/office.js');
+            const text = await officeToText(ext, fs.readFileSync(abs));
+            const fileId = upsertFileRecord(rel, text ?? '', file.size);
+            enqueue('index_file', { fileId });
+            indexed = true;
+          } catch (e: any) {
+            app.log.warn(`Office 提取失败 ${rel}: ${e.message}`);
+          }
+          notifySyncChange('file', rel);
+          emit('file-changed', { path: rel });
+        } else if (TEXT_EXTS.has(ext)) {
+          const text = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
+          const fileId = upsertFileRecord(rel, text, file.size);
           enqueue('index_file', { fileId });
           indexed = true;
-        } catch (e: any) {
-          app.log.warn(`Office 提取失败 ${rel}: ${e.message}`);
+          notifySyncChange('file', rel);
+          emit('file-changed', { path: rel });
+        } else if (['md', 'markdown'].includes(ext)) {
+          // 上传的 md 直接登记为可编辑页面并入库索引
+          const meta = syncPageFile(rel);
+          pageId = meta?.id;
+          if (pageId) {
+            enqueuePagePipeline(pageId);
+            indexed = true;
+          }
+          notifySyncChange('page', rel);
+          if (pageId) emit('page-changed', { path: rel, id: pageId });
+        } else if (isRawPath(dir) && await isExtractableExtension(ext)) {
+          // pdfjs 只在真的要给 PDF/图片排提取任务时才加载
+          const { scheduleFileExtraction } = await loadFileExtraction();
+          const fileId = ensureFileRecord(rel, file.size);
+          const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
+          notifySyncChange('file', rel);
+          emit('file-changed', { path: rel });
+          saved.push({
+            path: rel,
+            name: path.basename(rel),
+            indexed: false,
+            fileId,
+            extractionJobId: scheduled.jobId || null,
+          });
+          continue;
+        } else {
+          // 其余格式（图片等）仅落盘，不入索引，但同样需要多端同步
+          notifySyncChange('file', rel);
+          emit('file-changed', { path: rel });
         }
-        notifySyncChange('file', rel);
-        emit('file-changed', { path: rel });
-      } else if (TEXT_EXTS.has(ext)) {
-        const text = buffer.toString('utf8').replace(/\r\n/g, '\n');
-        const fileId = upsertFileRecord(rel, text, buffer.length);
-        enqueue('index_file', { fileId });
-        indexed = true;
-        notifySyncChange('file', rel);
-        emit('file-changed', { path: rel });
-      } else if (['md', 'markdown'].includes(ext)) {
-        // 上传的 md 直接登记为可编辑页面并入库索引
-        const meta = syncPageFile(rel);
-        pageId = meta?.id;
-        if (pageId) {
-          enqueuePagePipeline(pageId);
-          indexed = true;
-        }
-        notifySyncChange('page', rel);
-        if (pageId) emit('page-changed', { path: rel, id: pageId });
-      } else if (isRawPath(dir) && await isExtractableExtension(ext)) {
-        // pdfjs 只在真的要给 PDF/图片排提取任务时才加载
-        const { scheduleFileExtraction } = await loadFileExtraction();
-        const fileId = ensureFileRecord(rel, buffer.length);
-        const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
-        notifySyncChange('file', rel);
-        emit('file-changed', { path: rel });
+        try { appendWikiLog('上传文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
         saved.push({
           path: rel,
           name: path.basename(rel),
-          indexed: false,
-          fileId,
-          extractionJobId: scheduled.jobId || null,
+          indexed,
+          pageId,
         });
-        continue;
-      } else {
-        // 其余格式（图片等）仅落盘，不入索引，但同样需要多端同步
-        notifySyncChange('file', rel);
-        emit('file-changed', { path: rel });
       }
-      try { appendWikiLog('上传文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
-      saved.push({
-        path: rel,
-        name: path.basename(rel),
-        indexed,
-        pageId,
-      });
+      if (saved.length === 0 && duplicates.length > 0) {
+        return reply.code(409).send({ error: `已存在同名文件，未重复导入：${duplicates.join('、')}` });
+      }
+      if (saved.length === 0) return reply.code(400).send({ error: '没有文件' });
+      return { saved, duplicates: duplicates.length ? duplicates : undefined };
+    } finally {
+      cleanupTemps();
     }
-    if (saved.length === 0 && duplicates.length > 0) {
-      return reply.code(409).send({ error: `已存在同名文件，未重复导入：${duplicates.join('、')}` });
-    }
-    if (saved.length === 0) return reply.code(400).send({ error: '没有文件' });
-    return { saved, duplicates: duplicates.length ? duplicates : undefined };
   });
 
   /** 文件预览：Office 格式返回二进制地址，由前端开源组件渲染（docx-preview / x-data-spreadsheet / pptx-preview） */

@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
@@ -189,7 +189,7 @@ import {
 } from '../lib/contextMenu';
 import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
-import PdfViewer from './PdfViewer.vue';
+const PdfViewer = defineAsyncComponent(() => import('./PdfViewer.vue'));
 import AppModal from './ui/AppModal.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
@@ -248,7 +248,7 @@ const citationTitles = ref<Map<number, string>>(new Map());
 /** 委托式角标提示的卸载函数（角标由 Vditor 注入，挂不上 Vue 指令） */
 let citationTooltipUnbind: (() => void) | undefined;
 const officeEl = ref<HTMLDivElement>();
-const pdfViewer = ref<InstanceType<typeof PdfViewer>>();
+const pdfViewer = ref<any>();
 const versionsOpen = ref(false);
 const versionsLoading = ref(false);
 const versions = ref<OfficeVersion[]>([]);
@@ -295,9 +295,8 @@ const extractionStatusTone = computed(() => {
 
 async function openExternal() {
   try {
-    const res = await fetch(rawUrl.value, { credentials: 'include' });
-    if (!res.ok) throw new Error(`下载失败 ${res.status}`);
-    const buf = new Uint8Array(await res.arrayBuffer());
+    const res = await api.get<ArrayBuffer>(rawUrl.value, { responseType: 'arraybuffer' });
+    const buf = new Uint8Array(res.data);
     const wd = (window as any).wikiDesktop;
     if (wd) {
       const error = await wd.openFileBytes(fileName.value, buf);
@@ -457,9 +456,8 @@ async function retryOnlineOffice() {
 }
 
 async function renderFallbackOffice(url: string, officeExtension: string) {
-  const res = await fetch(url, { credentials: 'include' });
-  if (!res.ok) throw new Error(`获取文件失败 ${res.status}`);
-  const buf = await res.arrayBuffer();
+  const res = await api.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
+  const buf = res.data;
   const el = officeEl.value;
   if (!el) return;
   let extractedText = '';
@@ -740,6 +738,7 @@ onMounted(async () => {
     });
   }
   extractionTimer = setInterval(async () => {
+    if (document.visibilityState === 'hidden') return;
     if (!supportsExtraction.value) return;
     const status = extraction.value?.status;
     if (activeFileJob.value || status === 'pending' || status === 'running') {

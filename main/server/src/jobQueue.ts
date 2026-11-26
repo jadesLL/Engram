@@ -1,5 +1,12 @@
 import { db, now } from './lib/db.js';
 
+let wakeJobRunner: (() => void) | null = null;
+
+/** 由 jobs.ts 注册，使新任务入队后立即唤醒轮询而不必等下一秒 tick */
+export function registerJobWakeup(handler: (() => void) | null): void {
+  wakeJobRunner = handler;
+}
+
 export function enqueue(kind: string, payload: unknown, options: { dedupeRecent?: boolean } = {}): number | undefined {
   const payloadStr = JSON.stringify(payload);
   const duplicate = db
@@ -18,6 +25,7 @@ export function enqueue(kind: string, payload: unknown, options: { dedupeRecent?
   const info = db
     .prepare(`INSERT INTO jobs(kind, payload, status, created_at, updated_at) VALUES(?, ?, 'pending', ?, ?)`)
     .run(kind, payloadStr, now(), now());
+  wakeJobRunner?.();
   return Number(info.lastInsertRowid);
 }
 

@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from './stores/app';
 import { useAuthStore } from './stores/auth';
@@ -82,17 +82,17 @@ import { useServerUpdateStore } from './stores/serverUpdate';
 import { useSyncStore } from './stores/sync';
 import ToastHost from './components/ui/ToastHost.vue';
 import ConfirmHost from './components/ui/ConfirmHost.vue';
-import IdeaComposer from './components/ui/IdeaComposer.vue';
 import AppTooltip from './components/ui/AppTooltip.vue';
-import UpdateOverlay from './components/UpdateOverlay.vue';
-import BeautifyTaskPill from './components/BeautifyTaskPill.vue';
-import AssetDrawer from './components/AssetDrawer.vue';
-import SyncLogDrawer from './components/SyncLogDrawer.vue';
-import JobsDrawer from './components/JobsDrawer.vue';
 import BrandMark from './components/BrandMark.vue';
 import Icon from './components/Icon.vue';
 import { loadRuntimeCapabilities } from './lib/capabilities';
 import { registerGlobalBackLayers } from './lib/globalBackLayers';
+const IdeaComposer = defineAsyncComponent(() => import('./components/ui/IdeaComposer.vue'));
+const UpdateOverlay = defineAsyncComponent(() => import('./components/UpdateOverlay.vue'));
+const BeautifyTaskPill = defineAsyncComponent(() => import('./components/BeautifyTaskPill.vue'));
+const AssetDrawer = defineAsyncComponent(() => import('./components/AssetDrawer.vue'));
+const SyncLogDrawer = defineAsyncComponent(() => import('./components/SyncLogDrawer.vue'));
+const JobsDrawer = defineAsyncComponent(() => import('./components/JobsDrawer.vue'));
 import { installJoinLinkReceiver } from './lib/joinLink';
 import { installShareInboxReceiver } from './lib/shareInbox';
 import { installUiZoom } from './lib/uiZoom';
@@ -205,6 +205,10 @@ async function settleServerUpdateFeedback(): Promise<void> {
 let stopBackLayers: (() => void) | null = null;
 let stopShareInbox: (() => void) | null = null;
 let stopUiZoom: (() => void) | null = null;
+let darkMediaQuery: MediaQueryList | null = null;
+function onSystemDarkChange(): void {
+  if (app.theme === 'system') app.applyTheme();
+}
 onMounted(() => {
   loadRuntimeCapabilities().catch(() => {});
   // 上一次服务器更新是否成功（跨页面刷新结算，成功/回滚都在这里给提示）
@@ -220,9 +224,8 @@ onMounted(() => {
   // 安卓侧滑返回：先关全局浮层（确认框/长按菜单/资产抽屉/同步日志/记灵感），
   // 桌面端没有原生调用，注册了也不会触发
   stopBackLayers = registerGlobalBackLayers();
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (app.theme === 'system') app.applyTheme();
-  });
+  darkMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  darkMediaQuery.addEventListener('change', onSystemDarkChange);
 });
 onUnmounted(() => {
   stopUiZoom?.();
@@ -230,6 +233,8 @@ onUnmounted(() => {
   stopShareInbox?.();
   stopBackLayers?.();
   stopBackLayers = null;
+  darkMediaQuery?.removeEventListener('change', onSystemDarkChange);
+  darkMediaQuery = null;
   if (clockTimer) clearInterval(clockTimer);
   clockTimer = null;
   if (subscribedSync) {

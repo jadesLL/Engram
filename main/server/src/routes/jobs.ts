@@ -30,15 +30,19 @@ function safeJson(value: unknown, fallback: any = null) {
   try { return JSON.parse(value); } catch { return fallback; }
 }
 
+let cachedJobSelect: string | null = null;
+
 function jobSelect(): string {
+  if (cachedJobSelect) return cachedJobSelect;
   const columns = new Set((db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name));
-  return ['id', 'kind', 'payload', 'status', 'error', 'created_at', 'run_at',
+  cachedJobSelect = ['id', 'kind', 'payload', 'status', 'error', 'created_at', 'run_at',
     columns.has('updated_at') ? 'updated_at' : `NULL AS updated_at`,
     columns.has('stage') ? 'stage' : `NULL AS stage`,
     columns.has('progress') ? 'progress' : `NULL AS progress`,
     columns.has('detail') ? 'detail' : `NULL AS detail`,
     columns.has('acknowledged_at') ? 'acknowledged_at' : `NULL AS acknowledged_at`,
   ].join(', ');
+  return cachedJobSelect;
 }
 
 export async function jobRoutes(app: FastifyInstance) {
