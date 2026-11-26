@@ -59,6 +59,7 @@
 
 ### 内部
 
+- [平台影响: none] 精简仓库根 `README.md` 并补充亮暗双主题工作流与架构配图（`main/docs/readme/`），将近期功能细则归档至 `main/docs/USER-GUIDE.md`。
 - [平台影响: none] 清理无用的 `sqlite-vec` / `less` 等冗余依赖及废弃 Compose 文件，补充 `oxlint` 静态检查与 `raw`/`trash`/`office`/`entityNames`/`office pipeline` 接口与解析单测；拆分桌面构建镜像依赖缓存层、补齐安卓 CI 条件单测门禁，并让 worktree 清理同步删除远端已合并功能分支。
 - [平台影响: none] 补齐 `.dockerignore` 对 `.public-mirror`、`.env*`、临时/调试目录与大体积预构建包等敏感/无关文件的排除规则；将桌面端与安装器脚本测试改为经 `main/scripts/run-js-tests.cjs` 自动发现执行，补跑此前被漏掉的 `update-progress.test.js` 与 `installer-hardening.test.js`。
 - [平台影响: none] 桌面端与安装器补充单实例锁、实例健康检查标识校验、安装器日志轮询防重入与窗口导航拦截，并移除桌面端只写不读的冗余状态变量；Android `build.gradle` 兼容预发布版本号后缀。

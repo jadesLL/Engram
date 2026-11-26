@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 由 main/scripts/gen-readme-diagrams.mjs 生成，请勿手改 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 330" width="960" height="330" role="img" aria-label="Engram 三端架构与多端同步">
+  <title>Engram 三端架构与多端同步</title>
+  <rect x="4" y="4" width="952" height="322" rx="14" fill="#141413" stroke="#2B2925" stroke-width="1"/>
+
+  
+    <rect x="30" y="24" width="276" height="152" rx="12" fill="#1D1C1A" stroke="#3B3830" stroke-width="1.1"/>
+    <text x="48" y="54" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="700" fill="#E9E5DA">Windows 桌面端</text>
+    
+  <g>
+    <rect x="48" y="66" width="152" height="22" rx="6" fill="#1D243B"/>
+    <text x="124" y="80.78" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="10.5" font-weight="600" fill="#8FA8FF">安装包 / 源码快装</text>
+  </g>
+    <line x1="48" y1="98" x2="288" y2="98" stroke="#2B2925" stroke-width="1"/>
+      <circle cx="53" cy="116" r="2.2" fill="#E08A6A"/>
+      <text x="63" y="120" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">Electron 内嵌本地服务端</text>
+      <circle cx="53" cy="137" r="2.2" fill="#E08A6A"/>
+      <text x="63" y="141" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">断网照常编辑、搜索与看图谱</text>
+      <circle cx="53" cy="158" r="2.2" fill="#E08A6A"/>
+      <text x="63" y="162" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">托盘常驻 · 应用内增量更新</text>
+    <rect x="342" y="24" width="276" height="152" rx="12" fill="#1D1C1A" stroke="#3B3830" stroke-width="1.1"/>
+    <text x="360" y="54" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="700" fill="#E9E5DA">Docker / NAS 中枢</text>
+    
+  <g>
+    <rect x="360" y="66" width="152" height="22" rx="6" fill="#2E221D"/>
+    <text x="436" y="80.78" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="10.5" font-weight="600" fill="#F0A184">24 小时同步中枢</text>
+  </g>
+    <line x1="360" y1="98" x2="600" y2="98" stroke="#2B2925" stroke-width="1"/>
+      <circle cx="365" cy="116" r="2.2" fill="#E08A6A"/>
+      <text x="375" y="120" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">单容器部署，源码同源零移植</text>
+      <circle cx="365" cy="137" r="2.2" fill="#E08A6A"/>
+      <text x="375" y="141" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">内置 HTTPS · DDNS · 扫码邀请</text>
+      <circle cx="365" cy="158" r="2.2" fill="#E08A6A"/>
+      <text x="375" y="162" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">承载手机代理、视频提炼与定时整理</text>
+    <rect x="654" y="24" width="276" height="152" rx="12" fill="#1D1C1A" stroke="#3B3830" stroke-width="1.1"/>
+    <text x="672" y="54" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="700" fill="#E9E5DA">Android 本地优先端</text>
+    
+  <g>
+    <rect x="672" y="66" width="152" height="22" rx="6" fill="#1D2922"/>
+    <text x="748" y="80.78" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="10.5" font-weight="600" fill="#7FAE8C">触屏适配 · 离线可用</text>
+  </g>
+    <line x1="672" y1="98" x2="912" y2="98" stroke="#2B2925" stroke-width="1"/>
+      <circle cx="677" cy="116" r="2.2" fill="#E08A6A"/>
+      <text x="687" y="120" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">内置本地知识库与 FTS 索引</text>
+      <circle cx="677" cy="137" r="2.2" fill="#E08A6A"/>
+      <text x="687" y="141" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">手机 / 折叠屏 / 平板自适应骨架</text>
+      <circle cx="677" cy="158" r="2.2" fill="#E08A6A"/>
+      <text x="687" y="162" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" fill="#B3ADA0">系统分享进收集箱 · 后台保活同步</text>
+
+  <!-- 垂直连接线到同步总线 -->
+  <line x1="168" y1="176" x2="168" y2="204" stroke="#7FAE8C" stroke-width="1.8" stroke-dasharray="4 3"/>
+  <line x1="480" y1="176" x2="480" y2="204" stroke="#E08A6A" stroke-width="2"/>
+  <line x1="792" y1="176" x2="792" y2="204" stroke="#7FAE8C" stroke-width="1.8" stroke-dasharray="4 3"/>
+
+  <!-- 同步总线横条 -->
+  <rect x="96" y="204" width="768" height="34" rx="17" fill="#191817" stroke="#3B3830" stroke-width="1.1"/>
+  <circle cx="122" cy="221" r="4.5" fill="#7FAE8C"/>
+  <text x="480" y="225" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" font-weight="600" fill="#E9E5DA">双向实时同步通道：局域网直连 → IPv6 → IPv4 自动择优  ·  Markdown / 图片 / 会话 / 看板 / 设置同步</text>
+  <circle cx="838" cy="221" r="4.5" fill="#7FAE8C"/>
+
+  <!-- 向下连到底座 -->
+  <line x1="480" y1="238" x2="480" y2="254" stroke="#3B3830" stroke-width="1.8"/>
+
+  <!-- 统一底层产品内核 -->
+  <rect x="30" y="254" width="900" height="54" rx="12" fill="#191817" stroke="#3B3830" stroke-width="1.1"/>
+  <text x="52" y="286" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="13.5" font-weight="700" fill="#E9E5DA">统一产品内核</text>
+  
+  <g>
+    <rect x="176" y="267" width="224" height="28" rx="7" fill="#1D1C1A" stroke="#2B2925" stroke-width="1"/>
+    <text x="288" y="285.14" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" font-weight="600" fill="#B3ADA0">brain/ Markdown 权威数据</text>
+  </g>
+  
+  <g>
+    <rect x="414" y="267" width="240" height="28" rx="7" fill="#1D1C1A" stroke="#2B2925" stroke-width="1"/>
+    <text x="534" y="285.14" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" font-weight="600" fill="#B3ADA0">SQLite FTS5 索引 + 证据账本</text>
+  </g>
+  
+  <g>
+    <rect x="668" y="267" width="242" height="28" rx="7" fill="#2E221D" stroke="#2B2925" stroke-width="1"/>
+    <text x="789" y="285.14" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="11.5" font-weight="600" fill="#F0A184">engram CLI + Skill 统一接口</text>
+  </g>
+</svg>
