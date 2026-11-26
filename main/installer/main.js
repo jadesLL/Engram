@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const { probeRepo } = require('./scripts/lib/repo-probe.js');
 const { findBundleZip, bundleInfo: bundleInfoOf } = require('./scripts/lib/bundle-zip.js');
 const { pickEngine } = require('./scripts/lib/engine.js');
-const { normalizeRepoUrl } = require('./scripts/lib/repo-url.js');
+const { normalizeRepoUrl, readGitConfigOriginUrl, summarizeRemoteUrl } = require('./scripts/lib/repo-url.js');
 
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
@@ -183,8 +183,9 @@ function startInstall({ user, pass, repoUrl } = {}) {
   if (child) return;
   const env = { ...process.env };
   const bundle = resolveBundleZip();
-  // 预构建模式不需要仓库凭据，也就不要把它们塞进环境变量/日志
-  if (!bundle) {
+  const hasExplicitRepo = Boolean(repoUrl && String(repoUrl).trim());
+  // 未提供仓库地址时不塞凭据到环境变量；只有用户明确填了地址才一并下发账号/令牌
+  if (!bundle || hasExplicitRepo) {
     // 通用名（GitHub 也走这套：令牌当密码用）；引擎同时认旧的 ENGRAM_GITEA_* 名字
     if (user) env.ENGRAM_REPO_USER = user;
     if (pass) env.ENGRAM_REPO_PASS = pass;
@@ -217,6 +218,14 @@ function startInstall({ user, pass, repoUrl } = {}) {
     // 正式安装器必须「有包才装」：引擎带 -RequireBundle 时，找不到内置包会直接失败，
     // 而不是悄悄退回「git clone + pnpm install + 本机构建」。旧引擎没有这个开关，不传。
     if (engineText.includes('$RequireBundle')) args.push('-RequireBundle');
+    if (hasExplicitRepo) {
+      const checked = normalizeRepoUrl(repoUrl);
+      if (!checked.ok) {
+        send('fail', { msg: checked.message });
+        return;
+      }
+      args.push('-RepoUrl', checked.url);
+    }
   } else if (repoUrl) {
     const checked = normalizeRepoUrl(repoUrl);
     if (!checked.ok) {
@@ -315,6 +324,17 @@ app.whenReady().then(() => {
   ipcMain.handle('probe-repo', (_e, url) => probe(url));
   // 内置环境包：界面拿到 available=true 就直接进入「一键安装」，不再问仓库地址与凭据
   ipcMain.handle('bundle-info', () => bundleInfo());
+  // 查询本机已有安装的 Git 远端（只返回脱敏地址与 hasCreds，绝不泄露明文密码）
+  ipcMain.handle('existing-remote', () => {
+    try {
+      const hasRepo = fs.existsSync(insideInstallRoot('.git'));
+      const cfgPath = insideInstallRoot('.git', 'config');
+      const rawUrl = fs.existsSync(cfgPath) ? readGitConfigOriginUrl(fs.readFileSync(cfgPath, 'utf8')) : '';
+      return { hasRepo, ...summarizeRemoteUrl(rawUrl) };
+    } catch {
+      return { hasRepo: false, configured: false, url: '', hasCreds: false };
+    }
+  });
 });
 
 app.on('window-all-closed', () => {

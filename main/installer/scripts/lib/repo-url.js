@@ -43,4 +43,40 @@ function redactRepoUrl(url) {
   return String(url == null ? '' : url).replace(/\/\/[^/@\s]+@/, '//***@');
 }
 
-module.exports = { normalizeRepoUrl, redactRepoUrl };
+/** 从 `.git/config` 文本解析 `[remote "origin"]` 的 url */
+function readGitConfigOriginUrl(configText) {
+  if (!configText || typeof configText !== 'string') return '';
+  let inOrigin = false;
+  for (const rawLine of configText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    if (line.startsWith('[')) {
+      inOrigin = /^\[\s*remote\s+"origin"\s*\]$/i.test(line);
+      continue;
+    }
+    if (!inOrigin) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    if (line.slice(0, eq).trim().toLowerCase() === 'url') {
+      return line.slice(eq + 1).trim();
+    }
+  }
+  return '';
+}
+
+/** 脱敏摘要已有 origin URL（绝不返回明文密码或令牌） */
+function summarizeRemoteUrl(rawUrl) {
+  const raw = String(rawUrl == null ? '' : rawUrl).trim();
+  if (!raw) return { configured: false, url: '', hasCreds: false };
+  try {
+    const u = new URL(raw);
+    const hasCreds = Boolean(u.username || u.password);
+    u.username = '';
+    u.password = '';
+    return { configured: true, url: u.toString(), hasCreds };
+  } catch {
+    return { configured: true, url: redactRepoUrl(raw), hasCreds: /:\/\/[^/@\s]+@/.test(raw) };
+  }
+}
+
+module.exports = { normalizeRepoUrl, redactRepoUrl, readGitConfigOriginUrl, summarizeRemoteUrl };

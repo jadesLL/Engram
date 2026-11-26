@@ -5,7 +5,7 @@
 // 主进程 fork 本脚本（ELECTRON_RUN_AS_NODE）后等它退出码为 0 再 app.exit，更新在独立控制台窗口里
 // 继续（同步依赖 → 构建 → 启动应用），失败时窗口用 pause 留住原因，输出同时落一份日志。
 //
-// 用法：update-handoff-launcher.js --root <安装根目录>
+// 用法：update-handoff-launcher.js [--root <安装根目录> | --app-root <main 目录>] [--skip-pull]
 const { spawn } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
@@ -13,24 +13,33 @@ const fs = require('node:fs');
 
 const argv = process.argv.slice(2);
 let root = '';
+let appRoot = '';
+let skipPull = false;
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--root' && argv[i + 1]) root = argv[i + 1];
+  if (argv[i] === '--root' && argv[i + 1]) root = argv[++i];
+  else if (argv[i] === '--app-root' && argv[i + 1]) appRoot = argv[++i];
+  else if (argv[i] === '--skip-pull') skipPull = true;
 }
-// 更新脚本路径由安装根推导并校验存在，不接收外部传入的任意命令参数
-const script = root ? path.join(root, 'Engram', 'main', 'scripts', 'update-from-source.ps1') : '';
+// 更新脚本路径由安装根（或 appRoot）推导并校验存在，不接收外部传入的任意命令参数
+const script = root
+  ? path.join(root, 'Engram', 'main', 'scripts', 'update-from-source.ps1')
+  : appRoot
+    ? path.join(appRoot, 'scripts', 'update-from-source.ps1')
+    : '';
 if (!script || !fs.existsSync(script)) process.exit(2);
 
 // 经临时 .cmd 转一道：把带引号的脚本路径、日志落盘（Start-Transcript：窗口照常显示的同时
 // 整段落进日志，含 Write-Host 与子命令输出）都写进文件里，避免往 `start` 命令里塞嵌套引号
 // （cmd 的引号规则会让 start 静默跑错命令，实测）。失败时窗口会关掉，日志留原因。
 const bat = path.join(os.tmpdir(), 'engram-source-update.cmd');
-const log = path.join(root, 'update-handoff.log');
+const log = path.join(root || os.tmpdir(), 'engram-update-handoff.log');
+const psInvoke = skipPull ? `& '${script}' -SkipPull` : `& '${script}'`;
 fs.writeFileSync(
   bat,
   [
     '@echo off',
     `echo Engram update log: ${log}`,
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '${log}' -Append | Out-Null; try { & '${script}' } finally { Stop-Transcript | Out-Null }"`,
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '${log}' -Append | Out-Null; try { ${psInvoke} } finally { Stop-Transcript | Out-Null }"`,
     '',
   ].join('\r\n'),
   'utf8',

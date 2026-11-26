@@ -22,6 +22,7 @@ param(
   [string]$RepoRoot = '',
   [string]$OutDir = '',
   [string]$RepoUrl = '',
+  [string]$MinGitDir = '',
   [string]$OfflineDataDir = (Join-Path $env:APPDATA '@engram\desktop\data'),
   # 可选离线资源（语音模型 + Python 运行时）默认不带：会让安装包从约 500MB 涨到 850MB，
   # 压缩时间翻几倍。要「装完连语音/办公本都不用点下载」时加这个开关。
@@ -96,6 +97,8 @@ $packArgs = @(
   '-Out', $bundleZip,
   '-OfflineDataDir', $OfflineDataDir
 )
+if ($RepoUrl) { $packArgs += @('-RepoUrl', $RepoUrl) }
+if ($MinGitDir) { $packArgs += @('-MinGitDir', $MinGitDir) }
 if ($IncludeOfflineAssets) { $packArgs += '-IncludeOfflineAssets' }
 if ($SkipOfflineAssets) { $packArgs += '-SkipOfflineAssets' }
 if ($KeepWork) { $packArgs += '-KeepWork' }
@@ -224,7 +227,28 @@ $bundledSha = (Get-FileHash -LiteralPath $bundledZip.FullName -Algorithm SHA256)
 if ($bundledSha -ne $bundleReceipt.sha256) {
   Die "安装器内的包与刚打出的包不一致（exe 里 $($bundledSha.Substring(0,12))… ≠ 期望 $($bundleReceipt.sha256.Substring(0,12))…）"
 }
-Say ("自检通过：exe 内置包 v{0}（sha256 {1}…），引擎带 -RequireBundle" -f $bundleReceipt.version, $bundleReceipt.sha256.Substring(0, 12))
+# 校验 zip 内确实含完整源码 Git 态与随包工具，且 .git/config 不含任何凭据
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipCheck = [System.IO.Compression.ZipFile]::OpenRead($bundledZip.FullName)
+try {
+  $zipEntries = @{}
+  foreach ($entry in $zipCheck.Entries) { $zipEntries[$entry.FullName.Replace('\', '/')] = $entry }
+  foreach ($must in @('.git/HEAD', 'main/package.json', 'main/node/node.exe', 'main/pnpm/pnpm.cjs', 'main/server/dist/index.js', 'main/web/dist/index.html')) {
+    if (-not $zipEntries.ContainsKey($must)) {
+      Die "安装器内置包缺少 $must：装完无法作为源码模式正常更新"
+    }
+  }
+  if ($zipEntries.ContainsKey('.git/config')) {
+    $sr = New-Object System.IO.StreamReader($zipEntries['.git/config'].Open(), [System.Text.Encoding]::UTF8)
+    try { $gitCfg = $sr.ReadToEnd() } finally { $sr.Dispose() }
+    if ($gitCfg -match '://[^/@\s]+@') {
+      Die '安全拦截：安装器内置包的 .git/config 包含凭据'
+    }
+  }
+} finally {
+  $zipCheck.Dispose()
+}
+Say ("自检通过：exe 内置包 v{0}（含 .git + pnpm，sha256 {1}…），引擎带 -RequireBundle" -f $bundleReceipt.version, $bundleReceipt.sha256.Substring(0, 12))
 
 # 回执：安装器 + 包一份，交给发版归档
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

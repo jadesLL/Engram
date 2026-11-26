@@ -48,3 +48,8 @@ installer/resources/runtime/
 installer/resources/prebuilt/*.zip
 installer/resources/prebuilt/*.zip.json
 installer/dist/
+# 预构建快装包附带的便携工具、清单与首次补装 Electron 暂存（不污染 git 状态）
+.engram-prebuilt.json
+/node/
+/pnpm/
+desktop/.electron-dist-stash/

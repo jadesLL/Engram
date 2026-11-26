@@ -39,6 +39,10 @@
   .repo .label { font-size: 12px; opacity: .85; margin-top: 6px; }
   .repo .hint.err { color: #fca5a5; opacity: 1; }
   .repo .hint.ok { color: #86efac; opacity: 1; }
+  .bundle-git { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.16); }
+  .bundle-git-row { display: flex; gap: 8px; }
+  .bundle-git-row input { flex: 1; min-width: 0; }
+  body.installing #bundle-step { display: none !important; }
   .foot { display: flex; align-items: center; gap: 14px; padding: 10px 28px 16px; }
   .details-toggle { font-size: 12px; opacity: .8; background: none; border: 0; color: #fff; cursor: pointer; display: flex; align-items: center; gap: 4px; }
   .foot .spacer { flex: 1; }
@@ -82,8 +86,17 @@
   </div>
 
   <div class="repo" id="bundle-step" style="display:none">
-    <div class="label">安装包已内置运行环境</div>
-    <p class="hint ok" id="bundle-msg">直接解压安装，不联网、不用凭据、不构建。</p>
+    <div class="label">安装包已内置运行环境（完整 Git 源码态）</div>
+    <p class="hint ok" id="bundle-msg">直接解压安装，免构建；装完可在应用内直接拉取更新。</p>
+    <div class="bundle-git" id="bundle-git">
+      <div class="label">Git 更新源配置（可选，留空也可先装）</div>
+      <input id="bundle-repo-url" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo.git（留空跳过或沿用已有）" />
+      <div class="bundle-git-row">
+        <input id="bundle-user" type="text" spellcheck="false" autocomplete="off" placeholder="账号（仅用令牌可留空）" />
+        <input id="bundle-pass" type="password" placeholder="密码或访问令牌（公开库留空）" />
+      </div>
+      <p class="hint" id="bundle-git-hint">装完可在应用「设置 → 版本与更新」随时填写或修改。</p>
+    </div>
   </div>
 
   <div class="repo" id="repo-step">
@@ -122,7 +135,7 @@
     // 渲染进程不开 Node：能力全部来自 preload.js 的 contextBridge（见 installer/main.js）
     const api = window.engramInstaller;
     const $ = (id) => document.getElementById(id);
-    let total = 0, doneCount = 0, started = false, repoUrl = '', bundleMode = false;
+    let total = 0, doneCount = 0, started = false, repoUrl = '', bundleMode = false, existingRemoteInfo = null;
 
     function renderProgress() {
       const pct = total ? Math.round((doneCount / total) * 100) : 0;
@@ -231,13 +244,15 @@
     async function begin(creds) {
       if (started) return;
       started = true;
+      document.body.classList.add('installing');
       $('creds').style.display = 'none';
       $('start-btn').style.display = 'none';
       $('next-btn').style.display = 'none';
       $('repo-step').style.display = 'none';
       $('cancel-btn').style.display = '';
       $('meta-left').textContent = '准备中…';
-      api.startInstall(Object.assign({ repoUrl }, creds || {}));
+      const payload = Object.assign({ repoUrl }, creds || {});
+      api.startInstall(payload);
     }
 
     $('next-btn').addEventListener('click', async () => {
@@ -263,8 +278,23 @@
     });
 
     $('start-btn').addEventListener('click', () => {
-      // 内置环境包模式：不联网、不用凭据，直接开装
-      if (bundleMode) { begin({}); return; }
+      // 内置环境包模式：仓库地址与凭据均可选；填了地址才下发，否则留空跳过或自动保留已有 origin
+      if (bundleMode) {
+        let bUrl = $('bundle-repo-url').value.trim();
+        const bUser = $('bundle-user').value.trim();
+        const bPass = $('bundle-pass').value;
+        if (!bUrl && (bUser || bPass)) {
+          if (existingRemoteInfo && existingRemoteInfo.configured && existingRemoteInfo.url) {
+            bUrl = existingRemoteInfo.url;
+          } else {
+            $('bundle-git-hint').textContent = '填写账号或凭据时，请同时填写 Git 仓库地址。';
+            $('bundle-git-hint').className = 'hint err';
+            return;
+          }
+        }
+        begin(bUrl ? { repoUrl: bUrl, user: bUser, pass: bPass } : {});
+        return;
+      }
       const user = $('user').value.trim();
       const pass = $('pass').value;
       if (!user || !pass) { appendLog('✖ 请填写账号与密码/访问令牌'); return; }
@@ -273,8 +303,8 @@
 
     (async () => {
       $('cancel-btn').style.display = 'none';
-      // 安装器自带预构建环境包时（resources\prebuilt\*.zip）直接走免构建安装：
-      // 不填仓库地址、不用凭据，点一下就把内置环境解压覆盖到本机安装目录
+      // 安装器自带预构建环境包时（resources\prebuilt\*.zip）直接走免构建快装：
+      // 解压内置完整源码仓库（含 .git）+ 运行时，装完即标准源码模式
       let info = { available: false };
       try {
         info = await api.bundleInfo();
@@ -291,9 +321,27 @@
           ? '；已预置语音模型与 Python 运行时，装完即可离线使用'
           : '';
         $('bundle-msg').textContent =
-          `已内置运行环境${verText ? ' ' + verText : ''}（${info.name}，约 ${info.sizeMB} MB${commitText}）：` +
-          `直接解压安装，不联网、不装依赖、不构建${assetsText}。已有安装会被覆盖，知识库数据与设置保持不变。`;
-        $('head-sub').textContent = '安装包自带运行环境：一键解压部署，免联网、免构建。数据目录与现有安装共用。';
+          `已内置源码快装环境${verText ? ' ' + verText : ''}（${info.name}，约 ${info.sizeMB} MB${commitText}）：` +
+          `含完整 Git 仓库与运行时，直接解压免构建${assetsText}；知识库数据与设置保持不变。`;
+        $('head-sub').textContent = '安装包自带完整 Git 源码态与运行时：免构建快装，装完即可在应用内直接拉取更新。';
+
+        try {
+          existingRemoteInfo = await api.existingRemote();
+        } catch {
+          existingRemoteInfo = null;
+        }
+        if (existingRemoteInfo && existingRemoteInfo.configured) {
+          $('bundle-git-hint').textContent =
+            `检测到原有更新源（${existingRemoteInfo.url}${existingRemoteInfo.hasCreds ? ' · 含凭据' : ''}）：全部留空将原样保留；填写新地址则覆盖。`;
+          $('bundle-git-hint').className = 'hint ok';
+        } else if (info.repoUrl) {
+          $('bundle-git-hint').textContent =
+            `默认将配置为 ${info.repoUrl}；可留空直接安装，或填写其他地址与凭据。`;
+        } else {
+          $('bundle-git-hint').textContent =
+            '可全部留空直接安装，装完后可在应用「设置 → 版本与更新」随时填写仓库地址与凭据。';
+        }
+
         $('next-btn').style.display = 'none';
         $('start-btn').style.display = '';
         $('start-btn').textContent = '开始安装（内置环境）';
@@ -304,7 +352,7 @@
           ? `Engram ${'v' + info.version} 已启动并创建了桌面快捷方式。`
           : 'Engram 已启动并创建了桌面快捷方式。';
         tip.appendChild(document.createElement('br'));
-        tip.appendChild(document.createTextNode('以后要更新到新版，重新运行最新安装器覆盖安装即可（知识库数据保留）。'));
+        tip.appendChild(document.createTextNode('已安装完整 Git 源码态：以后可在应用内「检查更新」直接拉取最新源码，无需频繁重装。'));
         return;
       }
       // 默认不填任何地址（用户要求）：仓库地址一律由用户自己填

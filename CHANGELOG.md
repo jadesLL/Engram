@@ -19,6 +19,10 @@
      发版时运行 node scripts/release/release-notes.mjs --render --write 生成本版段落
      （自动带上「安卓端自上一版本以来的累计更新」），不要手写版本段落。 -->
 
+### 更新
+
+- [平台影响: B,E] 源码版支持在「设置 → 版本与更新 → 桌面端更新」里查看、填写或修改 Git 更新源与访问凭据（绝不在安装包内写入或向页面回显密码/令牌），未配置远端时也能引导补填并即时验证连通性。
+
 ### 优化
 
 - [平台影响: B,E] 替换存在已知高危漏洞的表格解析依赖，改用更安全的 `exceljs` 实现服务端文本提取与网页端电子表格预览，并清理已停用的向量扩展与多余代理配置。
@@ -29,6 +33,7 @@
 
 ### 修复
 
+- [平台影响: B,E] 修复 Windows 源码版安装器装完后显示「预构建安装（不含 Git），无法应用内更新、只能覆盖安装」的问题：安装器现在仍保留免构建快装体验（内置已构建产物与 Electron / Node 运行时），但同时自带完整的单分支 `.git` 仓库与便携 `pnpm`（及本机已有便携 MinGit），安装界面可选填仓库地址与凭据（留空也可先装，覆盖安装自动保留原有 `.git/config` 更新源），装完即进入标准源码模式，之后可在应用内直接检查并拉取最新源码更新（首次更新自动退出并补齐一次开发构建依赖，不重复下载 Electron）。
 - [平台影响: none] 修复 Windows 源码版安装器双击就弹「A JavaScript error occurred in the main process（Cannot find module './scripts/lib/repo-probe.js'）」的问题：打包脚本复制启动所需脚本时用了不展开通配符的写法，实际一个都没复制、也不报错，出来的安装器无法启动。现在改为正确复制，并在打包时加两道自检（暂存目录必须真的有这些脚本、exe 解包后必须逐一对得上），重新下载固定链接上的安装器即可正常安装。
 - [平台影响: B,E] 修复安装版（exe 安装包）里「设置 → 本机应用」看不到「卸载 Engram」的问题：之前这个入口只在源码模式出现，装在安装包里的机器整组连同左侧导航项一起消失，用户只能自己去 Windows「设置 → 应用」里翻。现在两种桌面形态都有这一项——源码模式仍走随源码带的卸载脚本，安装版直接调用 Engram 自带的卸载程序（与系统「已安装的应用」里那个相同，进度条和结束提示由它显示），勾选「同时删除本机知识库数据」会一并删掉本机数据。便携版与开发目录没有卸载程序，仍然不显示该入口（不会留点了只报错的按钮）。
 - [平台影响: none] Windows 源码版安装器不再要求客户机联网：以前固定链接上下载的安装器里没有运行环境包，客户装的时候要填私有仓库凭据、拉 1GB 依赖再自己构建（客户机上常常直接失败）；现在安装包自带源码、全部运行时依赖、已构建产物与 Electron / Node 运行时，双击点一次「开始安装」就装完，不联网、不要凭据、不装依赖、不构建。安装界面与日志会写明装的是哪一版（版本号 + 提交号），装完即该版最新代码；知识库数据与设置在覆盖安装时保持不变。
@@ -57,6 +62,7 @@
 
 - [平台影响: none] 安装引擎 `install-engram.ps1` 升到 ENGINE_VERSION 3：新增 `-RequireBundle`（正式安装器没有内置环境包时直接失败，绝不退回 git clone + 装依赖 + 本机构建）、新增包完整性门禁（源码/构建产物/Electron 运行时/服务端依赖/便携 Node/依赖记录缺一即在解压前拒绝）、预构建安装离线落位便携 Node 与可选离线资源（只补缺失文件、不覆盖用户已有内容）。
 - [平台影响: none] 新增 `scripts/build-customer-installer.ps1`：打环境包 → 打 portable exe → 解包自检 exe 内确实带包且 sha256 / 版本 / 提交与本次源码一致；`pack-prebuilt-bundle.ps1` 补随包 Node、better-sqlite3 ABI 校验、包清单版本字段与 `zip.json` 回执；安装器界面显示内置包版本与提交；安装器 exe 改为在仓库外的独立 staging 目录打包（pnpm workspace 的符号链接会让 electron-builder 26 读不出依赖树，报 No JSON content found in output），且不再带源码模式专用的 Node/pnpm 运行时；发布前发现并修掉包清单 BOM 导致「提交 / 构建时间」显示成「—」的问题（PowerShell 5.1 的 Set-Content -Encoding UTF8 默认加 BOM，JSON.parse 直接抛）；新增 `installer-offline-contract.test.js` 并接入 `pnpm test`。
+- [平台影响: none] 源码快装包与引擎升级到 ENGINE_VERSION 4：`pack-prebuilt-bundle.ps1` 改用单分支 `git init + fetch` 携带干净 `.git` 与便携 `pnpm 10.20.0`（可选 MinGit），不写假的工作区依赖记录；`install-engram.ps1` 保留 `.git`、还原中文截图工作区并自动继承原有 `origin`；`desktop/scripts/lib/source-remote.js` 与 `deps.workspaceBootstrapPending` / `sync-deps.js` Electron `dist` 暂存机制支持应用内修改远端、首次更新交接补装依赖并保留已有运行时；补充 `source-remote.test.js` 与对应门禁断言。
 
 ## v1.5.21（2026-11-25）
 

@@ -17,6 +17,8 @@ const inboxRender = require('./lib/inbox-render');
 const { joinLinkFromArgs, protocolRegistration } = require('./lib/join-link');
 // 源码模式更新说明：从远端 CHANGELOG 增量条目提取「更新 / 优化 / 修复」分类（见 scripts/lib/source-changelog.js）
 const sourceChangelog = require('./scripts/lib/source-changelog');
+// 源码模式 Git 远端与凭据解析/脱敏（见 scripts/lib/source-remote.js）
+const sourceRemote = require('./scripts/lib/source-remote');
 // 启动分段计时与 app.log 轮转（纯本地小工具，单测见 desktop/scripts/tests/startup-log.test.js）：
 // 前者给「首次打开很慢」留可对照的分段数据，后者避免 737MB 级 app.log 拖慢启动（见 lib/app-log.js 头注释）。
 const startupTiming = require('./lib/startup-timing');
@@ -2495,7 +2497,11 @@ let sourceUpdating = false;
 let prebuiltManifestCache;
 function prebuiltInstall() {
   if (prebuiltManifestCache === undefined) {
-    prebuiltManifestCache = runtimeMode.readPrebuiltManifest(appRootDir);
+    // 只要目录本身就是 git 检出（含新版带 .git 的快装源码包），一律按源码模式处理，
+    // 不因残留/附带的 .engram-prebuilt.json 清单被误判为「无 Git 预构建安装」。
+    prebuiltManifestCache = runtimeMode.isGitCheckout(appRootDir)
+      ? null
+      : runtimeMode.readPrebuiltManifest(appRootDir);
   }
   return prebuiltManifestCache;
 }
@@ -2533,11 +2539,12 @@ function runtimeSwapPending() {
  * 窗口跑 scripts/update-from-source.ps1（同步依赖 → 构建 → 启动），本进程随即退出把文件让出来。
  * 与卸载走 uninstall-launcher 同理：GUI 进程直接 spawn powershell 会空句柄秒退，必须经 Node 中转。
  */
-function handOffSourceUpdate() {
+function handOffSourceUpdate(options = {}) {
   return new Promise((resolve) => {
     const root = sourceInstallRoot();
-    if (!root) return resolve(false);
-    const child = fork(path.join(__dirname, 'scripts', 'update-handoff-launcher.js'), ['--root', root], {
+    const args = root ? ['--root', root] : ['--app-root', appRootDir];
+    if (options.skipPull) args.push('--skip-pull');
+    const child = fork(path.join(__dirname, 'scripts', 'update-handoff-launcher.js'), args, {
       detached: true,
       stdio: 'ignore',
     });
@@ -2589,7 +2596,10 @@ function runGit(args, timeoutMs = 120_000) {
     child.on('exit', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(out.trim());
-      else reject(new Error(`git ${args[0]} 失败(code ${code})：${err.trim().split('\n')[0] || out.trim()}`));
+      else {
+        const detail = sourceRemote.redactRemoteError(err.trim().split('\n')[0] || out.trim());
+        reject(new Error(`git ${args[0]} 失败(code ${code})：${detail}`));
+      }
     });
   });
 }
@@ -2753,6 +2763,20 @@ async function sourceCheckCore() {
     // abbrev-ref 会消歧成 heads/main，拼 origin/heads/main 直接报 128
     const branch = await runGit(['branch', '--show-current']);
     if (!branch) return { ok: false, error: '当前不在任何分支上（游离 HEAD），无法比对远端' };
+    let originUrl = '';
+    try {
+      originUrl = (await runGit(['remote', 'get-url', 'origin'], 10_000)).trim();
+    } catch {
+      originUrl = '';
+    }
+    if (!originUrl) {
+      return {
+        ok: false,
+        unconfigured: true,
+        branch,
+        error: '尚未配置 Git 远端仓库地址：请在下方「源码仓库配置」填写仓库地址（私有仓库需填账号与密码/访问令牌）后再检查更新。',
+      };
+    }
     const lsRemote = await runGit(['ls-remote', 'origin', `refs/heads/${branch}`], 20_000);
     const remoteSha = ((lsRemote.split(/\r?\n/)[0] || '').trim().split(/\s+/)[0] || '');
     if (!remoteSha) return { ok: false, error: `远端没有分支 ${branch}` };
@@ -2807,7 +2831,11 @@ async function sourceCheckCore() {
 /** 把一次检查结果同步进自动检查状态（手动检查也走这里，设置页文案与自动检查一致） */
 function applySourceCheckResult(r) {
   if (!r || !r.ok) {
-    setSourceAutoState({ phase: 'failed', error: (r && r.error) || '检查失败', checkedAt: Date.now() });
+    setSourceAutoState({
+      phase: r && r.unconfigured ? 'unconfigured' : 'failed',
+      error: (r && r.error) || '检查失败',
+      checkedAt: Date.now(),
+    });
     return;
   }
   setSourceAutoState({
@@ -2878,6 +2906,66 @@ ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
     scheduleSourceCheck(1000); // 开启后立即触发一次检查
   }
   return { ...sourceAutoState };
+});
+
+ipcMain.handle('desktop-source-remote-get', async () => {
+  if (PACKAGED || !runtimeMode.isGitCheckout(appRootDir)) {
+    return { ok: false, error: '仅源码模式支持配置 Git 远端仓库' };
+  }
+  let rawUrl = '';
+  try {
+    rawUrl = (await runGit(['remote', 'get-url', 'origin'], 10_000)).trim();
+  } catch {
+    rawUrl = '';
+  }
+  let branch = '';
+  try {
+    branch = (await runGit(['branch', '--show-current'], 10_000)).trim();
+  } catch {
+    branch = '';
+  }
+  return { ok: true, ...sourceRemote.parseRemoteUrl(rawUrl), branch };
+});
+
+ipcMain.handle('desktop-source-remote-set', async (_e, payload = {}) => {
+  if (PACKAGED || !runtimeMode.isGitCheckout(appRootDir)) {
+    return { ok: false, error: '仅源码模式支持配置 Git 远端仓库' };
+  }
+  let existingRawUrl = '';
+  try {
+    existingRawUrl = (await runGit(['remote', 'get-url', 'origin'], 10_000)).trim();
+  } catch {
+    existingRawUrl = '';
+  }
+  const built = sourceRemote.buildRemoteUrl({
+    repoUrl: payload.repoUrl,
+    username: payload.username,
+    password: payload.password,
+    keepExistingPassword: payload.keepExistingPassword !== false,
+    clearCredentials: Boolean(payload.clearCredentials),
+    existingRawUrl,
+  });
+  if (!built.ok) return { ok: false, error: built.message };
+  try {
+    if (existingRawUrl) {
+      await runGit(['remote', 'set-url', 'origin', built.url], 10_000);
+    } else {
+      await runGit(['remote', 'add', 'origin', built.url], 10_000);
+    }
+    const branch = (await runGit(['branch', '--show-current'], 10_000)).trim();
+    if (branch) {
+      await runGit(['config', `branch.${branch}.remote`, 'origin'], 10_000);
+      await runGit(['config', `branch.${branch}.merge`, `refs/heads/${branch}`], 10_000);
+    }
+    const parsed = sourceRemote.parseRemoteUrl(built.url);
+    log(`[source] 已更新 Git 远端 origin：${parsed.url}（${parsed.hasPassword ? '含凭据' : '无凭据'}）`);
+    sourceBackoffIndex = 0;
+    const check = await sourceCheckCore();
+    applySourceCheckResult(check);
+    return { ok: true, remote: parsed, check };
+  } catch (e) {
+    return { ok: false, error: sourceRemote.redactRemoteError(describeError(e)) };
+  }
 });
 
 // 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。紧凑深色卡片（应用图标 + Engram + 当前步骤
@@ -3069,15 +3157,28 @@ async function runSourceUpdate() {
     showMainWindow();
     return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
   }
-  // 换 Electron 运行时不能在应用运行时做：交接给更新脚本，退出后由它同步依赖、构建并启动
-  if (runtimeSwapPending()) {
+  // 换 Electron 运行时或首次补齐构建依赖不能在应用运行时做：交接给更新脚本，退出后由它同步依赖、构建并启动
+  const swapPending = runtimeSwapPending();
+  const bootstrapPending = !swapPending && depsLib.workspaceBootstrapPending(appRootDir);
+  if (swapPending || bootstrapPending) {
     const scriptRel = path.join('main', 'scripts', 'update-from-source.ps1');
-    setUpdateStep('本次更新包含 Electron 运行时升级，正在交接给更新脚本…');
-    appendUpdateLog('> 运行时升级要先退出应用：将打开「Engram 更新」窗口完成，完成后自动启动');
-    if (!(await handOffSourceUpdate())) {
+    setUpdateStep(
+      swapPending
+        ? '本次更新包含 Electron 运行时升级，正在交接给更新脚本…'
+        : '首次源码更新需补齐开发构建依赖，正在交接给更新脚本…',
+    );
+    appendUpdateLog(
+      swapPending
+        ? '> 运行时升级要先退出应用：将打开「Engram 更新」窗口完成，完成后自动启动'
+        : '> 首次更新需补齐开发依赖（仅此一次，后续应用内直接更新）：将打开「Engram 更新」窗口完成，完成后自动启动',
+    );
+    if (!(await handOffSourceUpdate({ skipPull: true }))) {
       failUpdateProgress('无法启动更新脚本，请手动运行 ' + scriptRel);
       showMainWindow();
-      return { ok: false, error: `运行时升级需要退出应用后完成：请手动运行 ${scriptRel}` };
+      return {
+        ok: false,
+        error: `${swapPending ? '运行时升级' : '首次补齐构建依赖'}需要退出应用后完成：请手动运行 ${scriptRel}`,
+      };
     }
     await new Promise((r) => setTimeout(r, 2500)); // 让进度小窗把提示显示完整
     await stopLocalChild(); // 优雅停内嵌 server（数据库落盘），其余进程由更新脚本清理

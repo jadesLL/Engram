@@ -101,6 +101,9 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 增量拉取源码并重建：主进程 pull 后拉起构建脚本，应用自动退出并由新实例接管
   // （依赖清单真变化时自动装依赖，不再要求去终端跑脚本）
   desktopSourceUpdate: () => ipcRenderer.invoke('desktop-source-update'),
+  // 查询/设置源码模式的 Git 远端地址与凭据（返回脱敏 URL + username + hasPassword，绝不返回密码）
+  desktopSourceRemoteGet: () => ipcRenderer.invoke('desktop-source-remote-get'),
+  desktopSourceRemoteSet: (payload) => ipcRenderer.invoke('desktop-source-remote-set', payload),
   // ---------- 应用内卸载（设置 → 本机应用 → 卸载 Engram） ----------
   // 查询卸载可用性：{ available, mode }。mode='source' 走源码安装根里的 uninstall-engram.ps1，
   // mode='packaged' 走安装目录里的「Uninstall Engram.exe」（与系统「已安装的应用」是同一个卸载器）；
