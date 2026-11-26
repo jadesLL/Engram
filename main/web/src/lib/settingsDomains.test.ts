@@ -385,6 +385,8 @@ test('桌面端更新：预构建安装不能落进 git 更新入口（防回归
   assert.match(updatePanel, /installerMode/, '安装包入口必须与源码模式/预构建模式分开判定');
   assert.match(updatePanel, /预构建安装/, '预构建安装必须给用户可读的更新方式说明');
   assert.match(updatePanel, /!env\.prebuilt/, 'sourceMode 必须排除预构建安装，否则又会跑 git 检查');
+  assert.match(updatePanel, /desktopSourceRemoteGet/, '源码模式应支持读取并配置 Git 更新源');
+  assert.match(updatePanel, /desktopSourceRemoteSet/, '源码模式应支持保存并验证 Git 更新源');
 });
 
 test('锚点 → 大类：设置页内跳转不再靠调用方写死大类', () => {

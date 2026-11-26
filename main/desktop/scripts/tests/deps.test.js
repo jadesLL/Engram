@@ -198,6 +198,26 @@ test('lockfileRegistry：按 lockfile 里 tarball URL 的唯一 host 推断 regi
   assert.equal(deps.lockfileRegistry(root), null); // host 不唯一，交给环境配置
 });
 
+test('workspaceBuildToolsOk 与 workspaceBootstrapPending：预构建快装包首次更新需补齐构建工具', () => {
+  const root = makeApp();
+  assert.equal(deps.workspaceBuildToolsOk(root), false);
+  assert.equal(deps.workspaceBootstrapPending(root), true);
+
+  // 放上 tsc / vite 与 .pnpm 存储后不再需要 bootstrap
+  fs.mkdirSync(path.join(root, 'server/node_modules/typescript/bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'server/node_modules/typescript/bin/tsc'), '');
+  fs.mkdirSync(path.join(root, 'web/node_modules/vite/bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'web/node_modules/vite/bin/vite.js'), '');
+  assert.equal(deps.workspaceBuildToolsOk(root), true);
+  assert.equal(deps.workspaceBootstrapPending(root), false);
+
+  // 有预置 electron 但没有 .pnpm 存储时仍需退出应用交接安装
+  fs.mkdirSync(path.join(root, 'desktop/node_modules/electron'), { recursive: true });
+  assert.equal(deps.workspaceBootstrapPending(root), true);
+  fs.mkdirSync(path.join(root, 'node_modules/.pnpm'), { recursive: true });
+  assert.equal(deps.workspaceBootstrapPending(root), false);
+});
+
 (async () => {
   let failed = 0;
   for (const c of cases) {

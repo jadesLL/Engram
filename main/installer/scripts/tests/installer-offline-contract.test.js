@@ -41,18 +41,23 @@ check(
 const missingFn = /function Get-BundleMissingParts[\s\S]*?\n}/.exec(ps1);
 check('引擎有包完整性检查 Get-BundleMissingParts', Boolean(missingFn));
 for (const required of [
+  '.git/HEAD',
   'main/server/dist/index.js',
   'main/web/dist/index.html',
   'main/desktop/web/dist/index.html',
   'main/desktop/node_modules/electron/dist/Engram.exe',
   'main/desktop/server/node_modules/better-sqlite3/package.json',
   'main/node/node.exe',
-  'main/node_modules/.engram-deps.json',
+  'main/pnpm/pnpm.cjs',
   'main/desktop/server/node_modules/.engram-deps.json',
   'main/.engram-prebuilt.json',
 ]) {
   check('完整性检查要求 ' + required, Boolean(missingFn) && missingFn[0].includes(required));
 }
+check(
+  '不再要求假的 main/node_modules/.engram-deps.json（首次更新时按需补齐开发依赖）',
+  Boolean(missingFn) && !missingFn[0].includes('main/node_modules/.engram-deps.json'),
+);
 check(
   '缺件在解压覆盖之前就失败（先查后解压）',
   ps1.indexOf('Get-BundleMissingParts $zipPath') < ps1.indexOf("Invoke-Logged $tarExe @('-xf'"),
@@ -71,16 +76,20 @@ check(
   '便携 Node 落到 %LOCALAPPDATA%\\engram\\node（应用约定的路径）',
   ps1.includes("$portableNodeDir = Join-Path $installDir 'node'") && ps1.includes('Copy-Item -LiteralPath $bundleNode'),
 );
-check('有离线资源时发独立步骤（界面可见）', ps1.includes('##STEPS:bundle=解压预构建环境;assets=安装离线资源;shortcut=创建桌面快捷方式;launch=启动 Engram'));
+check('预构建安装落位便携 pnpm', ps1.includes("Join-Path $mainDir 'pnpm\\pnpm.cjs'") && ps1.includes("Join-Path $installDir 'pnpm'"));
+check('保留旧安装里的 origin 更新源与凭据', ps1.includes('Read-GitOriginUrl') && ps1.includes('$existingOrigin'));
+check('有 Git 步骤与离线资源步骤（界面可见）', ps1.includes('##STEPS:bundle=解压预构建环境;git=配置 Git 与更新源;assets=安装离线资源;shortcut=创建桌面快捷方式;launch=启动 Engram'));
 check('离线资源只补缺、不覆盖用户文件', ps1.includes('if (Test-Path -LiteralPath $target) { $skipped++; continue }'));
 check('数据目录按 config.json 的 dataDir 解析', ps1.includes('function Resolve-DataRoot') && ps1.includes(".dataDir"));
-check('包清单里的版本/提交写进安装标记', ps1.includes('if ($bundleManifest) {') && ps1.includes("foreach ($prop in $bundleManifest.PSObject.Properties)"));
+check('包清单里的版本/提交写进安装标记并标明 git=true', ps1.includes('if ($bundleManifest) {') && ps1.includes("$obj['git'] = $true"));
 
 // ---------- 4) 打包链路：包清单 + 自检 ----------
-check('打包器要求随包 Node', pack.includes("$bundleNodeSource") && pack.includes("Join-Path $bundleMain 'node'"));
+check('打包器构建干净单分支 .git 仓库（不携带凭据）', /git init\b[^\n]*\$src/.test(pack) && pack.includes('安全拦截：包内 .git/config 不得包含仓库凭据'));
+check('打包器要求随包 Node 与 pnpm', pack.includes("$bundleNodeSource") && pack.includes("Join-Path $bundleMain 'node'") && pack.includes("Join-Path $bundleMain 'pnpm'"));
+check('打包器不写假的 main/node_modules/.engram-deps.json', !pack.includes("deps.writeRecord(path.join(root, 'node_modules')"));
 check('打包器校验 Node 版本 >= 20', pack.includes("-lt 20"));
 check('打包器校验 better-sqlite3 ABI 与 Electron 一致', pack.includes('verify-packaged-abi.js') && pack.includes('--electron-version'));
-check('包清单写版本号', pack.includes('version    = $appVersion'));
+check('包清单写版本号与 git=true', pack.includes('version    = $appVersion') && pack.includes('git        = $true'));
 check('打包器写回执（versions/sha256/offline）', pack.includes("($Out + '.json')"));
 check(
   '离线资源只带模型/运行时本体（不带用户凭据与数据）',
@@ -98,6 +107,7 @@ check(
 
 check('一键构建脚本存在并调打包器', build.includes('pack-prebuilt-bundle.ps1'));
 check('构建脚本自检 exe 内确实带包', build.includes("resources\\prebuilt") && build.includes('没有内置环境包'));
+check('构建脚本自检包内含 .git/HEAD 与 pnpm 且无凭据', build.includes('.git/HEAD') && build.includes('main/pnpm/pnpm.cjs') && build.includes('安装器内置包的 .git/config 包含凭据'));
 check('构建脚本自检引擎带 -RequireBundle', build.includes('$RequireBundle'));
 check('构建脚本校验包版本/提交与源码一致', build.includes('与源码版本') && build.includes('与源码提交'));
 // 不能在 workspace 成员目录直接打：installer/node_modules 全是 pnpm 符号链接，electron-builder 26
@@ -146,10 +156,11 @@ check(
   !/Set-Content -LiteralPath \$manifest/.test(ps1),
 );
 
-// ---------- 5) GUI：强制要求内置包 ----------
+// ---------- 5) GUI：强制要求内置包 + 可选 Git 更新源 ----------
 check('GUI 在引擎支持时传 -RequireBundle', gui.includes("args.push('-RequireBundle')"));
 check('GUI 只在有包时走预构建模式', gui.includes('if (bundle && engineText.includes(\'BundleZip\'))'));
-check('界面显示内置包版本与提交', ui.includes('info.version') && ui.includes('info.commit'));
+check('GUI 支持在包模式下传可选 -RepoUrl 与 existing-remote 查询', gui.includes("ipcMain.handle('existing-remote'") && gui.includes('if (hasExplicitRepo)'));
+check('界面显示内置包版本、提交与可选更新源配置', ui.includes('info.version') && ui.includes('info.commit') && ui.includes('bundle-repo-url'));
 check('bundleInfo 读打包回执', fs.readFileSync(path.join(installerDir, 'scripts', 'lib', 'bundle-zip.js'), 'utf8').includes("zip + '.json'"));
 
 // 内置包目录与 runtime 目录都不进 Git（二进制产物走发布归档）。

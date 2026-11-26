@@ -143,6 +143,33 @@ function electronRuntimeSwapPending(appRoot) {
 }
 
 /**
+ * 构建 server / web 所需的开发期工具（tsc 与 vite）是否都在工作区 node_modules 里。
+ * 新版安装器只携带运行时产物（不带 1GB+ 开发依赖），首次源码更新时会按需补齐一次。
+ */
+function workspaceBuildToolsOk(appRoot) {
+  const hasTsc =
+    fs.existsSync(path.join(appRoot, 'server', 'node_modules', 'typescript', 'bin', 'tsc')) ||
+    fs.existsSync(path.join(appRoot, 'node_modules', 'typescript', 'bin', 'tsc'));
+  const hasVite =
+    fs.existsSync(path.join(appRoot, 'web', 'node_modules', 'vite', 'bin', 'vite.js')) ||
+    fs.existsSync(path.join(appRoot, 'node_modules', 'vite', 'bin', 'vite.js'));
+  return hasTsc && hasVite;
+}
+
+/**
+ * 是否需要首次补齐工作区依赖（交接给独立更新脚本在退出应用后执行）：
+ *  - 缺 tsc 或 vite（预构建快装只带了运行物，首次源码更新需要 pnpm install 补装开发依赖）；
+ *  - 或 desktop/node_modules/electron 已就位但工作区尚无 node_modules/.pnpm（pnpm 首次建立链接
+ *    会覆盖 desktop/node_modules/electron，运行中的 Engram.exe 占锁会导致失败）。
+ */
+function workspaceBootstrapPending(appRoot) {
+  if (!workspaceBuildToolsOk(appRoot)) return true;
+  const hasElectron = fs.existsSync(path.join(appRoot, 'desktop', 'node_modules', 'electron'));
+  const hasStore = fs.existsSync(path.join(appRoot, 'node_modules', '.pnpm'));
+  return hasElectron && !hasStore;
+}
+
+/**
  * desktop/server 运行时依赖状态。
  *  - needsInstall：prod 依赖需要（重）装
  *  - needsNative：better-sqlite3 的 Electron ABI binding 需要（重）取——文件缺失，
@@ -269,6 +296,8 @@ module.exports = {
   serverInstallState,
   electronRuntimeOk,
   electronRuntimeSwapPending,
+  workspaceBuildToolsOk,
+  workspaceBootstrapPending,
   resolvePnpmEntry,
   lockfileRegistry,
   readRecord,

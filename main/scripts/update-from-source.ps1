@@ -33,6 +33,14 @@ foreach ($p in @((Join-Path $portableRoot 'node'), (Join-Path $portableRoot 'pnp
 $appRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $desktop = Join-Path $appRoot 'desktop'
 
+# 若安装于自定义路径（<InstallDir>\Engram\main），同样把安装根目录下的便携 Node/pnpm/MinGit 前置到 PATH
+$installRoot = Split-Path -Parent (Split-Path -Parent $appRoot)
+if ($installRoot -and $installRoot -ne $portableRoot) {
+  foreach ($p in @((Join-Path $installRoot 'node'), (Join-Path $installRoot 'pnpm'), (Join-Path $installRoot 'MinGit\cmd'))) {
+    if (Test-Path $p) { $env:Path = "$p;$env:Path" }
+  }
+}
+
 function Step([string]$msg) { Write-Host "`n>> $msg" -ForegroundColor Cyan }
 
 function Test-PortBusy([int]$p) {
@@ -49,6 +57,19 @@ if (-not $SkipPull) {
   git -C $appRoot pull --ff-only
   if ($LASTEXITCODE -ne 0) { throw 'git pull 失败：本地未提交改动与远端冲突或历史分叉，请先提交/暂存后再试' }
 }
+
+# 等本目录运行的 Engram 实例退出（应用内交接时会立刻 app.exit(0)，这里让它有时间落盘再开装，
+# 否则首次 bootstrap 执行 pnpm install 时会因 Engram.exe/electron.exe 占锁而失败）
+$waitDeadline = (Get-Date).AddSeconds(5)
+while ((Get-Date) -lt $waitDeadline) {
+  $running = @(Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($desktop, [System.StringComparison]::OrdinalIgnoreCase) })
+  if ($running.Count -eq 0) { break }
+  Start-Sleep -Milliseconds 300
+}
+Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($desktop, [System.StringComparison]::OrdinalIgnoreCase) } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 # 2) 同步工作区依赖：依赖指纹变化才 pnpm install --frozen-lockfile（sync-deps.js 判定，
 #    与应用内「检查更新」同一实现；依赖无变化时只打印一行说明）

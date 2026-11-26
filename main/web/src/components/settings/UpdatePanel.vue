@@ -415,6 +415,93 @@
             </button>
           </div>
           <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，请看置顶的更新进度窗口；完成后应用自动重启。</p>
+
+          <!-- 源码仓库配置：安装时可跳过，装完可随时查看/修改远端与凭据 -->
+          <template v-if="sourceRemoteSupported && sourceRemoteLoaded">
+            <div class="setting-row">
+              <div class="setting-copy">
+                <strong>Git 更新源</strong>
+                <span>
+                  <template v-if="sourceRemoteInfo?.configured">
+                    {{ sourceRemoteInfo.url }}
+                    {{ sourceRemoteInfo.hasPassword ? '（已保存凭据）' : '（公开 / 无凭据）' }}
+                  </template>
+                  <template v-else>尚未配置：填好远端仓库地址即可在应用内拉取更新。</template>
+                </span>
+              </div>
+              <div class="setting-actions">
+                <button class="btn" type="button" @click="sourceRemoteEditing = !sourceRemoteEditing">
+                  {{ sourceRemoteEditing ? '收起' : (sourceRemoteInfo?.configured ? '修改仓库' : '配置仓库') }}
+                </button>
+              </div>
+            </div>
+
+            <template v-if="sourceRemoteEditing">
+              <div class="setting-row setting-row-form repo-row">
+                <div class="setting-copy">
+                  <strong>Git 远端地址</strong>
+                  <span>支持 GitHub 或自建 Gitea 的 HTTPS 仓库地址（例：https://github.com/owner/Engram.git）。</span>
+                </div>
+                <input
+                  v-model="sourceRemoteForm.repoUrl"
+                  type="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="https://github.com/owner/repo.git"
+                  aria-label="源码 Git 远端地址"
+                  @input="sourceRemoteError = ''"
+                />
+              </div>
+
+              <div class="setting-row setting-row-form credential-row">
+                <div class="setting-copy">
+                  <strong>仓库凭据（私有仓库需要）</strong>
+                  <span>仅写入本机 .git/config 供应用内拉取更新；公开仓库留空即可。</span>
+                </div>
+                <div class="credential-inputs">
+                  <input
+                    v-model="sourceRemoteForm.username"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="账号（仅用访问令牌时可留空）"
+                    aria-label="源码 Git 账号"
+                  />
+                  <div class="password-control">
+                    <input
+                      v-model="sourceRemoteForm.password"
+                      type="password"
+                      autocomplete="off"
+                      :placeholder="sourceRemoteInfo?.hasPassword && !sourceRemoteForm.clearCredentials ? '已保存（留空沿用）' : '密码或访问令牌'"
+                      aria-label="源码 Git 密码或访问令牌"
+                      @input="sourceRemoteForm.clearCredentials = false"
+                    />
+                    <button
+                      v-if="sourceRemoteInfo?.hasPassword"
+                      class="btn"
+                      type="button"
+                      @click="sourceRemoteForm.clearCredentials = !sourceRemoteForm.clearCredentials"
+                    >{{ sourceRemoteForm.clearCredentials ? '保留原有凭据' : '清除凭据' }}</button>
+                  </div>
+                  <p v-if="sourceRemoteForm.clearCredentials" class="setting-note">
+                    保存后将清除已保存的 Git 凭据，切换为无凭据访问。
+                  </p>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <strong>保存并验证连接</strong>
+                  <span>写入本机 .git/config 并立即检测一次远端更新。</span>
+                </div>
+                <button class="btn primary" type="button" :disabled="sourceRemoteSaving" @click="saveSourceRemote">
+                  <AppSpinner v-if="sourceRemoteSaving" :size="11" />
+                  <template v-else>保存并验证</template>
+                </button>
+              </div>
+              <p v-if="sourceRemoteError" class="setting-message err">{{ sourceRemoteError }}</p>
+            </template>
+          </template>
         </template>
       </template>
       </div>
@@ -744,6 +831,19 @@ const srcError = ref('');
 const sourceAutoSupported = ref(false);
 const sourceAuto = ref<any>({ enabled: true, phase: 'idle', behind: 0, localCommit: '', remoteCommit: '', error: '', checkedAt: null });
 let offSourceState: (() => void) | null = null;
+// 源码模式 Git 远端仓库配置（安装时可跳过，装完在应用内随时补填或修改；仅桌面源码壳提供）
+const sourceRemoteSupported = ref(false);
+const sourceRemoteLoaded = ref(false);
+const sourceRemoteEditing = ref(false);
+const sourceRemoteSaving = ref(false);
+const sourceRemoteError = ref('');
+const sourceRemoteInfo = ref<{ configured: boolean; url: string; username: string; hasPassword: boolean; branch?: string } | null>(null);
+const sourceRemoteForm = reactive({
+  repoUrl: '',
+  username: '',
+  password: '',
+  clearCredentials: false,
+});
 
 // 桌面快捷方式重建与开机自启不在这里：2026-09-28 起随「桌面端应用」分组拆到 DesktopAppSection.vue
 // （归属「本机应用」大类），本组件只剩版本相关的分组。
@@ -794,6 +894,9 @@ const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' | 'a
   if (prebuiltMode.value) return { text: '预构建', tone: 'muted' };
   if (sourceAuto.value?.phase === 'behind') {
     return { text: `${sourceAuto.value.behind ?? 0} 个新提交`, tone: 'warn' };
+  }
+  if (sourceMode.value && sourceAuto.value?.phase === 'unconfigured') {
+    return { text: '未配置源', tone: 'warn' };
   }
   const r = desktopCheck.value;
   if (r?.ok && r.hasUpdate) return { text: '有新版', tone: 'warn' };
@@ -974,10 +1077,10 @@ const desktopUpdateModeText = computed(() => {
   return '安装包（自动或手动下载）';
 });
 
-/** 源码模式自动检查的状态条色调：有新提交 / 失败需要处理时给琥珀点，其余默认 */
+/** 源码模式自动检查的状态条色调：有新提交 / 失败 / 未配置源时给琥珀点，其余默认 */
 const sourceAutoStateTone = computed(() => {
   const phase = sourceAuto.value?.phase;
-  return phase === 'behind' || phase === 'failed' ? 'tone-warn' : '';
+  return phase === 'behind' || phase === 'failed' || phase === 'unconfigured' ? 'tone-warn' : '';
 });
 
 // 分组折叠：本组件三张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
@@ -1022,6 +1125,8 @@ const sourceAutoStatus = computed(() => {
     }
     case 'failed':
       return `自动检查失败：${s.error}。不影响使用，可手动点「检查更新」重试。`;
+    case 'unconfigured':
+      return '尚未配置 Git 远端仓库地址，请在下方填写后即可检查更新。';
     case 'unsupported':
       return s.error || '当前安装不支持应用内源码更新。';
     default:
@@ -1304,6 +1409,68 @@ async function doSourceUpdate() {
   }
 }
 
+async function loadSourceRemote() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopSourceRemoteGet) return;
+  sourceRemoteSupported.value = true;
+  try {
+    const r = await wd.desktopSourceRemoteGet();
+    if (r?.ok) {
+      sourceRemoteInfo.value = r;
+      sourceRemoteForm.repoUrl = r.url || '';
+      sourceRemoteForm.username = r.username || '';
+      sourceRemoteForm.password = '';
+      sourceRemoteForm.clearCredentials = false;
+      if (!r.configured) sourceRemoteEditing.value = true;
+    }
+  } catch {
+    /* 旧壳或读取失败时忽略，保留主功能可用 */
+  } finally {
+    sourceRemoteLoaded.value = true;
+  }
+}
+
+async function saveSourceRemote() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopSourceRemoteSet) return;
+  sourceRemoteSaving.value = true;
+  sourceRemoteError.value = '';
+  try {
+    const r = await wd.desktopSourceRemoteSet({
+      repoUrl: sourceRemoteForm.repoUrl,
+      username: sourceRemoteForm.username,
+      password: sourceRemoteForm.password,
+      keepExistingPassword: !sourceRemoteForm.clearCredentials,
+      clearCredentials: sourceRemoteForm.clearCredentials,
+    });
+    if (!r?.ok) {
+      sourceRemoteError.value = r?.error || '保存失败';
+      return;
+    }
+    if (r.remote) {
+      sourceRemoteInfo.value = { ...r.remote, branch: sourceRemoteInfo.value?.branch || '' };
+      sourceRemoteForm.repoUrl = r.remote.url || '';
+      sourceRemoteForm.username = r.remote.username || '';
+      sourceRemoteForm.password = '';
+      sourceRemoteForm.clearCredentials = false;
+    }
+    if (r.check) {
+      srcResult.value = r.check;
+      srcError.value = r.check.ok ? '' : (r.check.error || '连接验证失败');
+    }
+    if (r.check?.ok) {
+      sourceRemoteEditing.value = false;
+      notify.success('源码仓库已保存并验证连通');
+    } else {
+      notify.success('源码仓库已保存，但连接检查未通过，请确认地址与凭据');
+    }
+  } catch (e: any) {
+    sourceRemoteError.value = e?.message || '保存失败';
+  } finally {
+    sourceRemoteSaving.value = false;
+  }
+}
+
 // 卸载 Engram 与桌面端应用（开机自启 / 快捷方式）都不在这里：
 // 2026-09-28 起归「本机应用」大类——开机自启与快捷方式在 DesktopAppSection.vue，
 // 卸载在 UninstallSection.vue；本组件只负责版本相关的三张卡片。
@@ -1371,6 +1538,7 @@ onMounted(() => {
         prebuiltMode.value = Boolean(env?.prebuilt);
         // 预构建安装同属「非打包形态」，但没有 git 检出：不能走源码更新分支
         sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32' && !env.prebuilt);
+        if (sourceMode.value && wd.desktopSourceRemoteGet) void loadSourceRemote();
       })
       .catch(() => {
         /* 主进程未就绪时按安装包形态兜底 */

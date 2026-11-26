@@ -35,7 +35,7 @@
 | 使用方式 | 入口 |
 |---|---|
 | Windows 安装包 | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`，双击安装；固定装到当前用户目录（`%LOCALAPPDATA%\Programs\Engram`），应用内自动更新无需管理员权限、不弹 UAC。旧版装在 Program Files（「所有用户」安装）的机器可在 设置 → 版本与更新 → 桌面端更新 里点「切换安装位置」一次性迁移到当前用户目录，之后更新也不再弹 UAC。更新时会保留一张安装进度窗口直到装完并自动重启；后台自动更新下载期间点右上角更新图标可直接看到下载进度，不会再报「正在下载」。更新面板按「更新 / 优化 / 修复」列出本次内容（源码模式从 CHANGELOG 增量读取，不再显示提交标题）；某个版本的自动更新失败一次后会暂停该版本的自动重试并提示（设置页可「重试自动更新」或手动更新），发布新版本后自动恢复；设置 → 本机应用 → 版本信息也能直接检查并更新本机软件（源码模式增量拉取重建，安装包模式下载并静默安装）；卸载在 设置 → 本机应用 → 卸载 Engram（源码版与安装版都有：安装版调用它自带的卸载程序，与 Windows「已安装的应用」里那个相同） |
-| Windows 源码版 | 下载 [源码版安装器](https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe)：安装包自带「源码 + 全部运行时依赖 + 已构建产物 + Electron / Node 运行时」（打包机已有语音模型与 Python 运行时也会一并带上），双击点一次即装完，**安装全程不联网、不要仓库凭据、不装依赖、不构建**，装的就是安装器对应的那一版（界面与日志写明版本号与提交号）。这类安装不含 `.git`，更新方式是重新运行最新安装器覆盖安装（知识库数据保留）；维护者打包用 `scripts/build-customer-installer.ps1` 一条命令完成并自检 |
+| Windows 源码版 | 下载 [源码版安装器](https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe)：安装包自带「完整单分支 `.git` 源码仓库 + 全部运行时依赖 + 已构建产物 + Electron / Node / pnpm 运行时」（本机已有便携 MinGit / 语音模型 / Python 运行时也会一并带上），**免构建快速安装**，安装时可选填写（或留空跳过，覆盖安装自动保留旧更新源）Git 仓库地址与凭据；**装完即标准源码模式（含 `.git`），可在应用内「检查更新 / 更新并重启」直接增量拉取最新源码**（首次更新自动补齐一次开发构建依赖，之后每次约 1 分钟更新，无需再反复重装）。也可在 设置 → 版本与更新 里随时查看或修改远端仓库地址与凭据。维护者打包用 `scripts/build-customer-installer.ps1` 一条命令完成并自检（绝不把私有凭据打进安装包） |
 | Android | 从 [Releases](https://github.com/jadesLL/Engram/releases) 下载 APK；可离线使用，也可连接同步中枢，详见 [Android 指南](./main/docs/ANDROID.md) |
 | Docker / NAS | 按下面的命令从源码启动，或参考 [部署指南](./main/docs/BUILDING.md) 使用 Registry 镜像 / NAS Compose |
 

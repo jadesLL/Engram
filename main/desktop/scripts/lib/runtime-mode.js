@@ -57,7 +57,7 @@ const PREBUILT_MANIFEST = '.engram-prebuilt.json';
  * @param {string} appRoot main/ 根目录
  * @param {(p: string) => boolean} [exists]
  * @param {(p: string, enc: string) => string} [readFile]
- * @returns {{ commit: string, builtAt: string, version: string, mode: string, bundle: string, offline: boolean } | null}
+ * @returns {{ commit: string, builtAt: string, version: string, mode: string, bundle: string, offline: boolean, git: boolean } | null}
  */
 function readPrebuiltManifest(appRoot, exists = fs.existsSync, readFile = fs.readFileSync) {
   if (!appRoot) return null;
@@ -81,10 +81,25 @@ function readPrebuiltManifest(appRoot, exists = fs.existsSync, readFile = fs.rea
       mode: text(data.mode) || 'prebuilt',
       bundle: text(data.bundle),
       offline: Boolean(data.offline),
+      git: Boolean(data.git),
     };
   } catch {
-    return { commit: '', builtAt: '', version: '', mode: 'prebuilt', bundle: '', offline: false };
+    return { commit: '', builtAt: '', version: '', mode: 'prebuilt', bundle: '', offline: false, git: false };
   }
+}
+
+/**
+ * 是否为「无 Git 的纯预构建安装」：只有在安装目录确实不存在 .git 检出、且有 .engram-prebuilt.json
+ * 时才为 true。新版安装器同时自带 .git 仓库，此时按标准源码模式处理（返回 false）。
+ *
+ * @param {string} appRoot main/ 根目录
+ * @param {(p: string) => boolean} [exists]
+ * @param {(p: string, enc: string) => string} [readFile]
+ */
+function isGitlessPrebuilt(appRoot, exists = fs.existsSync, readFile = fs.readFileSync) {
+  if (!appRoot) return false;
+  if (isGitCheckout(appRoot, exists)) return false;
+  return Boolean(readPrebuiltManifest(appRoot, exists, readFile));
 }
 
 /**
@@ -282,6 +297,7 @@ module.exports = {
   PREBUILT_MANIFEST,
   isPackagedRuntime,
   readPrebuiltManifest,
+  isGitlessPrebuilt,
   isGitCheckout,
   gitBinaryName,
   findGitInPath,

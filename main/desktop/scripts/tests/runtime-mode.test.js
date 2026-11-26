@@ -137,6 +137,16 @@ test('预构建标记内容损坏时仍按预构建处理（没有 .git 的事�
   assert.equal(info.commit, '');
 });
 
+test('isGitlessPrebuilt：有 .git 时即便存在 .engram-prebuilt.json 也不算无 Git 预构建', () => {
+  const outer = tmpdir('git-prebuilt');
+  const mainRoot = path.join(outer, 'Engram', 'main');
+  fs.mkdirSync(mainRoot, { recursive: true });
+  fs.writeFileSync(path.join(mainRoot, '.engram-prebuilt.json'), JSON.stringify({ mode: 'source-bundle', git: true }));
+  assert.equal(runtimeMode.isGitlessPrebuilt(mainRoot), true, '没有 .git 时应识别为无 Git 预构建');
+  fs.mkdirSync(path.join(path.dirname(mainRoot), '.git'), { recursive: true });
+  assert.equal(runtimeMode.isGitlessPrebuilt(mainRoot), false, '存在 .git 时应按源码模式处理');
+});
+
 test('isGitCheckout：main/.git 与上一级 .git 都算检出（源码版仓库根在 main 上一级）', () => {
   const outer = tmpdir('checkout');
   const root = path.join(outer, 'Engram', 'main');
@@ -214,6 +224,9 @@ test('main.js：读预构建标记、检查入口先判不可用、ENOENT 翻成
   );
   assert.ok(text.includes('未找到 Git：源码模式更新需要 Git'), 'spawn ENOENT 必须翻成用户能执行的中文说明');
   assert.ok(text.includes('prebuilt: Boolean(prebuiltInstall())'), 'desktop-get-env 必须把预构建标记交给渲染层');
+  assert.ok(text.includes('runtimeMode.isGitCheckout(appRootDir)'), 'prebuiltInstall 必须在有 .git 检出时走标准源码模式');
+  assert.ok(text.includes("ipcMain.handle('desktop-source-remote-get'") && text.includes("ipcMain.handle('desktop-source-remote-set'"), '主进程必须提供源码仓库读取与保存通道');
+  assert.ok(text.includes('workspaceBootstrapPending'), '首次更新缺少构建依赖时必须交接更新脚本补齐');
 });
 
 /* ---------- 内置 Agent 的真实 Node 解析 ---------- */

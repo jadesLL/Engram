@@ -77,15 +77,23 @@ function bundleInfo({
   let version = '';
   let commit = '';
   let offline = false;
+  let git = false;
+  let hasMinGit = false;
+  let hasPnpm = false;
+  let repoUrl = '';
   try {
     const receipt = JSON.parse(readFile(zip + '.json', 'utf8'));
     version = typeof receipt.version === 'string' ? receipt.version : '';
     commit = typeof receipt.commit === 'string' ? receipt.commit : '';
     offline = Boolean(receipt.offline);
+    git = Boolean(receipt.git);
+    hasMinGit = Boolean(receipt.hasMinGit);
+    hasPnpm = Boolean(receipt.hasPnpm);
+    repoUrl = typeof receipt.repoUrl === 'string' ? receipt.repoUrl : '';
   } catch {
     /* 没有回执（旧包/手工放的包）：只显示文件名与大小 */
   }
-  return { available: true, name: path.basename(zip), sizeMB, version, commit, offline };
+  return { available: true, name: path.basename(zip), sizeMB, version, commit, offline, git, hasMinGit, hasPnpm, repoUrl };
 }
 
 module.exports = { bundleDirs, findBundleZip, bundleInfo };

@@ -36,6 +36,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest 进度条在 PS5.1 慢十倍
+$explicitRepoUrl = $PSBoundParameters.ContainsKey('RepoUrl') -and [Boolean]$RepoUrl.Trim()
 # npm 镜像（pnpm 安装与依赖安装共用；原先漏了定义，$npmmirror 一直是 $null）
 $npmmirror = 'https://registry.npmmirror.com'
 # npm registry 回退：npmmirror 偶发 5xx/限流时换源往往就过了（pnpm 装不上，后面每一步都做不了）
@@ -72,9 +73,9 @@ if ($env:ENGRAM_MINGIT_URL) { $mingitUrls = @($env:ENGRAM_MINGIT_URL) }
 if ($env:ENGRAM_NODE_URL) { $nodeUrls = @($env:ENGRAM_NODE_URL) }
 
 # 引擎版本：GUI 用它和克隆目录里的旧引擎比较取高者，避免旧克隆脚本盖掉安装器 exe 里的新修复。
-# 3：预构建模式强制校验包完整性、离线落位便携 Node、还原可选离线资源（-RequireBundle）。
-# ENGINE_VERSION: 3
-$engineVersion = 3
+# 4：预构建快装包保留完整 .git 源码态（不删除 .git）、落位便携 pnpm/MinGit、保留旧更新源。
+# ENGINE_VERSION: 4
+$engineVersion = 4
 # pnpm 精确版本：仓库仅在 10.20.0 上构建验证过（CI Dockerfile 与 packageManager 同值）。
 $pnpmVer = '10.20.0'
 
@@ -330,6 +331,7 @@ function Test-BundleArchive([string]$path) {
 # 因为它决定「装完是否真的能离线跑起来」。
 function Get-BundleMissingParts([string]$path) {
   $required = @(
+    @{ name = '.git/HEAD'; what = 'Git 仓库' },
     @{ name = 'main/package.json'; what = '源码' },
     @{ name = 'main/scripts/install-engram.ps1'; what = '部署引擎' },
     @{ name = 'main/server/dist/index.js'; what = 'server 构建产物' },
@@ -338,7 +340,7 @@ function Get-BundleMissingParts([string]$path) {
     @{ name = 'main/desktop/node_modules/electron/dist/Engram.exe'; what = 'Electron 运行时' },
     @{ name = 'main/desktop/server/node_modules/better-sqlite3/package.json'; what = '服务端运行时依赖' },
     @{ name = 'main/node/node.exe'; what = '便携 Node' },
-    @{ name = 'main/node_modules/.engram-deps.json'; what = '工作区依赖记录' },
+    @{ name = 'main/pnpm/pnpm.cjs'; what = '便携 pnpm' },
     @{ name = 'main/desktop/server/node_modules/.engram-deps.json'; what = '运行时依赖记录' },
     @{ name = 'main/.engram-prebuilt.json'; what = '包清单' }
   )
@@ -427,8 +429,53 @@ function Copy-OfflineAssets([string]$offlineRoot, [string]$dataRoot) {
   return $copied
 }
 
-# 预构建安装：解压 → 覆盖 main/ → 落位便携 Node → 还原离线资源 → 补 electron.exe → 写安装标记。
+# 预构建安装：解压 → 覆盖源码仓库（保留完整 .git） → 落位便携 Node/pnpm/MinGit → 配置 Git 与更新源 → 还原离线资源 → 补 electron.exe → 写安装标记。
 # 数据目录（默认 %APPDATA%\@engram\desktop）里的知识库与设置一律不动；离线资源只补缺，不覆盖。
+function Read-GitOriginUrl([string]$gitConfigPath) {
+  if (-not $gitConfigPath -or -not (Test-Path -LiteralPath $gitConfigPath -PathType Leaf)) { return '' }
+  try {
+    $inOrigin = $false
+    foreach ($rawLine in (Get-Content -LiteralPath $gitConfigPath -Encoding UTF8)) {
+      $line = $rawLine.Trim()
+      if (-not $line -or $line.StartsWith('#') -or $line.StartsWith(';')) { continue }
+      if ($line.StartsWith('[')) {
+        $inOrigin = ($line -match '^\[\s*remote\s+"origin"\s*\]$')
+        continue
+      }
+      if (-not $inOrigin) { continue }
+      if ($line -match '^url\s*=\s*(.+)$') { return $Matches[1].Trim() }
+    }
+  } catch { }
+  return ''
+}
+
+function Build-AuthRepoUrl([string]$rawUrl, [string]$user, [string]$pass) {
+  $clean = $rawUrl.Trim() -replace '^(https?://)[^/@\s]+@', '$1'
+  if (-not $pass) { return $clean }
+  if ($user) {
+    return ($clean -replace '^(https?://)', ('$1' + [Uri]::EscapeDataString($user) + ':' + [Uri]::EscapeDataString($pass) + '@'))
+  }
+  return ($clean -replace '^(https?://)', ('$1' + [Uri]::EscapeDataString($pass) + '@'))
+}
+
+function Resolve-AvailableGit([string]$installDir) {
+  $portable = Join-Path $installDir 'MinGit\cmd\git.exe'
+  if (Test-Path -LiteralPath $portable) {
+    $cmdDir = Split-Path -Parent $portable
+    if (($env:Path -split ';') -notcontains $cmdDir) { $env:Path = "$cmdDir;$env:Path" }
+    return $portable
+  }
+  $cmd = Get-Command 'git' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($cmd -and $cmd.Source) { return $cmd.Source }
+  foreach ($cand in @(
+      (Join-Path $env:ProgramFiles 'Git\cmd\git.exe'),
+      (Join-Path ${env:ProgramFiles(x86)} 'Git\cmd\git.exe'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd\git.exe'))) {
+    if ($cand -and (Test-Path -LiteralPath $cand)) { return $cand }
+  }
+  return ''
+}
+
 function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repoDir, [string]$mainDir) {
   Step 'bundle' '解压预构建环境'
   if (-not (Test-BundleArchive $zipPath)) {
@@ -440,11 +487,17 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
     StepFail 'bundle' ("预构建环境包不完整，缺少：" + ($missing -join '、') + "。请用 build-customer-installer.ps1 重新打包（安装包必须自带源码/依赖/构建产物/运行时）")
   }
   StepLog "包：$(Split-Path $zipPath -Leaf)（$([math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB)) MB）"
+  $existingOrigin = Read-GitOriginUrl (Join-Path $repoDir '.git\config')
+  if ($existingOrigin) { StepLog ("检测到已有更新源：$(Redact $existingOrigin)（留空时自动保留）") }
+
   $stopped = Stop-EngramInstances $installDir
   if ($stopped -gt 0) { StepLog "已停止本安装目录下的 $stopped 个 Engram 进程（覆盖前先让出文件）" }
 
-  $stageRoot = Join-Path $installDir ("Engram.bundle-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $stageRoot = Join-Path $installDir ("Engram.bundle-" + $stamp)
+  $stageAssets = Join-Path $installDir ("Engram.bundle-assets-" + $stamp)
   if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path -LiteralPath $stageAssets) { Remove-Item -LiteralPath $stageAssets -Recurse -Force -ErrorAction SilentlyContinue }
   New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
   StepLog '解压中（约 1GB，视磁盘速度需要一两分钟）'
   # 用 Windows 自带 bsdtar 的绝对路径：装了 Git for Windows 的机器上 PATH 里还有 msys 版 GNU tar，
@@ -452,13 +505,25 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
   $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
   if (-not (Test-Path -LiteralPath $tarExe)) { $tarExe = 'tar.exe' }
   $code = Invoke-Logged $tarExe @('-xf', $zipPath, '-C', $stageRoot)
-  if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $stageRoot 'main'))) {
+  if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $stageRoot 'main\package.json'))) {
     StepLog '（tar.exe 解压不可用，改用 Expand-Archive）'
     Expand-Archive -LiteralPath $zipPath -DestinationPath $stageRoot -Force
   }
   $newMain = Join-Path $stageRoot 'main'
   if (-not (Test-Path -LiteralPath (Join-Path $newMain 'package.json'))) {
     StepFail 'bundle' '解压结果里没有 main/package.json：包结构不对'
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $stageRoot '.git\HEAD'))) {
+    StepFail 'bundle' '解压结果里缺少 .git 仓库：包结构不对'
+  }
+
+  # 附带资源（mingit / offline）不属于 Git 仓库工作区，先移出暂存后再把仓库目录原子替换到 $repoDir
+  foreach ($extra in @('offline', 'mingit')) {
+    $srcExtra = Join-Path $stageRoot $extra
+    if (Test-Path -LiteralPath $srcExtra) {
+      New-Item -ItemType Directory -Force -Path $stageAssets | Out-Null
+      Move-Item -LiteralPath $srcExtra -Destination (Join-Path $stageAssets $extra) -Force
+    }
   }
 
   # 包清单：版本与提交号来自打包那一刻，安装日志和「装的是哪一版」都以它为准
@@ -471,33 +536,18 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
     StepLog "包版本 v$($bundleManifest.version)$(if ($bundleManifest.commit) { "（提交 $("$($bundleManifest.commit)".Substring(0, [Math]::Min(7, "$($bundleManifest.commit)".Length)))）" })"
   }
 
-  # 覆盖：旧 main 先改名让位（Windows 上删 1GB 目录很慢，改名是瞬时的），装完再清理
-  if (Test-Path -LiteralPath $mainDir) {
-    $old = $mainDir + '.old'
-    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }
-    Rename-Item -LiteralPath $mainDir -NewName 'main.old' -ErrorAction Stop
+  # 覆盖整个仓库目录（含 .git 与根级 CHANGELOG/README 等）：旧目录先改名让位，装完再清理
+  $oldRepo = ''
+  if (Test-Path -LiteralPath $repoDir) {
+    $oldRepo = $repoDir + '.old'
+    if (Test-Path -LiteralPath $oldRepo) { Remove-Item -LiteralPath $oldRepo -Recurse -Force -ErrorAction SilentlyContinue }
+    Rename-Item -LiteralPath $repoDir -NewName 'Engram.old' -ErrorAction Stop
   }
-  New-Item -ItemType Directory -Force -Path $repoDir | Out-Null
-  Move-Item -LiteralPath $newMain -Destination $mainDir
-
-  # 预构建安装不再走 git：留着旧 .git 会让「检查更新」把整份新目录当成待提交改动，越pull越乱
-  $gitDir = Join-Path $repoDir '.git'
-  if (Test-Path -LiteralPath $gitDir) {
-    Remove-Item -LiteralPath $gitDir -Recurse -Force -ErrorAction SilentlyContinue
-    StepLog '已移除旧 .git（预构建安装不使用 git 更新）'
-  }
-
-  # 离线资源（可选但预置好才叫「装完即用」）：语音识别模型 / Python 共享运行时等。
-  # 只往数据目录补缺失文件，不覆盖用户已有内容、不碰知识库。
-  if (Test-Path -LiteralPath (Join-Path $stageRoot 'offline')) {
-    Step 'assets' '安装离线资源'
-    $dataRoot = Resolve-DataRoot
-    $copied = Copy-OfflineAssets (Join-Path $stageRoot 'offline') $dataRoot
-    StepDone 'assets' "已预置到 $dataRoot（$copied 个文件；已有文件不覆盖）"
-  } else {
-    Out-Line '##STEP:assets'
-    Out-Line '   包内未附带可选离线资源（语音模型 / Python 运行时），首次使用时会按提示下载'
-    Out-Line '##DONE:assets'
+  try {
+    Move-Item -LiteralPath $stageRoot -Destination $repoDir -ErrorAction Stop
+  } catch {
+    Restore-OldRepo $repoDir $oldRepo
+    StepFail 'bundle' "替换安装目录失败（$(Redact "$($_.Exception.Message)")）"
   }
 
   # 便携 Node：内置 Agent（dsh）与外部 CLI 都靠它，必须落在应用约定的位置
@@ -512,6 +562,17 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
       Copy-Item -LiteralPath $bundleNode -Destination $portableNode -Force
       StepLog "已安装便携 Node v$targetVer → $portableNode"
     }
+    Remove-Item -LiteralPath (Join-Path $mainDir 'node') -Recurse -Force -ErrorAction SilentlyContinue
+  }
+
+  # 便携 pnpm：落位到 <InstallDir>\pnpm，供首次应用内更新补齐开发依赖使用
+  $bundlePnpm = Join-Path $mainDir 'pnpm\pnpm.cjs'
+  if (Test-Path -LiteralPath $bundlePnpm) {
+    $portablePnpmDir = Join-Path $installDir 'pnpm'
+    New-Item -ItemType Directory -Force -Path $portablePnpmDir | Out-Null
+    Copy-Item -Path (Join-Path $mainDir 'pnpm\*') -Destination $portablePnpmDir -Force
+    StepLog "已安装便携 pnpm → $portablePnpmDir"
+    Remove-Item -LiteralPath (Join-Path $mainDir 'pnpm') -Recurse -Force -ErrorAction SilentlyContinue
   }
 
   # 包内只带品牌启动器 Engram.exe（省掉一份 190MB 的重复运行时）：运行时检查认 electron.exe，这里补一份
@@ -524,11 +585,12 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
     StepLog '已由 Engram.exe 复制出 electron.exe'
   }
 
-  # 安装标记：记录来自哪个包、哪一版、什么时候装的（排查与「用安装器更新」提示都靠它）
+  # 安装标记：记录来自哪个包、哪一版、什么时候装的（同时标明 git=true，桌面端据此走标准源码模式）
   $manifest = Join-Path $mainDir '.engram-prebuilt.json'
   try {
     $obj = [ordered]@{
-      mode        = 'prebuilt'
+      mode        = 'source-bundle'
+      git         = $true
       bundle      = (Split-Path $zipPath -Leaf)
       installedAt = (Get-Date).ToString('o')
       installDir  = $installDir
@@ -536,15 +598,87 @@ function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repo
     if ($bundleManifest) {
       foreach ($prop in $bundleManifest.PSObject.Properties) { $obj[$prop.Name] = $prop.Value }
     }
-    $obj['mode'] = 'prebuilt'
+    $obj['mode'] = 'source-bundle'
+    $obj['git'] = $true
     Write-Utf8NoBom $manifest ($obj | ConvertTo-Json -Depth 4)
   } catch {
     StepLog "（安装标记写入失败，忽略：$($_.Exception.Message)）"
   }
-
-  Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath (Join-Path $repoDir 'main.old') -Recurse -Force -ErrorAction SilentlyContinue
   StepDone 'bundle'
+
+  # ---------- 配置 Git 与更新源 ----------
+  Step 'git' '配置 Git 与更新源'
+  $bundledMinGit = Join-Path $stageAssets 'mingit'
+  if (Test-Path -LiteralPath (Join-Path $bundledMinGit 'cmd\git.exe')) {
+    $portableGitDir = Join-Path $installDir 'MinGit'
+    if (Test-Path -LiteralPath $portableGitDir) { Remove-Item -LiteralPath $portableGitDir -Recurse -Force -ErrorAction SilentlyContinue }
+    Move-Item -LiteralPath $bundledMinGit -Destination $portableGitDir -Force
+    StepLog "已安装内置便携 MinGit → $portableGitDir"
+  }
+  $gitBin = Resolve-AvailableGit $installDir
+  if (-not $gitBin) {
+    try {
+      StepLog "本机未检测到 Git，尝试准备便携 MinGit $mingitVer（装在 $installDir\MinGit）"
+      $script:fallback = @($mingitUrls | Select-Object -Skip 1)
+      Get-RemoteFile $mingitUrls[0] (Join-Path $installDir $mingitZip)
+      Expand-Archive (Join-Path $installDir $mingitZip) (Join-Path $installDir 'MinGit') -Force
+      Remove-Item (Join-Path $installDir $mingitZip) -Force -ErrorAction SilentlyContinue
+      $gitBin = Resolve-AvailableGit $installDir
+    } catch {
+      StepLog "（未获取到便携 MinGit，继续离线完成安装：$(Redact "$($_.Exception.Message)")）"
+    }
+  }
+  if ($gitBin) {
+    # 还原打包时跳过的中文截图文件，并清理跟踪分支配置，保证 git status 干净
+    $null = Invoke-Logged $gitBin @('-C', $repoDir, 'checkout', '-q', '--', '.')
+    $null = Invoke-Logged $gitBin @('-C', $repoDir, 'config', '--local', 'core.quotepath', 'false')
+    $null = Invoke-Logged $gitBin @('-C', $repoDir, 'config', '--local', 'branch.main.remote', 'origin')
+    $null = Invoke-Logged $gitBin @('-C', $repoDir, 'config', '--local', 'branch.main.merge', 'refs/heads/main')
+    $null = Invoke-Logged $gitBin @('-C', $repoDir, 'update-index', '-q', '--refresh')
+
+    $currentOrigin = Read-GitOriginUrl (Join-Path $repoDir '.git\config')
+    if ($explicitRepoUrl) {
+      $targetUrl = Build-AuthRepoUrl $RepoUrl $GiteaUser $GiteaPass
+      if ($currentOrigin) {
+        $null = Invoke-Logged $gitBin @('-C', $repoDir, 'remote', 'set-url', 'origin', $targetUrl)
+      } else {
+        $null = Invoke-Logged $gitBin @('-C', $repoDir, 'remote', 'add', 'origin', $targetUrl)
+      }
+      StepLog ("已配置更新源：$(Redact $targetUrl)")
+    } elseif ($existingOrigin) {
+      if ($currentOrigin) {
+        $null = Invoke-Logged $gitBin @('-C', $repoDir, 'remote', 'set-url', 'origin', $existingOrigin)
+      } else {
+        $null = Invoke-Logged $gitBin @('-C', $repoDir, 'remote', 'add', 'origin', $existingOrigin)
+      }
+      StepLog ("已保留原有更新源与凭据：$(Redact $existingOrigin)")
+    } elseif ($currentOrigin) {
+      StepLog ("更新源：$(Redact $currentOrigin)（可在应用 设置 → 版本与更新 里修改）")
+    } else {
+      StepLog '暂未配置更新源（可装完后在应用 设置 → 版本与更新 → 桌面端更新 里填写）'
+    }
+    $gitVerOut = try { ((& $gitBin --version) -replace '^git version ', '').Trim() } catch { '' }
+    StepDone 'git' $(if ($gitVerOut) { "git $gitVerOut" } else { '就绪' })
+  } else {
+    StepDone 'git' '未检测到 Git（可装完后安装 Git 并在设置中配置）'
+  }
+
+  # 离线资源（可选但预置好才叫「装完即用」）：语音识别模型 / Python 共享运行时等。
+  # 只往数据目录补缺失文件，不覆盖用户已有内容、不碰知识库。
+  $offlineAssetsDir = Join-Path $stageAssets 'offline'
+  if (Test-Path -LiteralPath $offlineAssetsDir) {
+    Step 'assets' '安装离线资源'
+    $dataRoot = Resolve-DataRoot
+    $copied = Copy-OfflineAssets $offlineAssetsDir $dataRoot
+    StepDone 'assets' "已预置到 $dataRoot（$copied 个文件；已有文件不覆盖）"
+  } else {
+    Out-Line '##STEP:assets'
+    Out-Line '   包内未附带可选离线资源（语音模型 / Python 运行时），首次使用时会按提示下载'
+    Out-Line '##DONE:assets'
+  }
+
+  if (Test-Path -LiteralPath $stageAssets) { Remove-Item -LiteralPath $stageAssets -Recurse -Force -ErrorAction SilentlyContinue }
+  if ($oldRepo -and (Test-Path -LiteralPath $oldRepo)) { Remove-Item -LiteralPath $oldRepo -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # 步骤表先发源码模式那一行（它同时是 installer-download-sources.test.js 切分辅助函数的结束标记，
@@ -555,12 +689,12 @@ Out-Line '##STEPS:git=检测 Git 环境;node=准备便携 Node.js;pnpm=安装 pn
 $bundleZip = Find-BundleZip $PSScriptRoot $BundleZip
 $repoDir = Join-Path $InstallDir 'Engram'
 $mainDir = Join-Path $repoDir 'main'
-if ($bundleZip) { Out-Line '##STEPS:bundle=解压预构建环境;assets=安装离线资源;shortcut=创建桌面快捷方式;launch=启动 Engram' }
+if ($bundleZip) { Out-Line '##STEPS:bundle=解压预构建环境;git=配置 Git 与更新源;assets=安装离线资源;shortcut=创建桌面快捷方式;launch=启动 Engram' }
 Out-Line '=============================='
 Out-Line ' Engram 源码版安装器'
 Out-Line " 安装位置：$InstallDir"
 Out-Line " 安装引擎 v$engineVersion$(if ($runtimeDir) { "（内置运行时：Node v$nodeVer + pnpm $pnpmVer）" })"
-if ($bundleZip) { Out-Line ' 模式：预构建环境包（免联网、免构建）' }
+if ($bundleZip) { Out-Line ' 模式：源码快装包（含完整 .git 源码态，免构建安装）' }
 Out-Line '=============================='
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
@@ -656,8 +790,16 @@ if ($bundledNodeZip -and (Test-Path $bundledNodeZip)) {
 Step 'pnpm' '准备 pnpm'
 function Get-PnpmVersion {
   if (-not (Test-Command 'pnpm')) { return '' }
-  $v = (pnpm -v 2>$null | Select-Object -First 1)
-  return "$v".Trim()
+  $savedEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $v = (pnpm -v 2>$null | Select-Object -First 1)
+    return "$v".Trim()
+  } catch {
+    return ''
+  } finally {
+    $ErrorActionPreference = $savedEap
+  }
 }
 $pnpmDir = Join-Path $InstallDir 'pnpm'
 $bundledPnpmDir = if ($runtimeDir) { Join-Path $runtimeDir 'pnpm' } else { '' }
@@ -820,7 +962,7 @@ $lnk.Arguments = '.'
 $lnk.IconLocation = (Join-Path $mainDir 'desktop\build\icon.ico') + ',0'
 $lnk.WorkingDirectory = (Join-Path $mainDir 'desktop')
 $lnk.WindowStyle = 1
-$lnk.Description = 'Engram（源码版）：双击直接启动；更新请在应用内 设置→连接与同步→桌面端更新→检查更新'
+$lnk.Description = 'Engram（源码版）：双击直接启动；更新请在应用内 设置→版本与更新→桌面端更新→检查更新'
 $lnk.Save()
 StepDone 'shortcut' "$desktop\Engram.lnk"
 

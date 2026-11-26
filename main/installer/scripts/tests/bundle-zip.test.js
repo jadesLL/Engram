@@ -67,10 +67,15 @@ check(
   }) === '',
 );
 
-// 8) bundleInfo：界面拿到的包名与大小
+// 8) bundleInfo：界面拿到的包名、大小与回执元数据
+fs.writeFileSync(
+  resZip + '.json',
+  JSON.stringify({ version: '1.5.21', commit: 'abc1234', offline: true, git: true, hasPnpm: true, repoUrl: 'https://example.com/o/r.git' }),
+);
 const info = bundleInfo({ resourcesPath: resDir });
 check('bundleInfo 报可用的包名', info.available === true && info.name === 'engram-prebuilt-win-x64.zip', JSON.stringify(info));
 check('bundleInfo 报大小（MB，四舍五入）', info.sizeMB === 3, String(info.sizeMB));
+check('bundleInfo 透出 git/hasPnpm/repoUrl 字段', info.git === true && info.hasPnpm === true && info.repoUrl === 'https://example.com/o/r.git', JSON.stringify(info));
 check('无内置包时 available=false', bundleInfo({ dirname: path.join(tmp, 'missing') }).available === false);
 
 // 9) 候选目录顺序：打包态在开发态之前
