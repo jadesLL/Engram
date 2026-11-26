@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 /**
  * 「收集箱」的路径约定与分类——全库唯一来源。
  *
@@ -28,12 +30,15 @@ export const INBOX_DERIVED_DIR = `${INBOX_DIR}/转换结果`;
  */
 export const CHAT_ATTACHMENT_DIR = `${INBOX_DIR}/.对话附件`;
 
-/** 统一成正斜杠、去掉首尾斜杠的 vault 相对路径 */
+/** 统一成正斜杠、去掉首尾斜杠并折叠 `.` / `..` 段的 vault 相对路径 */
 export function normalizeBrainRel(rel: string | null | undefined): string {
-  return String(rel ?? '')
+  const raw = String(rel ?? '')
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
     .replace(/\/+$/, '');
+  if (!raw) return '';
+  const normalized = path.posix.normalize(raw).replace(/^\/+/, '').replace(/\/+$/, '');
+  return normalized === '.' ? '' : normalized;
 }
 
 /** 是否位于收集箱内（含收集箱目录自身） */

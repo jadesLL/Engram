@@ -227,9 +227,12 @@ function applyConflictResolution(
   if (isSystemArea || !loser.trim()) return { copyPath: null, theirsWins };
   const dir = path.posix.dirname(target);
   const base = path.basename(target).replace(/\.md$/i, '');
-  let copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
+  const prefix = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}`;
+  let copyRel = `${prefix}.md`;
+  let seq = 2;
   while (fs.existsSync(safeJoin(copyRel))) {
-    copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
+    copyRel = `${prefix}-${seq}.md`;
+    seq += 1;
   }
   try {
     applyPageContent(copyRel, loser);

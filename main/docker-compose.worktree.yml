@@ -10,6 +10,7 @@ services:
         com.engram.scope: feature
         com.engram.feature: "${ENGRAM_FEATURE}"
     container_name: "engram-${ENGRAM_FEATURE}"
+    init: true
     labels:
       com.engram.scope: feature
       com.engram.feature: "${ENGRAM_FEATURE}"

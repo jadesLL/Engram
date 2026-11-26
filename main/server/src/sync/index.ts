@@ -545,4 +545,14 @@ export function reconcileNow(): void {
   void reconcile('manual').catch((error) => console.error('[sync] 手动对账失败:', error));
 }
 
+/** 供退出流程调用：清理本地广播节流定时器并等待同步客户端停稳 */
+export async function stopSync(): Promise<void> {
+  if (localFlushTimer) {
+    clearTimeout(localFlushTimer);
+    localFlushTimer = null;
+  }
+  localBatch.length = 0;
+  await stopClientAndWait();
+}
+
 export { configureLinkPreferLan, hubConfigured, syncConfigEnabled };

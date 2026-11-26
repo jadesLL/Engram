@@ -16,16 +16,24 @@ import {
   uniqueDerivedPath,
 } from './brainPaths.js';
 
-test('normalizeBrainRel：反斜杠、前后斜杠都归一', () => {
+test('normalizeBrainRel：反斜杠、前后斜杠、`.` 与 `..` 段都归一', () => {
   assert.equal(normalizeBrainRel('\\收集箱\\a.pdf'), '收集箱/a.pdf');
   assert.equal(normalizeBrainRel('/收集箱/a.pdf/'), '收集箱/a.pdf');
+  assert.equal(normalizeBrainRel('./收集箱/a.pdf'), '收集箱/a.pdf');
+  assert.equal(normalizeBrainRel('收集箱/../Wiki/概念/x.md'), 'Wiki/概念/x.md');
+  assert.equal(normalizeBrainRel('Wiki/../收集箱/a.pdf'), '收集箱/a.pdf');
+  assert.equal(normalizeBrainRel('.'), '');
+  assert.equal(normalizeBrainRel('/'), '');
   assert.equal(normalizeBrainRel(undefined), '');
 });
 
-test('isInboxPath：只认收集箱自己与它的子路径', () => {
+test('isInboxPath：只认收集箱自己与它的子路径，且不被 .. 绕过', () => {
   assert.equal(isInboxPath(INBOX_DIR), true);
   assert.equal(isInboxPath(`${INBOX_DIR}/合同.pdf`), true);
   assert.equal(isInboxPath(`${INBOX_DIR}/子目录/深处/x.bin`), true);
+  assert.equal(isInboxPath('./收集箱/合同.pdf'), true);
+  assert.equal(isInboxPath('Wiki/../收集箱/合同.pdf'), true);
+  assert.equal(isInboxPath('收集箱/../Wiki/概念/x.md'), false);
   assert.equal(isInboxPath('原始资料/x.pdf'), false);
   assert.equal(isInboxPath('Wiki/概念/x.md'), false);
   // 前缀相同但不是同一个目录：不能被误判
@@ -36,6 +44,7 @@ test('isInboxPath：只认收集箱自己与它的子路径', () => {
 test('isNestedVaultPath：vault 顶层又叫 brain 的路径一律视为整库副本', () => {
   assert.equal(isNestedVaultPath('brain/Wiki/概念/x.md'), true);
   assert.equal(isNestedVaultPath('brain/brain/Wiki/概念/x.md'), true);
+  assert.equal(isNestedVaultPath('Wiki/../brain/Wiki/概念/x.md'), true);
   // Windows 文件系统大小写不敏感：Brain/ 与 brain/ 是同一个目录
   assert.equal(isNestedVaultPath('Brain/Wiki/概念/x.md'), true);
   // 只是前缀相同或出现在子目录里，都不是副本

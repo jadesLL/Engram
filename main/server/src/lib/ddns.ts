@@ -940,14 +940,30 @@ async function ddnsTick(): Promise<void> {
   return syncing;
 }
 
+let ddnsFirstTimer: ReturnType<typeof setTimeout> | null = null;
+let ddnsTimer: ReturnType<typeof setInterval> | null = null;
+
 /** 进程级启动入口：启动 5s 后首跑，此后每 30s tick 到期判断（未配置则完全静默跳过） */
 export function startDdnsScheduler(): void {
-  const first = setTimeout(() => {
+  if (ddnsTimer || ddnsFirstTimer) return;
+  ddnsFirstTimer = setTimeout(() => {
+    ddnsFirstTimer = null;
     void ddnsTick();
   }, 5_000);
-  first.unref();
-  const timer = setInterval(() => {
+  ddnsFirstTimer.unref();
+  ddnsTimer = setInterval(() => {
     void ddnsTick();
   }, DDNS_TICK_MS);
-  timer.unref();
+  ddnsTimer.unref();
+}
+
+export function stopDdnsScheduler(): void {
+  if (ddnsFirstTimer) {
+    clearTimeout(ddnsFirstTimer);
+    ddnsFirstTimer = null;
+  }
+  if (ddnsTimer) {
+    clearInterval(ddnsTimer);
+    ddnsTimer = null;
+  }
 }

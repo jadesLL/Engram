@@ -7,6 +7,7 @@ services:
     image: engram:0.1.0
     build: .
     container_name: engram
+    init: true
     ports:
       - "18080:8080"
     volumes:
