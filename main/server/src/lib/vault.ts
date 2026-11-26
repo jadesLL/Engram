@@ -36,11 +36,13 @@ export interface ScanVaultPagesResult {
 /** 防路径穿越：把相对路径解析到 brain 内，越界抛错 */
 export function safeJoin(rel: string): string {
   const clean = rel.replace(/^[/\\]+/, '');
-  // vault 里又套了一层 vault（整库副本残留）：任何读写都不许碰，否则副本会再次被收录/同步
-  if (isNestedVaultPath(clean)) throw new Error('路径无效：vault 内不允许出现嵌套的 brain 目录');
   const abs = path.resolve(BRAIN_DIR, clean);
   if (abs !== BRAIN_DIR && !abs.startsWith(BRAIN_DIR + path.sep)) {
     throw new Error('路径无效');
+  }
+  // vault 里又套了一层 vault（整库副本残留）：基于真实解析后的相对路径校验，防止 `Wiki/../brain/...` 绕过
+  if (isNestedVaultPath(toRel(abs))) {
+    throw new Error('路径无效：vault 内不允许出现嵌套的 brain 目录');
   }
   return abs;
 }

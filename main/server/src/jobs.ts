@@ -154,6 +154,7 @@ const handlers: Record<string, JobHandler> = {
 const KNOWN_KINDS = new Set(Object.keys(handlers));
 
 let running = false;
+let jobTimer: ReturnType<typeof setInterval> | null = null;
 type JobLane = 'default' | 'document';
 type ActiveExecution = {
   controller: AbortController;
@@ -546,5 +547,17 @@ export function startJobRunner() {
     pollLane('document');
   };
   tick();
-  setInterval(tick, 1000);
+  jobTimer = setInterval(tick, 1000);
+  jobTimer.unref?.();
+}
+
+export function stopJobRunner(): void {
+  running = false;
+  if (jobTimer) {
+    clearInterval(jobTimer);
+    jobTimer = null;
+  }
+  for (const execution of activeExecutions.values()) {
+    execution.controller.abort();
+  }
 }

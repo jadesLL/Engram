@@ -1,7 +1,7 @@
 <template>
   <AppModal
     :open="confirmState.open"
-    v-tooltip="confirmState.title"
+    :title="confirmState.title"
     width="min(400px, 92vw)"
     :auto-focus="false"
     @close="settleConfirm(false)"

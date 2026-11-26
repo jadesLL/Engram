@@ -147,7 +147,7 @@
       </a>
     </div>
 
-    <AppModal :open="versionsOpen" v-tooltip="'历史版本'" placement="right" @close="versionsOpen = false">
+    <AppModal :open="versionsOpen" title="历史版本" placement="right" @close="versionsOpen = false">
       <template #subtitle>
         <p class="muted small">{{ fileName }}</p>
       </template>

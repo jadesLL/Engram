@@ -8,6 +8,7 @@ services:
   engram:
     image: gitea.example.com/example/engram/engram:latest
     container_name: engram
+    init: true
     ports:
       - "8080:8080"
     volumes:

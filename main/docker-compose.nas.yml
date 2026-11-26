@@ -13,6 +13,7 @@ services:
   engram:
     image: ${ENGRAM_IMAGE:-gitea.example.com/example/engram/engram:latest}
     container_name: engram
+    init: true
     ports:
       # 宿主端口可调（NAS 上 8080 常被系统占用）；改 ENGRAM_HOST_PORT（命令行 .env 或项目环境变量）
       - "${ENGRAM_HOST_PORT:-18080}:8080"

@@ -10,6 +10,10 @@ ensureDirs();
 export const db: Database.Database = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
+db.pragma('synchronous = NORMAL');
+db.pragma('temp_store = MEMORY');
+db.pragma('cache_size = -32000');
 // sqlite-vec：Electron asar 打包下 load 内部 require.resolve 返回 app.asar 虚拟路径，
 // better-sqlite3 的 loadExtension 直接走 native dlopen 不经 asar fs 转换会失败；
 // 转成 app.asar.unpacked 真实路径。非 asar 环境（Docker/dev）路径不含 app.asar，原样工作。

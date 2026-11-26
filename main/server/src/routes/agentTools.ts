@@ -11,7 +11,7 @@ import { GUIDE_VERSION } from '../content/agentGuide.js';
 import { relatedPageData } from '../lib/graphCache.js';
 import { resolvePageRef, AgentPageError } from '../pipeline/agentDelete.js';
 import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from '../lib/pageAssets.js';
-import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
+import { isChatAttachmentPath, isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
 import { addInboxFile, InboxAddError } from '../pipeline/inboxAdd.js';
 import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
 import { beginCustomerResearch, submitCustomerResearch, CustomerResearchError } from '../research/customerResearch.js';
@@ -281,10 +281,16 @@ export async function agentToolRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'path / markdown 必须是字符串' });
     }
     const rel = cleanRel(body.path);
-    if (!isInboxPath(rel) || isInboxDerivedPath(rel)) {
+    if (!isInboxPath(rel) || isInboxDerivedPath(rel) || isChatAttachmentPath(rel)) {
       return reply.code(400).send({ error: `只能写入 收集箱/ 下原件的转换产物：${rel}` });
     }
-    if (!fs.existsSync(safeJoin(rel))) return reply.code(404).send({ error: `原件不存在：${rel}` });
+    let abs: string;
+    try {
+      abs = safeJoin(rel);
+    } catch {
+      return reply.code(400).send({ error: `路径无效：${rel}` });
+    }
+    if (!fs.existsSync(abs)) return reply.code(404).send({ error: `原件不存在：${rel}` });
     if (!body.markdown.trim()) return reply.code(400).send({ error: 'markdown 不能为空' });
     const { writeInboxMarkdown } = await import('../pipeline/inboxConvert.js');
     const result = writeInboxMarkdown(rel, body.markdown, typeof body.note === 'string' ? body.note : undefined, {
@@ -308,7 +314,7 @@ export async function agentToolRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '缺少 path（收集箱内的原件路径）' });
     }
     const rel = cleanRel(body.path);
-    if (!isInboxPath(rel) || isInboxDerivedPath(rel)) {
+    if (!isInboxPath(rel) || isInboxDerivedPath(rel) || isChatAttachmentPath(rel)) {
       return reply.code(400).send({ error: `只能转换 收集箱/ 下的原件（不能是转换产物，也不能是知识库里的文件）：${rel}` });
     }
     let abs: string;

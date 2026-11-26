@@ -185,7 +185,7 @@ function scheduleDerivedRebuild(): void {
 }
 
 /** 退出前把待重建的补上：窗口内进程收到 SIGTERM/SIGINT 时不能把最后一次写入丢掉 */
-function flushDerivedRebuild(): void {
+export function flushDerivedRebuild(): void {
   if (!derivedRebuildTimer) return;
   clearTimeout(derivedRebuildTimer);
   derivedRebuildTimer = null;
