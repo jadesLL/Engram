@@ -70,8 +70,16 @@
 
 ; 新装出来的卸载器自己也不再因为个别文件被占用而整次 Abort：默认实现（--updated）是逐文件
 ; 改名到临时目录，一个占用就 Abort，于是下一次升级又卡在同一个报错上。这里改为「尽量删除」：
-; 删不掉的文件留着无妨，注册表与快捷方式照常清理。
+; 先离开 $INSTDIR，再带短暂重试地清空目录，删不掉的文件留着无妨，注册表与快捷方式照常清理。
 !macro customRemoveFiles
   SetOutPath $TEMP
-  RMDir /r "$INSTDIR"
+  StrCpy $R9 0
+  engr_rm_retry:
+    RMDir /r "$INSTDIR"
+    IfFileExists "$INSTDIR\*.*" 0 engr_rm_done
+    IntOp $R9 $R9 + 1
+    IntCmp $R9 5 engr_rm_done 0 engr_rm_done
+    Sleep 500
+    Goto engr_rm_retry
+  engr_rm_done:
 !macroend

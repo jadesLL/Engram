@@ -39,10 +39,11 @@ test('安装器兜底：旧卸载失败不再中止升级，而是清旧目录�
   }
 });
 
-test('新卸载器自身：不再逐文件原子改名，改为尽量删除（不会因一个文件被占用整次失败）', () => {
+test('新卸载器自身：不再逐文件原子改名，改为尽量删除并带重试（不会因短暂占锁留残骸或 Abort）', () => {
   const body = macroBody('customRemoveFiles');
   assert.ok(body.includes('RMDir /r "$INSTDIR"'), 'customRemoveFiles 要尽力删安装目录');
   assert.ok(body.includes('SetOutPath $TEMP'), '删之前先离开 $INSTDIR（当前目录在里面会删不掉）');
+  assert.ok(body.includes('engr_rm_retry') && body.includes('Sleep 500'), '短暂占锁时必须有重试循环');
   assert.ok(!/\bAbort\b/.test(body), '卸载器不能 Abort：否则下一次升级又卡在同一处');
 });
 

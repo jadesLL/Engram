@@ -3295,7 +3295,7 @@ async function waitUninstallStarted(statusFile) {
   const deadline = Date.now() + UNINSTALL_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const s = uninstallGuard.readStatus(statusFile);
-    if (s && s.phase === 'running') return { ok: true };
+    if (s && (s.phase === 'running' || (s.phase === 'done' && s.code === 0))) return { ok: true };
     if (s && s.phase === 'error') return { ok: false, error: '卸载进程启动失败：' + (s.error || '未知原因') };
     if (s && s.phase === 'done' && s.code !== 0) {
       return { ok: false, error: '卸载脚本立即退出（code=' + s.code + '），详见日志：' + uninstallLogFile() };
@@ -3303,6 +3303,19 @@ async function waitUninstallStarted(statusFile) {
     await new Promise((r) => setTimeout(r, 200));
   }
   return { ok: false, error: '卸载进程 ' + Math.round(UNINSTALL_START_TIMEOUT_MS / 1000) + ' 秒内没有启动，详见日志：' + uninstallLogFile() };
+}
+
+/** 把源码卸载中转器及其 guard 依赖复制到 TEMP 握手目录，避免运行在安装目录里锁死目录或被杀 */
+function stageUninstallLauncher(dir) {
+  const libDir = path.join(dir, 'lib');
+  fs.mkdirSync(libDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(__dirname, 'scripts', 'lib', 'uninstall-guard.js'),
+    path.join(libDir, 'uninstall-guard.js'),
+  );
+  const target = path.join(dir, 'uninstall-launcher.js');
+  fs.copyFileSync(path.join(__dirname, 'scripts', 'uninstall-launcher.js'), target);
+  return target;
 }
 
 ipcMain.handle('desktop-source-uninstall-state', () => {
@@ -3325,17 +3338,23 @@ ipcMain.handle('desktop-source-uninstall-state', () => {
  */
 function packagedUninstallScript(opts) {
   const q = (value) => "'" + String(value).replace(/'/g, "''") + "'";
-  const { appPid, uninstaller, statusFile, readyFile, logFile, deleteData } = opts;
+  const { appPid, installDir, uninstaller, statusFile, readyFile, logFile, deleteData } = opts;
   return [
     '$ErrorActionPreference = "SilentlyContinue"',
+    'Set-Location $env:TEMP',
     `$appPid = ${Number(appPid) || 0}`,
+    `$installDir = ${q(installDir || '')}`,
     `$uninstaller = ${q(uninstaller)}`,
     `$statusFile = ${q(statusFile)}`,
     `$readyFile = ${q(readyFile)}`,
     `$logFile = ${q(logFile)}`,
     `$deleteData = ${deleteData ? '$true' : '$false'}`,
+    '$utf8NoBom = New-Object System.Text.UTF8Encoding($false)',
     'function Write-Status($obj) {',
-    '  try { $obj | ConvertTo-Json -Compress | Set-Content -LiteralPath $statusFile -Encoding UTF8 } catch {}',
+    '  try {',
+    '    $obj.at = (Get-Date).ToUniversalTime().ToString("o")',
+    '    [System.IO.File]::WriteAllText($statusFile, ($obj | ConvertTo-Json -Compress), $utf8NoBom)',
+    '  } catch {}',
     '}',
     'function Write-Log([string]$line) {',
     '  try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " " + $line) -Encoding UTF8 } catch {}',
@@ -3351,6 +3370,28 @@ function packagedUninstallScript(opts) {
     '  if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) { break }',
     '  Start-Sleep -Milliseconds 200',
     '}',
+    // 再等/清安装目录内残留子进程（Electron 渲染/GPU/crashpad 与刚退出中的中转启动器），
+    // 避免 NSIS 提示应用仍在运行或 RMDir 跳过被占文件留残骸
+    'if ($installDir) {',
+    '  $dirRoot = $installDir.TrimEnd("\\") + "\\"',
+    '  $dirDeadline = (Get-Date).AddSeconds(5)',
+    '  $graceEnd = (Get-Date).AddSeconds(2)',
+    '  while ((Get-Date) -lt $dirDeadline) {',
+    '    $lingering = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {',
+    '      $_.ProcessId -ne $PID -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($dirRoot, [System.StringComparison]::OrdinalIgnoreCase)',
+    '    })',
+    '    if ($lingering.Count -eq 0) { break }',
+    '    if ((Get-Date) -ge $graceEnd) {',
+    '      foreach ($p in $lingering) {',
+    '        Write-Log ("cleanup lingering process " + $p.Name + " pid=" + $p.ProcessId)',
+    '        try { & taskkill /PID $p.ProcessId /T /F 2>&1 | Out-Null } catch {}',
+    '        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue } catch {}',
+    '      }',
+    '    }',
+    '    Start-Sleep -Milliseconds 250',
+    '  }',
+    '  Start-Sleep -Milliseconds 400',
+    '}',
     'if (-not (Test-Path -LiteralPath $uninstaller)) {',
     '  Write-Log ("missing uninstaller: " + $uninstaller)',
     '  Write-Status @{ phase = "error"; error = "找不到安装版卸载程序：$uninstaller" }',
@@ -3362,9 +3403,9 @@ function packagedUninstallScript(opts) {
     // 有参数才传 -ArgumentList：Start-Process 在 -ArgumentList @() 时会抛
     // 「参数为 Null、为空」的参数验证错误（2026-11-26 真机实测，不删数据这条默认路径直接起不来）
     '  if ($argList.Count -gt 0) {',
-    '    $proc = Start-Process -FilePath $uninstaller -ArgumentList $argList -PassThru',
+    '    $proc = Start-Process -FilePath $uninstaller -ArgumentList $argList -WorkingDirectory $env:TEMP -PassThru',
     '  } else {',
-    '    $proc = Start-Process -FilePath $uninstaller -PassThru',
+    '    $proc = Start-Process -FilePath $uninstaller -WorkingDirectory $env:TEMP -PassThru',
     '  }',
     '} catch {',
     '  Write-Log ("start failed: " + $_.Exception.Message)',
@@ -3401,6 +3442,7 @@ async function beginPackagedUninstall(target, deleteData) {
       Buffer.from(
         packagedUninstallScript({
           appPid: process.pid,
+          installDir: target.installDir,
           uninstaller: target.uninstaller,
           statusFile,
           readyFile,
@@ -3421,6 +3463,7 @@ async function beginPackagedUninstall(target, deleteData) {
     child = fork(launcherFile, ['--script', scriptFile, '--log', logFile, '--ready', readyFile], {
       detached: true,
       stdio: 'ignore',
+      cwd: app.getPath('temp'),
     });
     child.unref();
   } catch (e) {
@@ -3465,16 +3508,45 @@ ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
   // 先写卸载标记：期间用户再点图标会被启动守卫挡下，避免新实例锁住正在被删的安装目录。
   uninstallGuard.writeFlag(root, { deleteData: Boolean(deleteData) });
   const statusFile = uninstallGuard.statusPath(app.getPath('temp'));
+  const logFile = uninstallLogFile();
   uninstallGuard.writeStatus(statusFile, { phase: 'launching' });
-  // 先优雅停掉内嵌 server（数据库落盘），再拉起独立卸载进程。
-  // 不能直接 spawn powershell：GUI 进程 spawn 的 powershell 会空句柄静默秒退（实测），
-  // 必须经 fork 出的 Node 中转（uninstall-launcher.js），fork 的子进程在 app.exit 后存活。
+  const dir = path.join(app.getPath('temp'), `engram-uninstall-${process.pid}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const readyFile = path.join(dir, 'ready.txt');
+  fs.rmSync(readyFile, { force: true });
+  // 先优雅停掉内嵌 server（数据库落盘），再收干净整棵进程树，最后交由 TEMP 中的独立中转进程拉起卸载。
   await stopLocalChild();
-  const child = fork(
-    path.join(__dirname, 'scripts', 'uninstall-launcher.js'),
-    ['--root', root, ...(deleteData ? ['--delete-data'] : []), '--status', statusFile],
-    { detached: true, stdio: 'ignore' },
-  );
+  await stopLocalTree();
+  let child;
+  try {
+    const launcherFile = stageUninstallLauncher(dir);
+    child = fork(
+      launcherFile,
+      [
+        '--root',
+        root,
+        ...(deleteData ? ['--delete-data'] : []),
+        '--status',
+        statusFile,
+        '--ready',
+        readyFile,
+        '--log',
+        logFile,
+        '--app-pid',
+        String(process.pid),
+      ],
+      {
+        detached: true,
+        stdio: 'ignore',
+        cwd: app.getPath('temp'),
+        env: { ...process.env, ENGRAM_INSTALL_LOG: logFile },
+      },
+    );
+    child.unref();
+  } catch (e) {
+    uninstallGuard.removeFlag(root);
+    return { ok: false, error: '无法启动卸载中转进程：' + describeError(e) };
+  }
   // 没有 error 监听时 spawn 失败会变成 uncaughtException 带走主进程；失败原因由状态文件给出
   child.on('error', () => {});
   const started = await waitUninstallStarted(statusFile);
@@ -3488,7 +3560,7 @@ ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
     log('[uninstall] 卸载未能启动：' + started.error);
     return { ok: false, error: started.error };
   }
-  log('[uninstall] 卸载脚本已拉起，应用退出；进度日志：' + uninstallLogFile());
+  log('[uninstall] 卸载脚本已拉起，应用退出；进度日志：' + logFile);
   app.exit(0);
   return { ok: true };
 });
