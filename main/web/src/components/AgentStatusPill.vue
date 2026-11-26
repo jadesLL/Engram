@@ -2,6 +2,7 @@
   <button
     v-if="visible"
     class="agent-pill"
+    :class="{ 'above-beautify': editorAi.pillVisible }"
     type="button"
     :aria-label="busy ? `${agentName} 正在回复，打开对话` : `${agentName} 已最小化，打开对话`"
     @click="open"
@@ -21,6 +22,7 @@ import AppSpinner from './ui/AppSpinner.vue';
 import Icon from './Icon.vue';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
+import { useEditorAiStore } from '../stores/editorAi';
 import { agentActivityText } from '../lib/agentActivity';
 import { formatDuration } from '../lib/chatTime';
 import { isReasoningMessage, reasoningDurationMs } from '../lib/chatTimeline';
@@ -42,6 +44,7 @@ const HINT_MS = 4000;
 
 const app = useAppStore();
 const chat = useChatStore();
+const editorAi = useEditorAiStore();
 const { capabilities } = useRuntimeCapabilities();
 const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 
@@ -126,12 +129,17 @@ function open() {
   max-width: calc(100% - 36px);
   padding: 8px 12px 8px 11px;
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--card-bg);
   color: var(--accent);
   box-shadow: var(--shadow);
   font-size: var(--font-sm);
   cursor: pointer;
+  transition: bottom var(--motion-base) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+
+.agent-pill.above-beautify {
+  bottom: 82px;
 }
 
 .agent-pill:hover {
@@ -174,6 +182,10 @@ function open() {
     right: 12px;
     bottom: calc(74px + var(--safe-bottom));
     max-width: calc(100% - 24px);
+  }
+
+  .agent-pill.above-beautify {
+    bottom: calc(140px + var(--safe-bottom));
   }
 
   .agent-pill .detail,

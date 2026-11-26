@@ -47,7 +47,7 @@
         >
           {{ cancellingRuntime ? '取消中…' : '取消下载' }}
         </button>
-        <button class="btn ghost small" type="button" :disabled="loading || binding" @click="refresh">
+        <button class="btn small" type="button" :disabled="loading || binding" @click="refresh">
           {{ loading ? '检测中…' : binding ? '绑定中…' : '重新检测' }}
         </button>
       </div>
@@ -200,15 +200,20 @@
     <p v-if="bound && accountFallback" class="setting-note">
       官方 CLI 的扫码 / 旧版会话没有记录手机号，这里用脱敏的用户 ID 展示当前账号；不影响读写办公本资料。
     </p>
-    <p class="setting-note">
-      技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭据由官方 CLI 生成，开启「设置」分类同步后 Engram 只在本机与同步群组之间转存官方 CLI 的会话文件，不读取账号密码。
-    </p>
     <p v-if="settingsSyncOff" class="setting-note tone-warn">
       当前已加入多端同步，但「设置」分类同步未开启：办公本类型与登录凭据不会跨设备同步。到「多端同步 → 同步内容」打开「设置」即可。
     </p>
-    <p v-else-if="sync.settingsEnabled && sync.role !== 'none'" class="setting-note">
-      办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。切换账号会先让同步设备一起退出旧账号，新账号登录成功后自动切过去。
-    </p>
+    <details class="doxent-tech-details">
+      <summary>工作原理与隐私说明</summary>
+      <div class="doxent-tech-body">
+        <p class="setting-note">
+          技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭据由官方 CLI 生成，开启「设置」分类同步后 Engram 只在本机与同步群组之间转存官方 CLI 的会话文件，不读取账号密码。
+        </p>
+        <p v-if="!settingsSyncOff && sync.settingsEnabled && sync.role !== 'none'" class="setting-note">
+          办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。切换账号会先让同步设备一起退出旧账号，新账号登录成功后自动切过去。
+        </p>
+      </div>
+    </details>
   </div>
 </template>
 
@@ -1133,9 +1138,31 @@ onBeforeUnmount(() => {
 }
 .doxent-status-copy {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+.doxent-tech-details {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.doxent-tech-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  user-select: none;
+}
+.doxent-tech-details summary:hover {
+  color: var(--text);
+}
+.doxent-tech-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 .doxent-status-hint {
   color: var(--text-secondary);

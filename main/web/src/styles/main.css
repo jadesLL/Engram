@@ -487,9 +487,9 @@ html.desktop-frame.ui-zoomed .win-titlebar {
 .win-titlebar-brand-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.15; }
 .win-titlebar-name { font-size: 13.5px; font-weight: 600; letter-spacing: .01em; color: var(--text); }
 .win-titlebar-sub {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-faint);
-  letter-spacing: .05em;
+  letter-spacing: .04em;
   white-space: nowrap;
 }
 
@@ -506,9 +506,9 @@ html.desktop-frame.ui-zoomed .win-titlebar {
 }
 .win-titlebar-page-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .win-titlebar-date {
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
-  letter-spacing: .04em;
+  letter-spacing: .03em;
   white-space: nowrap;
 }
 .win-titlebar-spacer { flex: 1; min-width: 10px; }
@@ -549,11 +549,15 @@ html.desktop-frame.ui-zoomed .win-titlebar {
   background: var(--bg);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: .01em;
   cursor: pointer;
   -webkit-app-region: no-drag;
   transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
+}
+/* 桌面融合标题栏已常驻同步胶囊，侧栏标题栏隐藏重复的同步小胶囊以留出空间 */
+html.desktop-frame .sidebar-title-actions .sync-chip {
+  display: none;
 }
 .win-titlebar-sync:hover { border-color: var(--border-strong); background: var(--bg-secondary); }
 .win-titlebar-sync-dot {

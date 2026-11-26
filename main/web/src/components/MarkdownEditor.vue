@@ -1709,12 +1709,16 @@ function placeTableBar() {
   const wrapRect = wrap.getBoundingClientRect();
   const width = panel.offsetWidth || 210;
   const height = panel.offsetHeight || 31;
-  // 表格上半部分滚出视野时贴着光标所在行走，免得浮条跑到屏幕外
+  // 表格下半部分滚出视野时贴着光标所在行走，免得浮条跑到屏幕外；
+  // 优先放在表格下方外侧避免遮挡前一段正文，下方放不下再翻回上方。
   const useCaret = tableBarAnchor.top < wrapRect.top + 8;
   const anchorTop = useCaret ? tableBarAnchor.caretTop : tableBarAnchor.top;
   const anchorBottom = useCaret ? tableBarAnchor.caretBottom : tableBarAnchor.bottom;
-  let top = anchorTop - wrapRect.top - height - 6;
-  if (top < 2) top = anchorBottom - wrapRect.top + 6;
+  let top = anchorBottom - wrapRect.top + 6;
+  if (top + height > wrapRect.height - 2) {
+    const above = anchorTop - wrapRect.top - height - 6;
+    if (above >= 2) top = above;
+  }
   top = Math.max(2, Math.min(top, wrapRect.height - height - 2));
   const left = Math.max(4, Math.min(tableBarAnchor.left - wrapRect.left, wrapRect.width - width - 4));
   const next = { top: Math.round(top), left: Math.round(left), row: tableBar.value.row };
@@ -1749,7 +1753,7 @@ function syncTableBar() {
   };
   if (!tableBar.value) {
     tableBar.value = {
-      top: Math.max(2, rect.top - (wrapEl.value?.getBoundingClientRect().top ?? 0) - 36),
+      top: Math.max(2, rect.bottom - (wrapEl.value?.getBoundingClientRect().top ?? 0) + 6),
       left: Math.max(4, rect.left - (wrapEl.value?.getBoundingClientRect().left ?? 0)),
       row: target.row,
     };

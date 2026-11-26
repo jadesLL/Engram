@@ -70,17 +70,7 @@
         <Icon name="square" :size="12" /> {{ stopping ? '停止中…' : '停止' }}
       </button>
       <span class="chat-spacer" />
-      <!-- 内置 Agent 设置：聊天抽屉与内置 Agent 工作台共用同一份 dsh 配置（模型/插件/预设） -->
-      <button
-        v-if="capabilities.features.agentConsole"
-        class="btn icon agent-settings"
-        type="button"
-        v-tooltip="'内置 Agent 设置：模型 / 插件 / Agent 预设'"
-        aria-label="内置 Agent 设置"
-        @click="openAgentSettings"
-      >
-        <Icon name="settings" :size="15" />
-      </button>
+      <!-- 会话与配置组 | 分隔线 | 窗口控制组：避免 6 枚纯图标连续平铺导致误点 -->
       <button
         class="btn icon session-toggle"
         type="button"
@@ -93,6 +83,20 @@
         <Icon name="messages" :size="15" />
         <span v-if="chat.runningCount" class="session-badge">{{ chat.runningCount }}</span>
       </button>
+      <button class="btn icon" type="button" v-tooltip="'新建会话'" aria-label="新建会话" @click="newSession">
+        <Icon name="plus" :size="15" />
+      </button>
+      <button
+        v-if="capabilities.features.agentConsole"
+        class="btn icon agent-settings"
+        type="button"
+        v-tooltip="'内置 Agent 设置：模型 / 插件 / Agent 预设'"
+        aria-label="内置 Agent 设置"
+        @click="openAgentSettings"
+      >
+        <Icon name="settings" :size="15" />
+      </button>
+      <span class="chat-head-sep" aria-hidden="true" />
       <button
         class="btn icon"
         type="button"
@@ -102,9 +106,6 @@
         @click="app.toggleChatDrawerMode()"
       >
         <Icon :name="isFull ? 'minimize' : 'maximize'" :size="15" />
-      </button>
-      <button class="btn icon" type="button" v-tooltip="'新建会话'" aria-label="新建会话" @click="newSession">
-        <Icon name="plus" :size="15" />
       </button>
       <button
         class="btn icon"
@@ -2267,6 +2268,14 @@ onUnmounted(() => {
   gap: 6px;
   padding: 11px 13px;
   border-bottom: 1px solid var(--border);
+}
+
+.chat-head-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 2px;
+  flex: none;
 }
 
 /* 品牌徽章：渐变圆角块托住 ✨，比裸图标更像一个「产品入口」 */

@@ -79,7 +79,7 @@
 
         <!-- 动作/面板组 -->
         <button class="rail-btn action" type="button" v-tooltip.right="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感" @click="quickNote">
-          <Icon name="plus" :size="19" />
+          <Icon name="lightbulb" :size="19" />
         </button>
         <div class="rail-divider" />
 
@@ -197,6 +197,15 @@
 
     <!-- 内置 Agent 最小化后的常驻状态：有轮次在跑时任何视图都看得到，点它回到对话 -->
     <AgentStatusPill />
+
+    <CommandPalette
+      v-if="commandPaletteOpen"
+      :agent-name="agentName"
+      @close="commandPaletteOpen = false"
+      @quick-note="quickNote"
+      @new-page="quickNew"
+      @open-agent="openAgent"
+    />
 
     <AppContextMenu />
 
@@ -395,6 +404,7 @@ import {
 } from '../lib/chatDrawer';
 import Sidebar from '../components/Sidebar.vue';
 const ChatDrawer = defineAsyncComponent(() => import('../components/ChatDrawer.vue'));
+const CommandPalette = defineAsyncComponent(() => import('../components/CommandPalette.vue'));
 import AgentStatusPill from '../components/AgentStatusPill.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import UpdateNotice from '../components/UpdateNotice.vue';
@@ -408,6 +418,7 @@ const updateStore = useUpdateStore();
 const appUpdateStore = useAppUpdateStore();
 const updateNoticeVisible = ref(false);
 const sourceHasUpdate = ref(false);
+const commandPaletteOpen = ref(false);
 /* 桌面端（有 wikiDesktop 桥）：更新入口渲染进融合标题栏，不再浮在正文上方，正文也就无需为它让出顶部间距 */
 const desktopShell = Boolean((window as any).wikiDesktop);
 const chat = useChatStore();
@@ -1285,12 +1296,16 @@ async function quickNote() {
 }
 
 function onKey(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    if (e.defaultPrevented || isActive('/settings')) return;
     e.preventDefault();
-    router.push('/search');
+    commandPaletteOpen.value = !commandPaletteOpen.value;
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();
     quickNote();
+  } else if (e.key === 'Escape' && commandPaletteOpen.value && !e.defaultPrevented) {
+    e.preventDefault();
+    commandPaletteOpen.value = false;
   } else if (e.key === 'Escape' && app.sidebarFull && !e.defaultPrevented) {
     // 满窗目录的退出键：与内置 Agent 满窗（ChatDrawer 的 Esc）同一套手感。
     // 弹窗/确认框自己会 preventDefault，编辑器全屏的 Esc 也会先处理，这里不抢。
