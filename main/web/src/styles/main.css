@@ -437,17 +437,15 @@ body {
 }
 
 /*
- * 桌面端无边框标题栏（titleBarOverlay）：顶部 46px 铭牌页眉——品牌块（库名 + 页数）、
- * 当前页与日期、搜索 / 记灵感、同步胶囊；右侧 138px 留给 Windows 原生的最小化 / 最大化 / 关闭。
- * 高度须与 desktop/main.js 的 titleBarOverlay.height 一致；原生按钮区的底色取
- * --win-titlebar-bg（与这条同色，见 stores/app.ts 的 applyTheme）。
+ * 桌面端无边框标题栏：顶部 46px 铭牌页眉——品牌块（库名 + 页数）、当前页与日期、
+ * 搜索 / 记灵感、同步胶囊、更新入口与右侧 Windows 窗口控制按钮（最小化 / 最大化 / 关闭）。
+ * 按钮自绘于标题栏内（不再依赖不透明原生 titleBarOverlay），保证底边线全宽贯通且在弹窗遮罩下统一压暗；
+ * 旧版壳未提供窗口控制桥时回退右侧 152px 留白。
  */
 html.desktop-frame { --win-titlebar-h: 46px; }
 html.desktop-frame #app { padding-top: var(--win-titlebar-h); }
 /*
- * 整页缩放时标题栏反缩放：右上角的最小化 / 最大化 / 关闭按钮是 Windows 原生绘制的固定
- * 46 物理像素，标题栏如果跟着整页一起放大（150% → 69px）就会和按钮错位。
- * 这里把标题栏乘 1/z 抵消掉（高度先按 46px 写，再由自身 zoom 回到 46 物理像素），
+ * 整页缩放时标题栏反缩放：保持物理像素 46px 高，不随正文缩放而放大或缩小，
  * 内容区留白 --win-titlebar-h 同步乘 1/z，两者仍然对齐；100% 时不加 ui-zoomed。
  */
 html.desktop-frame.ui-zoomed { --win-titlebar-h: calc(46px * var(--ui-zoom-inverse, 1)); }
@@ -465,13 +463,57 @@ html.desktop-frame.ui-zoomed .win-titlebar {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* 右侧 3 × 46px 原生窗口按钮 + 14px 间隙：内容不铺到按钮下面 */
+  /* 旧壳回退：右侧 3 × 46px 原生窗口按钮 + 14px 间隙；自绘窗口按钮启用时由 .has-win-controls 置 0 */
   padding: 0 152px 0 14px;
   background: var(--win-titlebar-bg, var(--bg));
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
   user-select: none;
   z-index: var(--z-chrome);
+}
+.win-titlebar.has-win-controls {
+  padding-right: 0;
+}
+.win-titlebar-controls {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  flex: none;
+  margin-left: 4px;
+  -webkit-app-region: no-drag;
+}
+.win-ctrl-btn {
+  width: 46px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+.win-ctrl-btn:hover {
+  background: var(--bg-hover);
+}
+.win-ctrl-btn:active {
+  background: var(--control-bg-pressed);
+}
+.win-ctrl-btn.win-ctrl-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+.win-ctrl-btn.win-ctrl-close:active {
+  background: #b02517;
+  color: #ffffff;
+}
+.win-ctrl-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .win-titlebar svg { flex-shrink: 0; }
 

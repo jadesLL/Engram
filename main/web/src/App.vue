@@ -1,10 +1,11 @@
 <template>
   <!--
-    桌面融合标题栏（46px 铭牌页眉）：品牌块（库名 + 页数）+ 当前页 + 日期 + 搜索/记灵感 + 同步胶囊 + 更新入口。
-    右侧 152px 内边距留给 Windows 原生窗口按钮（3 × 46px + 14px 间隙），不在这里自绘。
+    桌面融合标题栏（46px 铭牌页眉）：品牌块（库名 + 页数）+ 当前页 + 日期 + 搜索/记灵感 + 同步胶囊 + 更新入口 + 窗口控制按钮。
+    自绘最小化 / 最大化 / 关闭按钮置于标题栏内（旧版 Electron 壳回退右侧 152px 原生按钮留白），
+    使标题栏底边线全宽贯通并在弹窗遮罩打开时随标题栏同步压暗。
     整条除按钮外都可拖拽（-webkit-app-region: drag）。
   -->
-  <div v-if="isDesktop" class="win-titlebar">
+  <div v-if="isDesktop" class="win-titlebar" :class="{ 'has-win-controls': hasWindowControls }">
     <span class="win-titlebar-brand">
       <span class="win-titlebar-logo">
         <BrandMark :size="24" />
@@ -47,6 +48,46 @@
       <span id="win-titlebar-slot" class="win-titlebar-slot"></span>
     </template>
     <span v-else class="win-titlebar-spacer"></span>
+    <span v-if="hasWindowControls" class="win-titlebar-controls">
+      <button class="win-ctrl-btn" type="button" aria-label="最小化" @click="minimizeWindow">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M1 5.5h8" stroke="currentColor" stroke-width="1" shape-rendering="crispEdges" />
+        </svg>
+      </button>
+      <button
+        class="win-ctrl-btn"
+        type="button"
+        :aria-label="isMaximized ? '向下还原' : '最大化'"
+        @click="toggleMaximizeWindow"
+      >
+        <svg v-if="isMaximized" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path
+            d="M2.5 2.5V1.5h6v6h-1M1.5 2.5h6v6h-6z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1"
+            shape-rendering="crispEdges"
+          />
+        </svg>
+        <svg v-else width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <rect
+            x="1.5"
+            y="1.5"
+            width="7"
+            height="7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1"
+            shape-rendering="crispEdges"
+          />
+        </svg>
+      </button>
+      <button class="win-ctrl-btn win-ctrl-close" type="button" aria-label="关闭" @click="closeWindow">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.1" />
+        </svg>
+      </button>
+    </span>
   </div>
   <!-- 路由切换过渡（2026-11 动效）：只做入场淡入（见 main.css .page-*），离场瞬时卸载，重页面切换不加延迟。
        **不要给根组件加 :key="route.path"**：根 router-view 里装的是 Home（侧栏 + 子路由外壳），
@@ -115,9 +156,32 @@ const sync = useSyncStore();
 const serverUpdate = useServerUpdateStore();
 // 桌面端壳（有 wikiDesktop 桥）：启用标题栏融合条（品牌块 + 上下文 + 系统窗口按钮）；
 // Docker/Android 无此桥，不渲染也不加偏移
-const isDesktop = Boolean((window as any).wikiDesktop);
+const desktopBridge = (window as any).wikiDesktop;
+const isDesktop = Boolean(desktopBridge);
+const hasWindowControls = Boolean(
+  desktopBridge?.windowMinimize && desktopBridge?.windowToggleMaximize && desktopBridge?.windowClose
+);
+const isMaximized = ref(false);
 // 在渲染前就挂上桌面壳类：否则首帧标题栏没有高度、内容也没有顶部留白，挂载后会跳一下
 if (isDesktop) document.documentElement.classList.add('desktop-frame');
+
+function minimizeWindow(): void {
+  void desktopBridge?.windowMinimize?.();
+}
+
+async function toggleMaximizeWindow(): Promise<void> {
+  if (!desktopBridge?.windowToggleMaximize) return;
+  try {
+    const maximized = await desktopBridge.windowToggleMaximize();
+    isMaximized.value = Boolean(maximized);
+  } catch {
+    /* 窗口销毁时忽略 */
+  }
+}
+
+function closeWindow(): void {
+  void desktopBridge?.windowClose?.();
+}
 
 const isLoginPage = computed(() => route.path === '/login');
 const sectionTitle = computed(() => (isLoginPage.value ? '' : titlebarSection(route.path)));
@@ -205,6 +269,7 @@ async function settleServerUpdateFeedback(): Promise<void> {
 let stopBackLayers: (() => void) | null = null;
 let stopShareInbox: (() => void) | null = null;
 let stopUiZoom: (() => void) | null = null;
+let stopWindowMaximize: (() => void) | null = null;
 let darkMediaQuery: MediaQueryList | null = null;
 function onSystemDarkChange(): void {
   if (app.theme === 'system') app.applyTheme();
@@ -218,6 +283,14 @@ onMounted(() => {
   stopShareInbox = installShareInboxReceiver();
   // 桌面端整页缩放（Ctrl + 滚轮）：无桌面桥时是空实现，Docker/安卓不接管原生缩放
   stopUiZoom = installUiZoom();
+  if (hasWindowControls) {
+    desktopBridge.windowIsMaximized?.().then((v: unknown) => {
+      isMaximized.value = Boolean(v);
+    }).catch(() => {});
+    stopWindowMaximize = desktopBridge.onWindowMaximizeChange?.((v: boolean) => {
+      isMaximized.value = Boolean(v);
+    }) ?? null;
+  }
   // 标题栏日期：每分钟对一次表（只在桌面壳里渲染，其它端不必跑定时器）
   if (isDesktop) clockTimer = setInterval(() => { clock.value = Date.now(); }, 60_000);
   app.applyTheme();
@@ -228,6 +301,8 @@ onMounted(() => {
   darkMediaQuery.addEventListener('change', onSystemDarkChange);
 });
 onUnmounted(() => {
+  stopWindowMaximize?.();
+  stopWindowMaximize = null;
   stopUiZoom?.();
   stopUiZoom = null;
   stopShareInbox?.();

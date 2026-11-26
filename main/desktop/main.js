@@ -312,7 +312,42 @@ const SPLASH_STYLE = `
   }
   .detail { margin: 4px 0; font-size: 13px; color: #8a93a6; text-align: center; word-break: break-all; }
   .detail code { font-family: Consolas, monospace; font-size: 12px; color: #aab4c8; }
+  .splash-win-ctrls {
+    position: fixed; top: 0; right: 0; height: 46px; display: flex; z-index: 10;
+    -webkit-app-region: no-drag;
+  }
+  .splash-win-btn {
+    width: 46px; height: 46px; border: 0; padding: 0; background: transparent;
+    color: #e6e9f0; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; -webkit-app-region: no-drag;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .splash-win-btn:hover { background: rgba(255, 255, 255, 0.09); }
+  .splash-win-btn:active { background: rgba(255, 255, 255, 0.15); }
+  .splash-win-close:hover { background: #c42b1c; color: #ffffff; }
+  .splash-win-close:active { background: #b02517; color: #ffffff; }
 `;
+
+function splashWindowControlsHtml() {
+  return (
+    '<div class="splash-win-ctrls">' +
+    '<button class="splash-win-btn" id="splash-win-min" type="button" aria-label="最小化">' +
+    '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">' +
+    '<path d="M1 5.5h8" stroke="currentColor" stroke-width="1" shape-rendering="crispEdges"/></svg></button>' +
+    '<button class="splash-win-btn" id="splash-win-max" type="button" aria-label="最大化">' +
+    '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">' +
+    '<rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1" shape-rendering="crispEdges"/></svg></button>' +
+    '<button class="splash-win-btn splash-win-close" id="splash-win-close" type="button" aria-label="关闭">' +
+    '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">' +
+    '<path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.1"/></svg></button>' +
+    '</div>' +
+    '<script>(function(){var b=window.wikiDesktop;if(!b)return;' +
+    'var min=document.getElementById("splash-win-min"),max=document.getElementById("splash-win-max"),cls=document.getElementById("splash-win-close");' +
+    'if(min&&b.windowMinimize)min.addEventListener("click",function(){b.windowMinimize();});' +
+    'if(max&&b.windowToggleMaximize)max.addEventListener("click",function(){b.windowToggleMaximize();});' +
+    'if(cls&&b.windowClose)cls.addEventListener("click",function(){b.windowClose();});})();</script>'
+  );
+}
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -322,7 +357,9 @@ function splashPage(title, desc, status) {
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
-    '</style></head><body><div class="wrap">' +
+    '</style></head><body>' +
+    splashWindowControlsHtml() +
+    '<div class="wrap">' +
     logoSvg('logo') +
     `<h1>${title}</h1><p class="desc">${desc}</p>` +
     '<div class="bar"><i></i></div>' +
@@ -342,7 +379,9 @@ function errorPage(title, lines) {
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
-    '</style></head><body><div class="wrap">' +
+    '</style></head><body>' +
+    splashWindowControlsHtml() +
+    '<div class="wrap">' +
     '<div class="err-icon">!</div>' +
     `<h1 style="font-size:24px;letter-spacing:1px;">${escHtml(title)}</h1>` +
     body +
@@ -359,18 +398,14 @@ function setSplashStatus(text) {
     .catch(() => {});
 }
 
-// 主进程侧页面底色跟随：窗口背景 + Windows 标题栏 overlay 一起切（进应用后由渲染进程经 IPC 接管）
+// 主进程侧页面底色跟随：切换窗口背景色（窗口控制按钮在标题栏内自绘）
 function applyPageChrome(bg) {
-  const dark = bg === SPLASH_BG;
   try {
     if (win && !win.isDestroyed()) {
       win.setBackgroundColor(bg);
-      if (typeof win.setTitleBarOverlay === 'function') {
-        win.setTitleBarOverlay({ color: bg, symbolColor: dark ? '#e6e9f0' : '#37352f' });
-      }
     }
   } catch {
-    /* 非 Windows 或未启用 overlay 时忽略 */
+    /* 非 Windows 或窗口不可用时忽略 */
   }
 }
 
@@ -413,11 +448,10 @@ function createWindow({ silent = false } = {}) {
     autoHideMenuBar: true,
     // 源码模式窗口/任务栏图标（electron.exe 自带的是 Electron 默认图标）；打包版 exe 已内嵌图标
     icon: windowIcon(),
-    // 标题栏融合进应用：系统标题栏隐藏，右上角最小化/最大化/关闭由 Windows WCO 原生绘制，
-    // 颜色初值匹配 46px 铭牌页眉，进入应用后由渲染进程按主题经 set-title-bar-overlay 同步。
-    // height 46 须与 web 端 main.css 的 --win-titlebar-h 一致。
+    // 标题栏融合进应用：隐藏系统标题栏但保留 Windows 原生边框/圆角/阴影/分屏；
+    // 窗口控制按钮（最小化 / 最大化 / 关闭）由标题栏内自绘（不再使用原生 titleBarOverlay，
+    // 否则不透明 WCO 会遮盖标题栏底边线并在弹窗暗色遮罩上保持高亮）。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#fbfaf6', symbolColor: '#1f1e1b', height: 46 },
     backgroundColor: '#f7f7f5',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -463,6 +497,13 @@ function createWindow({ silent = false } = {}) {
   });
   // 从托盘/后台回到主窗就补查一次更新，不用等下一轮退避（内部去抖）
   win.on('focus', () => pokeUpdateChecks('window-focus'));
+  const emitWindowMaximize = () => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('window-maximize-change', win.isMaximized());
+    }
+  };
+  win.on('maximize', emitWindowMaximize);
+  win.on('unmaximize', emitWindowMaximize);
   return win;
 }
 
@@ -1111,23 +1152,26 @@ ipcMain.handle('get-launch-at-login', async () => {
 
 ipcMain.handle('set-launch-at-login', (_e, enabled) => setLaunchAtLogin(enabled));
 
-const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-
 // ---------- IPC ----------
-// 主题切换时同步窗口控制按钮（WCO）配色；未启用 overlay 或平台不支持时静默忽略
-ipcMain.handle('set-title-bar-overlay', (_e, opts) => {
-  try {
-    if (win && !win.isDestroyed() && typeof win.setTitleBarOverlay === 'function') {
-      const color = String(opts?.color || '').trim();
-      const symbolColor = String(opts?.symbolColor || '').trim();
-      if (!HEX_COLOR_RE.test(color) || !HEX_COLOR_RE.test(symbolColor)) return false;
-      win.setTitleBarOverlay({ color, symbolColor });
-    }
-  } catch (e) {
-    log('set-title-bar-overlay failed: ' + (e && e.message ? e.message : e));
-  }
+// 窗口控制（标题栏内自绘最小化 / 最大化 / 关闭）
+ipcMain.handle('window-minimize', () => {
+  if (win && !win.isDestroyed()) win.minimize();
   return true;
 });
+ipcMain.handle('window-toggle-maximize', () => {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+  return win.isMaximized();
+});
+ipcMain.handle('window-close', () => {
+  if (win && !win.isDestroyed()) win.close();
+  return true;
+});
+ipcMain.handle('window-is-maximized', () => Boolean(win && !win.isDestroyed() && win.isMaximized()));
+
+// 兼容旧调用：已改用标题栏内自绘窗口控制按钮，不再启用原生 titleBarOverlay
+ipcMain.handle('set-title-bar-overlay', () => true);
 
 // 数据保存位置查询与更改
 ipcMain.handle('get-data-dir', () => {
