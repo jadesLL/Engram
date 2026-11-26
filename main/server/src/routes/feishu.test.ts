@@ -193,8 +193,11 @@ test('飞书授权：status 给回调地址，start 生成授权链接，坏 sta
   const badState = await app.inject({
     method: 'GET',
     url: '/api/feishu/oauth/callback?code=abc&state=not-a-real-state',
+    headers: { 'x-forwarded-host': 'evil.example' },
   });
   assert.equal(badState.statusCode, 302);
+  assert.ok(String(badState.headers.location).startsWith('/settings?'));
+  assert.equal(String(badState.headers.location).includes('evil.example'), false);
   assert.match(String(badState.headers.location), /feishu=error/);
   assert.match(String(badState.headers.location), /%E6%8E%88%E6%9D%83/);
 

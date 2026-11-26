@@ -300,7 +300,7 @@ async function openExternal() {
     const buf = new Uint8Array(await res.arrayBuffer());
     const wd = (window as any).wikiDesktop;
     if (wd) {
-      const error = await wd.openFileBytes(fileName.value, Array.from(buf));
+      const error = await wd.openFileBytes(fileName.value, buf);
       if (error) throw new Error(error);
     } else if ((window as any).__TAURI__) {
       await (window as any).__TAURI__.core.invoke('open_file_bytes', {

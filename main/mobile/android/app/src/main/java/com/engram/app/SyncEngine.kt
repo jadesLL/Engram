@@ -48,7 +48,13 @@ class SyncEngine(
     private val network: Ipv6Outlet? = null,
 ) {
     private val executor = Executors.newSingleThreadExecutor()
-    private val fetchExecutor = Executors.newFixedThreadPool(MAX_PARALLEL_FETCHES)
+    private val fetchExecutor = java.util.concurrent.ThreadPoolExecutor(
+        MAX_PARALLEL_FETCHES,
+        MAX_PARALLEL_FETCHES,
+        60L,
+        TimeUnit.SECONDS,
+        java.util.concurrent.LinkedBlockingQueue(),
+    ).apply { allowCoreThreadTimeOut(true) }
     private val activeCalls = ConcurrentHashMap.newKeySet<Call>()
     /**
      * 客户端按「设置里的连接超时」懒构建（见 clientsFor）：三个客户端共用一套超时，只有 DNS 解析不同，
@@ -522,15 +528,17 @@ class SyncEngine(
      * 新中枢当前值走「直接覆盖」分支——结果是旧中枢的内容显示着、新中枢的内容被顶掉，且没有任何
      * 报错。归零后下一轮按轻量清单做一次全量对账，内容与账本都能重新对齐。
      */
+    fun currentActiveBase(): String? = activeBase
+
     fun resetCursor(reason: String) {
         val previous = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
-        if (previous <= 0L) return
         db.setSetting("sync_cursor", "0")
         // 标记核对的节流时刻一起归零：换中枢后要立刻重新核对「已提炼」标记，不能等 5 分钟窗口
         db.setSetting(ledgerMarksAtSetting, "0")
         // 自愈对账也归零：新中枢的目录必须马上核一遍，不能等 15 分钟周期
         db.setSetting(healAtSetting, "0")
-        db.log("info", "sync-cursor-reset", "$reason：增量游标已归零（$previous → 0），下次同步按全量对账重新对齐")
+        db.resetSyncBaselines()
+        db.log("info", "sync-cursor-reset", "$reason：增量游标与页面基线已归零（$previous → 0），下次同步按全量对账重新对齐")
     }
 
     /** 上次成功全量对账的时刻（0 = 从未跑过 → 下一次前台同步立即自愈一轮） */
@@ -1153,7 +1161,7 @@ class SyncEngine(
                                     db.rawPage(path)?.let { db.writeSyncedPage(path, it, revision) }
                                 }
                             } else if (kind == "page") {
-                                if (localFile.exists() && db.pageRevision(path) > 0) {
+                                if (localFile.exists() && !preferHub && db.pageRevision(path) > 0) {
                                     db.enqueue("page", path)
                                     recordLocalNewer("page", path)
                                 } else {

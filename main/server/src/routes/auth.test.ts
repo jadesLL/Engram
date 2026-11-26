@@ -23,7 +23,10 @@ before(async () => {
   const { authRoutes } = await import('./auth.js');
   app = Fastify();
   await app.register(cookie);
-  await app.register(jwt, { secret: 'auth-route-test-secret' });
+  await app.register(jwt, {
+    secret: 'auth-route-test-secret',
+    cookie: { cookieName: 'token', signed: false },
+  });
   await app.register(authRoutes);
   await app.ready();
 });
@@ -61,4 +64,35 @@ test('锁定计数在成功登录后清零（模拟锁过期后重置）', async
   // 计数清零逻辑由「正确密码登录成功即 delete」保证（auth.ts 实现内联，不单独测时序）
   const still = await login('auth-test-pass');
   assert.equal(still.statusCode, 429, '锁定期内继续保持 429');
+});
+
+test('修改密码后旧 JWT 失效（401），新签发的 cookie 仍有效', async () => {
+  const oldToken = app.jwt.sign({ sub: 'owner', tv: 0 });
+  const changed = await app.inject({
+    method: 'POST',
+    url: '/api/auth/password',
+    headers: { authorization: `Bearer ${oldToken}` },
+    payload: { oldPassword: 'auth-test-pass', newPassword: 'new-auth-password' },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.ok(changed.headers['set-cookie'], '改密后应为当前操作者下发新 cookie');
+
+  // 使用旧 JWT 再调需要 requireAuth 的接口应被拒绝
+  const stale = await app.inject({
+    method: 'POST',
+    url: '/api/auth/password',
+    headers: { authorization: `Bearer ${oldToken}` },
+    payload: { oldPassword: 'new-auth-password', newPassword: 'another-password' },
+  });
+  assert.equal(stale.statusCode, 401);
+
+  // 用新 cookie 携带的新 JWT 应放行
+  const cookieHeader = String(changed.headers['set-cookie']).split(';')[0];
+  const fresh = await app.inject({
+    method: 'POST',
+    url: '/api/auth/password',
+    headers: { cookie: cookieHeader },
+    payload: { oldPassword: 'new-auth-password', newPassword: 'auth-test-pass' },
+  });
+  assert.equal(fresh.statusCode, 200);
 });

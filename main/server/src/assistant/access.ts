@@ -22,3 +22,10 @@ export async function requireAssistantAccess(req: FastifyRequest, reply: Fastify
   }
   await requireAuth(req, reply);
 }
+
+/**
+ * 控制台未脱敏配置兜底接口仍只允许 owner / Agent 令牌访问，不允许同步成员令牌读取。
+ */
+export async function requireAssistantOwner(req: FastifyRequest, reply: FastifyReply) {
+  await requireAuth(req, reply);
+}

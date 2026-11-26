@@ -1,11 +1,14 @@
 // Engram 桌面端主进程（Electron）
 // fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式），探活后加载本地页面。
 const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, Notification, dialog, powerMonitor } = require('electron');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn, execFile } = require('node:child_process');
 const net = require('node:net');
+const { Readable, Transform } = require('node:stream');
+const { pipeline: streamPipeline } = require('node:stream/promises');
 const dataDirLib = require('./lib/data-dir');
 // 局域网访问开关与监听地址（设置 → 多端同步 → 同步群组 里把本机当中枢时用）
 const localAccess = require('./lib/local-access');
@@ -82,7 +85,8 @@ if (process.env.ENGRAM_USER_DATA) app.setPath('userData', path.resolve(process.e
 // 单实例锁：点 X 后应用驻留托盘，此时再次启动若开新实例，其 fork 的后端会撞 18180 端口、
 // 探活又探测到旧实例的服务，出现双窗口共用单后端的混乱。故第二实例直接退出并唤起已有窗口。
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  app.exit(0);
+  process.exit(0);
 } else {
   app.on('second-instance', (_event, argv) => {
     showMainWindow();
@@ -660,6 +664,7 @@ async function startLocalModeInner(notice) {
   } else {
     log('[local] 未找到可用的 Node.js（内置 Agent 控制台/聊天将不可用）');
   }
+  const instanceId = crypto.randomUUID();
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
@@ -672,6 +677,7 @@ async function startLocalModeInner(notice) {
     ENGRAM_WEB_DIST: webDistPath(),
     ENGRAM_APP_VERSION: app.getVersion(),
     ENGRAM_GIT_SHA: identity.commit,
+    ENGRAM_INSTANCE_ID: instanceId,
     // 仅「真实 Node」路径有意义：server 会把它探测校验（>=20）后覆盖 process.execPath 再拉起 dsh
     ...(agentNode ? { ENGRAM_NODE_BIN: agentNode.path } : {}),
   };
@@ -698,7 +704,7 @@ async function startLocalModeInner(notice) {
   const base = `http://127.0.0.1:${port}`;
   // 探活超过 6 秒时补充说明：首次启动要初始化数据库，慢是正常的，避免被当成卡死
   const slowHint = setTimeout(() => setSplashStatus('仍在准备中，首次启动需要初始化数据库，会稍慢一些…'), 6000);
-  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null)
+  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null, instanceId)
     .then((ok) => {
       clearTimeout(slowHint);
       if (ok) {
@@ -724,12 +730,12 @@ function loadWin(url) {
   Promise.resolve(win.loadURL(url)).catch((e) => log('[local] 页面加载失败：' + describeError(e)));
 }
 
-async function waitForHealth(base, timeoutMs, isAlive = () => true) {
+async function waitForHealth(base, timeoutMs, isAlive = () => true, expectedInstanceId = '') {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const r = await fetch(base + '/health');
-      if (r.ok) return true;
+      if (r.ok && (!expectedInstanceId || r.headers.get('x-engram-instance') === expectedInstanceId)) return true;
     } catch {
       /* 尚未就绪 */
     }
@@ -745,23 +751,25 @@ function stopLocalChild() {
   serverChild = null;
   if (!c || c.exitCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
+    let settled = false;
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(killTimer);
+      await killChildTree(c).catch(() => {});
       resolve();
     };
     const killTimer = setTimeout(() => {
-      // 超时不再只杀直接子进程：内置 Agent 的 node.exe 孙进程会活下来并占着安装目录文件
-      void killChildTree(c);
-    }, 5000);
-    c.once('exit', finish);
-    c.once('error', finish);
+      // 超时或自然退出均收干净整棵进程树：避免内置 Agent 的 node.exe 孙进程变孤儿
+      void finish();
+    }, 3000);
+    c.once('exit', () => { void finish(); });
+    c.once('error', () => { void finish(); });
     try {
-      c.kill('SIGTERM');
+      if (c.connected) c.send({ type: 'shutdown' });
+      else c.kill('SIGTERM');
     } catch {
-      finish();
+      void finish();
     }
   });
 }
@@ -892,6 +900,7 @@ app.whenReady().then(() => {
   reportPendingUpdateResult();
   // 上一次「切换安装位置」结算：落到当前用户目录就把成功提示摆到设置页，没成就写清原因
   reportScopeMigrationResult();
+  cleanupTempOpenFiles();
   cleanupInstallHandshakeDirs();
   // 已有的失败暂停记录先灌进状态：设置页在首轮自动检查（启动 4 秒后）之前就能显示暂停横幅
   {
@@ -941,7 +950,17 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) launchByConfig();
 });
 
-app.on('before-quit', () => {
+function cleanupTempOpenFiles() {
+  try {
+    fs.rmSync(path.join(app.getPath('temp'), 'engram'), { recursive: true, force: true });
+  } catch {
+    /* 占用中的临时文件下次清理 */
+  }
+}
+
+let quitCleanupDone = false;
+
+app.on('before-quit', (event) => {
   quitting = true; // 真退出：放行窗口 close，不再隐藏进托盘
   if (tray) {
     try {
@@ -951,11 +970,20 @@ app.on('before-quit', () => {
     }
     tray = null;
   }
-  // 退出前也要收整棵子树：只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，
+  // 退出前先停整棵子树：只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，
   // 它们握着安装目录里的文件，下一次覆盖安装会卡在「卸载旧版本」（见 process-tree 注释）
-  if (serverChild) {
-    void stopLocalTree();
+  if (serverChild && !quitCleanupDone) {
+    event.preventDefault();
+    void stopLocalTree()
+      .catch(() => {})
+      .finally(() => {
+        cleanupTempOpenFiles();
+        quitCleanupDone = true;
+        app.quit();
+      });
+    return;
   }
+  cleanupTempOpenFiles();
 });
 
 // ---------- 开机自启（Windows 登录时静默启动到系统托盘） ----------
@@ -1081,12 +1109,17 @@ ipcMain.handle('get-launch-at-login', async () => {
 
 ipcMain.handle('set-launch-at-login', (_e, enabled) => setLaunchAtLogin(enabled));
 
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
 // ---------- IPC ----------
 // 主题切换时同步窗口控制按钮（WCO）配色；未启用 overlay 或平台不支持时静默忽略
 ipcMain.handle('set-title-bar-overlay', (_e, opts) => {
   try {
     if (win && !win.isDestroyed() && typeof win.setTitleBarOverlay === 'function') {
-      win.setTitleBarOverlay({ color: String(opts?.color), symbolColor: String(opts?.symbolColor) });
+      const color = String(opts?.color || '').trim();
+      const symbolColor = String(opts?.symbolColor || '').trim();
+      if (!HEX_COLOR_RE.test(color) || !HEX_COLOR_RE.test(symbolColor)) return false;
+      win.setTitleBarOverlay({ color, symbolColor });
     }
   } catch (e) {
     log('set-title-bar-overlay failed: ' + (e && e.message ? e.message : e));
@@ -1201,13 +1234,27 @@ ipcMain.handle('set-lan-access', async (_e, enabled) => {
   return { enabled: next };
 });
 
+const BLOCKED_OPEN_EXTS = new Set([
+  '.exe', '.bat', '.cmd', '.com', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
+  '.msi', '.msp', '.scr', '.hta', '.lnk', '.pif', '.cpl', '.reg', '.jar', '.dll', '.inf', '.msc',
+]);
+const OPEN_FILE_BYTES_MAX = 50 * 1024 * 1024;
+
 // 远程文件「用系统程序打开」：渲染进程把文件字节传过来，写临时目录后调系统默认程序
-ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
-  const safe = String(name).replace(/[\\/:*?"<>|]/g, '-');
+ipcMain.handle('open-file-bytes', async (_e, name, bytes) => {
+  const safe = path.basename(String(name || '')).replace(/[\\/:*?"<>|]/g, '-').replace(/^\.+/, '') || 'file';
+  const ext = path.extname(safe).toLowerCase();
+  if (BLOCKED_OPEN_EXTS.has(ext)) {
+    throw new Error(`出于安全原因，禁止直接打开可执行或脚本文件（${ext}）`);
+  }
+  const buf = Buffer.from(bytes);
+  if (buf.byteLength > OPEN_FILE_BYTES_MAX) {
+    throw new Error('文件超过 50MB 上限，请先下载后手动打开');
+  }
   const dir = path.join(app.getPath('temp'), 'engram');
-  fs.mkdirSync(dir, { recursive: true });
+  await fs.promises.mkdir(dir, { recursive: true });
   const file = path.join(dir, safe);
-  fs.writeFileSync(file, Buffer.from(bytes));
+  await fs.promises.writeFile(file, buf);
   return shell.openPath(file); // 空串=成功
 });
 
@@ -1278,6 +1325,13 @@ function createInboxRenderWindow() {
   });
   created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   created.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  created.webContents.on('will-navigate', (event, navUrl) => {
+    try {
+      inboxRender.assertRenderableUrl(navUrl);
+    } catch {
+      event.preventDefault();
+    }
+  });
   return created;
 }
 
@@ -1366,9 +1420,6 @@ async function resolveUpdateCfg(passed) {
   return readDesktopUpdateEnv();
 }
 
-/** 最近一次检查成功解析的更新源配置：下载校验复用，确保与资产 URL 同源 */
-let lastCheckCfg = null;
-
 function cmpVersions(a, b) {
   const pa = String(a || '0').replace(/^v/i, '').split('.').map((s) => Number(s.match(/\d+/)?.[0] || 0));
   const pb = String(b || '0').replace(/^v/i, '').split('.').map((s) => Number(s.match(/\d+/)?.[0] || 0));
@@ -1442,7 +1493,6 @@ async function checkForUpdate(passedCfg) {
   if (!cfg.giteaUrl || !cfg.giteaRepo) {
     return { ok: false, error: 'not-configured' };
   }
-  lastCheckCfg = cfg;
   try {
     const release = await giteaLatestRelease(cfg);
     if (!release) return { ok: true, latestVersion: null, hasUpdate: false, exe: null };
@@ -1485,21 +1535,24 @@ async function downloadUpdateFile(cfg, url, send, signal, expectedSha256, progre
   }
   if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
   const total = Number(res.headers.get('content-length')) || 0;
+  if (!res.body) throw new Error('下载响应为空');
   const out = fs.createWriteStream(file);
   let received = 0;
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    out.write(Buffer.from(value));
-    // source 让渲染层分清「手动下载」与「自动更新」：两者落盘路径相同，进度混用会让进度条来回跳
-    if (send) send('desktop-update-progress', updateProgress.progressPayload({ received, total, percent: total ? Math.floor((received / total) * 100) : null }, progressSource));
-  }
-  await new Promise((resolve, reject) => {
-    out.on('error', reject);
-    out.end(() => resolve());
+  const counter = new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      // source 让渲染层分清「手动下载」与「自动更新」：两者落盘路径相同，进度混用会让进度条来回跳
+      if (send) send('desktop-update-progress', updateProgress.progressPayload({ received, total, percent: total ? Math.floor((received / total) * 100) : null }, progressSource));
+      callback(null, chunk);
+    },
   });
+  try {
+    await streamPipeline(Readable.fromWeb(res.body), counter, out);
+  } catch (e) {
+    out.destroy();
+    fs.rmSync(file, { force: true });
+    throw new Error(describeError(e));
+  }
   let actual = '';
   try {
     actual = await updateChain.sha256File(file);
@@ -1541,7 +1594,6 @@ ipcMain.handle('desktop-update-download', async (e, url) => {
   if (!cfg.giteaUrl || !cfg.giteaRepo) throw new Error('尚未配置更新源');
   manualDownloadBusy = true;
   try {
-    lastCheckCfg = cfg;
     autoState.installError = ''; // 新一轮安装开始：清掉上一次的结算提示
     const release = await giteaLatestRelease(cfg);
     if (!release) throw new Error('更新源上没有可用的 Release');
@@ -1561,8 +1613,11 @@ ipcMain.handle('desktop-update-download', async (e, url) => {
 function validateInstallerFile(filePath) {
   const file = path.resolve(String(filePath));
   const dir = path.resolve(path.join(app.getPath('userData'), 'downloads'));
-  if (!file.startsWith(dir + path.sep)) {
-    throw new Error('只允许运行 downloads 目录内的安装包');
+  const inDir = process.platform === 'win32'
+    ? file.toLowerCase().startsWith(dir.toLowerCase() + path.sep)
+    : file.startsWith(dir + path.sep);
+  if (!inDir || !file.toLowerCase().endsWith('.exe')) {
+    throw new Error('只允许运行 downloads 目录内的 .exe 安装包');
   }
   if (!fs.existsSync(file)) throw new Error('安装包不存在');
   return file;
@@ -2102,7 +2157,7 @@ function cleanupInstallHandshakeDirs() {
     const temp = app.getPath('temp');
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     for (const name of fs.readdirSync(temp)) {
-      if (!name.startsWith('engram-install-')) continue;
+      if (!name.startsWith('engram-install-') && !name.startsWith('engram-uninstall-')) continue;
       const dir = path.join(temp, name);
       try {
         const st = fs.statSync(dir);
@@ -2234,7 +2289,6 @@ async function autoUpdateTick() {
       setAutoPhase('unconfigured');
       return;
     }
-    lastCheckCfg = cfg;
     const release = await giteaLatestRelease(cfg);
     const current = app.getVersion();
     const exe = (release && release.assets.find((a) => a.name.endsWith('.exe'))) || null;
@@ -3076,7 +3130,8 @@ async function runSourceUpdate() {
   }
   setUpdateStep('完成，正在启动新版本…');
   appendUpdateLog('> 更新完成');
-  app.relaunch({ args: process.argv.slice(1) });
+  const relaunchArgs = process.argv.slice(1).filter((arg) => arg !== '--silent-start' && !String(arg).startsWith('engram://'));
+  app.relaunch({ args: relaunchArgs });
   app.exit(0);
   return { ok: true, restarting: true };
 }

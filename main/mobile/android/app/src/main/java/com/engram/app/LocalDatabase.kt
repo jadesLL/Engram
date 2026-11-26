@@ -1274,6 +1274,12 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /** 换中枢或退出同步时清零每页基线，避免把旧中枢 revision 当作本机最新反推覆盖新中枢 */
+    fun resetSyncBaselines() = synchronized(lock) {
+        writableDatabase.execSQL("UPDATE pages SET sync_revision = 0")
+        writableDatabase.execSQL("DELETE FROM page_revisions")
+    }
+
     fun pageEvidence(id: String): JSONObject = synchronized(lock) {
         val page = pageJson(id) ?: error("页面不存在")
         evidence(page.getString("path")) ?: JSONObject()

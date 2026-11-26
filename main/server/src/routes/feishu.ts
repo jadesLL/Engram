@@ -97,12 +97,23 @@ function callbackUriOf(req: FastifyRequest): string {
   return origin ? `${origin}/api/feishu/oauth/callback` : '';
 }
 
+function escapeHtml(text: string): string {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** 桌面端在系统浏览器里完成授权后展示的落地页（无脚本、不依赖登录态） */
 function oauthResultHtml(title: string, message: string, tone: 'ok' | 'error'): string {
   const color = tone === 'error' ? '#b3261e' : '#2f6f4f';
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title>
+<title>${safeTitle}</title>
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f3ec; color: #2b2a27;
          font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
@@ -111,7 +122,7 @@ function oauthResultHtml(title: string, message: string, tone: 'ok' | 'error'): 
   p { margin: 0 0 8px; }
   .hint { color: #6b675f; font-size: 13px; }
 </style></head>
-<body><main><h1>${title}</h1><p>${message}</p><p class="hint">可以关闭这个页面，回到 Engram 的 设置 → 外设接入 → 飞书多维表格 查看状态。</p></main></body></html>`;
+<body><main><h1>${safeTitle}</h1><p>${safeMessage}</p><p class="hint">可以关闭这个页面，回到 Engram 的 设置 → 外设接入 → 飞书多维表格 查看状态。</p></main></body></html>`;
 }
 
 export async function feishuRoutes(app: FastifyInstance) {
@@ -167,7 +178,6 @@ export async function feishuRoutes(app: FastifyInstance) {
    */
   app.get('/api/feishu/oauth/callback', async (req, reply) => {
     const query = (req.query || {}) as Record<string, unknown>;
-    const origin = requestOrigin(req) || '';
     const state = String(query.state || '');
     const record = oauthStates.get(state);
     oauthStates.delete(state);
@@ -175,7 +185,7 @@ export async function feishuRoutes(app: FastifyInstance) {
     const html = (title: string, message: string, tone: 'ok' | 'error') =>
       reply.type('text/html; charset=utf-8').send(oauthResultHtml(title, message, tone));
     const back = (params: string) =>
-      `${origin}/settings?section=peripheral&anchor=peripheral-feishu&${params}`;
+      `/settings?section=peripheral&anchor=peripheral-feishu&${params}`;
     const fail = (message: string) => {
       // 系统浏览器（桌面端）没有 Engram 登录态，不要把人甩到登录页：给一张结果页
       if (external) return html('飞书授权未完成', message, 'error');

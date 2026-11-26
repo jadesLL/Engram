@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { requireAssistantAccess } from '../assistant/access.js';
+import { requireAssistantAccess, requireAssistantOwner } from '../assistant/access.js';
 import {
   consoleInternalPort,
   consoleStatus,
@@ -429,7 +429,23 @@ async function discoverModels(origin: string, body: any): Promise<any> {
   const settingsNs = PI_AI_NS;
   const request: Record<string, unknown> = {};
   if (provider) request.provider = provider;
-  if (typeof body?.baseURL === 'string' && body.baseURL.trim()) request.baseURL = body.baseURL.trim();
+  if (typeof body?.baseURL === 'string' && body.baseURL.trim()) {
+    const rawBaseUrl = body.baseURL.trim();
+    let parsedBaseUrl: URL;
+    try {
+      parsedBaseUrl = new URL(rawBaseUrl);
+    } catch {
+      throw new ConsoleRpcError('模型提供商接口地址格式无效', { status: 400, code: 'invalid-base-url' });
+    }
+    if ((parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:')
+      || parsedBaseUrl.username || parsedBaseUrl.password) {
+      throw new ConsoleRpcError('模型提供商接口地址只支持 http/https 且不能内嵌凭据', {
+        status: 400,
+        code: 'invalid-base-url',
+      });
+    }
+    request.baseURL = rawBaseUrl;
+  }
   if (typeof body?.api === 'string' && body.api.trim()) request.api = body.api.trim();
   if (typeof body?.apiKey === 'string' && body.apiKey.trim()) request.apiKey = body.apiKey.trim();
   const models = await rpcValue<any[]>(origin, 'llm/discoverModels', { settingsNs, request });
@@ -927,8 +943,10 @@ export async function agentConsoleRoutes(app: FastifyInstance) {
     }
   });
 
-  /** 兜底：按 namespace 读一个设置视图（后续做 schema 表单/诊断用） */
+  /** 兜底：按 namespace 读一个设置视图（仅 owner / Agent 令牌可读，禁止成员令牌读取未脱敏配置） */
   app.get('/api/agent-console/settings/:ns', async (req, reply) => {
+    await requireAssistantOwner(req, reply);
+    if (reply.sent) return;
     try {
       const origin = await ensureOrigin(req);
       const ns = (req.params as { ns?: string }).ns ?? '';

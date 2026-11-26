@@ -9,8 +9,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -77,6 +79,7 @@ class AppUpdater(
     @Volatile private var releaseNotes = ""
     @Volatile private var assetName = ""
     @Volatile private var assetUrl = ""
+    @Volatile private var sha256AssetUrl = ""
     @Volatile private var checkedAtMs = 0L
     @Volatile private var installLaunched = false
 
@@ -375,12 +378,15 @@ class AppUpdater(
                 val picked = AppUpdatePolicy.pickApkAsset(names)
                 if (picked == null) throw IOException("该 Release 里没有 APK 附件（发版时需勾选 binaries）")
                 val pickedIndex = names.indexOf(picked)
+                val shaPicked = AppUpdatePolicy.pickSha256Asset(names, version)
+                val shaIndex = if (shaPicked != null) names.indexOf(shaPicked) else -1
                 synchronized(lock) {
                     latestVersion = version
                     releaseTag = tag
                     releaseNotes = notes.take(12_000)
-                    assetName = picked
+                    assetName = AppUpdatePolicy.sanitizeApkFileName(picked)
                     assetUrl = urls.getOrElse(pickedIndex) { "" }
+                    sha256AssetUrl = if (shaIndex >= 0) urls.getOrElse(shaIndex) { "" } else ""
                     totalBytes = sizes.getOrElse(pickedIndex) { 0L }
                     doneBytes = 0
                     percentValue = 0
@@ -421,57 +427,121 @@ class AppUpdater(
         }
     }
 
+    private fun verifyApkSha256(cfg: AppUpdateConfig, target: File, safeName: String) {
+        if (sha256AssetUrl.isBlank() || !AppUpdatePolicy.isSameOrigin(sha256AssetUrl, cfg.giteaUrl)) {
+            target.delete()
+            throw IOException("更新源未提供同源 sha256 校验文件，为避免安装未经校验的 APK 已中止更新")
+        }
+        val manifestReq = Request.Builder()
+            .url(sha256AssetUrl)
+            .header("Accept", "text/plain")
+        authHeader()?.let { manifestReq.header("Authorization", it) }
+        val manifestText = http.newCall(manifestReq.get().build()).execute().use { res ->
+            if (!res.isSuccessful) {
+                target.delete()
+                throw IOException("校验文件下载失败 HTTP ${res.code}")
+            }
+            res.body?.string().orEmpty()
+        }
+        val expected = AppUpdatePolicy.parseSha256ForAsset(manifestText, safeName)
+        if (expected.isNullOrBlank()) {
+            target.delete()
+            throw IOException("校验清单里缺少 $safeName 的 sha256，已中止更新")
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(target).use { input ->
+            val buf = ByteArray(64 * 1024)
+            var count = input.read(buf)
+            while (count >= 0) {
+                if (count > 0) digest.update(buf, 0, count)
+                count = input.read(buf)
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        if (!actual.equals(expected, ignoreCase = true)) {
+            target.delete()
+            throw IOException("安装包校验失败（sha256 与发布记录不一致），已删除损坏文件")
+        }
+    }
+
     private fun runDownload() {
         try {
+            val cfg = config()
+            if (!AppUpdatePolicy.isSameOrigin(assetUrl, cfg.giteaUrl)) {
+                throw IOException("安装包下载地址不在配置的远端仓库源内")
+            }
             val dir = updatesDir()
             if (!dir.exists() && !dir.mkdirs()) throw IOException("无法创建更新目录")
-            val name = assetName.ifBlank { "engram-update.apk" }
+            val name = AppUpdatePolicy.sanitizeApkFileName(assetName)
             val target = File(dir, name)
-            var existing = if (target.exists()) target.length() else 0L
-            if (totalBytes > 0 && existing >= totalBytes) {
-                finishReady(target)
-                return
+            if (!target.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
+                throw IOException("非法的安装包存储路径")
             }
-            val builder = Request.Builder()
-                .url(assetUrl)
-                .header("Accept", "application/octet-stream")
-            authHeader()?.let { builder.header("Authorization", it) }
-            // 断点续传：上次切后台/进程被杀留下的半截包从断点接着下（服务端支持 Range 才行）
-            if (existing > 0) builder.header("Range", "bytes=$existing-")
-            http.newCall(builder.get().build()).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("下载失败 HTTP ${response.code}")
-                val append = existing > 0 && response.code == 206
-                if (!append) existing = 0L
-                val remaining = response.body?.contentLength() ?: -1L
-                val total = if (totalBytes > 0) totalBytes else if (remaining > 0) existing + remaining else 0L
-                synchronized(lock) {
-                    totalBytes = total
-                    doneBytes = existing
-                    percentValue = AppUpdatePolicy.percent(existing, total)
+            var existing = if (target.exists()) target.length() else 0L
+            if (totalBytes > 0 && existing > totalBytes) {
+                target.delete()
+                existing = 0L
+            }
+            if (totalBytes > 0 && existing == totalBytes) {
+                val verified = runCatching { verifyApkSha256(cfg, target, name) }.isSuccess
+                if (verified) {
+                    finishReady(target)
+                    return
                 }
-                val input = response.body?.byteStream() ?: throw IOException("下载响应为空")
-                input.use { source ->
-                    FileOutputStream(target, append).use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        var done = existing
-                        var count = source.read(buffer)
-                        while (count >= 0) {
-                            output.write(buffer, 0, count)
-                            done += count
-                            synchronized(lock) {
-                                doneBytes = done
-                                percentValue = AppUpdatePolicy.percent(done, totalBytes)
-                            }
-                            count = source.read(buffer)
-                        }
-                        output.flush()
+                existing = 0L
+            }
+            var attempts = 0
+            while (attempts < 2) {
+                attempts += 1
+                val builder = Request.Builder()
+                    .url(assetUrl)
+                    .header("Accept", "application/octet-stream")
+                authHeader()?.let { builder.header("Authorization", it) }
+                // 断点续传：上次切后台/进程被杀留下的半截包从断点接着下（服务端支持 Range 才行）
+                if (existing > 0) builder.header("Range", "bytes=$existing-")
+                val retryFromScratch = http.newCall(builder.get().build()).execute().use { response ->
+                    if (response.code == 416 && existing > 0 && attempts == 1) {
+                        target.delete()
+                        existing = 0L
+                        return@use true
                     }
+                    if (!response.isSuccessful) throw IOException("下载失败 HTTP ${response.code}")
+                    val append = existing > 0 && response.code == 206
+                    if (!append) existing = 0L
+                    val remaining = response.body?.contentLength() ?: -1L
+                    val total = if (totalBytes > 0) totalBytes else if (remaining > 0) existing + remaining else 0L
+                    synchronized(lock) {
+                        totalBytes = total
+                        doneBytes = existing
+                        percentValue = AppUpdatePolicy.percent(existing, total)
+                    }
+                    val input = response.body?.byteStream() ?: throw IOException("下载响应为空")
+                    input.use { source ->
+                        FileOutputStream(target, append).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var done = existing
+                            var count = source.read(buffer)
+                            while (count >= 0) {
+                                output.write(buffer, 0, count)
+                                done += count
+                                synchronized(lock) {
+                                    doneBytes = done
+                                    percentValue = AppUpdatePolicy.percent(done, totalBytes)
+                                }
+                                count = source.read(buffer)
+                            }
+                            output.flush()
+                        }
+                    }
+                    false
                 }
+                if (!retryFromScratch) break
             }
             val size = target.length()
             if (!AppUpdatePolicy.downloadComplete(size, totalBytes)) {
                 throw IOException("安装包不完整（$size/$totalBytes 字节），已保留下载进度，下次继续")
             }
+            verifyApkSha256(cfg, target, name)
             finishReady(target)
         } catch (error: Exception) {
             val detail = describe(error)

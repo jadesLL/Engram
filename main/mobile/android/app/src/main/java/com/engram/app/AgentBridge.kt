@@ -14,7 +14,11 @@ import java.nio.charset.StandardCharsets
  * 留在 24 小时在线的中枢。WebView 退后台导致 SSE 断开不会取消远端 run，回前台后聊天
  * store 会通过 active + snapshot 接回现场。
  */
-class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStore) {
+class AgentBridge(
+    private val db: LocalDatabase,
+    private val secrets: SecretStore,
+    private val preferredBase: () -> String? = { null },
+) {
     data class Response(val status: Int, val contentType: String, val body: ByteArray)
     data class Stream(val connection: HttpURLConnection, val status: Int, val contentType: String)
 
@@ -29,7 +33,7 @@ class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStor
         var failure: Exception? = null
         val urls = baseUrls()
         for ((index, base) in urls.withIndex()) {
-            val connection = open(base, method, path, "application/json")
+            val connection = open(base, method, path, "application/json", body != null)
             try {
                 if (body != null) {
                     val bytes = body.toByteArray(StandardCharsets.UTF_8)
@@ -62,7 +66,7 @@ class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStor
         var failure: Exception? = null
         val urls = baseUrls()
         for ((index, base) in urls.withIndex()) {
-            val connection = open(base, "GET", path, accept)
+            val connection = open(base, "GET", path, accept, false)
             try {
                 connection.readTimeout = 0
                 val status = connection.responseCode
@@ -88,12 +92,18 @@ class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStor
     fun openMultipart(path: String, boundary: String): HttpURLConnection {
         require(configured()) { "请先在多端同步中绑定 Docker 中枢" }
         val base = baseUrls().firstOrNull() ?: error("未配置中枢地址")
-        val connection = open(base, "POST", path, "application/json")
+        val connection = open(base, "POST", path, "application/json", false)
         connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
         return connection
     }
 
-    private fun open(base: String, method: String, path: String, accept: String): HttpURLConnection {
+    private fun open(
+        base: String,
+        method: String,
+        path: String,
+        accept: String,
+        withJsonContentType: Boolean,
+    ): HttpURLConnection {
         val connection = URL(base + path).openConnection() as HttpURLConnection
         connection.requestMethod = method
         connection.connectTimeout = 6_000
@@ -101,15 +111,19 @@ class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStor
         connection.useCaches = false
         connection.setRequestProperty("Authorization", "Bearer ${token()}")
         connection.setRequestProperty("Accept", accept)
-        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        if (withJsonContentType) {
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
         connection.setRequestProperty("X-Engram-Client", "android-local")
         return connection
     }
 
     private fun baseUrls(): List<String> {
+        val preferred = preferredBase().orEmpty().trim().trimEnd('/')
         val primary = db.setting("sync_hub_url").orEmpty().trimEnd('/')
         val fallbacks = runCatching { JSONArray(db.setting("sync_direct_urls") ?: "[]") }.getOrDefault(JSONArray())
         return buildList {
+            if (preferred.startsWith("http://") || preferred.startsWith("https://")) add(preferred)
             if (primary.startsWith("http://") || primary.startsWith("https://")) add(primary)
             for (index in 0 until fallbacks.length()) {
                 fallbacks.optString(index).trimEnd('/').takeIf {
