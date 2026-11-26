@@ -165,9 +165,17 @@
               </span>
             </article>
           </div>
-          <div class="mi-gesture">
+          <div v-if="!gestureDismissed" class="mi-gesture">
             <Icon name="move-diagonal" :size="14" />
             <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 长按多选 · 点按看详情</span>
+            <button
+              type="button"
+              class="mi-gesture-close"
+              aria-label="隐藏手势提示"
+              @click="dismissGestureHint"
+            >
+              <Icon name="x" :size="12" />
+            </button>
           </div>
 
           <!-- 其余条目：卡片堆只铺三张，剩下的整列列出来——转换完的条目不能再被三张卡挡住看不到 -->
@@ -681,6 +689,18 @@ const isDesktop = Boolean((window as any).wikiDesktop);
  * .content 的下内边距本来就等于「底栏高度 + 外边距 + 呼吸位」，两层是同一份口径；万一
  * 改版换了底栏高度而 .content 没跟着改，这里再按底栏实际位置补一段让位，避免动作条压在栏上。
  */
+const GESTURE_DISMISSED_KEY = 'engram.mobileInbox.gestureDismissed';
+const gestureDismissed = ref(typeof localStorage !== 'undefined' && localStorage.getItem(GESTURE_DISMISSED_KEY) === '1');
+
+function dismissGestureHint(): void {
+  gestureDismissed.value = true;
+  try {
+    localStorage.setItem(GESTURE_DISMISSED_KEY, '1');
+  } catch {
+    // 忽略隐私模式写入失败
+  }
+}
+
 const rootEl = ref<HTMLElement | null>(null);
 const shellExtra = ref(0);
 const shellStyle = computed(() =>
@@ -2965,6 +2985,29 @@ onBeforeUnmount(() => {
   flex: none;
 }
 
+.mi-gesture-close {
+  position: relative;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--text-faint);
+}
+
+.mi-gesture-close::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+.mi-gesture-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
 /* ===== 长按多选：选择态列表 + 批量动作条 =====
  * 勾选框视觉 24px（行高 64px，整行可点），::after 再把命中区补到 44px；
  * 选中即变，不给背景加过渡（动效克制）。 */
@@ -3684,7 +3727,7 @@ onBeforeUnmount(() => {
   flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
   margin: 10px 0 4px;
   padding: 2px;
 }
@@ -3693,14 +3736,14 @@ onBeforeUnmount(() => {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-height: 40px;
-  padding: 0 12px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--card-bg);
   color: var(--text-secondary);
-  font-size: var(--font-md);
+  font-size: var(--fs-small);
   font-weight: 550;
   white-space: nowrap;
   transition: background var(--motion-fast) var(--ease-standard),
@@ -3715,8 +3758,7 @@ onBeforeUnmount(() => {
 }
 
 /*
- * ≤640px（规范档位）：四个胶囊总宽约 377px，390px 容器可用约 374px，flex 换行会变成 3+1，
- * 「已入库」单独一行既浪费高度又看不出同组。改成 2×2 等宽网格，四个分类一眼全在。
+ * ≤640px（规范档位）：四个胶囊改成 2×2 等宽网格，四个分类一眼全在，避免 3+1 落单。
  */
 @media (max-width: 640px) {
   .mi-filters {
@@ -3729,15 +3771,15 @@ onBeforeUnmount(() => {
 }
 
 .mi-filter-n {
-  min-width: 21px;
-  height: 21px;
-  padding: 0 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   font-size: var(--fs-caption);
   font-weight: 650;
-  line-height: 21px;
+  line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }

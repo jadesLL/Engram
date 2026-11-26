@@ -28,7 +28,7 @@
           <Icon name="search" :size="15" />
         </button>
         <button class="win-titlebar-action" type="button" v-tooltip.bottom="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感 (Ctrl+N)" @click="quickNote">
-          <Icon name="plus" :size="15" />
+          <Icon name="lightbulb" :size="15" />
         </button>
       </span>
       <button

@@ -61,10 +61,10 @@ html:root {
   --card-shadow: none;
   --card-shadow-hover: none;
   --card-radius: 10px;
-  --badge-idea: var(--cc-clay-deep);
-  --badge-idea-soft: var(--cc-clay-soft);
-  --badge-concept: var(--cc-clay-deep);
-  --badge-concept-soft: var(--cc-clay-soft);
+  --badge-idea: #a15c07;
+  --badge-idea-soft: #fbf0dd;
+  --badge-concept: #2e4cb8;
+  --badge-concept-soft: #e9efff;
   --badge-entity: var(--cc-pine);
   --badge-entity-soft: rgba(51, 105, 77, .12);
   --badge-note: var(--cc-slate);
@@ -110,13 +110,16 @@ html.dark:root {
   --success: var(--cc-pine);
   --success-soft: rgba(127, 174, 140, .16);
   --sidebar-selection-border: color-mix(in srgb, var(--cc-clay) 28%, transparent);
+  --badge-idea: #e5b545;
+  --badge-idea-soft: rgba(229, 181, 69, .16);
+  --badge-concept: #8ca8ff;
+  --badge-concept-soft: rgba(124, 156, 245, .18);
   --badge-entity-soft: rgba(127, 174, 140, .16);
   --badge-note-soft: rgba(142, 154, 166, .16);
 }
 
-/* 全站壳字体：终端语言。文档正文走 Vditor / pageExport 自己的字族，不受影响。 */
+/* 全站壳字体：中文正文保持系统无衬线可读性，数字 / 眉标 / 代码由局部声明使用 --cc-mono。 */
 html:root body {
-  font-family: var(--cc-mono);
   background: var(--cc-canvas);
   color: var(--cc-ink);
 }
@@ -165,7 +168,6 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 .sidebar {
   background: var(--cc-pane);
   border-right: 1px solid var(--cc-rule);
-  font-family: var(--cc-mono);
 }
 .sidebar-inner {
   background: transparent;
@@ -175,9 +177,8 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 }
 .sidebar-header { border-bottom: 1px solid var(--cc-rule); }
 .sidebar-titlebar h2 {
-  font-family: var(--cc-mono);
   font-weight: 600;
-  letter-spacing: .02em;
+  letter-spacing: .01em;
 }
 /* 宽字距只给真正的「眉标」元素。.sidebar-category 是包住整片分区的容器，
    它的 letter-spacing / text-transform / 字号与灰字会被里面的 .page-row、.page-title、
@@ -188,7 +189,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 .sidebar-section-title {
   letter-spacing: .16em;
   text-transform: uppercase;
-  font-size: 9.5px;
+  font-size: 11px;
   color: var(--cc-ink-3);
 }
 
@@ -199,21 +200,20 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   --card-pad: 14px;
   background: var(--cc-canvas);
   color: var(--cc-ink);
-  font-family: var(--cc-mono);
 }
 .board-date {
-  font-size: 9.5px;
+  font-family: var(--cc-mono);
+  font-size: 11px;
   font-weight: 650;
-  letter-spacing: .2em;
+  letter-spacing: .16em;
   text-transform: uppercase;
   color: var(--cc-ink-3);
 }
 .board-greeting {
-  font-family: var(--cc-mono);
   font-size: clamp(26px, 2.6vw, 34px);
-  font-weight: 500;
-  letter-spacing: -.025em;
-  line-height: 1.16;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1.18;
 }
 .board-sub {
   font-size: 12px;
@@ -248,9 +248,9 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 .glance-item { border-left: 0; padding: 0; gap: 3px; }
 .glance-item em {
   font-style: normal;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: .16em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--cc-ink-3);
 }
@@ -319,8 +319,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 }
 .board .shell-head .shell-titles { gap: 0; }
 .board .shell-head h3 {
-  font-family: var(--cc-mono);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: .01em;
   line-height: 1.3;
@@ -337,13 +336,15 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 .board .shell-head h3 svg { display: none; }
 .board .shell.ai-card .shell-head h3::after { content: none; }
 .board .shell-eyebrow {
-  font-size: 8.5px;
+  font-family: var(--cc-mono);
+  font-size: 11px;
   font-weight: 650;
-  letter-spacing: .18em;
+  letter-spacing: .14em;
   color: var(--cc-ink-3);
 }
 .board .shell-meta {
-  font-size: 10px;
+  font-family: var(--cc-mono);
+  font-size: 11px;
   color: var(--cc-ink-3);
 }
 .board .shell-expand {
@@ -419,8 +420,8 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 /* ---------- 近期待办 ---------- */
 .board .mini-task { padding: 7px 8px; }
 .board .mini-text { font-size: 12.5px; }
-.board .mini-meta { font-size: 10.5px; color: var(--cc-ink-3); }
-.board .mini-date { font-size: 10.5px; color: var(--cc-ink-3); }
+.board .mini-meta { font-size: 11.5px; color: var(--cc-ink-3); }
+.board .mini-date { font-family: var(--cc-mono); font-size: 11.5px; color: var(--cc-ink-3); }
 .board .mini-date.over { color: var(--cc-clay-deep); }
 .board .mini-check {
   border: 1px solid var(--cc-rule-2);
@@ -453,14 +454,14 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 .board .stat-bar { background: var(--cc-track); }
 .board .stat-lb,
 .board .stat-vl { font-size: 12px; }
-.board .stats-foot { font-size: 10px; }
+.board .stats-foot { font-size: 11px; }
 
 /* ---------- 知识热力 ---------- */
 .board .heat-recent,
 .board .heat-foot { border-color: transparent; color: var(--cc-ink-3); }
 .board .heat-recent-day { background: transparent; color: var(--cc-ink-2); }
-.board .heat-day { font-size: 9px; color: var(--cc-ink-3); }
-.board .heat-foot { font-size: 10px; }
+.board .heat-day { font-family: var(--cc-mono); font-size: 11px; color: var(--cc-ink-3); }
+.board .heat-foot { font-size: 11px; }
 .board .heat-cell { border-radius: 2.5px; }
 
 /* ---------- 最近更新 / 近期灵感 ---------- */
@@ -473,16 +474,14 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 
 /* ---------- Agent 摘要：转写体 ---------- */
 .board .digest-quote {
-  font-family: var(--cc-mono);
-  font-size: 19px;
-  font-weight: 400;
-  line-height: 1.5;
+  font-size: 18px;
+  font-weight: 450;
+  line-height: 1.55;
   letter-spacing: -.01em;
   /* 转写体限宽（2026-11 排版收口）：长摘要一行拉满卡片会难读，阅读宽度与正文档一致 */
   max-width: 62ch;
 }
 .board .digest-bullet {
-  font-family: var(--cc-mono);
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--cc-ink-2);
@@ -523,7 +522,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
 }
 .board .shell.capture .action-writing textarea:focus { border-color: transparent; box-shadow: none; }
 .board .shell.capture .action-writing textarea::placeholder { color: var(--cc-ink-3); }
-.board .shell.capture .bar-hint { color: var(--cc-ink-3); font-size: 10px; }
+.board .shell.capture .bar-hint { color: var(--cc-ink-3); font-size: 11px; }
 .board .shell.capture .action-send {
   width: 30px !important;
   min-width: 30px !important;

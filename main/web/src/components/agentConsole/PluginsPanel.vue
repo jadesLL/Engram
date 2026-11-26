@@ -112,7 +112,7 @@
       <article v-if="data.experimental.length" class="console-card">
         <div class="card-head">
           <div>
-            <h4>实验性插件</h4>
+            <h4 class="experimental-head-title">实验性插件 <span class="tag">实验性</span></h4>
             <p>这些功能仍在验证中，可能改变行为或界面；切换后对之后的任务生效。</p>
           </div>
         </div>
@@ -121,7 +121,7 @@
             <div class="experimental-copy">
               <div class="experimental-title">
                 <strong>{{ item.title }}</strong>
-                <span class="tag">{{ item.tag || '实验性' }}</span>
+                <span v-if="item.tag && item.tag !== '实验性'" class="tag">{{ item.tag }}</span>
               </div>
               <p v-if="item.description">{{ item.description }}</p>
             </div>
@@ -130,10 +130,13 @@
                 type="checkbox"
                 :checked="experimentalEnabled(item)"
                 :disabled="!writable || togglingKey === experimentalKey(item)"
+                :aria-label="`${item.title}，${experimentalEnabled(item) ? '已启用' : '已停用'}`"
                 @change="toggleExperimental(item)"
               />
               <span aria-hidden="true"></span>
-              <em>{{ togglingKey === experimentalKey(item) ? '处理中…' : experimentalEnabled(item) ? '已启用' : '已停用' }}</em>
+              <em v-if="togglingKey === experimentalKey(item) || experimentalEnabled(item)">
+                {{ togglingKey === experimentalKey(item) ? '处理中…' : '已启用' }}
+              </em>
             </label>
           </div>
         </div>
@@ -556,6 +559,11 @@ function handleMutationError(error: unknown): void {
 }
 .experimental-copy {
   min-width: 0;
+}
+.experimental-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .experimental-title {
   display: flex;
