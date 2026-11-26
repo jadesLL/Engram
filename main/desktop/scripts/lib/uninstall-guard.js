@@ -25,10 +25,14 @@ function statusPath(tmpDir) {
   return path.join(tmpDir || os.tmpdir(), STATUS_NAME);
 }
 
+function stripBom(text) {
+  return String(text || '').replace(/^\uFEFF/, '');
+}
+
 function readFlag(root) {
   if (!root) return null;
   try {
-    const raw = JSON.parse(fs.readFileSync(flagPath(root), 'utf8'));
+    const raw = JSON.parse(stripBom(fs.readFileSync(flagPath(root), 'utf8')));
     return raw && typeof raw === 'object' ? raw : null;
   } catch {
     return null;
@@ -67,7 +71,7 @@ function flagIsFresh(flag, nowMs = Date.now(), maxAgeMs = FLAG_MAX_AGE_MS) {
 
 function readStatus(file) {
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const raw = JSON.parse(stripBom(fs.readFileSync(file, 'utf8')));
     return raw && typeof raw === 'object' ? raw : null;
   } catch {
     return null;

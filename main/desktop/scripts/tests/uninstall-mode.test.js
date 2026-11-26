@@ -111,11 +111,15 @@ test('main.js：安装包形态交给自带卸载器，交接确认后才退出�
   assert.match(packagedBody, /fork\(launcherFile/, '必须经中转启动（GUI 直接 spawn 会空句柄秒退）');
 });
 
-test('main.js：随身脚本给 NSIS 卸载器的参数只有删除数据开关', () => {
+test('main.js：随身脚本给 NSIS 卸载器的参数只有删除数据开关，且清理残留进程并脱离目录', () => {
   const text = require('node:fs').readFileSync(MAIN_JS, 'utf8');
   const start = text.indexOf('function packagedUninstallScript(');
   assert.ok(start > 0, '缺少随身脚本生成函数');
-  const body = text.slice(start, start + 2600);
+  const body = text.slice(start, start + 4200);
+  assert.match(body, /Set-Location \$env:TEMP/, '脚本必须先切出安装目录');
+  assert.match(body, /UTF8Encoding\(\$false\)/, '写状态文件必须无 BOM UTF-8');
+  assert.match(body, /\$installDir/, '必须等待并清理安装目录内残留子进程');
+  assert.match(body, /-WorkingDirectory \$env:TEMP/, '拉起卸载器时工作目录必须在 TEMP');
   assert.match(body, /--delete-app-data/, '删除数据必须用 electron-builder 认的开关');
   assert.doesNotMatch(body, /_\?=/, '真卸载不能带 _?=（那是静默升级的原地模式）');
   assert.match(body, /WaitForExit\(\)/, '必须等卸载器结束再写 done 状态');
