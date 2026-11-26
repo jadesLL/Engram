@@ -129,7 +129,11 @@ foreach ($item in @('main.js', 'preload.js', 'ui.html', 'brand')) {
   Copy-Item -LiteralPath (Join-Path $installerDir $item) -Destination $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'scripts\lib') | Out-Null
-Copy-Item -LiteralPath (Join-Path $installerDir 'scripts\lib\*.js') -Destination (Join-Path $stage 'scripts\lib') -Force
+# 注意：Copy-Item -LiteralPath 不展开通配符，'*.js' 会被当成字面文件名、一个文件都不复制且不报错。
+# 2026-11-26 发布事故：staging 少了 scripts/lib，安装器一启动就 Cannot find module './scripts/lib/repo-probe.js'。
+Copy-Item -Path (Join-Path $installerDir 'scripts\lib\*.js') -Destination (Join-Path $stage 'scripts\lib') -Force
+$stagedLib = @(Get-ChildItem -LiteralPath (Join-Path $stage 'scripts\lib') -Filter '*.js' -File -ErrorAction SilentlyContinue)
+if ($stagedLib.Count -eq 0) { Die 'staging 没复制到 scripts/lib：安装器启动会缺模块' }
 # 部署引擎与内置包：extraResources 的相对路径按 staging 目录重写
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'resources\prebuilt') | Out-Null
 Copy-Item -LiteralPath (Join-Path $mainDir 'scripts\install-engram.ps1') -Destination (Join-Path $stage 'install-engram.ps1') -Force
@@ -144,7 +148,7 @@ $stageConfig = [ordered]@{
   electronDist    = (Join-Path $mainDir 'desktop\node_modules\electron\dist').Replace('\', '/')
   asar            = $false
   directories     = @{ output = 'dist' }
-  files           = @('main.js', 'preload.js', 'ui.html', 'brand/*.svg', 'scripts/lib/**/*.js')
+  files           = @('main.js', 'preload.js', 'ui.html', 'brand/*.svg', 'scripts/lib/*.js')
   extraResources  = @(
     @{ from = 'install-engram.ps1'; to = 'install-engram.ps1' },
     @{ from = 'resources/prebuilt'; to = 'prebuilt' }
@@ -201,6 +205,16 @@ $engineInExe = Join-Path $peek 'resources\install-engram.ps1'
 Assert-Path $engineInExe 'exe 内的部署引擎'
 $engineText = Get-Content -LiteralPath $engineInExe -Raw -Encoding UTF8
 if ($engineText -notmatch '\$RequireBundle') { Die 'exe 内的部署引擎不带 -RequireBundle（会退回联网构建）' }
+
+# 安装器主进程 require 的 scripts/lib/*.js 必须都在 exe 里：缺一个就是启动即弹
+# 「A JavaScript error occurred in the main process / Cannot find module」。
+$appLibInExe = Join-Path $peek 'resources\app\scripts\lib'
+foreach ($lib in Get-ChildItem -LiteralPath (Join-Path $installerDir 'scripts\lib') -Filter '*.js' -File) {
+  if (-not (Test-Path -LiteralPath (Join-Path $appLibInExe $lib.Name))) {
+    Die "安装器里缺少 scripts\lib\$($lib.Name)：客户双击会报 Cannot find module"
+  }
+}
+
 $bundledZip = Get-ChildItem -LiteralPath (Join-Path $peek 'resources\prebuilt') -Filter '*.zip' -File -ErrorAction SilentlyContinue |
   Sort-Object Name | Select-Object -First 1
 if (-not $bundledZip) {

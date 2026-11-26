@@ -111,6 +111,18 @@ check(
   'staging 配置带内置包与部署引擎',
   build.includes("from = 'install-engram.ps1'") && build.includes("from = 'resources/prebuilt'"),
 );
+// 2026-11-26 发布事故：staging 用 Copy-Item -LiteralPath 复制 'scripts\lib\*.js'，通配符被当成
+// 字面文件名 —— 一个文件都没复制且不报错，打出的安装器双击就 Cannot find module。
+check(
+  'staging 复制 scripts/lib 用 -Path（-LiteralPath 不展开通配符）',
+  build.includes("Copy-Item -Path (Join-Path $installerDir 'scripts\\lib\\*.js')") &&
+    !build.includes("Copy-Item -LiteralPath (Join-Path $installerDir 'scripts\\lib\\*.js')"),
+);
+check('staging 配置声明 scripts/lib/*.js（安装器主进程 require）', build.includes("'scripts/lib/*.js'"));
+check(
+  '构建自检断言 exe 内 resources/app/scripts/lib 齐全',
+  build.includes('resources\\app\\scripts\\lib') && build.includes('客户双击会报 Cannot find module'),
+);
 check('staging 配置不带 runtime（源码模式才需要）', !build.includes("to = 'runtime'"));
 check('staging 配置显式传 electronVersion（外部 config 不继承 build 段）', build.includes('electronVersion = $electronVersion'));
 check('staging 配置打 portable exe', build.includes("target = @(@{ target = 'portable'"));
