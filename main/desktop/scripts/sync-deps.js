@@ -67,8 +67,8 @@ function pnpmInvoker() {
       throw new Error(
         'pnpm 运行时不完整（缺少 ' +
           path.join(deps.pnpmEntryDir(entry), 'worker.js') +
-          '）：这是旧版安装器只复制 pnpm.cjs 造成的。请用新版安装器覆盖安装，' +
-          '或删除该 pnpm 目录后重新运行更新（安装器会落一份完整的 pnpm 发行包）。',
+          '）：这是旧版安装器只复制 pnpm.cjs 造成的。请下载并运行新版安装器覆盖安装' +
+          '（保留现有数据，自动补齐完整 pnpm 发行包）；若本机已自行安装全局 pnpm，也可删除该目录后重试更新。',
       );
     }
     const env = { ...process.env };

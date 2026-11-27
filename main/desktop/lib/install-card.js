@@ -116,6 +116,8 @@ function buildScript(opts = {}) {
     'try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " script start (pid " + $PID + ", mode " + $mode + ")") -Encoding UTF8 } catch {}',
     // 顶层终止错误也落一行日志再退出：-File 启动时异常只回退出码，不会回到界面上
     'trap { try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " FATAL: " + $_.Exception.Message) -Encoding UTF8 } catch {}; exit 1 }',
+    // 摘掉父进程（ELECTRON_RUN_AS_NODE=1）继承来的标志，避免更新后重拉 Engram.exe 退化成纯 Node 模式
+    'Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue',
     // DPI 感知 + 无边框窗拖拽（WM_NCLBUTTONDOWN / HTCAPTION）：不先声明感知，150% 缩放下整张卡会被位图拉伸发糊。
     // Add-Type 编译失败（受限语言模式 / 杀软）时降级：卡片照常显示，只是不能拖动、按 DeviceDpi 缩放。
     '$nativeReady = $false',

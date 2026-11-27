@@ -221,6 +221,12 @@ function main() {
     fail('准备卸载临时脚本失败：' + ((e && e.message) || String(e)), 3);
   }
 
+  const cleanEnv = { ...process.env };
+  for (const key of Object.keys(cleanEnv)) {
+    if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete cleanEnv[key];
+  }
+  cleanEnv.ENGRAM_INSTALL_LOG = logFile;
+
   const spec = buildHandoffSpec(buildPowerShellCommandLine(wrapperScript));
   let child;
   let cmdExit = null;
@@ -230,7 +236,7 @@ function main() {
       stdio: 'ignore',
       cwd: os.tmpdir(),
       windowsVerbatimArguments: spec.verbatim,
-      env: { ...process.env, ENGRAM_INSTALL_LOG: logFile },
+      env: cleanEnv,
     });
   } catch (e) {
     fail('无法启动 PowerShell：' + ((e && e.message) || String(e)), 3);
