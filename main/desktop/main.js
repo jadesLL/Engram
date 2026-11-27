@@ -73,6 +73,8 @@ const processTree = require('./scripts/lib/process-tree');
 const windowChrome = require('./lib/window-chrome');
 // 源码更新重启参数（保留/丢弃 --silent-start、丢弃 engram:// 深链），单测见 scripts/tests/relaunch-args.test.js
 const relaunchArgsLib = require('./lib/relaunch-args');
+// 源码更新 vite 构建参数与失败摘要提炼（单测见 scripts/tests/web-build-fallback.test.js）
+const webBuildLib = require('./lib/web-build');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -3199,7 +3201,7 @@ function forkStep(entry, args, cwd, onLine, timeoutMs = 10 * 60_000) {
     child.on('error', finish(reject));
     child.on('exit', finish((code) => {
       if (code === 0) resolve();
-      else reject(new Error(`${path.basename(entry)} 退出码 ${code}：${tail.slice(-4).join(' | ')}`));
+      else reject(new Error(`${path.basename(entry)} 退出码 ${code}：${webBuildLib.summarizeProcessTail(tail, 4)}`));
     }));
   });
 }
@@ -3289,12 +3291,12 @@ async function runSourceUpdate() {
       path.join('node_modules', 'vite', 'bin', 'vite.js'),
     ]);
     try {
-      await forkStep(viteEntry, ['build'], path.join(appRootDir, 'web'), appendUpdateLog);
+      await forkStep(viteEntry, webBuildLib.WEB_BUILD_ARGS, path.join(appRootDir, 'web'), appendUpdateLog);
     } catch (e) {
       // 本机安全软件偶发抢锁 esbuild 的临时文件（remove ...: Access is denied）：退回「不压缩、
       // 不降级语法」的构建，产物可直接运行、只是体积大一些——比整次更新失败好（2026-11-27 本机实测）。
       appendUpdateLog('> 默认构建失败（可能是安全软件锁住 esbuild 临时文件），改用未压缩构建重试');
-      await forkStep(viteEntry, ['build', '--minify false', '--target esnext'], path.join(appRootDir, 'web'), appendUpdateLog);
+      await forkStep(viteEntry, webBuildLib.WEB_BUILD_FALLBACK_ARGS, path.join(appRootDir, 'web'), appendUpdateLog);
     }
   } catch (e) {
     const msg = describeError(e);
