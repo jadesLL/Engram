@@ -41,6 +41,14 @@ assert.match(
 );
 assert.match(ps1, /默认构建失败/, 'update-from-source.ps1 回退时缺少可读的提示');
 
+const packPs1 = read('scripts/pack-prebuilt-bundle.ps1');
+assert.match(
+  packPs1,
+  /'--minify'\s+'false'\s+'--target'\s+'esnext'/,
+  'pack-prebuilt-bundle.ps1 缺少源码快装包的 web 构建回退参数',
+);
+assert.match(packPs1, /默认构建失败/, 'pack-prebuilt-bundle.ps1 回退时缺少可读的提示');
+
 // 3. summarizeProcessTail：优先保留错误标题行而非 node:internal 栈尾
 const viteArgError = webBuild.summarizeProcessTail([
   'file:///repo/node_modules/vite/dist/node/cli.js:448',
