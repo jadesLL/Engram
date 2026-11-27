@@ -199,21 +199,21 @@
         <SettingsGroup
           anchor="peripheral-speech"
           title="语音输入"
-          hint="专用 ASR（Whisper / Qwen-Audio-ASR）比多模态模型快；也可下载 SenseVoice 离线识别、选引擎与麦克风"
+          hint="离线模型、专用 ASR 与麦克风"
         >
           <SpeechInputPanel />
         </SettingsGroup>
         <SettingsGroup
           anchor="peripheral-doxent"
           title="办公本接入"
-          hint="选择办公本类型并绑定账号，内置 Agent 可调阅办公本资料"
+          hint="绑定后内置 Agent 可调阅资料"
         >
           <DoxentSection />
         </SettingsGroup>
         <SettingsGroup
           anchor="peripheral-feishu"
           title="飞书多维表格"
-          hint="接入飞书应用授权后搜索并选择多维表格，把整表记录拉成原始资料，可手动或定时更新"
+          hint="授权拉取多维表格到原始资料"
         >
           <FeishuBitableSection />
         </SettingsGroup>

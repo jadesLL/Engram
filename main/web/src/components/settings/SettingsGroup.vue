@@ -10,7 +10,10 @@
           <Icon :name="groupIcon" :size="16" />
         </span>
         <span class="group-text">
-          <span class="group-title">{{ title }}</span>
+          <span class="group-title-row">
+            <span class="group-title">{{ title }}</span>
+            <HelpTip v-if="help" :text="help" :title="title" />
+          </span>
           <span v-if="hint" class="group-hint">{{ hint }}</span>
         </span>
         <slot name="actions" />
@@ -36,6 +39,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import Icon from '../Icon.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import { settingsGroupIcon } from '../../lib/settingsDomains';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 
@@ -61,6 +65,7 @@ const props = withDefaults(
   defineProps<{
     title: string;
     hint?: string;
+    help?: string;
     defaultOpen?: boolean;
     flush?: boolean;
     danger?: boolean;

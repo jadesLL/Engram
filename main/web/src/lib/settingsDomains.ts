@@ -121,7 +121,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'account',
     label: '账户与访问',
-    desc: '登录凭据，以及这台设备怎么连上服务端。',
+    desc: '登录凭据与连接通道。',
     icon: 'user',
     groups: [
       { id: 'account-credentials', label: '账户', icon: 'user' },
@@ -131,7 +131,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'interface',
     label: '界面与检索',
-    desc: '界面长什么样、搜索怎么召回，都是「我这端」的偏好。',
+    desc: '外观与搜索同义词偏好。',
     icon: 'sun',
     groups: [
       { id: 'account-appearance', label: '外观', icon: 'sun' },
@@ -141,7 +141,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'data',
     label: '知识库数据',
-    desc: '知识数据放在哪、怎么备份、怎么清理，以及不可撤销的数据操作。',
+    desc: '数据目录、备份恢复与空间清理。',
     icon: 'archive',
     groups: [
       { id: 'data-location', label: '存储位置', icon: 'folder' },
@@ -154,7 +154,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'sync',
     label: '多端同步',
-    desc: '把多台设备组成一个同步群组：只要求中枢设备可被其他设备访问。',
+    desc: '多台设备经中枢双向同步。',
     icon: 'refresh',
     groups: [
       { id: 'panel-sync', label: '同步群组', icon: 'refresh' },
@@ -172,7 +172,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'peripheral',
     label: '外设接入',
-    desc: '把麦克风、办公本、飞书多维表格这类外部设备与数据源接进来：语音输入选识别引擎与本机模型，办公本绑定后 Agent 可调阅资料，多维表格可拉取到原始资料。',
+    desc: '管理语音输入、办公本与飞书多维表格接入。',
     icon: 'plug',
     groups: [
       // 语音输入（2026-11-23）：本机 SenseVoice 模型下载 / 识别引擎 / 麦克风 / 测试。
@@ -193,7 +193,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'update',
     label: '版本与更新',
-    desc: '三端各自的版本更新通道：服务器、桌面端、安卓端。',
+    desc: '服务器、桌面端与安卓端版本更新。',
     icon: 'download',
     groups: [
       // 桌面端更新在浏览器访问时只作展示（组件里有说明），因此与服务器更新同一能力位，
@@ -209,7 +209,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'app',
     label: '本机应用',
-    desc: '这台机器上的 Engram 应用本身：怎么启动、什么版本、怎么卸载。',
+    desc: '启动方式、版本信息与卸载。',
     icon: 'monitor',
     groups: [
       { id: 'panel-app', label: '桌面端应用', icon: 'monitor', need: 'desktop' },
@@ -220,7 +220,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'agent',
     label: 'Agent 与自动化',
-    desc: '内置 Agent、定时自动整理与看板提炼节奏，以及把知识库接入外部 Agent。',
+    desc: '内置 Agent、自动化任务与外部接入。',
     icon: 'ai',
     groups: [
       // 内置 Agent 与自动化分组挂 agentConsole：桌面 / 服务端恒 true；手机绑定同步中枢后 true

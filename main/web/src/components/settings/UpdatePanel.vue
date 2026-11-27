@@ -46,7 +46,6 @@
           <div class="setting-row">
             <div class="setting-copy">
               <strong>检查更新</strong>
-              <span>在服务器侧比对远端 Release 与镜像仓库版本。</span>
             </div>
             <div class="setting-actions">
               <span v-if="hubCheckResult?.ok" class="setting-value" :class="hubCheckResult.hasUpdate ? 'tone-warn' : 'tone-ok'">
@@ -64,7 +63,7 @@
           <div class="setting-row">
             <div class="setting-copy">
               <strong>立即更新</strong>
-              <span>拉取最新镜像并重建容器，服务中断 1–3 分钟，数据不受影响。</span>
+              <span>拉取最新镜像重建容器（中断 1–3 分钟，数据保留）。</span>
             </div>
             <div class="setting-actions">
               <button class="btn primary" type="button" :disabled="hubUpdating || !hubState?.supported || hubState?.busy" @click="confirmHubApply">
@@ -125,8 +124,10 @@
 
         <div class="setting-row">
           <div class="setting-copy">
-            <strong>更新通道</strong>
-            <span>latest 跟随正式发版；main 跟随主分支滚动构建。</span>
+            <span class="setting-title-row">
+              <strong>更新通道</strong>
+              <HelpTip title="更新通道" text="latest 跟随正式发版；main 跟随主分支滚动构建。" />
+            </span>
           </div>
           <div class="setting-actions">
             <AppSelect
@@ -143,7 +144,6 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从远端仓库 Release 与镜像仓库比对当前版本。</span>
           </div>
           <div class="setting-actions">
             <button class="btn" type="button" :disabled="checking" @click="doCheck">
@@ -169,7 +169,7 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>立即更新</strong>
-            <span>拉取最新镜像并重建容器，服务中断 1–3 分钟，数据不受影响。</span>
+            <span>拉取最新镜像重建容器（中断 1–3 分钟，数据保留）。</span>
           </div>
           <button class="btn primary" type="button" :disabled="updating || !state.supported" @click="confirmApply">
             立即更新
@@ -240,10 +240,10 @@
         </ul>
 
         <p v-if="sourceMode" class="setting-note">
-          源码模式：更新 = 增量拉源码并重建（约 1 分钟），自动装依赖并重启。
+          源码模式：增量拉源码重建并重启（约 1 分钟）。
         </p>
         <p v-if="prebuiltMode" class="setting-note">
-          预构建安装不含 Git：应用内不能增量拉源码，请用新版安装器覆盖安装，知识库数据保留。
+          预构建安装不含 Git，请用新版安装器覆盖安装（数据保留）。
         </p>
 
         <!-- 所有用户安装：每次自动更新都要过一次 UAC。给一次性切换入口：
@@ -251,8 +251,11 @@
         <template v-if="installerMode && installScopeInfo?.scope === 'machine' && installScopeInfo?.supported">
           <div v-if="installScopeInfo.uninstallerExists" class="setting-row">
             <div class="setting-copy">
-              <strong>每次更新都弹管理员确认？</strong>
-              <span>当前装在 Program Files（所有用户）。切换为「当前用户」安装只需这次确认一次，之后更新全静默；知识库数据不受影响。</span>
+              <span class="setting-title-row">
+                <strong>每次更新都弹管理员确认？</strong>
+                <HelpTip title="切换安装位置" text="当前装在 Program Files（所有用户）。切换为「当前用户」安装只需这次确认一次，之后更新全静默；知识库数据不受影响。" />
+              </span>
+              <span>切换为「当前用户」安装，之后更新免提权（数据保留）。</span>
             </div>
             <button class="btn" type="button" :disabled="scopeSwitching || downloading || installing || autoDownloading" @click="switchInstallScope">
               <AppSpinner v-if="scopeSwitching" :size="11" />
@@ -276,7 +279,7 @@
           <div class="setting-row">
             <div class="setting-copy">
               <strong>自动更新</strong>
-              <span>启动后自动检查，后台下载并静默安装，装完自动重启。</span>
+              <span>后台下载并静默安装，完成后自动重启。</span>
             </div>
             <label class="switch-control">
               <input
@@ -317,7 +320,6 @@
         <div v-if="installerMode" class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>手动从远端仓库 Release 比对桌面端版本。</span>
           </div>
           <div class="setting-actions">
             <button class="btn" type="button" :disabled="desktopChecking" @click="doDesktopCheck">
@@ -366,8 +368,11 @@
         <template v-if="sourceMode">
           <div v-if="sourceAutoSupported" class="setting-row">
             <div class="setting-copy">
-              <strong>自动检查更新</strong>
-              <span>启动后自动检查（之后每 8 小时）；发现新提交只在设置页与系统通知里提示，不会自动重启。</span>
+              <span class="setting-title-row">
+                <strong>自动检查更新</strong>
+                <HelpTip title="自动检查更新" text="启动后与每 8 小时自动检查；发现新提交仅提示，不会自动重启。" />
+              </span>
+              <span>仅提示新提交，不会自动重启。</span>
             </div>
             <label class="switch-control">
               <input
@@ -391,7 +396,6 @@
           <div class="setting-row">
             <div class="setting-copy">
               <strong>检查更新</strong>
-              <span>增量拉取远端源码，比对当前分支落后多少提交。</span>
             </div>
             <div class="setting-actions">
               <span v-if="srcResult && srcResult.ok" class="setting-value" :class="srcResult.upToDate ? 'tone-ok' : 'tone-warn'">
@@ -517,7 +521,13 @@
       <div class="group-band collapsible" @click="onBandClick($event, 'panel-update-source')">
         <span class="group-ico" aria-hidden="true"><Icon name="globe" :size="16" /></span>
         <span class="group-text">
-          <span class="group-title">更新源配置</span>
+          <span class="group-title-row">
+            <span class="group-title">更新源配置</span>
+            <HelpTip
+              title="更新源配置"
+              text="配置写入服务器数据目录的 .env 文件并随数据卷持久化；公开仓库无需填写访问凭据。"
+            />
+          </span>
           <span class="group-hint">远端仓库地址与访问凭据</span>
         </span>
         <span v-if="configLoaded && !state.giteaConfigured" class="group-badge tone-warn">未配置</span>
@@ -532,14 +542,11 @@
         </button>
       </div>
       <div v-show="!sourceCollapsed" class="group-body flush">
-      <p class="setting-note">
-        配置写入服务器数据目录的 .env 文件，随数据卷持久化；公开仓库无需填凭据。
-      </p>
 
       <div class="setting-row setting-row-form repo-row">
         <div class="setting-copy">
           <strong>远端仓库地址</strong>
-          <span>仓库首页或 Release 页地址，整条粘贴即可。</span>
+          <span>粘贴仓库首页或 Release 页地址。</span>
         </div>
         <input v-model="form.repoUrl" type="text" placeholder="https://gitea.xxx.com/username/Engram" aria-label="远端仓库地址" @input="repoUrlError = ''" />
         <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
@@ -547,8 +554,11 @@
 
       <div class="setting-row setting-row-form credential-row">
         <div class="setting-copy">
-          <strong>访问凭据</strong>
-          <span>私有仓库才需要；公开仓库留空即可。</span>
+          <span class="setting-title-row">
+            <strong>访问凭据</strong>
+            <HelpTip title="访问凭据" text="公开仓库留空即可。访问令牌可在仓库站点「设置 → 应用」生成只读令牌，清空保存即删除。" />
+          </span>
+          <span>公开仓库留空即可。</span>
         </div>
         <div class="credential-inputs">
           <div class="segmented credential-type" role="radiogroup" aria-label="凭据方式">
@@ -568,8 +578,7 @@
             >用户名密码</button>
           </div>
           <template v-if="form.authType === 'token'">
-            <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌" aria-label="远端仓库访问令牌" />
-            <p class="setting-note">仓库站点「设置 → 应用」里生成只读令牌；清空保存即删除。</p>
+            <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌（清空保存即删除）" aria-label="远端仓库访问令牌" />
           </template>
           <template v-else>
             <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
@@ -597,7 +606,6 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>保存配置</strong>
-          <span>写入服务器数据目录 .env，即时生效。</span>
         </div>
         <button class="btn primary" type="button" :disabled="savingConfig" @click="saveConfig">
           {{ savingConfig ? '保存中…' : '保存配置' }}
@@ -613,6 +621,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
 import AppSpinner from '../ui/AppSpinner.vue';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';

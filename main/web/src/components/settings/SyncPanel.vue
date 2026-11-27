@@ -4,8 +4,14 @@
       <div class="group-band collapsible" @click="onBandClick">
         <span class="group-ico" aria-hidden="true"><Icon name="refresh" :size="16" /></span>
         <span class="group-text">
-          <span class="group-title">同步群组</span>
-          <span class="group-hint">多台设备经中枢双向同步，成员之间无需互通</span>
+          <span class="group-title-row">
+            <span class="group-title">同步群组</span>
+            <HelpTip
+              title="同步群组"
+              text="成员设备只连接中枢（建议用常开的 NAS Docker 版），成员之间无需互通。"
+            />
+          </span>
+          <span class="group-hint">多台设备经中枢双向同步</span>
         </span>
         <span v-if="roleBadge" class="group-badge" :class="'tone-' + roleBadgeTone">{{ roleBadge }}</span>
         <button
@@ -58,7 +64,7 @@
             <div class="setting-row setting-row-form">
               <div class="setting-copy">
                 <strong>邀请链接</strong>
-                <span>中枢「添加成员」里复制后粘贴，自动填好地址与令牌。</span>
+                <span>粘贴后自动填好地址与令牌。</span>
               </div>
               <div class="setting-control sync-field">
                 <input
@@ -84,12 +90,10 @@
             </div>
             <p v-if="!scanSupported" class="setting-note">{{ cameraScanSupport().reason }}</p>
             <p v-if="inviteNotice" class="setting-note" :class="inviteNoticeTone === 'bad' ? 'tone-danger' : 'tone-ok'">{{ inviteNotice }}</p>
-            <p v-else class="setting-note">扫中枢屏幕上的二维码，或把邀请链接粘贴进来。</p>
 
             <div class="setting-row setting-row-form">
               <div class="setting-copy">
                 <strong>中枢地址</strong>
-                <span>已自动填好；换中枢需先解除绑定。</span>
               </div>
               <div class="setting-control sync-field">
                 <input
@@ -105,7 +109,6 @@
             <div class="setting-row setting-row-form">
               <div class="setting-copy">
                 <strong>绑定令牌</strong>
-                <span>中枢「添加成员」时生成的那串。</span>
               </div>
               <div class="setting-control sync-field">
                 <SecretField id="sync-hub-token" v-model="hubToken" placeholder="lsync_…" aria-label="绑定令牌" />
@@ -155,8 +158,11 @@
 
           <div v-if="lanAccessSupported" class="setting-row">
             <div class="setting-copy">
-              <strong>允许局域网访问</strong>
-              <span>开启后监听 0.0.0.0；Windows 可能问防火墙，选「专用网络」。</span>
+              <span class="setting-title-row">
+                <strong>允许局域网访问</strong>
+                <HelpTip title="局域网访问" text="开启后监听 0.0.0.0 供同网段设备连接；Windows 弹窗询问防火墙时请选择「专用网络」。" />
+              </span>
+              <span>开启后监听 0.0.0.0。</span>
             </div>
             <label class="switch-control">
               <input v-model="lanAccess" type="checkbox" :disabled="lanBusy" aria-label="允许局域网访问" @change="toggleLanAccess" />
@@ -167,7 +173,7 @@
           <div class="setting-row">
             <div class="setting-copy">
               <strong>群组成员</strong>
-              <span>给每台设备起名并生成令牌；「邀请」出二维码与链接。</span>
+              <span>「邀请」可生成二维码与链接。</span>
             </div>
             <div class="setting-actions">
               <button class="btn primary" type="button" :disabled="creating" @click="addPeer">添加成员</button>
@@ -209,7 +215,6 @@
               <div class="setting-copy">
                 <strong>中枢地址</strong>
                 <span v-if="hubAddresses.length > 1">共 {{ hubAddresses.length }} 条可用地址，选同网络那条。</span>
-                <span v-else>成员设备要填的中枢地址。</span>
               </div>
               <div class="setting-control sync-field">
                 <div class="copy-row">
@@ -224,7 +229,6 @@
             <div class="setting-row setting-row-form">
               <div class="setting-copy">
                 <strong>绑定令牌</strong>
-                <span>点令牌可展开完整值。</span>
               </div>
               <div class="setting-control sync-field">
                 <div class="copy-row">
@@ -345,12 +349,15 @@
           </div>
         </template>
 
-        <!-- 同步范围：必要语义压到每段 ≤2 行 -->
-        <div v-if="status && status.role !== 'none'" class="sync-role-note">
-          <p class="setting-note">同步范围：页面、附件图片、原始资料、证据账本、Agent 会话与任务看板、客户洞察记录；「设置」分类含模型配置、语音识别 ASR 配置与 API Key（明文随群组下发）。</p>
-          <p class="setting-note">各端登录密码、绑定令牌等仍各端独立；同一页面两端同时改按字符级合并，无法合并时以最新修改为准。</p>
-          <p v-if="capabilities.runtime === 'android-local'" class="setting-note">安卓端退到后台后最多再同步 {{ BACKGROUND_SYNC_MINUTES }} 分钟（窗口内用前台服务保活）；回到前台立即再对一次账。</p>
-        </div>
+        <!-- 同步范围与规则：默认折叠，避免占满首屏 -->
+        <details v-if="status && status.role !== 'none'" class="sync-scope-details">
+          <summary>同步范围与冲突规则</summary>
+          <div class="sync-role-note">
+            <p class="setting-note">同步范围：页面、附件图片、原始资料、证据账本、Agent 会话与任务看板、客户洞察记录；「设置」分类含模型配置、语音识别 ASR 配置与 API Key（明文随群组下发）。</p>
+            <p class="setting-note">各端登录密码、绑定令牌等仍各端独立；同一页面两端同时改按字符级合并，无法合并时以最新修改为准。</p>
+            <p v-if="capabilities.runtime === 'android-local'" class="setting-note">安卓端退到后台后最多再同步 {{ BACKGROUND_SYNC_MINUTES }} 分钟（窗口内用前台服务保活）；回到前台立即再对一次账。</p>
+          </div>
+        </details>
 
       </div>
     </div>
@@ -360,10 +367,10 @@
     class="settings-native"
     anchor="sync-content"
     title="同步内容"
-    hint="每类内容单独开关；主页卡片与设置默认关闭"
+    hint="按分类开关同步"
+    help="关闭后本机不再上传或接收该类内容，已同步的数据会保留；主页卡片与设置默认关闭。"
     flush
   >
-    <p class="setting-note sync-content-note">关闭后本机不再上传或接收该类内容，已同步的数据会保留。</p>
     <label
       v-for="item in syncCategoryItems"
       :key="item.key"
@@ -394,14 +401,15 @@
     class="settings-native"
     anchor="sync-lan"
     title="局域网优先"
-    hint="同网段优先直连中枢的内网地址"
+    hint="同网段优先直连中枢"
+    help="优先级固定为 局域网 → IPv6 → IPv4；断开时照常读写，恢复后自动补齐。"
     :badge="lanBadge"
     :badge-tone="lanBadgeTone"
   >
     <div class="setting-row">
       <div class="setting-copy">
         <strong>优先局域网</strong>
-        <span>同网段先试内网地址，探不到按中枢地址顺序连。</span>
+        <span>同网段先试内网地址。</span>
       </div>
       <label class="switch-control">
         <input v-model="preferLan" type="checkbox" :disabled="saving" aria-label="优先局域网" @change="savePreferLan" />
@@ -427,10 +435,8 @@
           <span v-else class="lan-probe-bad">✗ {{ item.error || '不可达' }}</span>
         </li>
       </ul>
-      <p v-else class="setting-note">还没有探测记录：下一轮连接会先试局域网，再逐级降级。</p>
+      <p v-else class="setting-note">暂无探测记录，将在下轮连接后更新。</p>
     </div>
-
-    <p class="setting-note">优先级固定为 局域网 → IPv6 → IPv4；断开时照常读写，恢复后自动补齐。</p>
   </SettingsGroup>
 
   <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接），只在本机作为成员连接中枢域名时才有内容。 -->
@@ -440,6 +446,7 @@
     anchor="sync-dualstack"
     title="双栈连接（IPv6 优先）"
     hint="域名连接优先 IPv6，不通自动改用 IPv4"
+    help="关闭后由系统自行决定 IPv6 / IPv4；切换不会打断当前传输。"
     :badge="dualStackBadge"
     :badge-tone="dualStackBadgeTone"
   >
@@ -447,7 +454,6 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>启用双栈策略</strong>
-          <span>关闭后由系统决定 IPv6 / IPv4；切换不打断传输。</span>
         </div>
         <label class="switch-control">
           <input v-model="dualStack.enabled" type="checkbox" aria-label="启用双栈策略" @change="saveDualStack(true)" />
@@ -462,8 +468,11 @@
       <div v-show="dualStack.enabled" class="dualstack-fields">
         <div class="setting-row">
           <div class="setting-copy">
-            <strong>判定 IPv6 不通</strong>
-            <span>连续失败次数或累计卡住秒数，任一满足即改用 IPv4。</span>
+            <span class="setting-title-row">
+              <strong>判定 IPv6 不通</strong>
+              <HelpTip title="判定 IPv6 不通" text="连续失败次数或累计卡住秒数，满足任一条件即切到 IPv4。" />
+            </span>
+            <span>连续失败次数 / 累计秒数。</span>
           </div>
           <div class="setting-actions ds-inputs">
             <input id="ds-failures" v-model.number="dualStack.failureThreshold" type="number" min="1" max="20" aria-label="连续失败次数" />
@@ -474,8 +483,11 @@
         </div>
         <div class="setting-row">
           <div class="setting-copy">
-            <strong>回探节奏</strong>
-            <span>IPv4 每成功 N 次回探一次 IPv6；单次连接超时 M 毫秒。</span>
+            <span class="setting-title-row">
+              <strong>回探节奏</strong>
+              <HelpTip title="回探节奏" text="切换到 IPv4 后，每成功 N 次回探一次 IPv6；单次连接超时 M 毫秒。" />
+            </span>
+            <span>IPv4 成功次数 / 单次超时。</span>
           </div>
           <div class="setting-actions ds-inputs">
             <input id="ds-probe" v-model.number="dualStack.probeAfterSuccesses" type="number" min="1" max="1000" aria-label="回探间隔次数" />
@@ -519,6 +531,7 @@ import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import Icon from '../Icon.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import QrCode from '../ui/QrCode.vue';
@@ -1450,6 +1463,20 @@ onUnmounted(() => {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+.sync-scope-details {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.sync-scope-details summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+}
+.sync-scope-details .sync-role-note {
+  margin-top: 4px;
 }
 .setting-note.sync-device-name {
   margin: 4px 0 0;

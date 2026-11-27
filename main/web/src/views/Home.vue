@@ -628,6 +628,8 @@ if (isTouchPointer() && sidebarWidth.value < DEFAULT_SIDEBAR) {
  * 被上限压窄，会算出「三栏放得下」的假结论，侧栏永远不让位。
  */
 const sidebarYieldedToDock = ref(false);
+const sidebarYieldedToSettings = ref(false);
+const settingsRouteActive = computed(() => route.path.startsWith('/settings'));
 const dockPreferredWidth = computed(() =>
   preferredDrawerWidth(viewportWidth.value, app.chatDrawerWidth));
 /** 侧栏留着时正文还剩多宽 */
@@ -669,6 +671,30 @@ watch(
     }
   },
   { flush: 'post' },
+);
+
+/*
+ * 设置页自身已经有「左侧目录 + 右侧内容」双栏：桌面端进入 /settings 时把知识库侧栏
+ * 临时收起，释放 280px 给设置页（避免出现「图标栏 + 知识库栏 + 设置目录 + 内容」四栏挤压）；
+ * 离开设置页后自动放回。用户手动点开/收起侧栏则取消本次自动让位标记。
+ */
+watch(
+  settingsRouteActive,
+  (inSettings) => {
+    if (sidebarOverlay.value) return;
+    if (inSettings) {
+      if (app.sidebarOpen && !app.sidebarFull) {
+        sidebarYieldedToSettings.value = true;
+        app.sidebarOpen = false;
+      }
+      return;
+    }
+    if (sidebarYieldedToSettings.value && !dockSqueezesSidebar.value) {
+      sidebarYieldedToSettings.value = false;
+      app.sidebarOpen = true;
+    }
+  },
+  { immediate: true, flush: 'post' },
 );
 
 /** 是否正在拖侧栏宽度：拖动中不做几何过渡，见 startResize */
@@ -742,6 +768,7 @@ const isActive = (p: string) => route.path.startsWith(p);
 function closeSidebar() {
   // 用户主动收起：之后关掉 Agent 不要再把侧栏弹回来
   sidebarYieldedToDock.value = false;
+  sidebarYieldedToSettings.value = false;
   if (app.sidebarFull) app.setSidebarFull(false);
   app.sidebarOpen = false;
 }
@@ -752,6 +779,7 @@ function toggleSidebar() {
     closeSidebar();
     return;
   }
+  sidebarYieldedToSettings.value = false;
   /*
    * 窄窗口里 Agent 卡片正开着、三栏放不下：后打开的一方优先——目录要回来，
    * 先收起 Agent（会话与形态都保留，右下角胶囊可继续），否则又是一条被压扁的正文。

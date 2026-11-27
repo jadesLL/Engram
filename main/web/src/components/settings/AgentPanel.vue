@@ -14,6 +14,7 @@
       :badge-tone="status.bundled ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
       hint="随包的 DeepSeek Harness"
+      help="点左栏 ✨ 打开聊天抽屉；工作目录为独立空壳，知识库只经 engram 命令读写。"
     >
       <!-- 运行时清单（来自 /api/assistant/status）：版本 / profile / 工作目录走值列表，不再套灰底带框表格 -->
       <ul class="value-list">
@@ -35,15 +36,11 @@
         </li>
       </ul>
 
-      <p class="setting-note">
-        点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 engram 命令读写。
-      </p>
-
       <!-- 模型与插件在控制台里配：原来的链接蓝改为行尾幽灵按钮，主入口仍在下方控制台卡 -->
       <div class="setting-row">
         <div class="setting-copy">
           <strong>模型与插件</strong>
-          <span>在下方「内置 Agent 控制台」里配置，与聊天共用。</span>
+          <span>与聊天共用下方控制台配置。</span>
         </div>
         <div class="setting-actions">
           <button class="btn ghost" type="button" @click="jumpToConsole">配置</button>
@@ -59,7 +56,10 @@
       <template v-if="permission && capabilities.features.agentAdmin">
         <div class="setting-row">
           <div class="setting-copy">
-            <strong>权限</strong>
+            <span class="setting-title-row">
+              <strong>权限</strong>
+              <HelpTip title="内置 Agent 权限" text="权限改动会重启控制台与聊天运行时，对新会话生效。" />
+            </span>
             <span>{{ permissionHint }}</span>
           </div>
           <div class="setting-control permission-control">
@@ -74,7 +74,6 @@
             />
           </div>
         </div>
-        <p class="setting-note">权限改动会重启控制台与聊天运行时，对新会话生效。</p>
       </template>
     </SettingsGroup>
 
@@ -107,11 +106,8 @@
       anchor="agent-tools"
       title="工具与手册"
       hint="只读参考：engram 命令速查"
+      :help="`命令统一以 engram 开头（远程设备先用 node engram.js）。全局选项：${CLI_GLOBAL_OPTIONS.join('、')}。${CLI_EXIT_NOTE}。`"
     >
-      <p class="setting-note">
-        命令统一以 <code>engram</code> 开头；远程设备先用 <code>node engram.js</code>。
-      </p>
-
       <!-- 命令参考：读 → 写 → 系统三组，行间细线分隔，不再给每条命令套一层小表格 -->
       <div class="tools-groups">
         <section v-for="group in commandGroups" :key="group.label" class="tools-group">
@@ -124,10 +120,6 @@
         </section>
       </div>
 
-      <p class="setting-note">
-        全局选项：<code v-for="(option, index) in CLI_GLOBAL_OPTIONS" :key="index">{{ option }}</code>。
-      </p>
-      <p class="setting-note">{{ CLI_EXIT_NOTE }}。</p>
       <div class="setting-actions tools-actions">
         <button class="btn ghost" type="button" @click="copyCommandSheet">复制命令清单</button>
         <button class="btn" type="button" title="《Agent 作业指南》" @click="loadGuide">
@@ -155,6 +147,7 @@ import {
 import { expandGroup } from '../../lib/settingsCollapse';
 import AgentCliSection from './AgentCliSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AgentConsolePanel from './AgentConsolePanel.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
