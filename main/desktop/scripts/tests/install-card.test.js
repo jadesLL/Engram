@@ -91,6 +91,9 @@ assert.ok(switching.includes('Engram 切换安装位置'), '切换模式的标�
 assert.ok(script.includes('function Show-Failure'), '失败必须有统一的红色提示');
 assert.ok(script.includes("'重新运行安装包'"), '失败必须能用安装包向导兜底');
 assert.ok(script.includes('$retry.Visible ='), '失败时重试入口必须显示');
+assert.ok(script.includes('$topClose.Visible = $false'), '正常安装期间右上角关闭按钮必须隐藏');
+assert.ok(script.includes('$topClose.Visible = $true'), '仅失败时才显示右上角关闭按钮');
+assert.ok(script.includes('$minFailedX'), '失败时最小化按钮必须左移让出右上角关闭按钮位置');
 assert.ok(script.includes('relaunch old'), '安装失败时必须把旧版拉回来，不能只剩一张报错卡');
 assert.ok(script.includes('AddMinutes(3)'), '失败卡片不能永远置顶（3 分钟自动关）');
 assert.ok(script.includes('$step.MaximumSize'), '说明文字必须能换行，权限提示不会拖出卡片');

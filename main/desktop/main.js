@@ -633,6 +633,14 @@ function ensureTray() {
 }
 
 function showMainWindow() {
+  if (sourceUpdating || (updateWin && !updateWin.isDestroyed())) {
+    if (updateWin && !updateWin.isDestroyed()) {
+      if (updateWin.isMinimized()) updateWin.restore();
+      updateWin.show();
+      updateWin.focus();
+    }
+    return;
+  }
   if (!win || win.isDestroyed()) {
     launchByConfig();
     return;
@@ -1031,6 +1039,13 @@ let quitCleanupDone = false;
 
 app.on('before-quit', (event) => {
   quitting = true; // 真退出：放行窗口 close，不再隐藏进托盘
+  if (updateWin && !updateWin.isDestroyed()) {
+    try {
+      updateWin.setClosable(true);
+    } catch {
+      /* 忽略 */
+    }
+  }
   if (tray) {
     try {
       tray.destroy();
@@ -2345,7 +2360,7 @@ function pokeUpdateChecks(reason) {
     scheduleAutoUpdateCheck(600);
   } else {
     if (sourceUpdateUnavailableReason()) return; // 预构建安装 / 非 git 检出：没有可检查的更新
-    if (sourceAutoBusy || sourceUpdating) return;
+    if (sourceAutoBusy || sourceUpdating || (updateWin && !updateWin.isDestroyed())) return;
     sourceBackoffIndex = 0;
     scheduleSourceCheck(600);
   }
@@ -2558,9 +2573,9 @@ ipcMain.handle('desktop-update-switch-scope', async (e) => {
 
 // ---------- 源码模式自更新（非打包形态：应用内增量拉源码并重建） ----------
 // 源码模式跑在 git 检出目录上，更新 = git pull 增量拉取 → 同步依赖 → 重建 server/web →
-// 组装 → 同步运行时依赖 → 重启。全程由主进程编排：弹置顶进度小窗，fork 各步骤（输出实时
-// 回显小窗），构建期间应用照常可用，到组装前才停内嵌 server、主窗藏进托盘；完成后
-// app.relaunch 重启，新实例接管。
+// 组装 → 同步运行时依赖 → 重启。全程由主进程编排：弹出置顶进度小窗后立即关闭主软件
+// （主窗、托盘与内嵌 server），更新期间只保留这一张小窗；成功则关闭小窗并 app.relaunch
+// 重启，失败则在弹窗内报错并亮出右上角关闭按钮。
 // 依赖同步统一交给 desktop/scripts/sync-deps.js（与 scripts/update-from-source.ps1 同一实现）：
 // 用依赖指纹判断是否真的需要 pnpm install，只在依赖变化时装，并补齐 desktop/server 运行时
 // 依赖与 better-sqlite3 的 Electron ABI binding。仍不走 powershell（GUI 进程 spawn powershell
@@ -2946,7 +2961,7 @@ async function sourceAutoTick() {
     setSourceAutoState({ phase: 'unsupported', enabled: false, error: unavailable, checkedAt: null });
     return;
   }
-  if (PACKAGED || sourceAutoBusy || sourceUpdating) {
+  if (PACKAGED || sourceAutoBusy || sourceUpdating || (updateWin && !updateWin.isDestroyed())) {
     // 检查/更新正忙：一分钟后重试，别把自动检查这条线彻底停掉
     if (!PACKAGED && process.platform === 'win32') scheduleSourceCheck(updateCadence.BACKOFF_MS[0]);
     return;
@@ -3056,9 +3071,9 @@ ipcMain.handle('desktop-source-remote-set', async (_e, payload = {}) => {
   }
 });
 
-// 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。紧凑深色卡片（应用图标 + Engram + 当前步骤
-// + 细进度线），主进程经 executeJavaScript 原地更新步骤文字与日志；页面本身是 data: URL，
-// 只通过专用 preload（update-preload.js）暴露「最小化」一个能力，不挂主窗的 wikiDesktop 桥。
+// 进度小窗：更新期间唯一的可见窗口（主窗与托盘随弹窗出现立即关闭）。紧凑深色卡片（应用图标 + Engram
+// + 当前步骤 + 细进度线），主进程经 executeJavaScript 原地更新步骤文字与日志；页面本身是 data: URL，
+// 只通过专用 preload（update-preload.js）暴露「最小化」与（仅失败态可点的）「关闭」能力，不挂主窗的 wikiDesktop 桥。
 function updateIconDataUrl() {
   try {
     // 用浅色品牌图：深色卡片上白色圆角图标更清楚（与更新提示截图一致）
@@ -3076,17 +3091,25 @@ function updateProgressPage() {
 
 let updateWin = null;
 
-// 小窗最小化通道：只接受更新小窗自己发来的请求（data: 页面 + 专用 preload），其他来源忽略
+// 小窗最小化/关闭通道：只接受更新小窗自己发来的请求（data: 页面 + 专用 preload），其他来源忽略；
+// 更新正常进行中窗口不可关闭（closable=false），只有 failUpdateProgress 后才放开关闭。
 ipcMain.on('desktop-update-window-minimize', (event) => {
   if (!updateWin || updateWin.isDestroyed() || event.sender !== updateWin.webContents) return;
   updateWin.minimize();
+});
+
+ipcMain.on('desktop-update-window-close', (event) => {
+  if (!updateWin || updateWin.isDestroyed() || event.sender !== updateWin.webContents) return;
+  if (typeof updateWin.isClosable === 'function' && !updateWin.isClosable()) return;
+  updateWin.close();
 });
 
 function showUpdateProgress() {
   if (updateWin && !updateWin.isDestroyed()) {
     // 上一次更新失败后用户可能把窗口最小化了：重试时先恢复，否则新步骤只在任务栏里更新
     if (updateWin.isMinimized()) updateWin.restore();
-    // 失败态会把卡片加高、步骤文字变红：新一轮更新先恢复默认尺寸与样式
+    if (typeof updateWin.setClosable === 'function') updateWin.setClosable(false);
+    // 失败态会把卡片加高、步骤文字变红并显示关闭按钮：新一轮更新先恢复默认尺寸与样式
     updateWin.setSize(updateCard.WINDOW.width, updateCard.WINDOW.height);
     updateWin.center();
     updateProgressExec("document.body.classList.remove('failed');");
@@ -3103,13 +3126,14 @@ function showUpdateProgress() {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
+    closable: false,
     frame: false,
     show: false,
     title: 'Engram 更新',
     backgroundColor: '#00000000',
     icon: windowIcon(),
     webPreferences: {
-      // 专用 preload：只给页面一个最小化方法，不复用主窗 preload.js 的完整桌面桥
+      // 专用 preload：只给页面最小化与（失败后）关闭方法，不复用主窗 preload.js 的完整桌面桥
       preload: path.join(__dirname, 'update-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
@@ -3118,8 +3142,43 @@ function showUpdateProgress() {
   });
   updateWin.setAlwaysOnTop(true, 'screen-saver');
   updateWin.once('ready-to-show', () => updateWin.show());
+  updateWin.on('closed', () => { updateWin = null; });
   updateWin.loadURL(dataUrl(updateProgressPage()));
   return updateWin;
+}
+
+/** 等进度小窗真正画出来后再关掉主窗，避免屏幕出现一瞬「两个窗口都没有」的空档。 */
+async function waitUpdateProgressShown(targetWin) {
+  if (!targetWin || targetWin.isDestroyed() || targetWin.isVisible()) return;
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, 1500);
+    targetWin.once('show', finish);
+    targetWin.once('ready-to-show', finish);
+    targetWin.once('closed', finish);
+  });
+}
+
+/** 点了更新、弹窗出现时就把主软件关掉（销毁主窗与托盘），更新全程只留进度小窗。 */
+function closeMainAppForUpdate() {
+  if (win && !win.isDestroyed()) {
+    win.destroy();
+    win = null;
+  }
+  if (tray) {
+    try {
+      tray.destroy();
+    } catch {
+      /* 忽略 */
+    }
+    tray = null;
+  }
 }
 
 function updateProgressExec(script) {
@@ -3146,11 +3205,15 @@ function failUpdateProgress(message) {
     `document.body.classList.add('failed');` +
       `const el=document.getElementById('step'); if (el) el.textContent=${JSON.stringify(message)};`,
   );
-  // 失败原因通常比步骤长：卡片加高到两行，别让错误被省略号吃掉（主窗同时会展示完整错误）
+  // 失败原因通常比步骤长：卡片加高并开放右上角关闭按钮，方便用户查看原因后手动关掉小窗
   try {
     if (updateWin && !updateWin.isDestroyed()) {
+      if (typeof updateWin.setClosable === 'function') updateWin.setClosable(true);
       updateWin.setSize(updateCard.WINDOW.width, updateCard.WINDOW.failedHeight);
       updateWin.center();
+      if (updateWin.isMinimized()) updateWin.restore();
+      updateWin.show();
+      updateWin.focus();
     }
   } catch {
     /* 窗口已关或正在关闭 */
@@ -3231,7 +3294,11 @@ ipcMain.handle('desktop-source-update', async () => {
 });
 
 async function runSourceUpdate() {
-  showUpdateProgress();
+  const progressWin = showUpdateProgress();
+  await waitUpdateProgressShown(progressWin);
+  // 点了更新、弹窗出现时立即关掉主软件（主窗、托盘与内嵌服务），全程只显示更新弹窗
+  closeMainAppForUpdate();
+  await stopLocalChild();
   setUpdateStep('正在拉取最新代码（git pull）…');
   try {
     const branch = await runGit(['branch', '--show-current']);
@@ -3239,11 +3306,10 @@ async function runSourceUpdate() {
     // 裸分支名会被解析成 tag —— pull 等于拿 tag 合并当前 HEAD，静默假成功且版本不变
     await runGit(['pull', '--ff-only', 'origin', `refs/heads/${branch}`], 180_000);
   } catch (e) {
-    // 拉取失败：小窗没有可展示的过程，关掉回主窗，由设置页展示错误
-    if (updateWin && !updateWin.isDestroyed()) updateWin.close();
-    updateWin = null;
-    showMainWindow();
-    return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
+    const msg = describeError(e) + '（本地有未提交改动时请先提交/暂存）';
+    failUpdateProgress('更新失败：' + msg);
+    appendUpdateLog('> ' + msg);
+    return { ok: false, error: msg };
   }
   // 换 Electron 运行时或首次补齐构建依赖不能在应用运行时做：交接给更新脚本，退出后由它同步依赖、构建并启动
   const swapPending = runtimeSwapPending();
@@ -3262,14 +3328,12 @@ async function runSourceUpdate() {
     );
     if (!(await handOffSourceUpdate({ skipPull: true, silentStart: SILENT_START }))) {
       failUpdateProgress('无法启动更新脚本，请手动运行 ' + scriptRel);
-      showMainWindow();
       return {
         ok: false,
         error: `${swapPending ? '运行时升级' : '首次补齐构建依赖'}需要退出应用后完成：请手动运行 ${scriptRel}`,
       };
     }
     await new Promise((r) => setTimeout(r, 2500)); // 让进度小窗把提示显示完整
-    await stopLocalChild(); // 优雅停内嵌 server（数据库落盘），其余进程由更新脚本清理
     app.exit(0);
     return { ok: true, restarting: true };
   }
@@ -3301,17 +3365,10 @@ async function runSourceUpdate() {
   } catch (e) {
     const msg = describeError(e);
     failUpdateProgress('更新失败：' + msg);
-    appendUpdateLog('> 可再次点击「更新并重启」重试；仍失败时在终端运行 scripts\\update-from-source.ps1');
-    showMainWindow();
+    appendUpdateLog('> 可关闭此窗口后重试，或在终端运行 scripts\\update-from-source.ps1');
     return { ok: false, error: msg };
   }
-  // 组装会覆盖正在运行的 desktop/server 产物副本，先停内嵌 server、主窗藏进托盘
   setUpdateStep('组装桌面运行目录…');
-  await stopLocalChild();
-  if (win && !win.isDestroyed()) {
-    ensureTray();
-    win.hide();
-  }
   try {
     await forkStep(path.join(appRootDir, 'desktop', 'scripts', 'prepare-desktop.js'),
       [], appRootDir, appendUpdateLog);
@@ -3321,8 +3378,7 @@ async function runSourceUpdate() {
   } catch (e) {
     const msg = describeError(e);
     failUpdateProgress('更新失败：' + msg);
-    appendUpdateLog('> 可再次点击「更新并重启」重试；仍失败时在终端运行 scripts\\update-from-source.ps1');
-    showMainWindow();
+    appendUpdateLog('> 可关闭此窗口后重试，或在终端运行 scripts\\update-from-source.ps1');
     return { ok: false, error: msg };
   }
   setUpdateStep('完成，正在启动新版本…');

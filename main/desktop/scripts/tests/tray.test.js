@@ -58,12 +58,14 @@ test('ensureTray：幂等（重复调用不会叠出第二个图标）', () => {
   assert.ok(/if\s*\(\s*tray\s*\)\s*return/.test(body), 'ensureTray 必须“已有 tray 就直接 return”，否则启动路径与 hideToTray 会各建一个');
 });
 
-test('关窗到托盘与源码更新藏主窗之前，仍然确保托盘在（旧路径不回退）', () => {
+test('关窗到托盘仍确保托盘在，源码更新弹窗出现时立即关闭主软件与托盘', () => {
   assert.ok(functionBody('hideToTray').includes('ensureTray()'), 'hideToTray 里必须保留 ensureTray()');
   const updateStart = MAIN.indexOf('async function runSourceUpdate');
   assert.ok(updateStart >= 0, '找不到 runSourceUpdate');
   const updateBody = MAIN.slice(updateStart, updateStart + 6000);
-  assert.ok(updateBody.includes('ensureTray()'), '源码模式更新在把主窗藏进托盘之前必须 ensureTray()');
+  assert.ok(updateBody.includes('closeMainAppForUpdate()'), '源码模式更新在弹窗出现后必须立即调用 closeMainAppForUpdate() 关掉主软件与托盘');
+  const closeBody = functionBody('closeMainAppForUpdate');
+  assert.ok(closeBody.includes('win.destroy()') && closeBody.includes('tray.destroy()'), 'closeMainAppForUpdate 必须销毁主窗与托盘');
 });
 
 test('before-quit：真退出时销毁托盘图标（不留幽灵图标）', () => {

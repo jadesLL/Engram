@@ -8,7 +8,7 @@
 // 主进程只负责窗口选项与数据（图标 data URL），页面 HTML 在这里生成，便于单测与静态截图。
 
 /** 窗口外框尺寸（DIP）：10px 透明留白给卡片投影，卡片本体 480×96 / 失败态加高 */
-const WINDOW = { width: 500, height: 116, failedHeight: 160 };
+const WINDOW = { width: 500, height: 116, failedHeight: 172 };
 
 const STYLE = `
   * { box-sizing: border-box; }
@@ -29,6 +29,7 @@ const STYLE = `
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
     -webkit-app-region: drag;
   }
+  .failed .card { padding-right: 68px; }
   .app-icon {
     width: 44px; height: 44px; flex: none; display: block;
     border-radius: 10px; object-fit: contain;
@@ -53,7 +54,7 @@ const STYLE = `
   .failed .bar i { animation: none; width: 100%; background: #f87171; }
   .failed .step {
     color: #f87171; white-space: normal;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   }
   .win-min {
     position: absolute; top: 7px; right: 7px; width: 26px; height: 22px;
@@ -65,6 +66,18 @@ const STYLE = `
   .win-min:hover { background: rgba(255, 255, 255, 0.09); color: #efefef; }
   .win-min:active { background: rgba(255, 255, 255, 0.15); }
   .win-min:focus-visible { outline: 1px solid #4d8aff; outline-offset: 1px; }
+  .failed .win-min { right: 35px; }
+  .win-close {
+    position: absolute; top: 7px; right: 7px; width: 26px; height: 22px;
+    display: none; align-items: center; justify-content: center; padding: 0;
+    border: 0; border-radius: 6px; background: transparent; color: #8a8a8a;
+    cursor: pointer; -webkit-app-region: no-drag;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .win-close:hover { background: #c42b1c; color: #ffffff; }
+  .win-close:active { background: #b02517; color: #ffffff; }
+  .win-close:focus-visible { outline: 1px solid #4d8aff; outline-offset: 1px; }
+  .failed .win-close { display: flex; }
   @keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(340%); } }
   @media (prefers-reduced-motion: reduce) {
     .bar i { animation-duration: 3.4s; }
@@ -91,6 +104,10 @@ function page({ iconDataUrl = '' } = {}) {
     '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M2.5 6h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
     '</svg></button>' +
+    '<button class="win-close" id="win-close" type="button" title="关闭" aria-label="关闭">' +
+    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">' +
+    '<path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
+    '</svg></button>' +
     iconTag +
     '<div class="body">' +
     '<div class="app-name">Engram</div>' +
@@ -99,8 +116,12 @@ function page({ iconDataUrl = '' } = {}) {
     '<div class="bar"><i></i></div>' +
     '</div>' +
     '<pre id="log" hidden></pre>' +
-    '<script>document.getElementById("win-min").addEventListener("click", function () {' +
-    'if (window.engramUpdateWindow) window.engramUpdateWindow.minimize();});</script>' +
+    '<script>' +
+    'document.getElementById("win-min").addEventListener("click", function () {' +
+    'if (window.engramUpdateWindow) window.engramUpdateWindow.minimize();});' +
+    'document.getElementById("win-close").addEventListener("click", function () {' +
+    'if (window.engramUpdateWindow) window.engramUpdateWindow.close();});' +
+    '</script>' +
     '</body></html>'
   );
 }
