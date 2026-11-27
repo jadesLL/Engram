@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 /**
  * 2026-11-17 导航美化护栏：
  *  ① 图标栏拆成上下两枚胶囊（原来是一根拉满高度的玻璃条 + flex spacer，中段空得像断了）；
- *  ② 设置左栏的二级目录补上展开提示、父项降级、导引线与 0fr→1fr 展开；
+ *  ② 设置左栏的二级目录补上展开提示、父项降级与 0fr→1fr 展开；
  *  ③ 折叠时高度必须真的是 0（给二级列表加 padding 会把 0fr 轨道撑成 8px），
  *     且收起的组要 inert，Tab 不能落到看不见的按钮上；
  *  ④ 2026-11-18 选中态统一为 1px 细环（左栏二级项 + 分段控件），不再平涂/白盒。
@@ -41,7 +41,7 @@ test('图标栏：上下两枚玻璃胶囊，不再用 flex spacer 撑出中段�
   assert.doesNotMatch(home, /\.rail-btn\.active::before/, '选中态又叠回两套信号（填充 + 外置竖条）');
 });
 
-test('设置目录：展开提示、父项降级、导引线与 0fr 展开', () => {
+test('设置目录：展开提示、父项降级与 0fr 展开', () => {
   assert.match(view, /class="settings-nav-chevron"/, '大类行尾缺少 chevron：用户仍不知道点开还有二级分组');
   assert.match(view, /:aria-expanded="activeDomain === domain\.id"/, '大类的 aria-expanded 没跟上展开状态');
   assert.match(
@@ -68,6 +68,11 @@ test('设置目录：展开提示、父项降级、导引线与 0fr 展开', () 
     ruleBody(css, '.settings-nav-sub'),
     /padding:\s*0/,
     '二级列表又加了 padding：0fr 轨道会被撑出高度（实测 8px），收起的组仍占位',
+  );
+  assert.doesNotMatch(
+    css,
+    /\.settings-nav-sub-wrap(?:\.open)?::before/,
+    '二级目录又加回紧贴左沿的竖向导引线：与 1px 细环选中圆角冲突',
   );
   // 2026-11-18：二级选中从「蓝底 + 竖条」收敛成一条 1px 细环，避免两套选中信号同屏
   assert.match(
