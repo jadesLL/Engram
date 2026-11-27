@@ -198,7 +198,13 @@ if (-not $SkipBuild) {
     Push-Location (Join-Path $srcMain 'web')
     try {
       & node 'node_modules\vite\bin\vite.js' 'build'
-      if ($LASTEXITCODE -ne 0) { Die 'web 构建失败（vite）' }
+      $webBuildCode = $LASTEXITCODE
+      if ($webBuildCode -ne 0) {
+        Write-Host '（默认构建失败，可能是安全软件锁住了 esbuild 的临时文件；改用未压缩构建重试，功能不受影响）' -ForegroundColor Yellow
+        & node 'node_modules\vite\bin\vite.js' 'build' '--minify' 'false' '--target' 'esnext'
+        $webBuildCode = $LASTEXITCODE
+      }
+      if ($webBuildCode -ne 0) { Die 'web 构建失败（vite）' }
     } finally { Pop-Location }
     Push-Location $srcMain
     try {
