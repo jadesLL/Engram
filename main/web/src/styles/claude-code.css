@@ -198,6 +198,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
  * ============================================================ */
 .board {
   --card-pad: 14px;
+  --row-bleed: 6px;
   background: var(--cc-canvas);
   color: var(--cc-ink);
 }
@@ -307,7 +308,13 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   border-color: var(--cc-rule) !important;
 }
 .board .shell.tier-standard { padding: var(--card-pad) !important; }
-.board .shell.short:not(.managing) { --card-pad: 10px; padding: 10px !important; }
+.board .shell.short:not(.managing) { --card-pad: 10px; --row-bleed: 4px; padding: 10px !important; }
+.board .shell.tier-standard:not(.capture) > .shell-content {
+  margin-inline: calc(var(--row-bleed) * -1);
+}
+.board .shell.tier-standard:not(.capture) > .shell-content > .shell-body > .module-content {
+  padding-inline: var(--row-bleed);
+}
 
 .board .shell-head {
   margin: calc(var(--card-pad) * -1) calc(var(--card-pad) * -1) 10px;
@@ -376,14 +383,30 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   border-radius: 6px;
 }
 
-/* ---------- 列表行：发丝环（2026-11-23，C 版） ----------
- * 用户反馈：悬停铺底 + 点开关后的满铺焦点底像一块贴上去的「影子」。
+/* ---------- 列表行：发丝环（2026-11-23，C 版；2026-11-28 补左右外扩留白） ----------
+ * 用户反馈：悬停铺底 + 点开关后的满铺焦点底像一块贴上去的「影子」，且环贴着行图标/时间太挤。
  * 列表行改成行内一圈发丝环：悬停 1px、按下转陶土 + 4% 洗色、键盘焦点 2px 深陶土。
- * 环画在伪元素上、贴着行自己的边缘（上下留 3px 不压分隔线）。
- * 注意：这些行是 <button>，Chrome 会把按钮的绘制裁到按钮盒子里，负 inset 会被切掉，
- * 所以环只能收在行内；行本身离卡片边还有 .shell 的 17px 内边距，视觉上仍与卡边留出空隙。
+ * 环画在伪元素上（上下留 3px 不压分隔线）；.shell-content 对称外扩 --row-bleed 并由
+ * .module-content 用同值 padding-inline 补回（保持正文内容宽度不变），再让 .hb-row
+ * 向左右伸出 --row-bleed 并保留 10px 内边距（窄屏/矮卡收至 8px），使环与图标/时间保持舒适间距。
  * 触屏（hover: none）不保留悬停环，点按仍有按下态。
  */
+.board .shell.tier-standard .module-content .hb-row {
+  width: calc(100% + var(--row-bleed) * 2);
+  margin-inline: calc(var(--row-bleed) * -1);
+  padding-inline: 10px;
+}
+.board .shell.tier-standard.auto-height .module-content .hb-row {
+  padding-block: 4px;
+}
+.board .shell.short:not(.managing) .module-content .hb-row {
+  padding-inline: 8px;
+}
+.board .shell.tier-standard .module-content :is(.stat-row, .week-row, .section-row) {
+  width: calc(100% + var(--row-bleed) * 2);
+  margin-inline: calc(var(--row-bleed) * -1);
+  padding-inline: var(--row-bleed);
+}
 .board .hb-row { position: relative; }
 .board .hb-row > * { position: relative; z-index: 1; }
 .board .hb-row::before {
@@ -391,7 +414,7 @@ html:root :is(button, input, textarea, select) { font-family: inherit; }
   position: absolute;
   inset: 3px 0;
   z-index: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   box-shadow: inset 0 0 0 1px transparent;
   pointer-events: none;
@@ -588,7 +611,8 @@ html.dark .board .activity-dot { border-color: var(--cc-pane); }
  * 响应式：手机保留等宽字阶，收小问候与间距
  * ============================================================ */
 @media (max-width: 840px) {
-  .board { --card-pad: 12px; }
+  .board { --card-pad: 12px; --row-bleed: 4px; }
+  .board .shell.tier-standard .module-content .hb-row { padding-inline: 8px; }
   .board-greeting { font-size: 25px; gap: 9px; }
   .board-glance { gap: 22px; }
   .glance-item strong { font-size: 20px; }

@@ -72,3 +72,25 @@ test('统一命令面板已接入 Home.vue', () => {
   assert.match(palette, /buildSettingsSearchIndex/);
   assert.match(palette, /registerBackHandler/);
 });
+
+test('首页列表行细环保留左右外扩与内边距留白', () => {
+  const cc = read('styles/claude-code.css');
+  assert.match(cc, /--row-bleed:\s*6px;/, '未定义列表行外扩令牌 --row-bleed');
+  assert.match(
+    cc,
+    /\.board\s+\.shell\.tier-standard:not\(\.capture\)\s*>\s*\.shell-content\s*\{\s*margin-inline:\s*calc\(var\(--row-bleed\)\s*\*\s*-1\);/,
+    '标准卡片内容区未对称外扩 --row-bleed'
+  );
+  assert.match(
+    cc,
+    /\.board\s+\.shell\.tier-standard\s+\.module-content\s+\.hb-row\s*\{[\s\S]{0,160}padding-inline:\s*10px;/,
+    '列表行细环未保留左右内边距留白'
+  );
+
+  const shell = read('components/HomeModuleShell.vue');
+  assert.doesNotMatch(
+    shell,
+    /\.module-content\s+:deep\(\.hb-row\)\s*\{[^}]*padding-(?:left|right):\s*0/,
+    'HomeModuleShell 不应再重置 .hb-row 左右内边距'
+  );
+});
