@@ -1284,7 +1284,14 @@ function updateCurrentHeading() {
     // 被收起的小节不在视口里参与「当前标题」判定（display:none 的 rect 会退化成 0）
     const headings = visibleHeadings();
     let current = headings[0]?.id || '';
-    const anchorOffset = toolbarHeight.value + 28;
+    /* 锚线必须和 scrollToHeading 同一坐标系：标题 rect 是视口坐标，而「顶栏 + 28px」是相对
+       阅读容器（.reading-preview）的偏移。桌面壳标题栏 46px、手机安全区都会把阅读容器整体
+       下移，只用 toolbarHeight + 28 会让刚点中的标题判成「还没到锚线」，高亮退回上一节
+       （点第三层、正文停在第三层，目录却亮在第二层）。
+       平滑滚动的落点会因亚像素取整比锚线多出不到 1px（实测 84.3px）：留 2px 容差，
+       否则刚点中的标题会被判成「还没到」，高亮又退回上一节。 */
+    const anchorOffset =
+      (readerEl.value?.getBoundingClientRect().top ?? 0) + toolbarHeight.value + 28 + 2;
     for (const heading of headings) {
       if (heading.getBoundingClientRect().top <= anchorOffset) current = heading.id;
       else break;

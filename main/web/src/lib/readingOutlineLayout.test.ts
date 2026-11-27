@@ -168,6 +168,26 @@ test('点目录项跳转：先收面板、等布局稳定，再定位', () => {
   );
 });
 
+test('当前章节判定与跳转落点同一坐标系：锚线包含阅读容器的视口偏移', () => {
+  const body = functionBody(source, 'function updateCurrentHeading');
+  /*
+   * 2026-11-24 用户报「点第 3 层目录，正文停在第三层，目录却亮在第 2 层」：
+   * 标题 rect 是视口坐标，而 toolbarHeight + 28 是相对阅读容器的偏移；桌面壳标题栏 46px、
+   * 手机安全区都会把阅读容器整体下移，少加这段偏移就会把刚点中的标题判成「还没到锚线」。
+   * scrollToHeading 里是 reader-relative 定位，这里必须同样换算回视口坐标。
+   */
+  assert.match(
+    body,
+    /getBoundingClientRect\(\)\.top[^;]*\+\s*toolbarHeight\.value\s*\+\s*28/,
+    '当前章节判定又只拿 toolbarHeight + 28 直接比标题的视口坐标了：桌面壳 46px 标题栏 / 手机安全区下会把高亮退回上一节',
+  );
+  assert.match(
+    body,
+    /anchorOffset[\s\S]*?\+\s*28\s*\+\s*2/,
+    '锚线没有留亚像素容差：平滑滚动落点会比锚线多不到 1px，刚点中的标题会被判成「还没到」',
+  );
+});
+
 test('触屏（hover: none / pointer: coarse）块存在，命中区到 44px 且不只靠 tooltip', () => {
   const touch = mediaBody(source, '(hover: none) and (pointer: coarse)');
   assert.match(
