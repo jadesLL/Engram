@@ -94,6 +94,11 @@ export function minOplogSeq(): number {
   return row.min_seq ?? 0;
 }
 
+export function maxOplogSeq(): number {
+  const row = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS max_seq FROM sync_oplog`).get() as { max_seq: number | null };
+  return Number(row?.max_seq || 0);
+}
+
 /**
  * 游标需要的那条 op 是否已被裁剪（即「落后超过保留窗口」，该走全量对账）。
  * 判据是「保留区最老的 op 比游标的下一条还新」，不能只看本轮取回 0 条：

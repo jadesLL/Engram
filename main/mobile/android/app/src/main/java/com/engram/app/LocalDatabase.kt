@@ -608,6 +608,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             readableDatabase.rawQuery("SELECT kind,original_path,stored_path FROM trash WHERE id=?", arrayOf(id)).use { c ->
                 require(c.moveToFirst()) { "项目不存在" }; val kind = c.getString(0); val rel = c.getString(1); val source = File(trashRoot, c.getString(2)); val destination = safe(rel)
                 require(!destination.exists()) { "原路径已被占用" }; destination.parentFile?.mkdirs(); Os.rename(source.absolutePath, destination.absolutePath)
+                // 刷新恢复时刻的 mtime：否则文件保留删除前的旧时间，推送时会被中枢判成迟到旧稿并再次删回回收站
+                destination.setLastModified(System.currentTimeMillis())
                 writableDatabase.execSQL("DELETE FROM trash WHERE id=?", arrayOf(id)); if (kind == "page") indexPage(rel) else indexFile(rel)
                 // 恢复也要跨端：否则中枢那边仍是「已删除」，下次全量对账会把它当本机独有内容推回去，或按旧删除抹掉
                 enqueue(if (kind == "page") "page" else "file", rel)
@@ -962,10 +964,11 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         indexFile(rel)
     }
 
-    fun installSyncedFile(rel: String, staged: File) = synchronized(lock) {
+    fun installSyncedFile(rel: String, staged: File, mtimeMs: Long = 0L) = synchronized(lock) {
         val target = safe(rel)
         target.parentFile?.mkdirs()
         Os.rename(staged.absolutePath, target.absolutePath)
+        if (mtimeMs > 0L) target.setLastModified(mtimeMs)
         indexFile(rel)
     }
 
@@ -1004,7 +1007,14 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     fun deleteSyncedPath(path: String) = synchronized(lock) {
         pageIdByPath(path)?.let { runCatching { deletePage(it, true) }; purgePathLedger(path); return@synchronized }
-        if (safe(path).exists()) runCatching { deleteFile(path, true) }
+        if (safe(path).exists()) {
+            runCatching { deleteFile(path, true) }
+            // 图片资产等未进 files 表的磁盘文件，deleteFile 会因查不到 files 行而失败；兜底直接移入回收站。
+            if (safe(path).exists()) {
+                runCatching { moveToTrash(path, "file") }
+                runCatching { writableDatabase.execSQL("DELETE FROM scan_state WHERE path=?", arrayOf(path)) }
+            }
+        }
         // 中枢已删除的路径，本机账本键（已提炼标记 / 祖先快照）必须一起清掉，
         // 否则会留下「文件不在了、标记还在」的幽灵状态，改名后还可能与新路径的账本混淆。
         purgePathLedger(path)
@@ -1287,10 +1297,10 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         JSONObject().put("neighbors", related).put("similar", JSONArray()).put("entities", JSONArray())
     }
 
-    fun enqueue(kind: String, target: String, oldPath: String = "") = synchronized(lock) {
+    fun enqueue(kind: String, target: String, oldPath: String = "", triggerSync: Boolean = true) = synchronized(lock) {
         if (!SyncPreferences(this).allowed(kind, target, oldPath)) return@synchronized
         writableDatabase.execSQL("INSERT OR REPLACE INTO sync_outbox(kind,target,old_path,created_at) VALUES(?,?,?,?)", arrayOf(kind, target, oldPath, now()))
-        EngramLocalServer.peek()?.requestSync(false)
+        if (triggerSync) EngramLocalServer.peek()?.requestSync(false)
     }
 
     fun outbox(): List<JSONObject> = synchronized(lock) { val out = mutableListOf<JSONObject>(); readableDatabase.rawQuery("SELECT id,kind,target,old_path FROM sync_outbox ORDER BY id", null).use { c -> while (c.moveToNext()) out += JSONObject().put("id", c.getLong(0)).put("kind", c.getString(1)).put("target", c.getString(2)).put("old_path", c.getString(3)) }; out }

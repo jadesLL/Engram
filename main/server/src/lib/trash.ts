@@ -6,6 +6,7 @@ import { TRASH_DIR, typeToDir } from '../config.js';
 import { db, newId, now } from './db.js';
 import { emit } from './events.js';
 import { invalidateGraphCache } from './graphCache.js';
+import { noteAppWrite } from './appWrites.js';
 import { safeJoin, syncPageFile, notifySyncChange, type WriteOrigin } from './vault.js';
 
 export type TrashKind = 'page' | 'file';
@@ -113,6 +114,7 @@ export function moveToTrash(relPath: string, origin: WriteOrigin = 'local'): Tra
   fs.writeFileSync(tmpMetadata, JSON.stringify(metadata, null, 2), 'utf8');
   try {
     fs.renameSync(source, destination);
+    noteAppWrite(source);
     fs.renameSync(tmpMetadata, finalMetadata);
     const updateDb = db.transaction(() => {
       if (page?.id) {
@@ -366,6 +368,13 @@ export function restoreTrashItem(id: string): RestoredTrashItem {
   const target = safeJoin(targetPath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.renameSync(source, target);
+  // 刷新磁盘修改时间为恢复时刻：成员端推送恢复页时 mtime 必须晚于中枢删除时刻，
+  // 否则中枢会误判成迟到的旧稿并下发 deleted: true 把刚恢复的页面再次删回回收站。
+  const restoredAt = new Date();
+  try {
+    fs.utimesSync(target, restoredAt, restoredAt);
+  } catch { /* 刷新恢复时间失败不阻塞恢复 */ }
+  noteAppWrite(target);
 
   try {
     const pageId = item.kind === 'page' ? restorePage(item, targetPath) : undefined;

@@ -420,19 +420,26 @@ class SyncEngine(
                     // 对账完成后推进到快照水位，再由 converge 补拉其后发生的少量变化。
                     reconcile(preferHub = true, advanceCursor = true)
                     markReconciled()
+                    syncPreferences()
+                    converge()
                 } else if (full) {
+                    syncPreferences()
+                    converge()
                     reconcile()
                     markReconciled()
+                    if (db.outboxCount() > 0) converge()
                 } else if (SyncHealPolicy.due(System.currentTimeMillis(), lastHealAt(), cursor)) {
-                    // 周期自愈：与桌面 / Docker 成员端 15 分钟一轮同一口径，只是挂在「前台有同步」
-                    // 这个时机上，不额外起后台定时器。补的正是增量 op 表达不了的那部分：
-                    // 改名 / 移动 / 删除后本机残留的旧路径、以及旧 op 回放时 404 被跳过的内容。
+                    // 周期自愈：先用增量补齐远端最新改动，再核对目录，避免未补拉的本地旧文件在对账里反推覆盖中枢。
+                    syncPreferences()
+                    converge()
                     syncProgress = "正在核对中枢目录"
                     reconcile()
                     markReconciled()
+                    if (db.outboxCount() > 0) converge()
+                } else {
+                    syncPreferences()
+                    converge()
                 }
-                syncPreferences()
-                converge()
                 try {
                     refreshLedgerMarks(force = full)
                 } catch (e: Cancelled) {
@@ -672,11 +679,22 @@ class SyncEngine(
             } catch (e: Cancelled) {
                 throw e
             } catch (error: Exception) {
+                val path = item.optString("target")
+                if (SyncPushErrorPolicy.isPermanent(error)) {
+                    // 永久拒绝（如超 200MB / 路径非法 4xx）：出队避免毒条目堵死 outbox 并反复触发后台宽限服务
+                    db.ackOutbox(item.getLong("id"))
+                    db.log(
+                        "error",
+                        "push-dropped",
+                        "「$path」无法同步且不会自动恢复：${error.message ?: error.javaClass.simpleName}（已跳过，继续推送其余改动）",
+                        toJson(mapOf("kind" to item.optString("kind"), "path" to path)),
+                    )
+                    return@forEachIndexed
+                }
                 // 逐项容错：一条推不上去的改动不能把后面所有本机改动堵在队首（否则整轮永远卡在
                 // 同一项，用户看到的就是「部分内容一直没上去」且同步中断）。本项留在 outbox 等
                 // 退避重试，其余项继续推。
                 pushDeferred = true
-                val path = item.optString("target")
                 db.log(
                     "warn",
                     "push-failed",
@@ -713,9 +731,10 @@ class SyncEngine(
                 val ack = postJson("/api/sync/push", payload)
                 if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); return }
                 if (ack.optBoolean("deleted")) {
-                    // 中枢已删除这页：这次只是迟到旧稿，删掉本端副本，不能把它写回去
+                    // 中枢已删除这页：这次只是迟到旧稿，删掉本端副本并出队，不能把它写回去
                     db.deleteSyncedPath(target)
                     db.bumpContentRevision()
+                    db.ackOutbox(item.getLong("id"))
                     db.log(
                         "info",
                         "push-deleted-stale",
@@ -1002,9 +1021,10 @@ class SyncEngine(
                     return
                 }
                 val beforeBytes = db.file(target).let { if (it.exists()) it.length() else 0L }
+                val remoteMtime = op.optDouble("mtime", 0.0).toLong()
                 val staged = stagedFile ?: stageFile(target)
                 val afterBytes = staged.length()
-                try { db.installSyncedFile(target, staged) } finally { staged.delete() }
+                try { db.installSyncedFile(target, staged, remoteMtime) } finally { staged.delete() }
                 recordApplied("pull-file", SyncOpText.summarizeFile(target, beforeBytes, afterBytes))
             }
             "delete" -> {
@@ -1057,11 +1077,15 @@ class SyncEngine(
          * 手动全量对账把旧路径复活）。待推送的旧路径要跳过，等这一轮 converge() 把改动推上去。
          */
         val pendingMoves = mutableSetOf<String>()
+        val pendingMoveTargets = mutableSetOf<String>()
         val pendingDeletes = mutableSetOf<String>()
         runCatching {
             for (item in db.outbox()) {
                 when (item.getString("kind")) {
-                    "move" -> item.optString("old_path").takeIf { it.isNotBlank() }?.let(pendingMoves::add)
+                    "move" -> {
+                        item.optString("old_path").takeIf { it.isNotBlank() }?.let(pendingMoves::add)
+                        pendingMoveTargets += item.getString("target")
+                    }
                     "delete" -> pendingDeletes += item.getString("target")
                 }
             }
@@ -1131,6 +1155,7 @@ class SyncEngine(
                             var hash = ""
                             var revision = 0
                             var distilled = false
+                            var mtime = 0L
                             reader.beginObject()
                             while (reader.hasNext()) when (reader.nextName()) {
                                 "kind" -> kind = reader.nextString()
@@ -1138,6 +1163,7 @@ class SyncEngine(
                                 "hash" -> hash = reader.nextString()
                                 "revision" -> revision = reader.nextInt()
                                 "distilled" -> distilled = reader.nextBoolean()
+                                "mtime" -> mtime = runCatching { reader.nextDouble().toLong() }.getOrDefault(0L)
                                 else -> reader.skipValue()
                             }
                             reader.endObject()
@@ -1161,8 +1187,8 @@ class SyncEngine(
                                     db.rawPage(path)?.let { db.writeSyncedPage(path, it, revision) }
                                 }
                             } else if (kind == "page") {
-                                if (localFile.exists() && !preferHub && db.pageRevision(path) > 0) {
-                                    db.enqueue("page", path)
+                                if (localFile.exists() && !preferHub && (db.pageRevision(path) > 0 || db.hasPendingOutbox(path))) {
+                                    db.enqueue("page", path, triggerSync = false)
                                     recordLocalNewer("page", path)
                                 } else {
                                     val fetchPath = path
@@ -1189,11 +1215,19 @@ class SyncEngine(
                                     )
                                 }
                             } else {
-                                if (localFile.exists() && !preferHub) {
-                                    db.enqueue("file", path)
+                                val fileAction = SyncFileConflictPolicy.resolve(
+                                    localExists = localFile.exists(),
+                                    preferHub = preferHub,
+                                    localPending = db.hasPendingOutbox(path),
+                                    localMtimeMs = if (localFile.exists()) localFile.lastModified() else 0L,
+                                    hubMtimeMs = mtime,
+                                )
+                                if (fileAction == SyncFileConflictPolicy.Action.PUSH_LOCAL) {
+                                    db.enqueue("file", path, triggerSync = false)
                                     recordLocalNewer("file", path)
                                 } else {
                                     val fetchPath = path
+                                    val entryMtime = mtime
                                     val beforeBytes = if (localFile.exists()) localFile.length() else 0L
                                     schedulePull()
                                     val future = fetchExecutor.submit<File?> { tolerateMissing { stageFile(fetchPath) } }
@@ -1205,8 +1239,11 @@ class SyncEngine(
                                                 recordMissingAtHub("file", fetchPath)
                                             } else {
                                                 val afterBytes = stagedFile.length()
-                                                try { if (SyncPreferences(db).allowed("file", fetchPath)) db.installSyncedFile(fetchPath, stagedFile) }
-                                                finally { stagedFile.delete() }
+                                                try {
+                                                    if (SyncPreferences(db).allowed("file", fetchPath)) {
+                                                        db.installSyncedFile(fetchPath, stagedFile, entryMtime)
+                                                    }
+                                                } finally { stagedFile.delete() }
                                                 completePull()
                                                 recordApplied("pull-file", SyncOpText.summarizeFile(fetchPath, beforeBytes, afterBytes), tally)
                                             }
@@ -1284,13 +1321,27 @@ class SyncEngine(
         }
         var localCount = 0
         val brainPrefix = db.brain.canonicalPath + File.separator
+        val prefs = SyncPreferences(db)
         db.brain.walkTopDown().filter { it.isFile && !it.canonicalPath.startsWith(brainPrefix + ".trash" + File.separator) }.forEach { file ->
             checkActive()
-            localCount++
             val path = file.canonicalPath.removePrefix(brainPrefix).replace('\\', '/')
-            if (path !in remotePaths && path !in stalePaths) {
+            // 跳过点目录与点文件（含原子写 .tmp 临时文件），避免把临时文件误推到中枢
+            if (path.split('/').any { it.startsWith('.') }) return@forEach
+            localCount++
+            if (path !in remotePaths) {
                 val kind = if (!InboxFiles.contains(path) && (file.extension.equals("md", true) || file.extension.equals("markdown", true))) "page" else "file"
-                db.enqueue(kind, path)
+                if (path in stalePaths) {
+                    val canClean = !preferHub && prefs.allowed(kind, path) && !db.hasPendingOutbox(path) &&
+                        (kind == "file" || db.pageRevision(path) > 0)
+                    if (canClean) {
+                        db.deleteSyncedPath(path)
+                        db.bumpContentRevision()
+                        db.log("info", "reconcile-stale-cleaned", "中枢已删除「$path」，对账时已将本机旧副本移入回收站", toJson(mapOf("kind" to kind, "path" to path)))
+                    }
+                    return@forEach
+                }
+                if (path in pendingMoveTargets) return@forEach
+                db.enqueue(kind, path, triggerSync = false)
             }
         }
         if (advanceCursor) {
