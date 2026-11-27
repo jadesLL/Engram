@@ -239,7 +239,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       // 任务看板提炼：看板不在后台定时跑，间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
       // 只决定「打开看板页时要不要自动重新提炼一次」。与梦境思考同属「按计划的自动化」，排在它后面。
       { id: 'agent-board', label: '任务看板提炼', icon: 'board', need: 'agentConsole' },
-      // 外部接入（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder）仍只在能管
+      // 外部接入（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder / Antigravity）仍只在能管
       // Agent 管理面的端出现：手机只有同步成员令牌，Agent 令牌不能下发到手机，所以这一组挂 agent
       // （android-local 为 false）且不渲染。
       { id: 'agent-target', label: '外部接入', icon: 'plug', need: 'agent' },

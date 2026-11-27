@@ -52,7 +52,7 @@ test('检测：客户端目录存在即 installed，skill 根与命令按契约�
     assert.equal(claude.cliCommand, runtime.command);
 
     // 只检测到 claude 时，其余客户端不能误判为已安装
-    for (const id of ['codex', 'dsh', 'zcode', 'kimi-code', 'workbuddy', 'qoder'] as AgentClientId[]) {
+    for (const id of ['codex', 'dsh', 'zcode', 'kimi-code', 'workbuddy', 'qoder', 'antigravity'] as AgentClientId[]) {
       const status = agentClientStatus(id, home, {
         runtime,
         env: { PATH: '' },
@@ -189,7 +189,7 @@ test('检测：WorkBuddy / Qoder 变体目录全部维护，Codex 的 PATH 探�
   }
 });
 
-test('客户端清单：7 个客户端、id 固定；未知 id 报错', () => {
+test('客户端清单：8 个客户端、id 固定；未知 id 报错', () => {
   const home = tempHome();
   try {
     const clients = agentClients(home, {
@@ -206,6 +206,7 @@ test('客户端清单：7 个客户端、id 固定；未知 id 报错', () => {
       'kimi-code',
       'workbuddy',
       'qoder',
+      'antigravity',
     ]);
     assert.equal(isAgentClientId('claude'), true);
     assert.equal(isAgentClientId('kimiwork'), false);
@@ -240,6 +241,55 @@ test('一键接入：写本机 shim + 两份 skill，正文用完整命令；重
   }
 });
 
+test('检测：Antigravity 认自己的目录与 agy 命令，~/.gemini 单独存在不算已装', () => {
+  const home = tempHome();
+  try {
+    const runtime = runtimeFor(home);
+    const skillPath = path.join(home, '.gemini', 'config', 'skills', 'engram', 'SKILL.md');
+
+    // 2.x IDE 数据目录
+    const ide = agentClientStatus('antigravity', home, {
+      runtime,
+      env: {},
+      isDir: onlyDirs(path.join(home, '.gemini', 'antigravity-ide')),
+      exists: () => false,
+    });
+    assert.equal(ide.installed, true);
+    assert.equal(ide.title, 'Antigravity');
+    assert.equal(ide.skillPath, skillPath);
+
+    // 只装了命令行：PATH 上有 agy 也算（Windows 上是 WindowsApps 下的 agy.exe）
+    const cli = agentClientStatus('antigravity', home, {
+      runtime,
+      env: { PATH: '/usr/local/bin' },
+      isDir: () => false,
+      exists: (file) => /^agy(\.(exe|cmd|bat|com))?$/i.test(path.basename(file)),
+    });
+    assert.equal(cli.installed, true);
+
+    // Windows 程序目录
+    const programs = path.join('C:\\Users\\example\\AppData\\Local', 'Programs', 'Antigravity IDE');
+    const windows = agentClientStatus('antigravity', home, {
+      runtime,
+      env: { LOCALAPPDATA: 'C:\\Users\\example\\AppData\\Local' },
+      isDir: (dir) => dir === programs,
+      exists: () => false,
+    });
+    assert.equal(windows.installed, true);
+
+    // ~/.gemini 是 Gemini CLI 也在用的目录：单独存在不能算装了 Antigravity
+    const geminiOnly = agentClientStatus('antigravity', home, {
+      runtime,
+      env: { PATH: '' },
+      isDir: onlyDirs(path.join(home, '.gemini')),
+      exists: () => false,
+    });
+    assert.equal(geminiOnly.installed, false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('一键接入：Qoder 两个变体都装了两份 skill，移除时两套都清', () => {
   const home = tempHome();
   try {
@@ -262,6 +312,32 @@ test('一键接入：Qoder 两个变体都装了两份 skill，移除时两套�
 
     const removed = unregisterAgentAccess('qoder', home, options);
     assert.equal(removed.removed.length, 4);
+    assert.equal(removed.client.skillsInstalled, false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('一键接入：Antigravity 写 App/IDE/CLI 共用的 skill 根，移除时清掉', () => {
+  const home = tempHome();
+  try {
+    const runtime = runtimeFor(home);
+    const options = {
+      runtime,
+      env: {},
+      isDir: onlyDirs(path.join(home, '.gemini', 'antigravity')),
+      exists: () => false,
+    };
+    const result = registerAgentAccess('antigravity', home, options);
+    assert.deepEqual(result.skillPaths, [
+      path.join(home, '.gemini', 'config', 'skills', 'engram', 'SKILL.md'),
+      path.join(home, '.gemini', 'config', 'skills', 'engram-customer-research', 'SKILL.md'),
+    ]);
+    for (const file of result.skillPaths) assert.equal(fs.existsSync(file), true, file);
+    assert.equal(result.client.skillsInstalled, true);
+
+    const removed = unregisterAgentAccess('antigravity', home, options);
+    assert.equal(removed.removed.length, 2);
     assert.equal(removed.client.skillsInstalled, false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

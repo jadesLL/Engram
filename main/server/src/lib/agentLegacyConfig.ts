@@ -166,7 +166,7 @@ export function cleanupLegacyAgentConfig(
       break;
     }
     default:
-      // claude / zcode 旧版本没有写入过 Engram MCP 配置
+      // claude / zcode / antigravity 旧版本没有写入过 Engram MCP 配置
       break;
   }
   return cleaned;
