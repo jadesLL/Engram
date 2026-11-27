@@ -203,30 +203,15 @@
 /*
  * 二级目录展开：grid-template-rows 0fr → 1fr 的高度过渡。
  * 始终保留 DOM（收起时 inert + aria-hidden），这样高度能平滑收起，Tab 也不会落到看不见的按钮上。
- * 导引线挂在 wrap 上而不是 inner：动画裁切由 wrap 的 overflow: hidden 负责，
- * 画在 inner 里的线会被裁掉。left: 27px = inner 的 28px 缩进 - 1px，让导引线正好落在二级项左沿。
+ * 已移除紧贴二级项左沿的竖向导引线（避免与 1px 细环选中圆角贴边冲突），层级由缩进、父图标与展开箭头表达。
  */
 .settings-nav-sub-wrap {
-  position: relative;
   display: grid;
   grid-template-rows: 0fr;
   overflow: hidden;
   transition: grid-template-rows var(--motion-base) var(--ease-standard);
 }
 .settings-nav-sub-wrap.open { grid-template-rows: 1fr; }
-.settings-nav-sub-wrap::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 27px;
-  width: 1px;
-  border-radius: 1px;
-  background: var(--border-strong);
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-standard);
-}
-.settings-nav-sub-wrap.open::before { opacity: 1; }
 .settings-nav-sub {
   display: flex;
   flex-direction: column;
