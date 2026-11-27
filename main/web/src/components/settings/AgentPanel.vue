@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>Agent 与自动化</h3>
-        <p>内置 Agent 与外部 Agent 的接入：Claude Code、Codex CLI、DeepSeek Harness、ZCode、Kimi Code CLI、WorkBuddy 与 Qoder 都通过 engram 命令读写知识库；一键接入只安装 skill 与 CLI 包装脚本。</p>
+        <p>内置 Agent 与外部 Agent 的接入：Claude Code、Codex CLI、DeepSeek Harness、ZCode、Kimi Code CLI、WorkBuddy、Qoder 与 Antigravity（反重力）都通过 engram 命令读写知识库；一键接入只安装 skill 与 CLI 包装脚本。</p>
       </div>
     </div>
 
@@ -87,7 +87,7 @@
          （2026-09-27 的「导航第 2 项、页面第 4 块」就是这里顺序错位造成的）。 -->
     <slot name="after-builtin" />
 
-    <!-- 外部接入（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder）只在 Agent 管理面
+    <!-- 外部接入（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder / Antigravity）只在 Agent 管理面
          可用的端渲染：手机（android-local）只有同步成员令牌，Agent 令牌不能下发到手机，管理面能力位
          features.agentAdmin 恒 false。注意不能用 features.agent——那是「聊天交互面」，手机绑定中枢后
          为 true（手机能聊天），拿它门控会让手机渲染出导航里没有、接口也 404 的「外部接入」组。 -->

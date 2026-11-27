@@ -27,7 +27,15 @@ import { cleanupLegacyAgentConfig } from './agentLegacyConfig.js';
  * 否则会把 skill 写进客户端根本不读的那套目录（「显示接入成功但没效果」）。
  */
 
-export type AgentClientId = 'claude' | 'codex' | 'dsh' | 'zcode' | 'kimi-code' | 'workbuddy' | 'qoder';
+export type AgentClientId =
+  | 'claude'
+  | 'codex'
+  | 'dsh'
+  | 'zcode'
+  | 'kimi-code'
+  | 'workbuddy'
+  | 'qoder'
+  | 'antigravity';
 
 export interface AgentClientStatus {
   id: AgentClientId;
@@ -167,6 +175,34 @@ function qoderConfigDirs(
 }
 
 /**
+ * Antigravity（Google 的 Agent IDE，中文常称「反重力」）检测：
+ * - 2.x 使用 ~/.gemini/antigravity（App）、~/.gemini/antigravity-ide（IDE）、
+ *   ~/.gemini/antigravity-cli（命令行 agy）作为数据目录；1.x 遗留 ~/.antigravity；
+ * - Windows 程序目录 %LOCALAPPDATA%\\Programs\\Antigravity( IDE)、Electron 配置 %APPDATA%\\Antigravity( IDE)；
+ * - 命令行装好后 PATH 上有 agy（Windows 在 %LOCALAPPDATA%\\Microsoft\\WindowsApps）。
+ * 不把 ~/.gemini 本身算作证据：Gemini CLI 也用这个目录，不能因为装了它就把 Antigravity 判成已安装。
+ */
+function antigravityInstalled(home: string, env: NodeJS.ProcessEnv, io: AgentIo): boolean {
+  const markers = [
+    path.join(home, '.gemini', 'antigravity'),
+    path.join(home, '.gemini', 'antigravity-cli'),
+    path.join(home, '.gemini', 'antigravity-ide'),
+    path.join(home, '.antigravity'),
+    path.join(home, '.config', 'Antigravity'),
+    path.join(home, '.config', 'Antigravity IDE'),
+    path.join(home, 'Library', 'Application Support', 'Antigravity'),
+    path.join(home, 'Library', 'Application Support', 'Antigravity IDE'),
+  ];
+  if (markers.some((dir) => io.isDir(dir))) return true;
+  const appData = envValue(env, ['APPDATA']);
+  if (appData && ['Antigravity', 'Antigravity IDE'].some((dir) => io.isDir(path.join(appData, dir)))) return true;
+  const localAppData = envValue(env, ['LOCALAPPDATA']);
+  if (localAppData && ['Antigravity', 'Antigravity IDE', 'antigravity', 'antigravity-ide']
+    .some((dir) => io.isDir(path.join(localAppData, 'Programs', dir)))) return true;
+  return binaryOnPath('antigravity', env, io.exists) || binaryOnPath('agy', env, io.exists);
+}
+
+/**
  * 客户端检测与 skill 根（契约第 6 节表格）：
  * | claude      | ~/.claude                | ~/.claude/skills        |
  * | codex       | $CODEX_HOME 或 ~/.codex  | ~/.agents/skills        |
@@ -175,6 +211,7 @@ function qoderConfigDirs(
  * | kimi-code   | $KIMI_CODE_HOME 或 ~/.kimi-code | <home>/skills   |
  * | workbuddy   | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | <配置目录>/skills（存在的变体全部维护） |
  * | qoder       | ~/.qoder / ~/.qoder-cn   | <配置目录>/skills（存在的变体全部维护） |
+ * | antigravity | ~/.gemini/antigravity* / 安装目录 / agy | ~/.gemini/config/skills（App/IDE/CLI 共用） |
  */
 const CLIENTS: AgentClientDef[] = [
   {
@@ -240,6 +277,15 @@ const CLIENTS: AgentClientDef[] = [
       const { dirs, fallback } = qoderConfigDirs(home, env, io);
       return (dirs.length ? dirs : [fallback]).map((dir) => path.join(dir, 'skills'));
     },
+  },
+  {
+    id: 'antigravity',
+    title: 'Antigravity',
+    installed: antigravityInstalled,
+    // App / IDE / CLI 共用的个人 skill 根（官方文档：~/.gemini/config/skills，三端都读）。
+    // CLI 专属的 ~/.gemini/antigravity-cli/skills 优先级更高，但再写一份会在 /skills 里
+    // 出现重复条目；共用根已覆盖，不再额外写 CLI 专属目录。
+    skillRoots: (home) => [path.join(home, '.gemini', 'config', 'skills')],
   },
 ];
 

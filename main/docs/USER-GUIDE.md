@@ -4,7 +4,7 @@
 
 本页保留原 README 的详细功能说明与操作细节，按需查阅。安装与部署也可直接查看 [构建与部署指南](./BUILDING.md)。
 
-一个**内核不内置任何 AI** 的自托管知识库：Markdown 文件是权威数据源，Engram 负责存储、文档解析、关键词检索与**确定性写入门禁**；读、写、提炼、综合、问答由 Agent 通过 **`engram` CLI + skill** 完成——既可以用你已有的外部 Agent（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder 等能跑 shell 的客户端），也可以用 Engram **随包内置的 Agent**（内嵌 DeepSeek Harness 的聊天抽屉，配一把你自己的模型 Key 即可开口）。两条路走同一套 `engram` 命令与证据门禁；不配 Key 时内置 Agent 不出网，知识库依旧零 API Key。
+一个**内核不内置任何 AI** 的自托管知识库：Markdown 文件是权威数据源，Engram 负责存储、文档解析、关键词检索与**确定性写入门禁**；读、写、提炼、综合、问答由 Agent 通过 **`engram` CLI + skill** 完成——既可以用你已有的外部 Agent（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder / Antigravity 等能跑 shell 的客户端），也可以用 Engram **随包内置的 Agent**（内嵌 DeepSeek Harness 的聊天抽屉，配一把你自己的模型 Key 即可开口）。两条路走同一套 `engram` 命令与证据门禁；不配 Key 时内置 Agent 不出网，知识库依旧零 API Key。
 
 ## 工作流
 
@@ -155,7 +155,7 @@ Docker：node /app/server/dist/cli/cli.js <command>
 | `research begin / research submit` | 客户调研：--customer 固定任务版本取回契约与 existingReports，--task + --file 提交报告 JSON 校验入库（详见客户调研指南） |
 | `ask --data '<json>'` | **内置 Agent 专用**：CLI 阻塞长轮询，问题在 Engram 对话最下侧弹选项，用户点选后当场返回、同一轮继续（外部 Agent 用自己客户端的提问能力） |
 
-**一键接入**：设置 → Agent 与自动化 → 外部接入 → 选 Claude Code / Codex / DeepSeek Harness（dsh）/ ZCode / Kimi Code CLI / WorkBuddy / Qoder 在本机一键接入——只装 CLI 包装脚本与 `engram` skill（写进该客户端的 skills 目录），**不再改客户端的 MCP 配置**：
+**一键接入**：设置 → Agent 与自动化 → 外部接入 → 选 Claude Code / Codex / DeepSeek Harness（dsh）/ ZCode / Kimi Code CLI / WorkBuddy / Qoder / Antigravity（反重力）在本机一键接入——只装 CLI 包装脚本与 `engram` skill（写进该客户端的 skills 目录），**不再改客户端的 MCP 配置**：
 
 | 一键接入目标 | skill 安装位置 | 检测口径 |
 |---|---|---|
@@ -166,6 +166,7 @@ Docker：node /app/server/dist/cli/cli.js <command>
 | Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram/SKILL.md` | `默认 ~/.kimi-code` |
 | WorkBuddy | `~/.workbuddy/skills/engram/SKILL.md`（`~/.workbuddy-ai` 变体同构；存在的变体目录都写） | `~/.workbuddy / ~/.workbuddy-ai（环境变量优先）` |
 | Qoder | `<配置目录>/skills/engram/SKILL.md`（`~/.qoder` 与 `~/.qoder-cn` 都存在时两套都写） | `~/.qoder / ~/.qoder-cn` |
+| Antigravity（反重力） | `~/.gemini/config/skills/engram/SKILL.md`（App / IDE / 命令行 `agy` 共用这一处） | `~/.gemini/antigravity*`、`~/.antigravity`、Windows 安装目录或 PATH 上的 `agy` |
 
 > **一键接入会顺带清旧**：旧版本写进 Codex / dsh / WorkBuddy / Qoder / Kimi 的 Engram MCP 条目在接入或移除接入时一并删掉（只删 `engram` 这一项，其他 MCP 配置不动）；写错目录的旧 skill（如 WorkBuddy 的 `~/.codebuddy/skills`）也会清掉带 Engram 管理标记的文件。各客户端只装 skill + CLI 包装脚本，不再写 `mcpServers` / `[mcp_servers.*]` 之类的 MCP 配置。
 

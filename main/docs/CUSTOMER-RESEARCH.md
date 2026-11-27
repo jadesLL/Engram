@@ -108,7 +108,7 @@
 
 ## 外部 Agent
 
-外部 Agent 必须是**能跑 shell 的客户端**（Claude Code / Codex / DeepSeek Harness / ZCode / Kimi Code CLI / WorkBuddy / Qoder），交互统一走 `engram` CLI + skill：服务端不再提供 MCP 端点，也没有 `mcp__engram__*` 工具。
+外部 Agent 必须是**能跑 shell 的客户端**（Claude Code / Codex / DeepSeek Harness / ZCode / Kimi Code CLI / WorkBuddy / Qoder / Antigravity），交互统一走 `engram` CLI + skill：服务端不再提供 MCP 端点，也没有 `mcp__engram__*` 工具。
 
 统一命令 `engram research begin --customer <客户> [--scope knowledge-web|knowledge-only] [--save] [--save-mode new|overwrite] [--overwrite-path <path>] [--client <客户端>] [--timezone <时区>]`：返回任务 ID、流程正文、模板版本、`identityContract`（主体核验要求）、`reportContract`（三种模式的章节、每章上限、来源格式）、`modeRules`（何时用哪种模式），以及 `existingReports`（知识库里该客户已有报告）与 `saveMode`（本次的保存方式，未选为空串）；`engram research submit` 校验通过后才算完成。客户端入口 skill 只说明何时使用与如何调用，契约以服务端返回为准，不在客户端复制一份。
 
@@ -131,6 +131,7 @@
 | Kimi Code CLI | `$KIMI_CODE_HOME/skills/engram-customer-research/SKILL.md`（默认 `~/.kimi-code`） |
 | WorkBuddy | 用户级 `~/.workbuddy/skills/engram-customer-research/SKILL.md`（配置目录下的 skills；`~/.workbuddy-ai` 变体同构） |
 | Qoder | 配置目录 `skills/engram-customer-research/SKILL.md`（`~/.qoder` / `~/.qoder-cn`） |
+| Antigravity（反重力） | 个人级 `~/.gemini/config/skills/engram-customer-research/SKILL.md`（App / IDE / CLI 共用） |
 
 > **Kimi Work 已下线**：它只有插件入口、没有 shell，跑不了 `engram` 命令；旧版登记的 MCP 插件条目已失效，一键接入时会顺带清掉。
 
@@ -138,4 +139,4 @@
 
 外部聊天说「调研客户 A」时默认返回报告预览；说「调研并保存」或之后要求保存时，Agent 才传 `--save`；如果知识库里已有该客户报告，必须先问用户「生成新版本还是覆盖旧报告」，再带 `--save-mode` 重新发起或提交。不自动更新客户实体页。自然语言自动触发依赖客户端是否加载了 skill 和模型是否遵循规则；可用客户端的显式 skill 命令减少漏选，不能把接入成功等同于真实模型已调用。
 
-客户端路径依据：[Codex](https://learn.chatgpt.com/docs/build-skills)、[ZCode](https://zcode.network/cn/docs/skill/)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md)、[WorkBuddy](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Setting)、[Kimi Code](https://moonshotai.github.io/kimi-code/en/customization/skills)。
+客户端路径依据：[Codex](https://learn.chatgpt.com/docs/build-skills)、[ZCode](https://zcode.network/cn/docs/skill/)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md)、[WorkBuddy](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Setting)、[Kimi Code](https://moonshotai.github.io/kimi-code/en/customization/skills)、[Antigravity](https://antigravity.google/docs/customization-discovery)。

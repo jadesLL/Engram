@@ -12,6 +12,10 @@
 
 ## 未发布
 
+### 更新
+
+- [平台影响: E] 外部 Agent 接入新增 Antigravity（Google 的「反重力」）：本机装了 Antigravity 的 App、IDE 或命令行 `agy` 后，可在「设置 → Agent 与自动化 → 外部接入」一键接入，engram skill 写入 App / IDE / CLI 共用的 `~/.gemini/config/skills`，读写知识库的流程与其他外部 Agent 相同；手机端不提供该入口。
+
 ### 优化
 
 - [平台影响: B] 移除设置页左侧二级目录左沿的竖向导引线，避免与当前选中项的细环圆角贴边冲突，让目录层级展示更简洁。
