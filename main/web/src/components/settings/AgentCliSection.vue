@@ -39,14 +39,13 @@
       </li>
     </ul>
 
-    <p class="setting-note">
-      一键接入只写入 skill 与 PATH 包装脚本，并清理旧版 Engram MCP 条目。
-    </p>
-
     <!-- 客户端接入：一行一个客户端，状态只在行尾出现一次 -->
     <div class="sub-block">
       <div class="block-head">
-        <h4>客户端接入</h4>
+        <span class="setting-title-row">
+          <h4>客户端接入</h4>
+          <HelpTip title="一键接入说明" text="一键接入只写入 skill 与 PATH 包装脚本，并清理旧版 Engram MCP 条目。" />
+        </span>
         <span v-if="installedCount" class="setting-value">已接入 {{ installedCount }} / {{ clients.length }}</span>
       </div>
 
@@ -92,15 +91,15 @@
     <!-- Agent 令牌：远程设备 login 用；表名沿用旧 mcp_tokens，仅是历史命名 -->
     <div class="sub-block">
       <div class="block-head">
-        <h4>Agent 令牌</h4>
+        <span class="setting-title-row">
+          <h4>Agent 令牌</h4>
+          <HelpTip title="Agent 令牌" text="远程设备用令牌执行 engram login，也可用于 REST API Bearer 认证；删除后立即失效。" />
+        </span>
         <button class="btn small" type="button" @click="newToken">
           <Icon name="plus" :size="14" />
           生成令牌
         </button>
       </div>
-      <p class="setting-note">
-        远程设备用令牌执行 <code>engram login</code>，也可走 REST API 的 Bearer 认证；删除后立即失效。
-      </p>
       <div v-if="tokens.length" class="cli-token-list">
         <div v-for="tokenItem in tokens" :key="tokenItem.id" class="setting-row">
           <div class="setting-copy">
@@ -118,70 +117,67 @@
 
     <!-- 远程接入：下载 cli.js 后在本机 login，不依赖 Engram 启动时自动登记的连接 -->
     <div class="sub-block">
-      <div class="block-head">
-        <h4>远程接入</h4>
-      </div>
-      <p class="setting-note">其他设备上的 Agent：下载 CLI 后用令牌登录，不依赖本机已安装。</p>
-      <ol class="remote-steps">
-        <li>
-          <div class="remote-step-head">
-            <span>下载 CLI 源文件（需要 Node 20+），保存为 <code>engram.js</code>。</span>
-            <button class="btn small" type="button" @click="downloadCli">下载 CLI</button>
-          </div>
-        </li>
-        <li>
-          <div class="remote-step-head">
-            <span>用令牌登记连接：</span>
-            <div class="setting-actions remote-step-controls">
-              <AppSelect
-                v-if="tokens.length"
-                v-model="tokenSelectValue"
-                class="remote-token-select"
-                aria-label="远程接入使用的 Agent 令牌"
-                :options="tokenOptions"
-              />
-              <button
-                class="btn ghost small"
-                type="button"
-                :disabled="!selectedToken"
-                @click="copy(loginCommand, '已复制 login 命令')"
-              >
-                复制命令
-              </button>
+      <details class="cli-remote-details">
+        <summary class="cli-remote-summary">远程接入（其他设备使用 CLI + 令牌）</summary>
+        <ol class="remote-steps">
+          <li>
+            <div class="remote-step-head">
+              <span>下载 CLI 源文件（需要 Node 20+），保存为 <code>engram.js</code>。</span>
+              <button class="btn small" type="button" @click="downloadCli">下载 CLI</button>
             </div>
-          </div>
-          <div class="command-line"><code>{{ loginCommand }}</code></div>
-          <p v-if="!tokens.length" class="setting-note">还没有令牌：先在上方生成一个，再回来复制命令。</p>
-        </li>
-        <li>
-          <div class="remote-step-head">
-            <span>验证连接与能力：<code>node engram.js status</code>。</span>
-          </div>
-        </li>
-        <li>
-          <div class="remote-step-head">
-            <span>把两个 skill 放进客户端 skills 目录（见上方各客户端的 skill 目录），或用 <code>node engram.js guide</code> 取作业指南。</span>
-          </div>
-        </li>
-      </ol>
+          </li>
+          <li>
+            <div class="remote-step-head">
+              <span>用令牌登记连接：</span>
+              <div class="setting-actions remote-step-controls">
+                <AppSelect
+                  v-if="tokens.length"
+                  v-model="tokenSelectValue"
+                  class="remote-token-select"
+                  aria-label="远程接入使用的 Agent 令牌"
+                  :options="tokenOptions"
+                />
+                <button
+                  class="btn ghost small"
+                  type="button"
+                  :disabled="!selectedToken"
+                  @click="copy(loginCommand, '已复制 login 命令')"
+                >
+                  复制命令
+                </button>
+              </div>
+            </div>
+            <div class="command-line"><code>{{ loginCommand }}</code></div>
+            <p v-if="!tokens.length" class="setting-note">还没有令牌：先在上方生成一个，再回来复制命令。</p>
+          </li>
+          <li>
+            <div class="remote-step-head">
+              <span>验证连接与能力：<code>node engram.js status</code>。</span>
+            </div>
+          </li>
+          <li>
+            <div class="remote-step-head">
+              <span>把两个 skill 放进客户端 skills 目录（见上方各客户端的 skill 目录），或用 <code>node engram.js guide</code> 取作业指南。</span>
+            </div>
+          </li>
+        </ol>
+      </details>
     </div>
 
     <!-- 客户调研入口 skill：内容来自服务端安装的 skill 正文（ENGRAM 占位已替换成本机调用命令） -->
     <div class="sub-block">
       <div class="block-head">
-        <h4>客户调研入口 skill</h4>
-      </div>
-      <p class="setting-note">
-        一键接入会同时安装 Engram skill 与客户调研入口 skill（<code>engram-customer-research</code>）；远程设备把这份 SKILL.md 放进客户端 skills 目录即可。
-      </p>
-      <p v-if="!researchSkillBody" class="setting-note">
-        正文未就绪：可执行 <code>engram skill show engram-customer-research</code> 获取。
-      </p>
-      <div class="setting-actions cli-research-actions">
+        <span class="setting-title-row">
+          <h4>客户调研入口 skill</h4>
+          <HelpTip title="客户调研入口 skill" text="一键接入会同时安装 Engram skill 与 engram-customer-research；远程设备可复制此 SKILL.md 放进客户端 skills 目录。" />
+        </span>
         <button class="btn small" type="button" :disabled="!researchSkillBody" @click="copyResearchSkill">
           复制 SKILL.md
         </button>
       </div>
+      <p v-if="!researchSkillBody" class="setting-note">
+        正文未就绪：可执行 <code>engram skill show engram-customer-research</code> 获取。
+      </p>
     </div>
   </div>
 </template>
@@ -191,6 +187,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import SecretField from '../SecretField.vue';
 import { errorMessage } from '../../lib/agentConsoleApi';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
@@ -531,6 +528,19 @@ onMounted(loadAll);
 }
 
 /* ---------- 远程接入步骤 ---------- */
+.cli-remote-details {
+  color: var(--text-secondary);
+}
+.cli-remote-summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+.cli-remote-details[open] .cli-remote-summary {
+  margin-bottom: 8px;
+}
 .remote-steps {
   margin: 0;
   padding-left: 20px;

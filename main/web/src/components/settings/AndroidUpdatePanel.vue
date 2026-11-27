@@ -77,7 +77,7 @@
     <div class="setting-row">
       <div class="setting-copy">
         <strong>自动更新</strong>
-        <span>启动与回前台时自动检查，有新版后台下载；安装仍需确认。</span>
+        <span>自动检查并后台下载新版，安装仍需确认。</span>
       </div>
       <label class="switch-control">
         <input
@@ -116,15 +116,15 @@
     </div>
 
     <!-- 更新源配置 -->
-    <p class="setting-note update-source-note">
-      留空则跟随同步中枢的更新源，本机填写的地址优先；凭据只存本机，不随同步下发。
-    </p>
     <div class="setting-row setting-row-form repo-row">
       <div class="setting-copy">
-        <strong>远端仓库地址</strong>
-        <span v-if="info.fromHub">当前用同步中枢下发的地址：<code>{{ info.repoUrl }}</code>；本机填写会覆盖它。</span>
-        <span v-else-if="info.hasLocalSource">当前用本机填写的地址。</span>
-        <span v-else>还没配置：填仓库首页地址；同步中枢配好后留空即可跟随。</span>
+        <span class="setting-title-row">
+          <strong>远端仓库地址</strong>
+          <HelpTip title="远端仓库地址" text="留空则跟随同步中枢的更新源，本机填写的地址优先；凭据只存本机，不随同步下发。" />
+        </span>
+        <span v-if="info.fromHub">跟随中枢：<code>{{ info.repoUrl }}</code>（本机填写可覆盖）。</span>
+        <span v-else-if="info.hasLocalSource">使用本机填写的地址。</span>
+        <span v-else>留空可跟随中枢，或填写仓库首页地址。</span>
       </div>
       <input
         v-model="form.repoUrl"
@@ -139,11 +139,14 @@
     <!-- 私有库凭据：访问令牌 / 用户名密码二选一（与服务器/桌面端「更新源配置」同一套口径） -->
     <div class="setting-row setting-row-form credential-row">
       <div class="setting-copy">
-        <strong>私有库凭据</strong>
-        <span v-if="credentialSaved">
-          已在本机保存{{ info.authType === 'password' ? '用户名密码' : '访问令牌' }}；输入框留空保存 = 不修改。
+        <span class="setting-title-row">
+          <strong>私有库凭据</strong>
+          <HelpTip title="私有库凭据" text="公开仓库留空即可。令牌在仓库「设置 → 应用」生成只读令牌；密码使用 Basic 认证并保存在 Android Keystore，留空保存表示不修改。" />
         </span>
-        <span v-else>私有仓库才需要，公开仓库留空即可；凭据只存本机。</span>
+        <span v-if="credentialSaved">
+          已保存{{ info.authType === 'password' ? '用户名密码' : '访问令牌' }}（留空保存即不修改）。
+        </span>
+        <span v-else>公开仓库留空，仅存本机。</span>
       </div>
       <div class="credential-inputs">
         <div class="segmented credential-type" role="radiogroup" aria-label="凭据方式">
@@ -172,7 +175,6 @@
             aria-label="远端仓库访问令牌"
           />
           <button v-if="info.tokenSaved" class="btn" type="button" @click="clearCredential('token')">清除令牌</button>
-          <p class="setting-note">仓库站点「设置 → 应用」里生成只读令牌。</p>
         </template>
         <template v-else>
           <input
@@ -192,7 +194,6 @@
             aria-label="远端仓库密码"
           />
           <button v-if="info.passwordSaved" class="btn" type="button" @click="clearCredential('password')">清除密码</button>
-          <p class="setting-note">Basic 认证；密码存 Android Keystore。</p>
         </template>
       </div>
       <p v-if="credentialError" class="setting-message err">{{ credentialError }}</p>
@@ -201,14 +202,12 @@
     <div v-if="info.hasLocalSource" class="setting-row">
       <div class="setting-copy">
         <strong>改回跟随同步中枢</strong>
-        <span>清掉本机地址，改用中枢下发的更新源。</span>
       </div>
       <button class="btn" type="button" @click="useHubSource">改回跟随中枢</button>
     </div>
     <div class="setting-row">
       <div class="setting-copy">
         <strong>保存配置</strong>
-        <span>保存后立即按新地址与凭据检查一次。</span>
       </div>
       <button class="btn" type="button" :disabled="saving" @click="save">
         {{ saving ? '保存中…' : '保存配置' }}
@@ -221,6 +220,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { useAppUpdateStore } from '../../stores/appUpdate';

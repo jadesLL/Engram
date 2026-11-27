@@ -17,10 +17,14 @@
     <!-- 凭据：未配置或主动更换时展开表单 -->
     <div v-if="editingCredentials" class="setting-row setting-row-form">
       <div class="setting-copy">
-        <strong>{{ configured ? '更换飞书应用凭据' : '飞书应用凭据' }}</strong>
-        <span>
-          飞书接口要求先有一个应用身份（这一步只能在飞书开放平台做一次）。填好 App ID / App Secret 后，绑定都走「飞书授权」链接，不用再填表格链接。Secret 只保存在中枢本机，不回显、不随同步下发。
+        <span class="setting-title-row">
+          <strong>{{ configured ? '更换飞书应用凭据' : '飞书应用凭据' }}</strong>
+          <HelpTip
+            title="飞书应用凭据"
+            text="需在飞书开放平台创建企业自建应用获取 App ID 与 Secret。填好后绑定走「飞书授权」即可，Secret 仅保存在中枢本机，不回显、不随同步下发。"
+          />
         </span>
+        <span>填写企业自建应用的 App ID 与 Secret。</span>
       </div>
       <div class="setting-control feishu-form-control">
         <input
@@ -73,24 +77,21 @@
     <!-- 飞书账号授权：点链接跳飞书登录/同意，回来自动完成 -->
     <div class="setting-row feishu-auth-row">
       <div class="setting-copy">
-        <strong>飞书账号授权</strong>
-        <span v-if="!configured">先保存上方的应用凭据，再点右侧「飞书授权」。</span>
-        <span v-else-if="oauthBound">
-          已授权：拉取使用你本人可见的飞书表格，不需要把应用加为协作者。令牌到期会自动刷新，失效时再点一次授权即可。
+        <span class="setting-title-row">
+          <strong>飞书账号授权</strong>
+          <HelpTip
+            title="飞书账号授权"
+            text="授权会申请多维表格、知识库节点与云文档只读权限，令牌仅保存在中枢本机；授权有效期约 2 小时并自动续期，超过 365 天需重新授权。无需单独部署域名，回调地址填当前打开 Engram 的地址即可。"
+          />
         </span>
-        <span v-else-if="oauthRequired">
-          飞书授权已失效（令牌过期或被撤销）。请重新点「飞书授权」，回来自动恢复。
-        </span>
-        <span v-else>
-          点「飞书授权」跳到飞书登录/同意，回来自动完成。不需要单独部署域名：回调地址就是你当前打开 Engram 的地址，加进飞书应用的「安全设置 → 重定向 URL」即可。
-        </span>
+        <span v-if="!configured">先保存应用凭据，再点右侧「飞书授权」。</span>
+        <span v-else-if="oauthBound">已授权，令牌到期自动刷新。</span>
+        <span v-else-if="oauthRequired">授权已失效，请重新点「飞书授权」恢复。</span>
+        <span v-else>授权后可直接搜索本人可见的多维表格。</span>
         <div v-if="configured && !oauthBound && redirectUri" class="feishu-redirect">
           <span>回调地址：</span>
           <code>{{ redirectUri }}</code>
           <button class="btn ghost small" type="button" @click="copyRedirectUri">复制</button>
-          <span class="feishu-redirect-hint">
-            如果飞书后台不接受这个地址（localhost / 内网 IP），请先用 DDNS 或 HTTPS 域名打开 Engram 再授权。
-          </span>
         </div>
       </div>
       <div class="setting-control feishu-auth-controls">
@@ -112,12 +113,6 @@
     </div>
     <p v-if="configured && oauthRequired" class="setting-note tone-warn">
       重新授权前，数据源不会自动拉取；已拉取的资料不受影响。
-    </p>
-    <p v-else-if="configured && oauthBound" class="setting-note">
-      授权有效期约 2 小时，Engram 用 refresh_token 自动续期；超过 365 天需要重新授权。
-    </p>
-    <p v-else-if="configured" class="setting-note">
-      授权会申请读取多维表格、知识库节点与搜索云文档的权限；应用密钥与授权令牌只保存在中枢本机。
     </p>
 
     <p v-if="errorText" class="setting-note tone-warn">{{ errorText }}</p>
@@ -144,7 +139,7 @@
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>添加多维表格</strong>
-            <span>搜索你能访问的多维表格，选中后再选具体数据表，不用粘贴链接。</span>
+            <span>按名称搜索并选择数据表。</span>
           </div>
           <div class="setting-control feishu-form-control">
             <input
@@ -278,6 +273,7 @@ import { api } from '../../api';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import SecretField from '../SecretField.vue';
 
 /**

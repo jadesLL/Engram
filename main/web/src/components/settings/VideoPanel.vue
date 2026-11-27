@@ -16,6 +16,7 @@
       :badge-tone="badgeTone"
       title="视频理解模型"
       hint="收集箱「提炼视频」的开关与当前配置"
+      help="已预置 DashScope 与 qwen3.8-omni-flash，只需填 API Key；配置随「设置」同步，本机 Key 优先且页面不回显。素材会发送至所配模型服务，纪要时间戳需人工复核。"
     >
       <p v-if="!loaded && loading" class="setting-note">正在读取视频理解模型配置…</p>
       <p v-else-if="!loaded" class="setting-note tone-warn">
@@ -73,15 +74,7 @@
 
       <!-- 手机（android-local）不跑模型：开关与配置都落在已绑定的中枢 -->
       <p v-if="isAndroidLocal" class="setting-note">
-        配置保存在已绑定的中枢：手机不运行模型，这里只远程读写中枢的开关，API Key 不落在手机。
-      </p>
-
-      <p class="setting-note">
-        已预置 DashScope（阿里云百炼）与 qwen3.8-omni-flash，只需填一个 API Key；
-        配置随「设置」分类同步给群组内设备，本机已配置的 Key 优先，页面不回显 Key。
-      </p>
-      <p class="setting-note">
-        素材会发送给配置的模型服务；模型给出的时间戳与章节是估计值，纪要需人工复核。
+        配置保存在已绑定的中枢：手机不运行模型，API Key 不落在手机。
       </p>
     </SettingsGroup>
   </section>
