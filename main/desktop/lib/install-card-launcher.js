@@ -99,6 +99,19 @@ function buildHandoffSpec(powerShellCmdLine, platform = process.platform) {
   return { command: 'sh', args: ['-c', `{ ${powerShellCmdLine} ; } >/dev/null 2>&1 &`], verbatim: false };
 }
 
+/**
+ * 从环境变量副本中移除 ELECTRON_RUN_AS_NODE（大小写不敏感）。
+ * 本脚本由主进程以 ELECTRON_RUN_AS_NODE=1 fork 启动，不清理会导致安装完成后
+ * 由卡片拉起的新版 Engram.exe 退化成纯 Node 模式并秒退。
+ */
+function stripElectronRunAsNode(baseEnv = process.env) {
+  const env = { ...baseEnv };
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[key];
+  }
+  return env;
+}
+
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
 
 function main() {
@@ -131,6 +144,7 @@ function main() {
       detached: true,
       stdio: 'ignore',
       windowsVerbatimArguments: spec.verbatim,
+      env: stripElectronRunAsNode(process.env),
     });
   } catch (e) {
     appendLog(`spawn failed: ${(e && e.message) || String(e)}`);
@@ -179,5 +193,6 @@ module.exports = {
   buildHandoffSpec,
   splitCommandLine,
   quoteIfNeeded,
+  stripElectronRunAsNode,
   DEFAULT_READY_TIMEOUT_MS,
 };

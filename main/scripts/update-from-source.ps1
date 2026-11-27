@@ -99,6 +99,9 @@ function Start-Engram {
 
   $launchArgs = @('.')
   if ($SilentStart) { $launchArgs += '--silent-start' }
+  # 从 Electron fork 出来的交接进程或外部 Electron 宿主继承 ELECTRON_RUN_AS_NODE=1 会让
+  # Engram.exe/electron.exe 退化成纯 Node 跑 main.js（app 未定义，秒退）。启动前摘掉。
+  Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
   Start-Process -FilePath $exe -ArgumentList $launchArgs -WorkingDirectory $desktop
   Start-Sleep -Seconds 4
   $alive = Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" -ErrorAction SilentlyContinue |

@@ -11,57 +11,78 @@ const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 
-const argv = process.argv.slice(2);
-let root = '';
-let appRoot = '';
-let skipPull = false;
-let silentStart = false;
-for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--root' && argv[i + 1]) root = argv[++i];
-  else if (argv[i] === '--app-root' && argv[i + 1]) appRoot = argv[++i];
-  else if (argv[i] === '--skip-pull') skipPull = true;
-  else if (argv[i] === '--silent-start') silentStart = true;
+/**
+ * 从环境变量副本中移除 ELECTRON_RUN_AS_NODE（大小写不敏感，兼容 Windows 环境变量变体）。
+ * 主进程以 ELECTRON_RUN_AS_NODE=1 fork 本中转脚本，若不清理，拉起的新版 Engram.exe
+ * 会退化成纯 Node 模式跑 desktop/main.js（app 为 undefined），直接报错退出。
+ */
+function stripElectronRunAsNode(baseEnv = process.env) {
+  const env = { ...baseEnv };
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[key];
+  }
+  return env;
 }
-// 更新脚本路径由安装根（或 appRoot）推导并校验存在，不接收外部传入的任意命令参数
-const script = root
-  ? path.join(root, 'Engram', 'main', 'scripts', 'update-from-source.ps1')
-  : appRoot
-    ? path.join(appRoot, 'scripts', 'update-from-source.ps1')
-    : '';
-if (!script || !fs.existsSync(script)) process.exit(2);
 
-// 经临时 .cmd 转一道：把带引号的脚本路径、日志落盘（Start-Transcript：窗口照常显示的同时
-// 整段落进日志，含 Write-Host 与子命令输出）都写进文件里，避免往 `start` 命令里塞嵌套引号
-// （cmd 的引号规则会让 start 静默跑错命令，实测）。失败时窗口暂时留住原因（脚本已把应用重新
-// 拉起），用户按任意键再关窗口，不会「什么都没看到就消失」。
-const bat = path.join(os.tmpdir(), 'engram-source-update.cmd');
-const log = path.join(root || os.tmpdir(), 'engram-update-handoff.log');
-const psInvoke = [skipPull ? `& '${script}' -SkipPull` : `& '${script}'`, silentStart ? '-SilentStart' : '']
-  .filter(Boolean)
-  .join(' ');
-fs.writeFileSync(
-  bat,
-  [
-    '@echo off',
-    `echo Engram update log: ${log}`,
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '${log}' -Append | Out-Null; try { ${psInvoke} } finally { Stop-Transcript | Out-Null }"`,
-    'if errorlevel 1 (echo. & echo 更新没有完成：Engram 已尝试重新启动，原因见上面的红字与日志。 & pause)',
-    '',
-  ].join('\r\n'),
-  'utf8',
-);
+function main() {
+  const argv = process.argv.slice(2);
+  let root = '';
+  let appRoot = '';
+  let skipPull = false;
+  let silentStart = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--root' && argv[i + 1]) root = argv[++i];
+    else if (argv[i] === '--app-root' && argv[i + 1]) appRoot = argv[++i];
+    else if (argv[i] === '--skip-pull') skipPull = true;
+    else if (argv[i] === '--silent-start') silentStart = true;
+  }
+  // 更新脚本路径由安装根（或 appRoot）推导并校验存在，不接收外部传入的任意命令参数
+  const script = root
+    ? path.join(root, 'Engram', 'main', 'scripts', 'update-from-source.ps1')
+    : appRoot
+      ? path.join(appRoot, 'scripts', 'update-from-source.ps1')
+      : '';
+  if (!script || !fs.existsSync(script)) process.exit(2);
 
-// 与安装包静默更新同款：整条 cmd 命令用 `"${cmd}"` 包裹并置 windowsVerbatimArguments，
-// 否则 Node 的参数转义会让 cmd 解析错位、start 静默不启。
-const cmd = `start "Engram 更新" cmd.exe /c "${bat}"`;
-const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
-  detached: true,
-  stdio: 'ignore',
-  windowsVerbatimArguments: true,
-});
-child.unref();
-// cmd 成功起来就报成功（start 立即返回，更新在独立窗口里继续）；起不来则非零退出，
-// 主进程据此中止更新、保留原界面并提示手动运行脚本
-child.once('spawn', () => process.exit(0));
-child.once('error', () => process.exit(3));
-setTimeout(() => process.exit(4), 5000);
+  // 经临时 .cmd 转一道：把带引号的脚本路径、日志落盘（Start-Transcript：窗口照常显示的同时
+  // 整段落进日志，含 Write-Host 与子命令输出）都写进文件里，避免往 `start` 命令里塞嵌套引号
+  // （cmd 的引号规则会让 start 静默跑错命令，实测）。失败时窗口暂时留住原因（脚本已把应用重新
+  // 拉起），用户按任意键再关窗口，不会「什么都没看到就消失」。
+  const bat = path.join(os.tmpdir(), 'engram-source-update.cmd');
+  const log = path.join(root || os.tmpdir(), 'engram-update-handoff.log');
+  const psInvoke = [skipPull ? `& '${script}' -SkipPull` : `& '${script}'`, silentStart ? '-SilentStart' : '']
+    .filter(Boolean)
+    .join(' ');
+  fs.writeFileSync(
+    bat,
+    [
+      '@echo off',
+      'set ELECTRON_RUN_AS_NODE=',
+      `echo Engram update log: ${log}`,
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '${log}' -Append | Out-Null; try { ${psInvoke} } finally { Stop-Transcript | Out-Null }"`,
+      'if errorlevel 1 (echo. & echo 更新没有完成：Engram 已尝试重新启动，原因见上面的红字与日志。 & pause)',
+      '',
+    ].join('\r\n'),
+    'utf8',
+  );
+
+  // 与安装包静默更新同款：整条 cmd 命令用 `"${cmd}"` 包裹并置 windowsVerbatimArguments，
+  // 否则 Node 的参数转义会让 cmd 解析错位、start 静默不启。
+  const cmd = `start "Engram 更新" cmd.exe /c "${bat}"`;
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
+    detached: true,
+    stdio: 'ignore',
+    windowsVerbatimArguments: true,
+    env: stripElectronRunAsNode(process.env),
+  });
+  child.unref();
+  // cmd 成功起来就报成功（start 立即返回，更新在独立窗口里继续）；起不来则非零退出，
+  // 主进程据此中止更新、保留原界面并提示手动运行脚本
+  child.once('spawn', () => process.exit(0));
+  child.once('error', () => process.exit(3));
+  setTimeout(() => process.exit(4), 5000);
+}
+
+if (require.main === module) main();
+
+module.exports = { stripElectronRunAsNode };
