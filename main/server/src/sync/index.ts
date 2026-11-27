@@ -40,6 +40,7 @@ import {
   reconcile,
   resetClientRuntime,
   resetLinkBinding,
+  restorePendingOps,
   startClient,
   stopClientAndWait,
   syncConfigEnabled,
@@ -428,6 +429,9 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   if (input.role === 'member') setSetting('sync_role', 'member');
 
   const url = String(input.hub_url || '').trim();
+  const existingToken = getSetting('sync_hub_token') || '';
+  const incomingToken = input.hub_token === undefined ? '' : String(input.hub_token).trim();
+  const effectiveToken = incomingToken || existingToken;
   if (input.enabled) {
     if (!url) return '缺少中枢地址';
     let parsed: URL;
@@ -439,17 +443,17 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return '中枢地址仅支持 http/https';
     }
-    if (!String(input.hub_token || '').trim()) return '缺少中枢访问令牌';
+    if (!effectiveToken) return '缺少中枢访问令牌';
   }
   const before = {
     enabled: getSetting('sync_enabled') === '1',
     url: getSetting('sync_hub_url') || '',
-    token: getSetting('sync_hub_token') || '',
+    token: existingToken,
   };
   // 换绑定（地址或令牌真的变了）作废学来的成员名：新中枢配的成员名由新中枢重新下发。
   // 值没变时不动作——设置页「保存修改」会把原值再发一遍，清掉会让本机名短暂退回主机名
   const urlChanged = input.hub_url !== undefined && url.replace(/\/+$/, '') !== before.url;
-  const tokenChanged = input.hub_token !== undefined && String(input.hub_token).trim() !== before.token;
+  const tokenChanged = Boolean(incomingToken) && incomingToken !== before.token;
   const rebinding = urlChanged || tokenChanged;
   if (rebinding) clearLearnedDeviceLabel();
   // 换中枢了：上一个中枢通告的内网地址、事件游标、页面基线与合并历史都必须丢掉。
@@ -463,7 +467,7 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   }
   setSetting('sync_enabled', input.enabled ? '1' : '0');
   if (input.hub_url !== undefined) setSetting('sync_hub_url', url.replace(/\/+$/, ''));
-  if (input.hub_token !== undefined) setSetting('sync_hub_token', String(input.hub_token).trim());
+  if (incomingToken) setSetting('sync_hub_token', incomingToken);
   const after = { enabled: input.enabled ? '1' : '0', url: url.replace(/\/+$/, '') };
   // 只记「变了什么」，不记令牌：绑定/解绑/换地址都是用户能感知的大动作，值得单独一条
   logSyncEvent('info', 'config-changed', {
@@ -475,7 +479,7 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
       enabled: after.enabled,
       hub: after.url,
       previousHub: before.url,
-      tokenUpdated: Boolean(input.hub_token),
+      tokenUpdated: Boolean(incomingToken),
       role: currentRole(),
     },
   });
@@ -518,6 +522,9 @@ export async function reinitClient(): Promise<void> {
     // 引导期间状态面板显示「已连接 · 首次同步中」：整库对账 + 从头补拉可能持续数分钟，
     // 此前 SSE 还没建立，旧口径会让用户以为没连上（重启后水位已推进才显示正常）。
     beginBootstrap();
+    // 先恢复持久化 outbox 再做首次对账：否则离线改名/删除在 bootstrap 对账期间不可见，
+    // 对账会把改名后新路径当成全新页面先推上去，引起 ID 重分配与账本断链。
+    restorePendingOps();
     // 先择优一次：上次用过的内网地址若能连上，首轮对账就直接走局域网，不必先绕一次公网
     try {
       await probeLinkChannel(true);

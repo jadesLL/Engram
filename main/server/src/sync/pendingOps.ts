@@ -40,9 +40,17 @@ export function persistPendingOp(
 ): number | null {
   if (!isPersistedKind(kind)) return null;
   if (kind === 'page' || kind === 'file') {
+    // 跨过 delete / move 屏障不能复用前置行：否则「编辑 → 删除 → 同路径重建」会把重建合并到删除之前。
+    const barrier = db
+      .prepare(
+        `SELECT COALESCE(MAX(id), 0) AS max_id FROM sync_pending_ops
+         WHERE (kind = 'delete' AND target = ?) OR (kind = 'move' AND (target = ? OR old_path = ?))`
+      )
+      .get(target, target, target) as { max_id: number } | undefined;
+    const barrierId = Number(barrier?.max_id || 0);
     const existing = db
-      .prepare(`SELECT id FROM sync_pending_ops WHERE kind = ? AND target = ? LIMIT 1`)
-      .get(kind, target) as { id: number } | undefined;
+      .prepare(`SELECT id FROM sync_pending_ops WHERE kind = ? AND target = ? AND id > ? ORDER BY id DESC LIMIT 1`)
+      .get(kind, target, barrierId) as { id: number } | undefined;
     if (existing) return Number(existing.id);
   }
   const result = db
@@ -84,15 +92,30 @@ export function clearPendingOps(): void {
   db.prepare(`DELETE FROM sync_pending_ops`).run();
 }
 
-/** 对账时跳过中枢旧路径：本机待删除的路径、本机已改名移走的旧路径 */
-export function pendingPathGuards(): { deleteTargets: Set<string>; moveOldPaths: Set<string> } {
+/** 对账时跳过中枢旧路径与在途改名/编辑路径 */
+export function pendingPathGuards(): {
+  deleteTargets: Set<string>;
+  moveOldPaths: Set<string>;
+  moveTargets: Set<string>;
+  pageTargets: Set<string>;
+  fileTargets: Set<string>;
+} {
   const deleteTargets = new Set<string>();
   const moveOldPaths = new Set<string>();
+  const moveTargets = new Set<string>();
+  const pageTargets = new Set<string>();
+  const fileTargets = new Set<string>();
   const rows = db.prepare(`SELECT kind, target, old_path FROM sync_pending_ops`).all() as any[];
   for (const row of rows) {
     const kind = String(row.kind || '');
-    if (kind === 'delete') deleteTargets.add(String(row.target || ''));
-    if (kind === 'move' && row.old_path) moveOldPaths.add(String(row.old_path));
+    const target = String(row.target || '');
+    if (kind === 'delete' && target) deleteTargets.add(target);
+    if (kind === 'move') {
+      if (row.old_path) moveOldPaths.add(String(row.old_path));
+      if (target) moveTargets.add(target);
+    }
+    if (kind === 'page' && target) pageTargets.add(target);
+    if (kind === 'file' && target) fileTargets.add(target);
   }
-  return { deleteTargets, moveOldPaths };
+  return { deleteTargets, moveOldPaths, moveTargets, pageTargets, fileTargets };
 }

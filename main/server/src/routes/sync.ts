@@ -33,6 +33,7 @@ import {
   getPageRevision,
   getOpsSince,
   listPeers,
+  maxOplogSeq,
   needsResync,
   revokePeer,
   touchPeer,
@@ -713,7 +714,7 @@ export async function syncRoutes(app: FastifyInstance) {
     return {
       entries,
       preferences: preferenceSnapshot(),
-      cursor: currentRevision(),
+      cursor: maxOplogSeq(),
       stale: buildStalePaths(),
       sessions: syncAllowed('session', '') ? sessionManifest() : [],
       tombstones: syncAllowed('session', '') ? listSessionTombstones() : [],

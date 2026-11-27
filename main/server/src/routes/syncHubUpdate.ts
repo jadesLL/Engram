@@ -4,7 +4,8 @@ import { sse } from '../lib/sse.js';
 import { consumeSseStream } from '../lib/sseStream.js';
 import { describeError } from '../lib/describeError.js';
 import { currentRole, syncConfigEnabled } from '../sync/index.js';
-import { hubUrl, hubToken } from '../sync/client.js';
+import { activeHubBase, hubUrl, hubToken } from '../sync/client.js';
+import { dualStackConfig, dualStackFetch } from '../sync/dualStack.js';
 
 /**
  * 同步中枢远程更新（成员端转发）：
@@ -29,10 +30,15 @@ let applying = false;
 function memberHub(): { url: string; token: string } | null {
   if (!syncConfigEnabled()) return null;
   if (currentRole() !== 'member') return null;
-  const url = hubUrl();
+  const url = activeHubBase() || hubUrl();
   const token = hubToken();
   if (!url || !token) return null;
   return { url, token };
+}
+
+/** 复用同步链路的局域网直连与双栈建连策略 */
+function hubFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return dualStackFetch(url, init, dualStackConfig());
 }
 
 /** 中枢响应错误 → 面向设置页的中文提示（含旧版中枢与令牌失效两种 401 成因） */
@@ -67,7 +73,7 @@ async function waitHubHealthy(url: string, timeoutMs: number): Promise<boolean> 
   for (;;) {
     if (Date.now() > deadline) return false;
     try {
-      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+      const res = await hubFetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         if (sawDown) return true;
       } else {
@@ -85,7 +91,7 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
     const hub = memberHub();
     if (!hub) return reply.code(400).send({ error: '尚未绑定多端同步：请在「设置 → 多端同步」绑定服务器后再使用远程更新' });
     try {
-      const res = await fetch(`${hub.url}/api/update/state`, {
+      const res = await hubFetch(`${hub.url}/api/update/state`, {
         headers: { authorization: `Bearer ${hub.token}` },
         signal: AbortSignal.timeout(15_000),
       });
@@ -100,7 +106,7 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
     const hub = memberHub();
     if (!hub) return reply.code(400).send({ error: '尚未绑定多端同步：请在「设置 → 多端同步」绑定服务器后再使用远程更新' });
     try {
-      const res = await fetch(`${hub.url}/api/update/check`, {
+      const res = await hubFetch(`${hub.url}/api/update/check`, {
         method: 'POST',
         headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' },
         body: '{}',
@@ -141,7 +147,7 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
     };
     let sawError = false;
     try {
-      const res = await fetch(`${hub.url}/api/update/apply`, {
+      const res = await hubFetch(`${hub.url}/api/update/apply`, {
         method: 'POST',
         headers: { authorization: `Bearer ${hub.token}` },
         signal: controller.signal,
@@ -166,7 +172,7 @@ export async function hubUpdateRoutes(app: FastifyInstance) {
       }
       let state: unknown = null;
       try {
-        const st = await fetch(`${hub.url}/api/update/state`, {
+        const st = await hubFetch(`${hub.url}/api/update/state`, {
           headers: { authorization: `Bearer ${hub.token}` },
           signal: AbortSignal.timeout(15_000),
         });

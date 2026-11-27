@@ -502,8 +502,9 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         };
       }
     }
-    if (base >= cur || cur === 0) {
-      // 基准未落后（或双方都不知道该页）：直接应用
+    const hubExisting = cur === 0 ? readPageRaw(target) : null;
+    if (base >= cur && (cur > 0 || hubExisting === null || hubExisting === raw)) {
+      // 基准未落后且没有未纳管的既有同名内容冲突：直接应用
       const before = previousPageContent(target, base, cur > 0 ? readPageRaw(target) : null);
       applyPageContent(target, raw);
       const result = commit('page', target, actorId, {});
@@ -779,6 +780,13 @@ export function commitFileChange(relPath: string, actorId: string): Record<strin
 /** 中枢本端产生变更后的提交入口（由 sync/index.ts 的 recordLocalChange / recordSessionChange 调用） */
 export function commitLocalChange(kind: SyncKind, target: string, oldPath = '', deleted = false): Record<string, unknown> {
   if (!syncAllowed(kind, target, oldPath)) return {};
+  if (kind === 'file' && !deleted) {
+    try {
+      if (!fs.statSync(safeJoin(target)).isFile()) return {};
+    } catch {
+      return {};
+    }
+  }
   return commit(kind, target, HUB_ACTOR, { oldPath, deleted });
 }
 

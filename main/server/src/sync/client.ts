@@ -160,6 +160,7 @@ let backoffMs = 1000;
 let loopPromise: Promise<void> | null = null;
 let streamAbort: AbortController | null = null;
 let pushing = false;
+let pushInflight: Promise<void> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 /** 推送失败重试退避（3s 起、倍增、30s 封顶；任一推送成功即复位） */
 let pushRetryMs = 3000;
@@ -535,6 +536,7 @@ async function runProbeRound(): Promise<void> {
   lastProbeRoundAt = Date.now();
 
   const winner = pickWinner(results, preferLan);
+  if (!syncConfigEnabled()) return;
   if (!winner) {
     // 全部不可达：保留原基地址继续重试，状态置「已断开」（本机改动照常排队）
     linkChannel = 'offline';
@@ -544,6 +546,7 @@ async function runProbeRound(): Promise<void> {
 
   const nextBase = winner.url;
   const nextChannel: SyncChannelKind = winner.kind === 'lan' ? 'lan' : await detectHubChannel(nextBase);
+  if (!syncConfigEnabled()) return;
   const previousBase = activeBase;
   const baseChanged = nextBase !== previousBase;
   const channelChanged = nextChannel !== linkChannel;
@@ -848,8 +851,10 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
   try {
     if (op.kind === 'page') {
       const revision = Number(op.revision || 0);
-      if (revision > 0 && revision <= getPageSyncRevision(target)) {
+      const localExists = readPageRaw(target) !== null;
+      if (localExists && revision > 0 && revision <= getPageSyncRevision(target)) {
         // 对账/推送确认可能已拿到更高版本，随后补拉的历史 op 只推进游标，不能回退正文。
+        // 本端文件已被删除（!localExists）时不跳过，避免删后重建页面的回放 op 被旧 sync_revision 误跳过。
       } else if (pendingTargets.has(target) || queue.some((item) => item.kind === 'page' && item.target === target)) {
         // 本端同页已排队或推送在途：暂存，等 ack 后按版本决定，保留待发送的离线改动。
         const prev = stashed.get(target);
@@ -908,22 +913,40 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
         });
       }
     } else if (op.kind === 'delete') {
-      const bytes = (() => {
-        try { return fs.statSync(safeJoin(target)).size; } catch { return 0; }
-      })();
-      try {
-        moveToTrash(target, 'sync');
-      } catch {
-        // 本端没有该文件（从没拉到/已被带外删除）：索引行仍要落删除标记，
-        // 否则行停在 deleted = 0，侧栏留下点开报「文件不存在」的幽灵页
-        markPageDeleted(target);
+      const opRev = Number(op.revision || 0);
+      const localPageRev = getPageSyncRevision(target);
+      if (opRev > 0 && localPageRev > opRev && readPageRaw(target) !== null) {
+        logEvent('info', 'delete-skipped-newer-local', `跳过过期删除「${target}」（本端已持有更新版本 rev=${localPageRev} > ${opRev}）`, {
+          path: target,
+          opRevision: opRev,
+          localRevision: localPageRev,
+        });
+      } else if (
+        pendingTargets.has(target)
+        || queue.some((item) => (item.kind === 'page' || item.kind === 'file') && item.target === target)
+      ) {
+        logEvent('info', 'delete-deferred-local-edit', `「${target}」本机有未推送的新改动，暂不按中枢删除移入回收站，等待推送裁决`, {
+          path: target,
+          opRevision: opRev,
+        });
+      } else {
+        const bytes = (() => {
+          try { return fs.statSync(safeJoin(target)).size; } catch { return 0; }
+        })();
+        try {
+          moveToTrash(target, 'sync');
+        } catch {
+          // 本端没有该文件（从没拉到/已被带外删除）：索引行仍要落删除标记，
+          // 否则行停在 deleted = 0，侧栏留下点开报「文件不存在」的幽灵页
+          markPageDeleted(target);
+        }
+        // 页面删除由 moveToTrash 推 page-deleted；文件类（收集箱 .md 也算文件、原始资料附件、
+        // 图片资产）没有页面行，也就没有事件——补齐，否则别端删掉的文件本机磁盘上已经消失、
+        // 界面却一直挂着（同样会被当成「文件不同步」）。
+        if (classifyBrainEntry(target) === 'file') emit('file-changed', { path: target });
+        applied = true;
+        appliedSummary = summarizeDelete(target, bytes, /\.(md|markdown)$/i.test(target));
       }
-      // 页面删除由 moveToTrash 推 page-deleted；文件类（收集箱 .md 也算文件、原始资料附件、
-      // 图片资产）没有页面行，也就没有事件——补齐，否则别端删掉的文件本机磁盘上已经消失、
-      // 界面却一直挂着（同样会被当成「文件不同步」）。
-      if (classifyBrainEntry(target) === 'file') emit('file-changed', { path: target });
-      applied = true;
-      appliedSummary = summarizeDelete(target, bytes, /\.(md|markdown)$/i.test(target));
     } else if (op.kind === 'move') {
       applyRemoteMove(String(op.old_path || ''), target, Number(op.revision || 0));
       applied = true;
@@ -1040,6 +1063,14 @@ interface PushOutcome {
   op?: SyncOpSummary;
 }
 
+function isRegularFileRel(relPath: string): boolean {
+  try {
+    return fs.statSync(safeJoin(relPath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function pushOne(item: QueueItem): Promise<PushOutcome> {
   if (!syncAllowed(item.kind, item.target, item.oldPath)) return { bytes: 0, merged: false };
   pendingTargets.add(item.target);
@@ -1135,6 +1166,7 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       return { bytes: Buffer.byteLength(raw, 'utf8'), merged, op: res.op as SyncOpSummary | undefined };
     }
     if (item.kind === 'file') {
+      if (!isRegularFileRel(item.target)) return { bytes: 0, merged: false };
       // 必须用 undici 自己的 FormData：hubRequest 走包内 fetch（要按协议族选连接），
       // 而它只认自己的 FormData 实例——传 Node 全局 FormData 会把 "[object FormData]" 当纯文本发出去，
       // 中枢 @fastify/multipart 直接 406「the request is not multipart」。
@@ -1256,6 +1288,15 @@ export function isPermanentPushError(error: unknown): boolean {
 }
 
 async function pushLoop(): Promise<void> {
+  if (pushInflight) return pushInflight;
+  pushInflight = runPushLoop().finally(() => {
+    pushInflight = null;
+    pushing = false;
+  });
+  return pushInflight;
+}
+
+async function runPushLoop(): Promise<void> {
   if (pushing) return;
   pushing = true;
   const startedAt = Date.now();
@@ -1295,7 +1336,7 @@ async function pushLoop(): Promise<void> {
     merged = 0;
   };
   try {
-    while (queue.length > 0) {
+    while (queue.length > 0 && syncConfigEnabled()) {
       // 先出队再推送：推送在途时同目标的新写入仍可入队（否则最新内容会被去重吞掉）
       const item = queue.shift()!;
       try {
@@ -1316,7 +1357,7 @@ async function pushLoop(): Promise<void> {
           removePendingOp(item.dbId);
           continue;
         }
-        if (item.kind === 'file' && !fs.existsSync(safeJoin(item.target))) {
+        if (item.kind === 'file' && !isRegularFileRel(item.target)) {
           removePendingOp(item.dbId);
           continue;
         }
@@ -1371,7 +1412,18 @@ export function enqueueLocalChange(kind: SyncKind, target: string, oldPath?: str
   if (!syncAllowed(kind, target, oldPath)) return;
   if (kind === 'page' || kind === 'file' || kind === 'session' || kind === 'board'
     || kind === 'preference' || kind === 'research') {
-    const existing = queue.find((item) => item.kind === kind && item.target === target);
+    let barrierIndex = -1;
+    if (kind === 'page' || kind === 'file') {
+      for (let i = queue.length - 1; i >= 0; i -= 1) {
+        const qItem = queue[i];
+        if ((qItem.kind === 'delete' && qItem.target === target)
+          || (qItem.kind === 'move' && (qItem.target === target || qItem.oldPath === target))) {
+          barrierIndex = i;
+          break;
+        }
+      }
+    }
+    const existing = queue.find((item, index) => index > barrierIndex && item.kind === kind && item.target === target);
     if (existing) {
       // 同一会话先排了快照、随后被删：不能因为去重把删除丢掉（轮到时本地已无快照，那条会直接
       // return，墓碑永远发不出去）。把已有条目改成删除并带上删除时刻。
@@ -1486,6 +1538,7 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
   if (reconcileRunning) { reconcileRequested = true; return; }
   reconcileRunning = true;
   const startedAt = Date.now();
+  const cursorBeforeReconcile = getCursor();
   try {
     logEvent('info', 'reconcile-start', `开始全量对账（${REASON_LABELS[reason]}）`, { reason, label: REASON_LABELS[reason] });
     const snap = await getJson('/api/sync/snapshot');
@@ -1551,8 +1604,11 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
             setPageSyncRevision(entry.path, entry.revision);
             continue;
           }
-          if (localRaw !== null && getPageSyncRevision(entry.path) > 0) {
-            // 两端都有且内容不同、本端同步过该页 → 推本端内容由 hub 裁决（离线改动不丢）
+          const localPagePending = pendingTargets.has(entry.path)
+            || queue.some((item) => item.kind === 'page' && item.target === entry.path)
+            || localPendingPaths.pageTargets.has(entry.path);
+          if (localRaw !== null && (getPageSyncRevision(entry.path) > 0 || localPagePending)) {
+            // 两端都有且内容不同、本端同步过该页或有尚未推送的离线改动 → 推本端内容由 hub 裁决（离线改动不丢）
             queued++;
             pushSample(queuedSamples, entry.path);
             enqueueLocalChange('page', entry.path);
@@ -1574,7 +1630,8 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
           }
           const hubMtime = Number(entry.mtime || 0);
           const localPending = pendingTargets.has(entry.path)
-            || queue.some((item) => item.kind === 'file' && item.target === entry.path);
+            || queue.some((item) => item.kind === 'file' && item.target === entry.path)
+            || localPendingPaths.fileTargets.has(entry.path);
           if (localHash) {
             // 两端文件内容不同：文件不可合并，按「较新者胜」裁决，而不是无条件本端优先。
             // 旧实现只要本端有文件就推，离线成员的旧副本会覆盖中枢新文件（真实回环：
@@ -1790,7 +1847,30 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     }
     const localEntries = localSnapshot();
     for (const entry of localEntries) {
-      if (!syncAllowed(entry.kind, entry.path) || hubTargets.has(entry.path) || hubStale.has(entry.path)) continue;
+      if (!syncAllowed(entry.kind, entry.path) || hubTargets.has(entry.path)) continue;
+      if (hubStale.has(entry.path)) {
+        const hasPending = pendingTargets.has(entry.path)
+          || queue.some((item) => (item.kind === 'page' || item.kind === 'file') && item.target === entry.path)
+          || localPendingPaths.pageTargets.has(entry.path)
+          || localPendingPaths.fileTargets.has(entry.path);
+        // 长期离线成员在 oplog 裁剪后收不到删除 op：中枢已删且本端无未推改动（页面需已纳管）时移入回收站。
+        const canClean = cursorBeforeReconcile > 0 && !hasPending
+          && (entry.kind === 'file' || getPageSyncRevision(entry.path) > 0);
+        if (canClean) {
+          try {
+            moveToTrash(entry.path, 'sync');
+          } catch {
+            markPageDeleted(entry.path);
+          }
+          if (entry.kind === 'file') emit('file-changed', { path: entry.path });
+          logEvent('info', 'reconcile-stale-cleaned', `中枢已删除「${entry.path}」，对账时已将本机旧副本移入回收站`, {
+            kind: entry.kind,
+            path: entry.path,
+          });
+        }
+        continue;
+      }
+      if (localPendingPaths.moveTargets.has(entry.path)) continue;
       queued++;
       pushSample(queuedSamples, entry.path);
       enqueueLocalChange(entry.kind, entry.path);
@@ -1840,6 +1920,9 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
         queuedSamples,
       }
     );
+    if (cursorBeforeReconcile === 0 && Number(snap?.cursor) > 0) {
+      setCursor(Number(snap.cursor));
+    }
     await pushLoop();
   } catch (error: any) {
     logEvent('error', 'reconcile-failed', `全量对账失败（${REASON_LABELS[reason]}）：${error?.message || error}；本端内容保持原样，联网后会自动重试`, {
@@ -2073,13 +2156,13 @@ export function resetClientRuntime(clearOutbox = true): void {
 }
 
 /** 启动/重连时恢复落库的 outbox：离线删除、改名、编辑在进程重启后继续补推 */
-function restorePendingOps(): void {
+export function restorePendingOps(): void {
   for (const op of loadPendingOps()) {
     if (!syncAllowed(op.kind, op.target, op.oldPath)) {
       removePendingOp(op.id);
       continue;
     }
-    if (queue.some((item) => item.kind === op.kind && item.target === op.target)) continue;
+    if (queue.some((item) => item.dbId === op.id)) continue;
     queue.push({
       kind: op.kind as SyncKind,
       target: op.target,
@@ -2136,6 +2219,10 @@ export function stopClient(): void {
   // 下次启动重新择优：回落到配置的中枢地址，避免拿着上一段会话选中的地址直接连
   activeBase = null;
   if (wasRunning) logEvent('info', 'stopped', '同步客户端已停止', { pending: queue.length, pendingPulls: pendingFilePulls.size });
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   if (pullRetryTimer) {
     clearInterval(pullRetryTimer);
     pullRetryTimer = null;
@@ -2197,5 +2284,15 @@ export async function stopClientAndWait(): Promise<void> {
   try {
     await loopPromise;
   } catch { /* 循环内已兜底 */ }
+  if (probeInflight) {
+    try {
+      await probeInflight;
+    } catch { /* 探测已兜底 */ }
+  }
+  if (pushInflight) {
+    try {
+      await pushInflight;
+    } catch { /* 推送已兜底 */ }
+  }
   loopPromise = null;
 }
