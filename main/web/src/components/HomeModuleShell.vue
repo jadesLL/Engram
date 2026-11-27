@@ -486,10 +486,6 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   box-shadow:none;
   padding:0;
 }
-.module-content :deep(.hb-row) {
-  padding-left:0;
-  padding-right:0;
-}
 .module-content :deep(.notes-bulb) {
   background:var(--accent-soft);
   color:var(--accent);
