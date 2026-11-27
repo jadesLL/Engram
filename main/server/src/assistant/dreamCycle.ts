@@ -304,8 +304,12 @@ export function dreamTick(now: Date = new Date(), deps: DreamDeps = {}): DreamSt
   return startDreamRun({ trigger: 'schedule', now, deps });
 }
 
+let dreamFirstTimer: ReturnType<typeof setTimeout> | null = null;
+let dreamTimer: ReturnType<typeof setInterval> | null = null;
+
 /** 进程级启动入口：启动 30 秒后首跑（等 Fastify 监听就绪，Agent 的 engram 命令要回调本机），此后每 30 秒 tick */
 export function startDreamScheduler(): void {
+  if (dreamTimer || dreamFirstTimer) return;
   const run = () => {
     try {
       dreamTick();
@@ -313,10 +317,24 @@ export function startDreamScheduler(): void {
       console.warn('[dream] 调度 tick 失败', error);
     }
   };
-  const first = setTimeout(run, 30_000);
-  first.unref?.();
-  const timer = setInterval(run, DREAM_TICK_MS);
-  timer.unref?.();
+  dreamFirstTimer = setTimeout(() => {
+    dreamFirstTimer = null;
+    run();
+  }, 30_000);
+  dreamFirstTimer.unref?.();
+  dreamTimer = setInterval(run, DREAM_TICK_MS);
+  dreamTimer.unref?.();
+}
+
+export function stopDreamScheduler(): void {
+  if (dreamFirstTimer) {
+    clearTimeout(dreamFirstTimer);
+    dreamFirstTimer = null;
+  }
+  if (dreamTimer) {
+    clearInterval(dreamTimer);
+    dreamTimer = null;
+  }
 }
 
 export interface DreamStatus {

@@ -277,8 +277,11 @@ watch(
   async (open) => {
     if (!open) {
       ready.value = false;
+      stopTicker();
       return;
     }
+    clock.value = Date.now();
+    startTicker();
     retryIn.value = RETRY_TICK_SECONDS;
     await nextTick();
     await place();
@@ -330,12 +333,22 @@ function onViewportChange(): void {
   if (props.open) void place();
 }
 
+function startTicker(): void {
+  if (ticker !== null) return;
+  ticker = window.setInterval(() => { clock.value = Date.now(); }, 1000);
+}
+
+function stopTicker(): void {
+  if (ticker !== null) window.clearInterval(ticker);
+  ticker = null;
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', onDocPointerDown, true);
   document.addEventListener('keydown', onDocKeyDown, true);
   window.addEventListener('resize', onViewportChange);
   window.addEventListener('scroll', onViewportChange, true);
-  ticker = window.setInterval(() => { clock.value = Date.now(); }, 1000);
+  if (props.open) startTicker();
 });
 
 onBeforeUnmount(() => {
@@ -343,8 +356,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onDocKeyDown, true);
   window.removeEventListener('resize', onViewportChange);
   window.removeEventListener('scroll', onViewportChange, true);
-  if (ticker !== null) window.clearInterval(ticker);
-  ticker = null;
+  stopTicker();
 });
 
 /* ── 动作 ───────────────────────────────────────────────── */

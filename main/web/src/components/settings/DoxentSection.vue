@@ -5,10 +5,16 @@
     <!-- 办公本类型：目前只实装讯飞（Doxent）。下拉是后续品牌的唯一入口，分组名保持中性的「办公本接入」 -->
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>办公本类型</strong>
-        <span v-if="bound">已绑定讯飞办公本；要换品牌请先解除绑定，只换账号可直接点下方「切换账号」。</span>
-        <span v-else-if="syncing">其他设备同步来的登录凭据正在应用，类型先锁定。</span>
-        <span v-else>选择要接入的办公本品牌，目前支持讯飞；类型与登录凭据随「设置」分类同步。</span>
+        <span class="setting-title-row">
+          <strong>办公本类型</strong>
+          <HelpTip
+            title="办公本类型与同步"
+            text="目前支持讯飞办公本；类型与登录凭据随「设置」分类同步，换品牌请先解除绑定。"
+          />
+        </span>
+        <span v-if="bound">已绑定讯飞办公本（换品牌需先解除绑定）。</span>
+        <span v-else-if="syncing">同步凭据应用中，类型已锁定。</span>
+        <span v-else>目前支持讯飞；随「设置」分类同步。</span>
       </div>
       <div class="setting-control doxent-type-control">
         <AppSelect
@@ -47,7 +53,7 @@
         >
           {{ cancellingRuntime ? '取消中…' : '取消下载' }}
         </button>
-        <button class="btn ghost small" type="button" :disabled="loading || binding" @click="refresh">
+        <button class="btn small" type="button" :disabled="loading || binding" @click="refresh">
           {{ loading ? '检测中…' : binding ? '绑定中…' : '重新检测' }}
         </button>
       </div>
@@ -115,17 +121,17 @@
     <div class="setting-row">
       <div class="setting-copy">
         <strong>{{ bound ? '已绑定：内置 Agent 可以调阅办公本' : '绑定办公本' }}</strong>
-        <span v-if="bound">在聊天抽屉里直接说「查一下我办公本的笔记」「把这份纪要写进办公本笔记」。新开的会话生效。</span>
+        <span v-if="bound">可在聊天抽屉直接调阅或写入笔记（新会话生效）。</span>
         <span v-else-if="binding" class="doxent-progress" aria-live="polite">
-          正在按下面的步骤执行；离开本页再回来会接着显示进度。
+          正在执行绑定，离开本页再回来可续看进度。
         </span>
         <span v-else-if="syncing" class="doxent-progress" aria-live="polite">
-          {{ syncDetail }}完成后这里会自动变成已绑定，无需再扫码。
+          {{ syncDetail }}完成后自动变成已绑定。
         </span>
-        <span v-else-if="waiting">已打开浏览器：在页面里完成登录，这里会自动变成已绑定。</span>
+        <span v-else-if="waiting">请在打开的浏览器完成登录。</span>
         <!-- 失败原因只在顶部状态条与失败弹框各展示一次，这里不再重复整段（长原因会串三遍） -->
-        <span v-else-if="bindFailed">上次绑定没有完成，点「重试绑定」可重新走一遍流程。</span>
-        <span v-else>点「绑定办公本」会装官方技能并生成本人的登录链接，在浏览器里扫码 / 登录即可。</span>
+        <span v-else-if="bindFailed">上次绑定未完成，请重试。</span>
+        <span v-else>安装官方技能并打开登录链接，扫码或登录后完成绑定。</span>
       </div>
       <div class="setting-actions">
         <button
@@ -184,31 +190,32 @@
     <p v-if="errorText && !bindFailed" class="setting-note tone-warn">{{ errorText }}</p>
     <p v-else-if="!pythonOk && !runtimeBusy" class="setting-note tone-warn">
       <template v-if="runtime?.supported">
-        官方客户端是 Python 脚本（meta.json 要求 3.8+）：点上方「下载 Python 运行时」由 Engram 安装一份共用解释器
-        （约 {{ runtimeSizeMb }}MB，不修改系统环境，其他需要 Python 的接入共用这一份）；也可以自行安装 Python 后点「重新检测」，
-        或用环境变量 <code>DOXENT_PYTHON</code> 指定解释器路径。
+        官方客户端需 Python 3.8+：点上方「下载 Python 运行时」（约 {{ runtimeSizeMb }}MB，共用且不改系统环境），或自行安装后点「重新检测」（支持 <code>DOXENT_PYTHON</code>）。
       </template>
       <template v-else>
-        官方客户端是 Python 脚本（meta.json 要求 3.8+），当前平台没有可下载的托管运行时{{ runtime?.error ? `：${runtime.error}` : '' }}；
-        可用环境变量 <code>DOXENT_PYTHON</code> 指定解释器路径。
+        官方客户端需 Python 3.8+，当前平台无托管运行时{{ runtime?.error ? `：${runtime.error}` : '' }}；可用 <code>DOXENT_PYTHON</code> 指定路径。
       </template>
     </p>
-    <p v-else-if="runtime?.ready" class="setting-note">
-      正在使用 Engram 共享 Python 运行时（Python {{ runtime.version }}）：运行时装在数据目录内，不修改系统环境，
-      之后其他需要 Python 的接入会直接复用这一份。
-    </p>
-    <p v-if="bound && accountFallback" class="setting-note">
-      官方 CLI 的扫码 / 旧版会话没有记录手机号，这里用脱敏的用户 ID 展示当前账号；不影响读写办公本资料。
-    </p>
-    <p class="setting-note">
-      技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭据由官方 CLI 生成，开启「设置」分类同步后 Engram 只在本机与同步群组之间转存官方 CLI 的会话文件，不读取账号密码。
-    </p>
     <p v-if="settingsSyncOff" class="setting-note tone-warn">
-      当前已加入多端同步，但「设置」分类同步未开启：办公本类型与登录凭据不会跨设备同步。到「多端同步 → 同步内容」打开「设置」即可。
+      已加入多端同步但未开「设置」分类：请到「多端同步 → 同步内容」开启以跨设备同步登录态。
     </p>
-    <p v-else-if="sync.settingsEnabled && sync.role !== 'none'" class="setting-note">
-      办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。切换账号会先让同步设备一起退出旧账号，新账号登录成功后自动切过去。
-    </p>
+    <details class="doxent-tech-details">
+      <summary>工作原理、运行时与隐私说明</summary>
+      <div class="doxent-tech-body">
+        <p v-if="runtime?.ready" class="setting-note">
+          正在使用 Engram 共享 Python 运行时（Python {{ runtime.version }}），位于数据目录内，不修改系统环境。
+        </p>
+        <p v-if="bound && accountFallback" class="setting-note">
+          官方 CLI 未记录手机号时，当前账号以脱敏用户 ID 展示，不影响读写资料。
+        </p>
+        <p class="setting-note">
+          技能包来自 <code>{{ status.downloadUrl || '官方下载地址' }}</code>；登录凭据由官方 CLI 生成，开启「设置」分类同步后 Engram 只在本机与同步群组之间转存官方 CLI 的会话文件，不读取账号密码。
+        </p>
+        <p v-if="!settingsSyncOff && sync.settingsEnabled && sync.role !== 'none'" class="setting-note">
+          办公本类型与登录凭据会随「设置」分类同步；在任一设备完成绑定后，其他设备会自动应用登录态，无需重复扫码。切换账号会先让同步设备一起退出旧账号，新账号登录成功后自动切过去。
+        </p>
+      </div>
+    </details>
   </div>
 </template>
 
@@ -218,6 +225,7 @@ import { api } from '../../api';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 
 /**
  * 设置 → 外设接入 →「办公本接入」（2026-11-18 从「Agent 与自动化」移出：它接入的是外部设备）。
@@ -1133,9 +1141,31 @@ onBeforeUnmount(() => {
 }
 .doxent-status-copy {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+.doxent-tech-details {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.doxent-tech-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  user-select: none;
+}
+.doxent-tech-details summary:hover {
+  color: var(--text);
+}
+.doxent-tech-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 .doxent-status-hint {
   color: var(--text-secondary);

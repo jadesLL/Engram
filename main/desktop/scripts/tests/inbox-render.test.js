@@ -39,11 +39,16 @@ function fakeWindow({ textLengths = [], snapshot = { html: '<html>ok</html>', ti
 
 const noSleep = async () => {};
 
-test('只接受 http/https 地址，其它协议与带凭据的地址拒绝', () => {
+test('只接受 http/https 地址，其它协议、带凭据与本机/私网地址拒绝', () => {
   assert.equal(assertRenderableUrl('https://example.com/a?b=1'), 'https://example.com/a?b=1');
   assert.throws(() => assertRenderableUrl('file:///C:/Windows/win.ini'), /http\/https/);
   assert.throws(() => assertRenderableUrl('javascript:alert(1)'), /http\/https/);
   assert.throws(() => assertRenderableUrl('https://user:pass@example.com/'), /用户名或密码/);
+  assert.throws(() => assertRenderableUrl('http://127.0.0.1:18180/api/pages/list'), /本机、私网/);
+  assert.throws(() => assertRenderableUrl('http://localhost:8080/'), /本机、私网/);
+  assert.throws(() => assertRenderableUrl('http://192.168.1.101/'), /本机、私网/);
+  assert.throws(() => assertRenderableUrl('http://169.254.169.254/latest/meta-data'), /本机、私网/);
+  assert.throws(() => assertRenderableUrl('http://[::1]:18180/'), /本机、私网/);
   assert.throws(() => assertRenderableUrl('不是地址'), /无效/);
 });
 

@@ -10,10 +10,23 @@ import crypto from 'node:crypto';
  */
 const LOGIN_MAX_FAILURES = 5;
 const LOGIN_LOCK_MS = 10 * 60 * 1000;
-const loginFailures = new Map<string, { count: number; lockedUntil: number }>();
+const LOGIN_TRACK_MAX_ENTRIES = 5000;
+const loginFailures = new Map<string, { count: number; lockedUntil: number; updatedAt: number }>();
 
 function clientKey(req: FastifyRequest): string {
   return req.ip || 'unknown';
+}
+
+function pruneLoginFailures(now = Date.now()): void {
+  for (const [key, rec] of loginFailures) {
+    if (rec.lockedUntil > 0 && rec.lockedUntil <= now) loginFailures.delete(key);
+    else if (rec.lockedUntil === 0 && now - rec.updatedAt > LOGIN_LOCK_MS) loginFailures.delete(key);
+  }
+  while (loginFailures.size >= LOGIN_TRACK_MAX_ENTRIES) {
+    const oldest = loginFailures.keys().next().value;
+    if (oldest === undefined) break;
+    loginFailures.delete(oldest);
+  }
 }
 
 function loginLocked(req: FastifyRequest): number {
@@ -25,14 +38,23 @@ function loginLocked(req: FastifyRequest): number {
 }
 
 function recordLoginFailure(req: FastifyRequest): void {
+  const now = Date.now();
+  pruneLoginFailures(now);
   const key = clientKey(req);
-  const rec = loginFailures.get(key) || { count: 0, lockedUntil: 0 };
+  const rec = loginFailures.get(key) || { count: 0, lockedUntil: 0, updatedAt: now };
   rec.count += 1;
+  rec.updatedAt = now;
   if (rec.count >= LOGIN_MAX_FAILURES) {
-    rec.lockedUntil = Date.now() + LOGIN_LOCK_MS;
+    rec.lockedUntil = now + LOGIN_LOCK_MS;
     rec.count = 0;
   }
+  loginFailures.delete(key);
   loginFailures.set(key, rec);
+}
+
+function currentTokenVersion(): number {
+  const parsed = Number(getSetting('token_version') || '0');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 export function ensureJwtSecret(): string {
@@ -78,6 +100,11 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   }
   try {
     await req.jwtVerify();
+    const minTv = currentTokenVersion();
+    const tokenTv = Number((req.user as { tv?: unknown } | undefined)?.tv || 0);
+    if (minTv > 0 && tokenTv < minTv) {
+      reply.code(401).send({ error: '登录态已失效，请重新登录' });
+    }
   } catch {
     reply.code(401).send({ error: '未授权' });
   }
@@ -95,9 +122,9 @@ export async function authRoutes(app: FastifyInstance) {
     if (!password || password.length < 6) {
       return reply.code(400).send({ error: '密码至少 6 位' });
     }
-    setSetting('password_hash', bcrypt.hashSync(password, 10));
-    const token = app.jwt.sign({ sub: 'owner' }, { expiresIn: '30d' });
-    reply.setCookie('token', token, cookieOpts());
+    setSetting('password_hash', await bcrypt.hash(password, 10));
+    const token = app.jwt.sign({ sub: 'owner', tv: currentTokenVersion() }, { expiresIn: '30d' });
+    reply.setCookie('token', token, cookieOpts(req));
     return { ok: true };
   });
 
@@ -109,13 +136,13 @@ export async function authRoutes(app: FastifyInstance) {
     }
     const { password } = req.body as { password?: string };
     const hash = getSetting('password_hash');
-    if (!hash || !password || !bcrypt.compareSync(password, hash)) {
+    if (!hash || !password || !(await bcrypt.compare(password, hash))) {
       recordLoginFailure(req);
       return reply.code(401).send({ error: '密码错误' });
     }
     loginFailures.delete(clientKey(req));
-    const token = app.jwt.sign({ sub: 'owner' }, { expiresIn: '30d' });
-    reply.setCookie('token', token, cookieOpts());
+    const token = app.jwt.sign({ sub: 'owner', tv: currentTokenVersion() }, { expiresIn: '30d' });
+    reply.setCookie('token', token, cookieOpts(req));
     return { ok: true };
   });
 
@@ -128,22 +155,29 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/password', { preHandler: requireAuth }, async (req, reply) => {
     const { oldPassword, newPassword } = req.body as { oldPassword?: string; newPassword?: string };
     const hash = getSetting('password_hash');
-    if (!hash || !oldPassword || !bcrypt.compareSync(oldPassword, hash)) {
+    if (!hash || !oldPassword || !(await bcrypt.compare(oldPassword, hash))) {
       return reply.code(400).send({ error: '原密码错误' });
     }
     if (!newPassword || newPassword.length < 6) {
       return reply.code(400).send({ error: '新密码至少 6 位' });
     }
-    setSetting('password_hash', bcrypt.hashSync(newPassword, 10));
+    const nextTv = currentTokenVersion() + 1;
+    setSetting('token_version', String(nextTv));
+    setSetting('password_hash', await bcrypt.hash(newPassword, 10));
+    const token = app.jwt.sign({ sub: 'owner', tv: nextTv }, { expiresIn: '30d' });
+    reply.setCookie('token', token, cookieOpts(req));
     return { ok: true };
   });
 }
 
-function cookieOpts() {
+function cookieOpts(req?: FastifyRequest) {
+  const forwardedProto = String(req?.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const isHttps = req?.protocol === 'https' || forwardedProto === 'https';
   return {
     path: '/',
     httpOnly: true,
     sameSite: 'lax' as const,
+    ...(isHttps ? { secure: true } : {}),
     maxAge: 30 * 24 * 3600,
     // 配置 COOKIE_DOMAIN（如 .xxx.com）时跨子域共享登录态（隧道域/直连域免重登）
     ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),

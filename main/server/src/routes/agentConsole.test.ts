@@ -90,4 +90,11 @@ test('同步成员令牌可进入控制台配置面（手机远程配置，v1.5.
     headers: { authorization: 'Bearer nope' },
   });
   assert.equal(denied.statusCode, 401);
+
+  const rawSettingsDenied = await app.inject({
+    method: 'GET',
+    url: '/api/agent-console/settings/subagent',
+    headers: { authorization: `Bearer ${memberToken}` },
+  });
+  assert.equal(rawSettingsDenied.statusCode, 401);
 });

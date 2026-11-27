@@ -41,7 +41,15 @@ class SyncPreferences(private val db: LocalDatabase) {
         }
         else -> null
     }
+    private fun isNestedVaultPath(path: String): Boolean {
+        val first = path.replace('\\', '/').trimStart('/').substringBefore('/')
+        return first.equals("brain", ignoreCase = true)
+    }
+
     fun allowed(kind: String, target: String, oldPath: String = ""): Boolean {
+        if (kind in setOf("page", "file", "move", "delete")) {
+            if (isNestedVaultPath(target) || (oldPath.isNotBlank() && isNestedVaultPath(oldPath))) return false
+        }
         val flags = categories()
         return flags.optBoolean(category(kind, target) ?: return false) &&
             (oldPath.isBlank() || flags.optBoolean(category(kind, oldPath) ?: return false))

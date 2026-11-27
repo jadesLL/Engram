@@ -37,7 +37,6 @@ before(async () => {
 
 beforeEach(() => {
   db.exec(`
-    DELETE FROM vec_chunks;
     DELETE FROM chunks;
     DELETE FROM edges;
     DELETE FROM pages_fts;
@@ -126,13 +125,11 @@ test('restoring an older page beside an active copy assigns a new page id', () =
   assert.equal(restoredData.id, restored.pageId);
 });
 
-test('permanent deletion removes page search records, chunks, vectors and edges', () => {
+test('permanent deletion removes page search records, chunks, and edges', () => {
   const page = createPage('Wiki/概念', '永久删除页面');
-  const chunk = db.prepare(
+  db.prepare(
     `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('page', ?, 0, '', '内容')`
   ).run(page.id);
-  db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`)
-    .run(BigInt(chunk.lastInsertRowid), JSON.stringify(Array(1536).fill(0)));
   db.prepare(
     `INSERT INTO edges(src_page, dst_title, rel, created_at) VALUES(?, '目标', 'link', '2026-01-01')`
   ).run(page.id);
@@ -142,7 +139,6 @@ test('permanent deletion removes page search records, chunks, vectors and edges'
   assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE id = ?`).get(page.id).n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM pages_fts WHERE page_id = ?`).get(page.id).n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM chunks WHERE ref_id = ?`).get(page.id).n, 0);
-  assert.equal(db.prepare(`SELECT count(*) n FROM vec_chunks`).get().n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM edges WHERE src_page = ?`).get(page.id).n, 0);
 });
 

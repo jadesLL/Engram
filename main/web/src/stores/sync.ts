@@ -174,6 +174,7 @@ export const useSyncStore = defineStore('sync', () => {
       timer = null;
     }
     if (subscribers === 0) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     timer = setTimeout(() => {
       timer = null;
       void refresh();

@@ -13,6 +13,8 @@ const MAX_REDIRECTS = 3;
 const FETCH_TIMEOUT_MS = 45_000;
 const TITLE_SCAN_BYTES = 256 * 1024;
 const MAX_URL_LENGTH = 4096;
+/** 单页 HTML 下载硬上限，避免恶意超大响应占满磁盘 */
+const MAX_PAGE_BYTES = 50 * 1024 * 1024;
 /** 空壳判定最多看这么多字节：大段内联脚本会把 <body>/挂载点推到 256KB 之后（实测 378KB 的分享页壳） */
 const SHELL_SCAN_BYTES = 4 * 1024 * 1024;
 /** 非 2xx 时最多读掉这么多响应体再主动断开：让连接正常收尾，又不把大页面整个下载下来 */
@@ -20,7 +22,7 @@ const DISCARD_BODY_BYTES = 64 * 1024;
 /** 反爬拦截：这些状态码基本只出现在「请求被站点拦下」，客户端可用内置浏览器渲染后重试 */
 const ANTI_BOT_STATUSES = new Set([403, 412, 429, 451]);
 
-type ResolvedAddress = { address: string; family: number };
+export type ResolvedAddress = { address: string; family: number };
 type HostResolver = (hostname: string) => Promise<ResolvedAddress[]>;
 
 export class InboxWebFetchError extends Error {
@@ -101,7 +103,7 @@ async function publicAddresses(url: URL, resolver: HostResolver): Promise<{ host
 }
 
 /** Undici 连接时只使用刚校验过的地址，避免校验和连接之间再次解析域名。 */
-function pinnedAgent(host: string, addresses: ResolvedAddress[]): Agent {
+export function pinnedAgent(host: string, addresses: ResolvedAddress[]): Agent {
   return new Agent({
     connections: 1,
     maxOrigins: 1,
@@ -330,6 +332,10 @@ export async function fetchInboxWebPage(
         const scanTitle = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             bytes += chunk.length;
+            if (bytes > MAX_PAGE_BYTES) {
+              callback(new InboxWebFetchError('网页体积超过 50MB 上限，已中止抓取'));
+              return;
+            }
             if (remaining > 0) {
               const slice = chunk.subarray(0, remaining);
               probe.push(slice);

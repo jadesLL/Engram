@@ -96,7 +96,10 @@ export async function speechRoutes(app: FastifyInstance) {
       if (part.type !== 'file') continue;
       // 只认 audio（兼容旧字段名 file）；其余文件继续读掉但不使用
       const wanted = part.fieldname === 'audio' || part.fieldname === 'file';
-      if (!wanted || audio) continue;
+      if (!wanted || audio) {
+        part.file.resume();
+        continue;
+      }
       const buffer = await part.toBuffer();
       if (buffer.length > SPEECH_MAX_AUDIO_BYTES) {
         oversized = true;

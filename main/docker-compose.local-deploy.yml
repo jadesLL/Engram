@@ -1,6 +1,7 @@
 services:
   engram:
     image: engram:local-current
+    init: true
     volumes:
       - engram-data:/data
 

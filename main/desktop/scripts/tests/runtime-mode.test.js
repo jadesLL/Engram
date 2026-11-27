@@ -108,6 +108,26 @@ test('预构建安装标记：读到提交号与打包时间，缺失时返回 n
   assert.equal(runtimeMode.readPrebuiltManifest(''), null);
 });
 
+test('预构建标记带 BOM 时仍能读出提交与版本（PowerShell 写出的文件默认带 BOM）', () => {
+  // 2026-11-26 实测：安装器用 PowerShell 5.1 的 Set-Content -Encoding UTF8 写标记，它默认加 BOM
+  // （EF BB BF）；JSON.parse 见到 BOM 直接抛，界面就把「提交」「构建时间」显示成「—」。
+  const root = tmpdir('prebuilt-bom');
+  const body = JSON.stringify({
+    mode: 'prebuilt',
+    version: '1.5.21',
+    commit: '0f47449040c28705f125e3b1b1c8dfd157a3f0a2',
+    builtAt: '2026-11-26T03:14:34+08:00',
+    bundle: 'engram-prebuilt-win-x64.zip',
+    offline: true,
+  });
+  fs.writeFileSync(path.join(root, '.engram-prebuilt.json'), '﻿' + body);
+  const info = runtimeMode.readPrebuiltManifest(root);
+  assert.equal(info.commit, '0f47449040c28705f125e3b1b1c8dfd157a3f0a2');
+  assert.equal(info.version, '1.5.21');
+  assert.equal(info.builtAt, '2026-11-26T03:14:34+08:00');
+  assert.equal(info.offline, true);
+});
+
 test('预构建标记内容损坏时仍按预构建处理（没有 .git 的事实不会因 JSON 坏而改变）', () => {
   const root = tmpdir('prebuilt-bad');
   fs.writeFileSync(path.join(root, '.engram-prebuilt.json'), '{ not json');
@@ -115,6 +135,16 @@ test('预构建标记内容损坏时仍按预构建处理（没有 .git 的事�
   assert.ok(info, '标记存在就必须认出来，否则又会按源码模式跑 git 报错');
   assert.equal(info.mode, 'prebuilt');
   assert.equal(info.commit, '');
+});
+
+test('isGitlessPrebuilt：有 .git 时即便存在 .engram-prebuilt.json 也不算无 Git 预构建', () => {
+  const outer = tmpdir('git-prebuilt');
+  const mainRoot = path.join(outer, 'Engram', 'main');
+  fs.mkdirSync(mainRoot, { recursive: true });
+  fs.writeFileSync(path.join(mainRoot, '.engram-prebuilt.json'), JSON.stringify({ mode: 'source-bundle', git: true }));
+  assert.equal(runtimeMode.isGitlessPrebuilt(mainRoot), true, '没有 .git 时应识别为无 Git 预构建');
+  fs.mkdirSync(path.join(path.dirname(mainRoot), '.git'), { recursive: true });
+  assert.equal(runtimeMode.isGitlessPrebuilt(mainRoot), false, '存在 .git 时应按源码模式处理');
 });
 
 test('isGitCheckout：main/.git 与上一级 .git 都算检出（源码版仓库根在 main 上一级）', () => {
@@ -194,6 +224,9 @@ test('main.js：读预构建标记、检查入口先判不可用、ENOENT 翻成
   );
   assert.ok(text.includes('未找到 Git：源码模式更新需要 Git'), 'spawn ENOENT 必须翻成用户能执行的中文说明');
   assert.ok(text.includes('prebuilt: Boolean(prebuiltInstall())'), 'desktop-get-env 必须把预构建标记交给渲染层');
+  assert.ok(text.includes('runtimeMode.isGitCheckout(appRootDir)'), 'prebuiltInstall 必须在有 .git 检出时走标准源码模式');
+  assert.ok(text.includes("ipcMain.handle('desktop-source-remote-get'") && text.includes("ipcMain.handle('desktop-source-remote-set'"), '主进程必须提供源码仓库读取与保存通道');
+  assert.ok(text.includes('workspaceBootstrapPending'), '首次更新缺少构建依赖时必须交接更新脚本补齐');
 });
 
 /* ---------- 内置 Agent 的真实 Node 解析 ---------- */

@@ -11,7 +11,7 @@
 - 服务端不再有 `/mcp` 端点，不依赖 `@modelcontextprotocol/sdk`，不再往任何客户端写 `mcpServers` 配置。
 - 内置 Agent（Engram 聊天抽屉里的 dsh）：$DSH_HOME/skills 下装 `engram` skill，PATH 里放 `engram` 包装脚本；
   其系统提示词改为「读写知识库只用 engram 命令」。
-- 外置 Agent（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder）：设置页「一键接入」只装 skill + CLI 包装脚本，
+- 外置 Agent（Claude Code / Codex / dsh / ZCode / Kimi Code / WorkBuddy / Qoder / Antigravity）：设置页「一键接入」只装 skill + CLI 包装脚本，
   不再改客户端 MCP 配置。Kimi Work 插件入口下线（无 shell）。
 - 内置 Agent 的「对话里弹选项」= `engram ask`：CLI POST 到服务端并阻塞等待用户点选，答复后同一轮继续。
 
@@ -145,6 +145,7 @@ export function ensureLocalAgentCli(): { cli: CliRuntime; env: NodeJS.ProcessEnv
 | kimi-code | Kimi Code CLI | $KIMI_CODE_HOME 或 ~/.kimi-code | <home>/skills |
 | workbuddy | WorkBuddy | ~/.workbuddy / ~/.workbuddy-ai（环境变量优先） | <配置目录>/skills；**存在的变体目录全部维护** |
 | qoder | Qoder | ~/.qoder / ~/.qoder-cn | <配置目录>/skills；**存在的变体目录全部维护**（国内版客户端只读 ~/.qoder-cn） |
+| antigravity | Antigravity（反重力） | ~/.gemini/antigravity(-ide/-cli) / ~/.antigravity / Windows 安装目录 / PATH 上的 `agy`；**~/.gemini 单独存在不算**（Gemini CLI 也用） | ~/.gemini/config/skills（App / IDE / CLI 共用；不重复写 CLI 专属目录，避免 /skills 列表出现两份） |
 
 - `AgentAccessStatus = { id, title, installed, skillsInstalled, skillPath, skillPaths, cliAvailable, cliCommand }`；
   `registerAgentAccess(id)` / `unregisterAgentAccess(id)` 只写/删带 `<!-- engram-managed -->` 标记的 skill 目录与同标记的旧入口 skill；

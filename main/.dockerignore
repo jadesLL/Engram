@@ -4,8 +4,27 @@ node_modules
 data
 data-test
 desktop/src-tauri
+desktop/server
+desktop/staging
+desktop/web
 # 随包 Node 运行时（prepare-node-runtime.js 生成，打包用；Docker verify 不需要 83MB exe）
 desktop/node
+# 安装器本地运行时与预构建大包（不进 Docker 上下文）
+installer/resources/runtime
+installer/resources/prebuilt/*.zip
+installer/resources/prebuilt/*.zip.json
+# 敏感目录、环境变量、临时目录与调试截图（不进 Docker 上下文）
+.public-mirror
+.env
+.env.*
+.shots
+.tmp-*
+**/.mimosa
+*.db
+*.db-wal
+*.db-shm
+*.tar
+*.sha256
 *.log
 .git
 # 安卓本地构建产物与签名配置（不进 docker 上下文）

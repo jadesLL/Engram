@@ -34,12 +34,12 @@ function check(name, ok, extra = '') {
 // ---------- 1) 静态分流 ----------
 check('脚本声明了 -BundleZip 参数', text.includes('[string]$BundleZip'));
 check(
-  '有包时发 bundle 步骤表（只有 3 步）',
-  text.includes("'##STEPS:bundle=解压预构建环境;shortcut=创建桌面快捷方式;launch=启动 Engram'"),
+  '有包时发源码快装步骤表（解压 → Git 配置 → 离线资源 → 快捷方式 → 启动）',
+  text.includes("'##STEPS:bundle=解压预构建环境;git=配置 Git 与更新源;assets=安装离线资源;shortcut=创建桌面快捷方式;launch=启动 Engram'"),
 );
 check('没有包时仍发源码模式步骤表', text.includes("'##STEPS:git=检测 Git 环境;node=准备便携 Node.js"));
 check('预构建分支调 Install-FromBundle', text.includes('Install-FromBundle $bundleZip $InstallDir $repoDir $mainDir'));
-check('预构建安装会移除旧 .git（不走 git 更新）', text.includes("$gitDir = Join-Path $repoDir '.git'"));
+check('快装模式要求与保留 .git 源码态并恢复原有 origin', text.includes("'.git\\HEAD'") && text.includes('Read-GitOriginUrl'));
 check('覆盖前先停本安装目录的实例', text.includes('Stop-EngramInstances $installDir'));
 check('显式指定不存在的包会失败而不是静默退回源码模式', text.includes('指定的预构建环境包不存在'));
 check('预构建安装后补出 electron.exe', text.includes("Copy-Item -LiteralPath $branded -Destination $plain -Force"));

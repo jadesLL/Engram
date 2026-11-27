@@ -2,6 +2,7 @@
   "name": "@engram/installer",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.20.0",
   "description": "Engram 源码版安装器 GUI",
   "main": "main.js",
   "scripts": {

@@ -196,7 +196,11 @@ async function autoNameSession(sessionId: string): Promise<boolean> {
     .map((message) => ({ role: message.role, content: message.content }));
   const title = await generateSessionTitle(history);
   if (!title) return false;
-  return setSessionTitleIfAuto(sessionId, title);
+  const renamed = setSessionTitleIfAuto(sessionId, title);
+  // 命名慢于收尾（>2s）时，finish 里的 recordSessionChange 已经执行过；这里再补一次，
+  // 否则这次标题更新永远到不了别端（对账只补推中枢没有的会话）。
+  if (renamed) recordSessionChange(sessionId);
+  return renamed;
 }
 
 /** 限时等待：命名慢于收尾就先用临时标题收口，命名结果随后自己落库 */

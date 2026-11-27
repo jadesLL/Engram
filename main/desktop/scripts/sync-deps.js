@@ -57,6 +57,20 @@ function run(cmd, args, options = {}) {
 function pnpmInvoker() {
   const entry = deps.resolvePnpmEntry(appRoot);
   if (entry) {
+    // 旧版安装器只落了 pnpm.cjs、漏掉同目录的 worker.js：任何 install 都会崩在
+    // 「Worker pnpm#N exited with code 1」，且错误里看不出真实原因（2026-11-26 用户实测）。
+    // 先从本机其它完整发行包补一份；补不上就直接给出可操作的报错。
+    if (!deps.pnpmRuntimeComplete(entry) && deps.repairPnpmRuntime(entry, appRoot)) {
+      say(`pnpm 运行时缺 worker.js，已从本机完整发行包补到 ${deps.pnpmEntryDir(entry)}`);
+    }
+    if (!deps.pnpmRuntimeComplete(entry)) {
+      throw new Error(
+        'pnpm 运行时不完整（缺少 ' +
+          path.join(deps.pnpmEntryDir(entry), 'worker.js') +
+          '）：这是旧版安装器只复制 pnpm.cjs 造成的。请下载并运行新版安装器覆盖安装' +
+          '（保留现有数据，自动补齐完整 pnpm 发行包）；若本机已自行安装全局 pnpm，也可删除该目录后重试更新。',
+      );
+    }
     const env = { ...process.env };
     if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
     return { label: entry, cmd: process.execPath, args: (a) => [entry, ...a], options: { env } };
@@ -74,14 +88,16 @@ function pnpmInvoker() {
  * URL，而 pnpm 11 的供应链策略会拿它跟当前 registry（默认 npmjs）的元数据比对，不一致就直接
  * 拒绝安装（ERR_PNPM_TARBALL_URL_MISMATCH，实测 PATH 上的 pnpm 11 在本仓库必现）。
  */
-async function runPnpm(args, cwd) {
+async function runPnpm(args, cwd, extraEnv = null) {
   const invoker = pnpmInvoker();
   const registry = deps.lockfileRegistry(appRoot);
   // registry 进的是 PATH 回退分支的 shell 命令行，lockfile 里的脏值必须拦在 shell 外
   const safeRegistry = registry && /^https?:\/\//.test(registry) ? registry : null;
   const fullArgs = safeRegistry ? [...args, '--registry', safeRegistry] : args;
   say(`运行 ${invoker.label} ${fullArgs.join(' ')}`);
-  const code = await run(invoker.cmd, invoker.args(fullArgs), { cwd, ...invoker.options });
+  const spawnOptions = { cwd, ...invoker.options };
+  if (extraEnv) spawnOptions.env = { ...(spawnOptions.env || process.env), ...extraEnv };
+  const code = await run(invoker.cmd, invoker.args(fullArgs), spawnOptions);
   return code;
 }
 
@@ -129,6 +145,17 @@ function workspaceAction(root) {
  * 客户机正是卡在这里：deps 步显示成功但 dist 始终缺，build 步整树 `--force` 重装又失败。
  * 故运行时缺失一律直接跑 electron 自带的 install.js 补齐（走 npmmirror 镜像），不整树重装。
  */
+function moveElectronDist(fromDir, toDir) {
+  if (fs.existsSync(toDir)) fs.rmSync(toDir, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(toDir), { recursive: true });
+  try {
+    fs.renameSync(fromDir, toDir);
+  } catch {
+    fs.cpSync(fromDir, toDir, { recursive: true });
+    fs.rmSync(fromDir, { recursive: true, force: true });
+  }
+}
+
 async function syncWorkspace() {
   const { action, reason } = workspaceAction(appRoot);
   if (action === 'skip') {
@@ -140,12 +167,55 @@ async function syncWorkspace() {
   else say(`工作区依赖无需安装（${reason}），仅补齐 Electron 运行时`);
 
   if (action === 'install' || action === 'reinstall') {
+    const electronDir = path.join(appRoot, 'desktop', 'node_modules', 'electron');
+    const electronDist = path.join(electronDir, 'dist');
+    const exeName = process.platform === 'win32' ? 'electron.exe' : 'electron';
+    const electronExe = path.join(electronDist, exeName);
+    const stashDir = path.join(appRoot, 'desktop', '.electron-dist-stash');
+    const hasStore = fs.existsSync(path.join(appRoot, 'node_modules', '.pnpm'));
+    // 预构建快装包首次补装工作区开发依赖：保留已有的 Electron dist，避免重复下载 ~110MB 二进制
+    let stashed = false;
+    if (!hasStore && !deps.electronRuntimeSwapPending(appRoot)) {
+      if (fs.existsSync(electronExe)) {
+        say('保留预置 Electron 运行时，补装工作区开发依赖（跳过重复下载）');
+        moveElectronDist(electronDist, stashDir);
+        stashed = true;
+      } else if (fs.existsSync(path.join(stashDir, exeName))) {
+        stashed = true;
+      }
+    }
+
+    const restoreStash = () => {
+      if (!stashed || !fs.existsSync(stashDir)) return;
+      let targetElectronDir = electronDir;
+      try {
+        if (fs.existsSync(electronDir)) targetElectronDir = fs.realpathSync(electronDir);
+      } catch {
+        /* 路径未就位时直接用目标目录 */
+      }
+      const targetDist = path.join(targetElectronDir, 'dist');
+      if (fs.existsSync(path.join(targetDist, exeName))) {
+        fs.rmSync(stashDir, { recursive: true, force: true });
+        return;
+      }
+      moveElectronDist(stashDir, targetDist);
+      say('已恢复预置 Electron 运行时');
+    };
+
     const args = ['install', '--frozen-lockfile'];
     if (action === 'reinstall') args.push('--force');
-    const code = await runPnpm(args, appRoot);
+    let code = 1;
+    try {
+      code = await runPnpm(args, appRoot, stashed ? { ELECTRON_SKIP_BINARY_DOWNLOAD: '1' } : null);
+    } catch (e) {
+      restoreStash();
+      throw e;
+    }
     if (code !== 0) {
+      restoreStash();
       throw new Error('pnpm install --frozen-lockfile 失败：请检查网络与 pnpm-lock.yaml 是否与 package.json 一致');
     }
+    restoreStash();
     const nodeModules = path.join(appRoot, 'node_modules');
     deps.writeRecord(nodeModules, {
       fingerprint: deps.workspaceFingerprint(appRoot).fingerprint,

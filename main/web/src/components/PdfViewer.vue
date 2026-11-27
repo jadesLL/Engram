@@ -1,7 +1,7 @@
 <template>
   <div ref="rootEl" class="pdf-viewer">
     <div class="pdf-toolbar">
-      <button class="icon-btn" v-tooltip="'上一页'" :disabled="pageNumber <= 1" @click="goToPage(pageNumber - 1)">
+      <button class="icon-btn" type="button" aria-label="上一页" v-tooltip="'上一页'" :disabled="pageNumber <= 1" @click="goToPage(pageNumber - 1)">
         <Icon name="chevron-left" :size="16" />
       </button>
       <label class="page-control">
@@ -13,15 +13,15 @@
         />
         <span>/ {{ pageCount || 0 }}</span>
       </label>
-      <button class="icon-btn" v-tooltip="'下一页'" :disabled="pageNumber >= pageCount" @click="goToPage(pageNumber + 1)">
+      <button class="icon-btn" type="button" aria-label="下一页" v-tooltip="'下一页'" :disabled="pageNumber >= pageCount" @click="goToPage(pageNumber + 1)">
         <Icon name="chevron-right" :size="16" />
       </button>
 
       <span class="toolbar-separator" />
-      <button class="icon-btn" v-tooltip="'缩小'" @click="zoomBy(-0.15)"><Icon name="zoom-out" :size="16" /></button>
+      <button class="icon-btn" type="button" aria-label="缩小" v-tooltip="'缩小'" @click="zoomBy(-0.15)"><Icon name="zoom-out" :size="16" /></button>
       <span class="zoom-label">{{ Math.round(effectiveScale * 100) }}%</span>
-      <button class="icon-btn" v-tooltip="'放大'" @click="zoomBy(0.15)"><Icon name="zoom-in" :size="16" /></button>
-      <button class="icon-btn" v-tooltip="'适合宽度'" :class="{ active: fitWidth }" @click="fitToWidth">
+      <button class="icon-btn" type="button" aria-label="放大" v-tooltip="'放大'" @click="zoomBy(0.15)"><Icon name="zoom-in" :size="16" /></button>
+      <button class="icon-btn" type="button" aria-label="适合宽度" v-tooltip="'适合宽度'" :class="{ active: fitWidth }" @click="fitToWidth">
         <Icon name="fit-width" :size="16" />
       </button>
 
@@ -37,14 +37,14 @@
         <span v-if="searchQuery" class="search-count">
           {{ searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : '0/0' }}
         </span>
-        <button class="icon-btn" v-tooltip="'上一个匹配'" :disabled="!searchMatches.length" @click="findPrevious">
+        <button class="icon-btn" type="button" aria-label="上一个匹配" v-tooltip="'上一个匹配'" :disabled="!searchMatches.length" @click="findPrevious">
           <Icon name="chevron-up" :size="14" />
         </button>
-        <button class="icon-btn" v-tooltip="'下一个匹配'" :disabled="searching" @click="findNext">
+        <button class="icon-btn" type="button" aria-label="下一个匹配" v-tooltip="'下一个匹配'" :disabled="searching" @click="findNext">
           <Icon name="chevron-down" :size="14" />
         </button>
       </div>
-      <button class="icon-btn" v-tooltip="'全屏'" @click="toggleFullscreen">
+      <button class="icon-btn" type="button" aria-label="全屏" v-tooltip="'全屏'" @click="toggleFullscreen">
         <Icon name="maximize" :size="16" />
       </button>
     </div>
@@ -261,11 +261,13 @@ function queueThumbnail(pageNumber: number, version = loadVersion) {
     .finally(() => pendingThumbnails.delete(pageNumber));
 }
 
-async function renderThumbnail(pageNumber: number, version: number) {
+const MAX_THUMBNAIL_URLS = 40;
+
+async function renderThumbnail(renderPageNumber: number, version: number) {
   if (version !== loadVersion || !pdfDocument) return;
   let page: Awaited<ReturnType<PDFDocumentProxy['getPage']>> | null = null;
   try {
-    page = await pdfDocument.getPage(pageNumber);
+    page = await pdfDocument.getPage(renderPageNumber);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 104 / base.width });
     const canvas = window.document.createElement('canvas');
@@ -276,7 +278,22 @@ async function renderThumbnail(pageNumber: number, version: number) {
       await page.render({ canvas, canvasContext: context, viewport }).promise;
       if (version === loadVersion) {
         const next = [...thumbnailUrls.value];
-        next[pageNumber - 1] = canvas.toDataURL('image/jpeg', 0.72);
+        next[renderPageNumber - 1] = canvas.toDataURL('image/jpeg', 0.72);
+        // 限制缩略图 data URL 缓存数量，超限时清理距当前页最远的条目以控制内存占用
+        let cachedCount = 0;
+        for (const item of next) if (item) cachedCount++;
+        if (cachedCount > MAX_THUMBNAIL_URLS) {
+          const anchorPage = pageNumber.value;
+          const evictOrder = next
+            .map((url, idx) => ({ idx, page: idx + 1, hasUrl: Boolean(url) }))
+            .filter((entry) => entry.hasUrl && entry.page !== renderPageNumber && entry.page !== anchorPage)
+            .sort((a, b) => Math.abs(b.page - anchorPage) - Math.abs(a.page - anchorPage));
+          for (const victim of evictOrder) {
+            if (cachedCount <= MAX_THUMBNAIL_URLS) break;
+            next[victim.idx] = '';
+            cachedCount--;
+          }
+        }
         thumbnailUrls.value = next;
       }
     }
@@ -409,7 +426,7 @@ watch(() => props.extractedPages, () => {
   searchTexts = null;
   searchMatches.value = [];
   searchIndex.value = -1;
-}, { deep: true });
+});
 watch(searchQuery, () => {
   searchMatches.value = [];
   searchIndex.value = -1;

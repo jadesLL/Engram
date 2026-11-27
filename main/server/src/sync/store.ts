@@ -94,6 +94,11 @@ export function minOplogSeq(): number {
   return row.min_seq ?? 0;
 }
 
+export function maxOplogSeq(): number {
+  const row = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS max_seq FROM sync_oplog`).get() as { max_seq: number | null };
+  return Number(row?.max_seq || 0);
+}
+
 /**
  * 游标需要的那条 op 是否已被裁剪（即「落后超过保留窗口」，该走全量对账）。
  * 判据是「保留区最老的 op 比游标的下一条还新」，不能只看本轮取回 0 条：
@@ -150,6 +155,7 @@ let bodyHashesBackfilled = false;
 function ensurePageBodyHashes(): void {
   if (bodyHashesBackfilled) return;
   bodyHashesBackfilled = true;
+  if (getSetting('page_body_hashes_backfilled') === '1') return;
   try {
     const rows = db.prepare(`SELECT path, content, ts FROM page_revisions`).all() as {
       path: string;
@@ -162,6 +168,7 @@ function ensurePageBodyHashes(): void {
     );
     db.transaction(() => {
       for (const row of rows) insert.run(row.path, pageBodyHash(row.content), row.ts);
+      setSetting('page_body_hashes_backfilled', '1');
     })();
   } catch {
     // 老库还没跑迁移等异常：下次进程启动再试，不能阻塞同步
@@ -219,6 +226,32 @@ export function setCursor(seq: number): void {
   if (seq > getCursor()) setSetting('sync_cursor', String(seq));
 }
 
+/**
+ * 换中枢 / 解除绑定：游标归零。
+ *
+ * cursor 是本端对「某个中枢的事件序号」的记忆，序号只在同一中枢内可比。换到 seq
+ * 更小的新中枢后仍拿旧游标去问 changes?since=，新中枢只会回 0 条，直播 op 也会被
+ * `seq <= cursor` 丢掉——界面仍显示「已连接」，实时同步却永久不工作。
+ */
+export function resetCursor(): void {
+  setSetting('sync_cursor', '0');
+}
+
+/**
+ * 换中枢 / 解除绑定：把页面同步基线与三方合并历史清掉。
+ *
+ * sync_revision / page_revisions / page_body_hashes 都来自旧中枢；新中枢的 revision
+ * 从 1 开始，旧基线会让对账把本机当成「已同步过的旧稿」直接推上去，或按旧祖先
+ * 做错误的三方合并。清掉后下一轮按新中枢全量对齐（空中枢则以本机内容播种）。
+ */
+export function resetSyncBaselines(): void {
+  db.prepare(`UPDATE pages SET sync_revision = 0`).run();
+  db.prepare(`DELETE FROM page_revisions`).run();
+  db.prepare(`DELETE FROM page_body_hashes`).run();
+  bodyHashesBackfilled = false;
+  setSetting('page_body_hashes_backfilled', '0');
+}
+
 // ---------- 同步群组成员（中枢端） ----------
 
 export interface SyncPeer {
@@ -260,19 +293,42 @@ export function revokePeer(id: string): void {
   db.prepare(`UPDATE sync_peers SET revoked = 1 WHERE id = ?`).run(id);
 }
 
-/** 成员活动上报：在线标记、节点设备名与节点 id、已应用水位 */
+const TOUCH_PEER_THROTTLE_MS = 30_000;
+const lastPeerTouch = new Map<string, { at: number; seq: number; nodeLabel: string; nodeId: string }>();
+
+/** 成员活动上报：在线标记、节点设备名与节点 id、已应用水位（纯心跳在节流窗口内跳过冗余写盘） */
 export function touchPeer(
   id: string,
   opts: { nodeLabel?: string; nodeId?: string; seq?: number } = {}
 ): void {
+  const prev = lastPeerTouch.get(id);
+  const nowMs = Date.now();
+  const nextLabel = opts.nodeLabel ?? '';
+  const nextNodeId = opts.nodeId ?? '';
+  if (
+    prev
+    && nowMs - prev.at < TOUCH_PEER_THROTTLE_MS
+    && (opts.seq === undefined || opts.seq <= prev.seq)
+    && (!nextLabel || nextLabel === prev.nodeLabel)
+    && (!nextNodeId || nextNodeId === prev.nodeId)
+  ) {
+    return;
+  }
   const peer = getPeer(id);
   if (!peer) return;
+  const nextSeq = Math.max(peer.last_seq, opts.seq ?? peer.last_seq);
   db.prepare(
     `UPDATE sync_peers SET last_seen_at = ?, last_seq = MAX(last_seq, ?),
        node_label = COALESCE(NULLIF(?, ''), node_label),
        node_id = COALESCE(NULLIF(?, ''), node_id)
      WHERE id = ?`
-  ).run(now(), opts.seq ?? peer.last_seq, opts.nodeLabel ?? '', opts.nodeId ?? '', id);
+  ).run(now(), nextSeq, nextLabel, nextNodeId, id);
+  lastPeerTouch.set(id, {
+    at: nowMs,
+    seq: nextSeq,
+    nodeLabel: nextLabel || prev?.nodeLabel || peer.node_label || '',
+    nodeId: nextNodeId || prev?.nodeId || peer.node_id || '',
+  });
 }
 
 /**

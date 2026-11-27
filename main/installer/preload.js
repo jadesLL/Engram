@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('engramInstaller', {
   bundleInfo() {
     return ipcRenderer.invoke('bundle-info');
   },
+  existingRemote() {
+    return ipcRenderer.invoke('existing-remote');
+  },
   /** 复制日志走主进程剪贴板（与改造前一致：不依赖网页 Clipboard API） */
   copyLog(text) {
     ipcRenderer.send('copy-log', String(text == null ? '' : text));

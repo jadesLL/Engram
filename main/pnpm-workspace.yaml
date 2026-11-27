@@ -5,7 +5,6 @@ packages:
   - installer
 allowBuilds:
   better-sqlite3: true
-  sqlite-vec: true
   electron: true
   electron-winstaller: true
   esbuild: true

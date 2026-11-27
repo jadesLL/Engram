@@ -17,11 +17,14 @@
     <!-- 本机识别：SenseVoice，不联网、不要 Key -->
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>本机离线识别（SenseVoice）</strong>
-        <span>
-          不联网、不要 API Key。下载一次模型后，中文语音可直接转文字；Windows 与 Docker 都由中枢执行。
-          没有下载模型时，Windows 会退回系统自带识别（兼容模式，准确率有限）。
+        <span class="setting-title-row">
+          <strong>本机离线识别（SenseVoice）</strong>
+          <HelpTip
+            title="本机离线识别"
+            text="不联网、不要 API Key，由中枢执行。未下载模型时 Windows 会退回系统自带兼容识别（准确率有限）。"
+          />
         </span>
+        <span>不联网、免 API Key，下载模型即可离线转文字。</span>
       </div>
       <div v-if="hubSupportsLocalModel" class="setting-control speech-model-control">
         <button
@@ -77,11 +80,14 @@
     <!-- 专用 ASR：客户自己填接口，出字比 Omni 这类多模态对话模型快；dsh 的模型页配不了这类接口 -->
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>专用语音识别模型（ASR）</strong>
-        <span>
-          直接调用专用转写接口，比 Omni 这类多模态模型快。可填 OpenAI 兼容的 Whisper 服务，
-          也可以填阿里云百炼的 Qwen-Audio-ASR / Qwen3-ASR 原生接口；保存后「自动」优先用它。
+        <span class="setting-title-row">
+          <strong>专用语音识别模型（ASR）</strong>
+          <HelpTip
+            title="专用语音识别模型（ASR）"
+            text="支持 OpenAI 兼容 Whisper 或百炼 Qwen-Audio-ASR / Qwen3-ASR。Key 不回显、不进日志；在「多端同步 → 同步内容」打开「设置」可跨设备同步。录音仅在请求内传输，不落盘。"
+          />
         </span>
+        <span>比多模态模型更快；保存后「自动」模式优先使用。</span>
       </div>
       <span class="setting-value" :class="asr.configured ? 'tone-ok' : ''">
         {{ asr.configured ? asr.label : '未配置' }}
@@ -106,7 +112,7 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>接口地址</strong>
-          <span>填 Base URL（如 https://api.openai.com/v1）或完整接口地址，两种都认。</span>
+          <span>支持 Base URL 或完整接口地址。</span>
         </div>
         <div class="setting-control speech-asr-control">
           <input
@@ -122,7 +128,6 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>模型名</strong>
-          <span>按服务商的模型 ID 填，不要带「模型：」之类的前缀。</span>
         </div>
         <div class="setting-control speech-asr-control">
           <input
@@ -162,11 +167,6 @@
       </div>
       <p v-if="asrError" class="speech-error">{{ asrError }}</p>
       <p v-else-if="asrMessage" class="speech-note tone-ok">{{ asrMessage }}</p>
-      <p class="speech-note">
-        Key 不会通过接口回显，也不进日志。到 设置 → 多端同步 → 同步内容 打开「设置」分类后，
-        接口地址、模型和 Key 会随群组内设备同步（两端都要开启）；别端保存后本页会自动刷新。
-        录音会发送给你填写的 ASR 服务，只在本次请求里存在，不落盘。
-      </p>
     </template>
     <p v-if="asrError && !asrProtocols.length" class="speech-error">{{ asrError }}</p>
     <p v-else-if="!asrProtocols.length" class="speech-note">正在读取专用 ASR 配置… 读取失败时刷新页面重试。</p>
@@ -174,8 +174,11 @@
     <!-- 引擎偏好 -->
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>识别引擎</strong>
-        <span>自动会优先用专用 ASR，其次内置 Agent 的音频模型，最后本机识别；也可以固定用某一个。</span>
+        <span class="setting-title-row">
+          <strong>识别引擎</strong>
+          <HelpTip title="识别引擎顺序" text="「自动」依次尝试：专用 ASR → 内置 Agent 音频模型 → 本机离线识别。" />
+        </span>
+        <span>自动按「专用 ASR → 音频模型 → 本机」回退。</span>
       </div>
       <div class="setting-control">
         <AppSelect v-model="engine" aria-label="识别引擎" :options="engineOptions" @change="onEngineChanged" />
@@ -186,7 +189,7 @@
     <div class="setting-row">
       <div class="setting-copy">
         <strong>麦克风</strong>
-        <span>选择只存本机，不参与多端同步；与编辑页语音菜单里的选择是同一份。</span>
+        <span>仅存本机，不参与多端同步。</span>
       </div>
       <div class="setting-control">
         <AppSelect v-model="device" aria-label="麦克风" :options="deviceOptions" @change="onDeviceChanged" />
@@ -219,6 +222,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import SecretField from '../SecretField.vue';
 import { notify } from '../../lib/notify';
 import { loadRuntimeCapabilities } from '../../lib/capabilities';

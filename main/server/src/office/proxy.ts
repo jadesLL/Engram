@@ -4,6 +4,7 @@ import {
   OFFICE_INTERNAL_URL,
   OFFICE_PUBLIC_PATH,
 } from '../config.js';
+import { requireAuth } from '../routes/auth.js';
 import { isSafeOfficeProxyPath } from './security.js';
 
 export async function registerOfficeProxy(app: FastifyInstance) {
@@ -12,6 +13,10 @@ export async function registerOfficeProxy(app: FastifyInstance) {
     if (!req.raw.url?.startsWith(prefix)) return;
     if (!isSafeOfficeProxyPath(req.raw.url)) {
       return reply.code(400).send({ error: 'ONLYOFFICE 代理路径无效' });
+    }
+    if (OFFICE_EDITOR_ENABLED) {
+      await requireAuth(req, reply);
+      if (reply.sent) return;
     }
   });
 

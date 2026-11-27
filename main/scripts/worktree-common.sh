@@ -859,6 +859,8 @@ engram_cleanup_feature_git() {
     if ! git -C "$ENGRAM_REPO_ROOT" branch -d "$ENGRAM_BRANCH"; then
       printf '!! 删除分支失败: %s\n' "$ENGRAM_BRANCH" >&2
       failed=1
+    elif git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/remotes/gitea/$ENGRAM_BRANCH"; then
+      git -C "$ENGRAM_REPO_ROOT" push gitea --delete "$ENGRAM_BRANCH" >/dev/null 2>&1 || true
     fi
   fi
 

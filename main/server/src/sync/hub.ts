@@ -32,10 +32,13 @@ import {
   collectSessionSnapshot,
   deleteSessionWithTombstone,
   deviceLabel,
+  listSessionTombstones,
   mergeBoardPayload,
   mergeSessionSnapshot,
+  readSyncedBoard,
   resolveOriginLabel,
   sessionContentHash,
+  sessionUpdatedAt,
   snapshotHash,
   stampSessionOrigin,
   type BoardPayload,
@@ -72,6 +75,8 @@ import {
 export interface NodeSubscriber {
   peerId: string;
   send(event: string, data: unknown): void;
+  /** 撤权时由中枢主动关闭 SSE 连接（不关的话被移除设备会继续收到广播） */
+  close?: () => void;
 }
 
 const nodeSubs = new Set<NodeSubscriber>();
@@ -79,6 +84,15 @@ const nodeSubs = new Set<NodeSubscriber>();
 export function addNodeSubscriber(sub: NodeSubscriber): () => void {
   nodeSubs.add(sub);
   return () => nodeSubs.delete(sub);
+}
+
+/** 移除成员/重置令牌：立即断开该成员已建立的 SSE，并停止后续广播 */
+export function removeNodeSubscribers(peerId: string): void {
+  for (const sub of Array.from(nodeSubs)) {
+    if (sub.peerId !== peerId) continue;
+    nodeSubs.delete(sub);
+    try { sub.close?.(); } catch { /* 已断开 */ }
+  }
 }
 
 export function notifyCategoriesChanged(): void {
@@ -102,15 +116,34 @@ function broadcast(data: Record<string, unknown>, excludePeerId?: string): void 
   }
 }
 
+const MAX_FILE_HASH_CACHE = 5000;
+const fileHashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
+
 function sha256(buf: Buffer): string {
   return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/** 带 (mtimeMs, size) 缓存的文件哈希：未修改的文件跳过重复全量读盘与 SHA-256 计算 */
+function cachedFileSha256(absPath: string, preStat?: fs.Stats): string {
+  const st = preStat ?? fs.statSync(absPath);
+  const hit = fileHashCache.get(absPath);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+    return hit.hash;
+  }
+  const hash = sha256(fs.readFileSync(absPath));
+  if (fileHashCache.size >= MAX_FILE_HASH_CACHE) {
+    const oldest = fileHashCache.keys().next().value;
+    if (oldest !== undefined) fileHashCache.delete(oldest);
+  }
+  fileHashCache.set(absPath, { mtimeMs: st.mtimeMs, size: st.size, hash });
+  return hash;
 }
 
 /** 原子写页面文件并同步 DB 索引（同步链路专用：不经 writePage，避免再次触发本地变更通知） */
 function applyPageContent(relPath: string, raw: string): { id: string } | null {
   const abs = safeJoin(relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const temp = `${abs}.${Date.now()}.sync.tmp`;
+  const temp = `${abs}.${Date.now()}-${crypto.randomUUID()}.sync.tmp`;
   fs.writeFileSync(temp, raw);
   fs.renameSync(temp, abs);
   // 自己写的：文件系统监听据此跳过回声（本函数已经推过 page-changed）
@@ -135,9 +168,10 @@ function readPageRaw(relPath: string): string | null {
 function writeRawFile(relPath: string, buf: Buffer): void {
   const abs = safeJoin(relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const temp = `${abs}.${Date.now()}.sync.tmp`;
+  const temp = `${abs}.${Date.now()}-${crypto.randomUUID()}.sync.tmp`;
   fs.writeFileSync(temp, buf);
   fs.renameSync(temp, abs);
+  noteAppWrite(abs);
 }
 
 /** 原子流式写入同步文件；普通文件保留大小上限，调用方可为收集箱传 Infinity。 */
@@ -169,6 +203,7 @@ async function writeRawFileStream(relPath: string, source: Readable, maxBytes = 
       return false;
     }
     fs.renameSync(temp, abs);
+    noteAppWrite(abs);
     return true;
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -213,9 +248,12 @@ function applyConflictResolution(
   if (isSystemArea || !loser.trim()) return { copyPath: null, theirsWins };
   const dir = path.posix.dirname(target);
   const base = path.basename(target).replace(/\.md$/i, '');
-  let copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
+  const prefix = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}`;
+  let copyRel = `${prefix}.md`;
+  let seq = 2;
   while (fs.existsSync(safeJoin(copyRel))) {
-    copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
+    copyRel = `${prefix}-${seq}.md`;
+    seq += 1;
   }
   try {
     applyPageContent(copyRel, loser);
@@ -276,6 +314,8 @@ interface CommitOptions {
   evidence?: EvidenceSnapshot | null;
   /** 会话删除：广播里带同一个标记，对端据此删掉本地副本并记墓碑 */
   deleted?: boolean;
+  /** 看板：成员推送时广播用刚合并的那一份，而不是重新收集中枢本机看板 */
+  board?: BoardPayload;
   /**
    * 这条变更的来源设备名（会话/看板广播给成员端，界面据此显示「来自 <哪台设备>」）。
    * 中枢本端写入留空 = 用本机设备名；成员推来的由 applyPush 传原推送方的名字。
@@ -334,10 +374,16 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     const snapshot = collectSessionSnapshot(target);
     payload.hash = snapshot ? snapshotHash(snapshot) : '';
     payload.messages = snapshot?.messages.length || 0;
-    if (opts.deleted) payload.deleted = true;
+    if (opts.deleted) {
+      payload.deleted = true;
+      // 删除时刻随广播下发：对端据此判断本机是否有晚于删除的新内容，
+      // 没有它就只能无条件删，刚聊出来的消息会被一起删掉。
+      payload.deleted_at = listSessionTombstones().find((item) => item.sessionId === target)?.deletedAt || '';
+    }
   } else if (kind === 'board') {
-    // 看板内容本身很小（一份 markdown），直接随广播下发，成员不再多一趟请求
-    const board = collectBoardPayload();
+    // 看板内容本身很小（一份 markdown），直接随广播下发，成员不再多一趟请求。
+    // 成员推来的看板用刚合并进 task_board_sync 的那一份；hub 本机生成本就用本机答案。
+    const board = opts.board || collectBoardPayload();
     if (board) payload.board = board;
   } else if (kind === 'research') {
     // 调研任务同样在 wiki.db 里：广播只带快照指纹与客户名，报告正文由成员按需拉取
@@ -368,6 +414,8 @@ export interface PushPayload {
   session?: SessionSnapshot;
   /** kind=session：删除标记（对端删副本并记墓碑） */
   deleted?: boolean;
+  /** kind=session 且 deleted：删除发生时刻；中枢据此拒绝“过期删除” */
+  deleted_at?: string;
   /** kind=board：全端唯一一份的任务看板 */
   board?: BoardPayload;
   /** kind=research：完成态客户调研任务快照（报告正文在这里，不在广播载荷里）；deleted=1 时是墓碑快照 */
@@ -382,6 +430,8 @@ export interface PushApplyResult {
   revision: number;
   /** hub 侧最终内容（可能与推送内容不同：合并/规范化）；非页面操作为空 */
   content?: string;
+  /** 页面已被中枢删除、这次推送只是迟到旧稿：客户端应删掉本地副本而不是按 content 写回 */
+  deleted?: boolean;
   /**
    * 页面写入方式：direct=直接应用；merged=字符级三方合并；conflict=无法融合按修改时间最新者胜；
    * stale=推送方拿的只是本页旧版本（正文 hash 命中历史版本，无本地改动），按中枢版本回执、
@@ -433,8 +483,28 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     const base = Number(push.base_revision || 0);
     if (push.evidence) applyEvidenceSnapshot(push.evidence);
     const cur = getPageSyncRevision(target);
-    if (base >= cur || cur === 0) {
-      // 基准未落后（或双方都不知道该页）：直接应用
+    // 页面在中枢已被删除：迟到的旧稿（mtime 早于删除时刻）不能把它复活。
+    // 删除后重新创建的新页 mtime 会晚于删除时刻，按正常创建处理。
+    const pageRow = db.prepare(`SELECT deleted, updated_at FROM pages WHERE path = ?`).get(target) as
+      | { deleted: number; updated_at: string }
+      | undefined;
+    if (pageRow?.deleted) {
+      const deletedAt = Date.parse(pageRow.updated_at) || 0;
+      const pushMtime = Number(push.mtime || 0);
+      if (!pushMtime || pushMtime <= deletedAt) {
+        return {
+          ok: true,
+          seq: 0,
+          revision: cur,
+          deleted: true,
+          merge: 'stale',
+          op: summarizePageChange(target, '', ''),
+        };
+      }
+    }
+    const hubExisting = cur === 0 ? readPageRaw(target) : null;
+    if (base >= cur && (cur > 0 || hubExisting === null || hubExisting === raw)) {
+      // 基准未落后且没有未纳管的既有同名内容冲突：直接应用
       const before = previousPageContent(target, base, cur > 0 ? readPageRaw(target) : null);
       applyPageContent(target, raw);
       const result = commit('page', target, actorId, {});
@@ -600,7 +670,19 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     // 成员端上报的主机名只在没有成员记录时才用——用户在中枢给设备起的名字才是他认得的那个
     const originLabel = resolveOriginLabel(actorId, String(push.node_label || ''));
     if (push.deleted) {
-      deleteSessionWithTombstone(sessionId, actorId);
+      const deletedAt = String(push.deleted_at || '') || now();
+      // 删除也在「较新者胜」的规则里：A 离线删除，B 期间继续聊出了更新的内容，
+      // A 的删除迟到时不能把 B 的新消息一起删掉（B 的快照会以 updatedAt > deletedAt 复活）。
+      const current = sessionUpdatedAt(sessionId);
+      if (current && current > deletedAt) {
+        return {
+          ok: true,
+          seq: 0,
+          revision: 0,
+          op: summarizeSessionChange(sessionId, ''),
+        };
+      }
+      deleteSessionWithTombstone(sessionId, actorId, deletedAt);
       const result = commit('session', sessionId, actorId, { deleted: true, nodeLabel: originLabel });
       // 中枢自己的浏览器也要刷会话列表（广播只发给成员端，不发本机 SSE）
       emit('session-changed', { id: sessionId, deleted: true, from: push.node_id || '' });
@@ -676,7 +758,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
       // 本端这份同样新或更新：不回发号（否则两端会互相把旧看板推来推去）
       return { ok: true, seq: 0, revision: 0, op: summarizeBoardChange() };
     }
-    const result = commit('board', BOARD_SYNC_ID, actorId, {});
+    const result = commit('board', BOARD_SYNC_ID, actorId, { board: readSyncedBoard() || undefined });
     // 中枢自己的页面也要换成最新那版看板（本机 SSE 不在成员广播里）
     emit('board-changed', { from: String(board.nodeId || '') });
     return {
@@ -698,7 +780,14 @@ export function commitFileChange(relPath: string, actorId: string): Record<strin
 /** 中枢本端产生变更后的提交入口（由 sync/index.ts 的 recordLocalChange / recordSessionChange 调用） */
 export function commitLocalChange(kind: SyncKind, target: string, oldPath = '', deleted = false): Record<string, unknown> {
   if (!syncAllowed(kind, target, oldPath)) return {};
+  if (kind === 'file' && !deleted) {
+    try {
+      if (!fs.statSync(safeJoin(target)).isFile()) return {};
+    } catch {
+      return {};
+    }
+  }
   return commit(kind, target, HUB_ACTOR, { oldPath, deleted });
 }
 
-export { writeRawFile, writeRawFileStream, sha256, applyPageContent, readPageRaw };
+export { writeRawFile, writeRawFileStream, sha256, cachedFileSha256, applyPageContent, readPageRaw };

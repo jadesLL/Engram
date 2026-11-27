@@ -93,13 +93,16 @@
                   @input="scheduleSyncLogReload()"
                 />
               </label>
-              <label class="select-host">
+              <div class="select-host">
                 <Icon name="activity" :size="13" />
-                <select v-model="state.peer" aria-label="按成员筛选" @change="reload">
-                  <option value="">成员：全部</option>
-                  <option v-for="name in peerOptions" :key="name" :value="name">{{ name }}</option>
-                </select>
-              </label>
+                <AppSelect
+                  v-model="state.peer"
+                  variant="mini"
+                  aria-label="按成员筛选"
+                  :options="peerSelectOptions"
+                  @change="reload"
+                />
+              </div>
               <button class="chip action" type="button" :class="{ on: !state.autoRefresh }" @click="toggleSyncLogAutoRefresh">
                 {{ state.autoRefresh ? '自动刷新：开' : '自动刷新：暂停' }}
               </button>
@@ -236,11 +239,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
+import AppSelect from './ui/AppSelect.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
 import { useServerUpdateStore } from '../stores/serverUpdate';
 import { useDismissOnOutside } from '../lib/dismissOnOutside';
+import { useDialogFocus } from '../lib/dialogFocus';
 import {
   OUTCOME_HINTS,
   OUTCOME_LABELS,
@@ -299,6 +304,7 @@ useDismissOnOutside({
   close: closeSyncLogDrawer,
   priority: () => 40,
 });
+useDialogFocus(() => state.open, rootEl);
 /** 空闲时 5 秒一跳；同步进行中收到 2 秒——用户正盯着「这轮又改了什么」，5 秒太钝 */
 const AUTO_REFRESH_MS = 5000;
 const AUTO_REFRESH_BUSY_MS = 2000;
@@ -502,6 +508,11 @@ const peerOptions = computed(() => {
   for (const entry of state.entries) if (entry.peer) names.add(entry.peer);
   return [...names].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
 });
+
+const peerSelectOptions = computed(() => [
+  { value: '', label: '成员：全部' },
+  ...peerOptions.value.map((name) => ({ value: name, label: name })),
+]);
 
 const filterSummary = computed(() => {
   const parts: string[] = [];
@@ -870,7 +881,16 @@ async function askClear(): Promise<void> {
   color: var(--text-faint);
   background: var(--card-bg);
 }
-.select-host select,
+.select-host :deep(.app-select-trigger) {
+  border: 0;
+  height: auto;
+  padding: 0 2px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: var(--fs-small);
+  max-width: 180px;
+}
 .search-host input {
   border: 0;
   background: transparent;
@@ -881,7 +901,6 @@ async function askClear(): Promise<void> {
 }
 .search-host { flex: 1; min-width: 150px; }
 .search-host input { width: 100%; }
-.select-host select { max-width: 200px; }
 
 /* 导出菜单：默认收起，hover / 聚焦时展开（不引入额外的浮层组件） */
 .menu-host { position: relative; }

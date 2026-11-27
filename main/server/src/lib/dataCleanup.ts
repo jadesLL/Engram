@@ -4,7 +4,7 @@ import { ensureDirs } from '../config.js';
 import { RELATION_WORDS } from '../pipeline/extractor.js';
 import { appendWikiLog, regenerateIndex, regenerateRelationships, LOG_PAGE } from '../pipeline/indexFile.js';
 import { rebuildAll } from '../pipeline/indexer.js';
-import { db, ensureVecTable, getVecDim } from './db.js';
+import { db } from './db.js';
 import { invalidateGraphCache } from './graphCache.js';
 import { safeJoin, writePage } from './vault.js';
 
@@ -74,11 +74,6 @@ function clearStaleSystemPageIndexes() {
   const ids = rows.map((row) => row.id);
   const ph = placeholders(ids);
   const clearIndexes = db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (
-         SELECT id FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})
-       )`
-    ).run(...ids);
     db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...ids);
     db.prepare(`DELETE FROM edges WHERE src_page IN (${ph})`).run(...ids);
   });
@@ -92,12 +87,10 @@ function clearStaleSystemPageIndexes() {
 export const yieldEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /**
- * vec0 虚表（vec_chunks）与 FTS5 虚表（pages_fts/files_fts）不支持 `DELETE ... LIMIT`，
- * 且 vec0 逐行删除代价随表规模线性增长。DROP + 重建空表是清空它们最彻底、占比最低的方式。
+ * FTS5 虚表（pages_fts/files_fts）不支持 `DELETE ... LIMIT`。
+ * DROP + 重建空表是清空它们最彻底、占比最低的方式。
  */
 function dropVectorAndFtsTables() {
-  db.exec('DROP TABLE IF EXISTS vec_chunks');
-  ensureVecTable(getVecDim());
   db.exec('DROP TABLE IF EXISTS pages_fts');
   db.exec(
     `CREATE VIRTUAL TABLE pages_fts USING fts5(title, content, tags, page_id UNINDEXED, tokenize = 'unicode61')`
@@ -226,12 +219,6 @@ export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
     const ids = logIds.map((row) => row.id);
     const ph = placeholders(ids);
     // 逐步删除日志页相关索引，每步让出事件循环，避免大库同步删除冻结 /health 探针。
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (
-         SELECT id FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})
-       )`
-    ).run(...ids);
-    await yieldEventLoop();
     db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...ids);
     await yieldEventLoop();
     db.prepare(`DELETE FROM pages_fts WHERE page_id IN (${ph})`).run(...ids);

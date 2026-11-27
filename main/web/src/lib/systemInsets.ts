@@ -87,17 +87,43 @@ export function reportThemeToNative(dark: boolean): void {
 }
 
 let installed = false;
+let pendingFrame = 0;
+let queuedInsets: Partial<SystemInsets> | null | undefined;
+let queuedFromNative = false;
+
+function scheduleSystemInsets(input?: Partial<SystemInsets> | null, fromNative = false): void {
+  if (fromNative) {
+    queuedFromNative = true;
+    queuedInsets = undefined;
+  } else {
+    queuedFromNative = false;
+    queuedInsets = input;
+  }
+  if (typeof requestAnimationFrame !== 'function') {
+    applySystemInsets(queuedFromNative ? readNativeInsets() : queuedInsets);
+    return;
+  }
+  if (pendingFrame) return;
+  pendingFrame = requestAnimationFrame(() => {
+    pendingFrame = 0;
+    const useNative = queuedFromNative;
+    const payload = queuedInsets;
+    queuedFromNative = false;
+    queuedInsets = undefined;
+    applySystemInsets(useNative ? readNativeInsets() : payload);
+  });
+}
 
 /** 应用启动时调用一次（main.ts）。桌面/网页端保持现状，不产生额外行为。 */
 export function installSystemInsets(): void {
   if (installed) return;
   installed = true;
   (window as unknown as { __engramSystemBars?: (value: unknown) => void }).__engramSystemBars = (value) => {
-    applySystemInsets(value as Partial<SystemInsets>);
+    scheduleSystemInsets(value as Partial<SystemInsets>, false);
   };
   applySystemInsets(readNativeInsets());
   // 兜底：宿主没推变化时（老 WebView / 厂商 ROM），旋转或分屏后自己再读一次原生值
-  const refresh = () => applySystemInsets(readNativeInsets());
+  const refresh = () => scheduleSystemInsets(undefined, true);
   window.addEventListener('resize', refresh, { passive: true });
   window.addEventListener('orientationchange', refresh, { passive: true });
 }

@@ -1,7 +1,7 @@
 import { db, getSetting, newId, now } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
-import { enqueuePagePipeline, saveIdeaDistillResult } from './jobQueue.js';
+import { enqueuePagePipeline, registerJobWakeup, saveIdeaDistillResult } from './jobQueue.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
 import { missingFtsPageIds } from './pipeline/sourceLedger.js';
 
@@ -154,6 +154,7 @@ const handlers: Record<string, JobHandler> = {
 const KNOWN_KINDS = new Set(Object.keys(handlers));
 
 let running = false;
+let jobTimer: ReturnType<typeof setInterval> | null = null;
 type JobLane = 'default' | 'document';
 type ActiveExecution = {
   controller: AbortController;
@@ -536,6 +537,8 @@ function abortStaleJobs(): void {
   }
 }
 
+let wakeScheduled = false;
+
 export function startJobRunner() {
   if (running) return;
   running = true;
@@ -545,6 +548,30 @@ export function startJobRunner() {
     pollLane('default');
     pollLane('document');
   };
+  registerJobWakeup(() => {
+    if (!running || wakeScheduled) return;
+    wakeScheduled = true;
+    setImmediate(() => {
+      wakeScheduled = false;
+      if (!running) return;
+      pollLane('default');
+      pollLane('document');
+    });
+  });
   tick();
-  setInterval(tick, 1000);
+  jobTimer = setInterval(tick, 1000);
+  jobTimer.unref?.();
+}
+
+export function stopJobRunner(): void {
+  running = false;
+  wakeScheduled = false;
+  registerJobWakeup(null);
+  if (jobTimer) {
+    clearInterval(jobTimer);
+    jobTimer = null;
+  }
+  for (const execution of activeExecutions.values()) {
+    execution.controller.abort();
+  }
 }

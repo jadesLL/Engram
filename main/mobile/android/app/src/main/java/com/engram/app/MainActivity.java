@@ -84,6 +84,8 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
      * 同一段前台里只问一次，避免轮询/切面板时反复弹框；退到后台（onStop）后重置，下次再问。
      */
     private boolean backgroundSyncPermissionAsked;
+    /** 正在跳转到系统权限/设置界面：该次 onStop 不重置已问标记，避免用户拒绝后回前台立刻死循环重弹 */
+    private boolean launchedPermissionSettings;
     /**
      * Android 13+（API 33）的预测性返回回调：系统返回手势经 OnBackInvokedDispatcher 派发，
      * 由它转发到 {@link #handleSystemBack()}。API 33 以下恒为 null——返回走 OnBackPressedCallback。
@@ -245,8 +247,12 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
     @Override
     public void onStop() {
         activityForeground = false;
-        // 退到后台后重置：下一次回到前台（下一次使用）发现还没授权就再申请一次
-        backgroundSyncPermissionAsked = false;
+        // 若是因为本应用刚跳去系统权限/设置页而触发的 onStop，不重置已问标记：用户拒绝返回后不会死循环重弹
+        if (launchedPermissionSettings) {
+            launchedPermissionSettings = false;
+        } else {
+            backgroundSyncPermissionAsked = false;
+        }
         try {
             EngramLocalServer localServer = EngramLocalServer.peek();
             if (localServer != null) localServer.onBackground();
@@ -311,6 +317,7 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
         if (action == null) return false;
         switch (action) {
             case BackgroundSyncPermissions.ACTION_REQUEST_NOTIFICATIONS:
+                launchedPermissionSettings = true;
                 SyncPermissions.markNotificationsAsked(this);
                 ActivityCompat.requestPermissions(
                         this,
@@ -319,9 +326,11 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
                 );
                 return true;
             case BackgroundSyncPermissions.ACTION_NOTIFICATION_SETTINGS:
+                launchedPermissionSettings = true;
                 SyncPermissions.openAppNotificationSettings(this);
                 return true;
             case BackgroundSyncPermissions.ACTION_REQUEST_BATTERY:
+                launchedPermissionSettings = true;
                 SyncPermissions.requestBatteryExemption(this);
                 return true;
             default:
@@ -350,6 +359,10 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
         updateHost = null;
         // 宿主静态持有 Activity：销毁时必须摘掉，否则泄漏（与本机服务实例是否还在无关）
         EngramLocalServer.setBackgroundSyncHost(null);
+        if (inboxRender != null) {
+            inboxRender.onDestroy();
+            inboxRender = null;
+        }
         // 导出桥待保存的 PNG 字节可能几十 MB：销毁时立刻丢掉，别等 GC
         if (pageExport != null) {
             pageExport.onDestroy();
@@ -796,10 +809,26 @@ public class MainActivity extends BridgeActivity implements BackgroundSyncHost {
         }, "engram-share-import").start();
     }
 
-    /** 打开分享 URI：content:// 走系统授权，旧应用仍可能给 file:// 绝对路径。 */
+    /** 打开分享 URI：content:// 走系统授权，旧应用仍可能给 file:// 绝对路径（严禁读取应用私有目录）。 */
     private InputStream openSharedStream(Uri uri) throws Exception {
         if ("file".equalsIgnoreCase(uri.getScheme())) {
-            return new FileInputStream(new File(uri.getPath()));
+            String rawPath = uri.getPath();
+            if (rawPath == null || rawPath.trim().isEmpty()) {
+                throw new SecurityException("无效的文件分享路径");
+            }
+            String canonical = new File(rawPath).getCanonicalPath();
+            String dataDir = getApplicationInfo().dataDir != null
+                    ? new File(getApplicationInfo().dataDir).getCanonicalPath() : "";
+            String filesDir = getFilesDir().getCanonicalPath();
+            String cacheDir = getCacheDir().getCanonicalPath();
+            if ((!dataDir.isEmpty() && (canonical.equals(dataDir) || canonical.startsWith(dataDir + File.separator)))
+                    || canonical.equals(filesDir) || canonical.startsWith(filesDir + File.separator)
+                    || canonical.equals(cacheDir) || canonical.startsWith(cacheDir + File.separator)
+                    || canonical.startsWith("/data/data/" + getPackageName())
+                    || canonical.startsWith("/data/user/")) {
+                throw new SecurityException("拒绝读取应用私有目录文件");
+            }
+            return new FileInputStream(new File(canonical));
         }
         return getContentResolver().openInputStream(uri);
     }

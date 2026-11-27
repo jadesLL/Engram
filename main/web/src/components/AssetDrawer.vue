@@ -124,6 +124,7 @@ import ImageViewer from './ImageViewer.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import { confirmDialog } from '../lib/confirm';
 import { useDismissOnOutside } from '../lib/dismissOnOutside';
+import { useDialogFocus } from '../lib/dialogFocus';
 import { useAppStore } from '../stores/app';
 import {
   assetDrawerState as state,
@@ -152,6 +153,7 @@ useDismissOnOutside({
   close: closeAssetDrawer,
   priority: () => 40,
 });
+useDialogFocus(() => state.open, rootEl);
 
 /**
  * 卡片离右缘的距离：Agent 悬浮卡片占着右侧时让开它的宽度，

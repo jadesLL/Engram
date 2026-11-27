@@ -32,3 +32,26 @@ test('中枢生成的冲突副本也广播给发起推送的成员；正本仍�
     assert.ok(!events.some((event) => event.target === target));
   } finally { remove(); }
 });
+
+test('同一秒内连续冲突不会忙等卡住，副本文件名自动顺延序号', async () => {
+  const target = 'Wiki/概念/同秒连冲.md';
+  vault.writePage(target, 'v0', { type: 'concept' });
+  const base = hub.commitLocalChange('page', target);
+  vault.writePage(target, 'hub-1', { type: 'concept' });
+  hub.commitLocalChange('page', target);
+
+  const startedAt = Date.now();
+  const r1 = await hub.applyPush({
+    node_id: 'm1', kind: 'page', target, base_revision: Number(base.revision), content: 'm1-1', mtime: Date.now() + 1000,
+  }, 'm1');
+  vault.writePage(target, 'hub-2', { type: 'concept' });
+  const b2 = hub.commitLocalChange('page', target);
+  const r2 = await hub.applyPush({
+    node_id: 'm2', kind: 'page', target, base_revision: Number(base.revision), content: 'm2-1', mtime: Date.now() + 2000,
+  }, 'm2');
+  assert.ok(Number(b2.revision) > Number(base.revision));
+  assert.equal(r1.merge, 'conflict');
+  assert.equal(r2.merge, 'conflict');
+  assert.ok(r1.copyPath && r2.copyPath && r1.copyPath !== r2.copyPath);
+  assert.ok(Date.now() - startedAt < 900, '同秒冲突不应阻塞等待下一秒');
+});

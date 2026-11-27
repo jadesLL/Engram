@@ -314,6 +314,11 @@ const ICONS: Record<string, string[]> = {
     'M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Z',
     'M7 11V7a5 5 0 0 1 10 0v4',
   ],
+  help: [
+    'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',
+    'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3',
+    'M12 17h.01',
+  ],
 };
 
 const paths = computed(() => ICONS[props.name] || ICONS.file);

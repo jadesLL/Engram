@@ -4,7 +4,7 @@ import matter from 'gray-matter';
 import { BRAIN_DIR, normalizeDir, isPageDir } from '../config.js';
 import { isInboxPath, isNestedVaultPath, VAULT_DIR_NAME } from './brainPaths.js';
 import { RAW_SECTION_NAMES } from './rawSections.js';
-import { db, newId, now } from './db.js';
+import { db, getSetting, newId, now, setSetting } from './db.js';
 import { ftsSegment } from './fts.js';
 import { emit } from './events.js';
 import { noteAppWrite } from './appWrites.js';
@@ -36,11 +36,13 @@ export interface ScanVaultPagesResult {
 /** 防路径穿越：把相对路径解析到 brain 内，越界抛错 */
 export function safeJoin(rel: string): string {
   const clean = rel.replace(/^[/\\]+/, '');
-  // vault 里又套了一层 vault（整库副本残留）：任何读写都不许碰，否则副本会再次被收录/同步
-  if (isNestedVaultPath(clean)) throw new Error('路径无效：vault 内不允许出现嵌套的 brain 目录');
   const abs = path.resolve(BRAIN_DIR, clean);
   if (abs !== BRAIN_DIR && !abs.startsWith(BRAIN_DIR + path.sep)) {
     throw new Error('路径无效');
+  }
+  // vault 里又套了一层 vault（整库副本残留）：基于真实解析后的相对路径校验，防止 `Wiki/../brain/...` 绕过
+  if (isNestedVaultPath(toRel(abs))) {
+    throw new Error('路径无效：vault 内不允许出现嵌套的 brain 目录');
   }
   return abs;
 }
@@ -64,6 +66,12 @@ const HIDDEN = new Set(['.trash', 'assets']);
 
 /** 递归列出 brain 目录树（页面 + 文件） */
 export function listTree() {
+  const pageByPath = new Map<string, any>();
+  for (const row of db
+    .prepare(`SELECT path, id, title, type, tags, updated_at, guide_version FROM pages WHERE deleted = 0`)
+    .all() as any[]) {
+    pageByPath.set(row.path, row);
+  }
   function walk(dir: string, orderList?: string[]): any[] {
     let entries: fs.Dirent[];
     try {
@@ -84,9 +92,7 @@ export function listTree() {
       if (e.isDirectory()) {
         out.push({ kind: 'dir', name: e.name, path: rel, children: walk(abs, SUB_ORDER[e.name]) });
       } else if (e.name.toLowerCase().endsWith('.md')) {
-        const page = db
-          .prepare(`SELECT id, title, type, tags, updated_at, guide_version FROM pages WHERE path = ? AND deleted = 0`)
-          .get(rel) as any;
+        const page = pageByPath.get(rel);
         out.push({
           kind: 'page',
           name: e.name,
@@ -356,7 +362,13 @@ export function syncPageFile(relPath: string): PageMeta | null {
  *
  * ftsIds 由调用方一次性查出传入，避免逐页一次 FTS B-tree 探测。
  */
-function scanPageFile(relPath: string, ftsIds: ReadonlySet<string>): 'skipped' | 'changed' {
+type PageFingerprintRow = { id: string; path: string; deleted: number; file_mtime_ms: number | null; file_size: number | null };
+
+function scanPageFile(
+  relPath: string,
+  ftsIds: ReadonlySet<string>,
+  pageRows?: ReadonlyMap<string, PageFingerprintRow>,
+): 'skipped' | 'changed' {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(safeJoin(relPath));
@@ -364,11 +376,11 @@ function scanPageFile(relPath: string, ftsIds: ReadonlySet<string>): 'skipped' |
     // 遍历后、stat 前被删掉：不计入跳过，交给 reconcileMissingPages 统一判删
     return 'changed';
   }
-  const row = db
-    .prepare(`SELECT id, deleted, file_mtime_ms, file_size FROM pages WHERE path = ?`)
-    .get(relPath) as
-    | { id: string; deleted: number; file_mtime_ms: number | null; file_size: number | null }
-    | undefined;
+  const row = pageRows
+    ? pageRows.get(relPath)
+    : (db
+        .prepare(`SELECT id, path, deleted, file_mtime_ms, file_size FROM pages WHERE path = ?`)
+        .get(relPath) as PageFingerprintRow | undefined);
   if (
     row &&
     Number(row.deleted) === 0 &&
@@ -590,6 +602,12 @@ export async function scanVaultPages(): Promise<ScanVaultPagesResult> {
   const ftsIds = new Set(
     (db.prepare(`SELECT page_id FROM pages_fts`).all() as { page_id: string }[]).map((row) => String(row.page_id))
   );
+  const pageRows = new Map<string, PageFingerprintRow>();
+  for (const row of db
+    .prepare(`SELECT id, path, deleted, file_mtime_ms, file_size FROM pages`)
+    .all() as PageFingerprintRow[]) {
+    pageRows.set(row.path, row);
+  }
   const result: ScanVaultPagesResult = { pages: 0, skipped: 0, changed: 0 };
   function walk(dir: string) {
     let entries: fs.Dirent[];
@@ -610,7 +628,7 @@ export async function scanVaultPages(): Promise<ScanVaultPagesResult> {
         walk(abs);
       } else if (e.name.toLowerCase().endsWith('.md')) {
         result.pages += 1;
-        if (scanPageFile(rel, ftsIds) === 'skipped') result.skipped += 1;
+        if (scanPageFile(rel, ftsIds, pageRows) === 'skipped') result.skipped += 1;
         else result.changed += 1;
       }
     }
@@ -647,23 +665,56 @@ export function adoptPageAssetRefs(relPath: string): AdoptedAssetFile[] {
   return result.files;
 }
 
-/** 全库图片归属自愈：只读带 /media/ 的页面，命中跨父项引用才写回（含同步通知）。 */
+/** 全库图片归属自愈：只读有变动的页面且带 /media/ 才解析收编（含同步通知）。 */
 function adoptVaultAssetRefs(): { pages: number; files: number } {
-  const rows = db.prepare(`SELECT path FROM pages WHERE deleted = 0`).all() as { path: string }[];
+  const rows = db
+    .prepare(`SELECT id, path, file_mtime_ms, file_size FROM pages WHERE deleted = 0`)
+    .all() as { id: string; path: string; file_mtime_ms: number | null; file_size: number | null }[];
+  let checked: Record<string, string> = {};
+  try {
+    checked = JSON.parse(getSetting('asset_adopt_checked') || '{}') || {};
+  } catch {
+    checked = {};
+  }
+  const nextChecked: Record<string, string> = {};
+  let dirty = false;
   let pages = 0;
   let files = 0;
   for (const row of rows) {
+    const rel = String(row.path);
+    const sig = `${row.file_mtime_ms ?? ''}:${row.file_size ?? ''}`;
+    if (sig !== ':' && checked[row.id] === sig) {
+      nextChecked[row.id] = sig;
+      continue;
+    }
     let raw: string;
+    let statSig = sig;
     try {
-      raw = fs.readFileSync(safeJoin(String(row.path)), 'utf8');
+      const abs = safeJoin(rel);
+      const st = fs.statSync(abs);
+      statSig = `${st.mtimeMs}:${st.size}`;
+      raw = fs.readFileSync(abs, 'utf8');
     } catch {
       continue;
     }
-    if (!raw.includes(MEDIA_PREFIX)) continue;
-    const adopted = adoptPageAssetRefs(String(row.path));
-    if (!adopted.length) continue;
-    pages++;
-    files += adopted.length;
+    if (raw.includes(MEDIA_PREFIX)) {
+      const content = matter(raw).content.trim();
+      const result = adoptForeignAssetRefs(row.id, content);
+      if (result.adopted) {
+        writePage(rel, result.content, {});
+        const updatedRow = db
+          .prepare(`SELECT file_mtime_ms, file_size FROM pages WHERE id = ?`)
+          .get(row.id) as { file_mtime_ms: number | null; file_size: number | null } | undefined;
+        statSig = `${updatedRow?.file_mtime_ms ?? ''}:${updatedRow?.file_size ?? ''}`;
+        pages++;
+        files += result.files.length;
+      }
+    }
+    nextChecked[row.id] = statSig;
+    if (checked[row.id] !== statSig) dirty = true;
+  }
+  if (dirty || Object.keys(checked).length !== Object.keys(nextChecked).length) {
+    setSetting('asset_adopt_checked', JSON.stringify(nextChecked));
   }
   return { pages, files };
 }

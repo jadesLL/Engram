@@ -1,7 +1,11 @@
 <template>
-  <!-- 卸载 Engram：桌面源码安装形态才有（安装包走系统「添加或删除程序」，浏览器 / Docker / Android 无此项）。
+  <!-- 卸载 Engram：桌面端两种安装形态都出现（源码模式跑 uninstall-engram.ps1，安装包跑它自带的
+       卸载程序）；浏览器 / Docker / Android 没有本机应用可卸，整组隐藏。
        2026-09-28 从「知识库数据 → 危险操作」移到「本机应用」（方案 A）：它删的是这台机器上的应用，
-       与"知识数据"不是一回事；危险色与不可撤销提示照旧保留。 -->
+       与"知识数据"不是一回事；危险色与不可撤销提示照旧保留。
+       2026-11-26 用户报「卸载消失了」：旧实现只认源码安装根，安装版（NSIS）里整组连同导航项一起
+       不渲染，用户只能自己去系统设置里翻。现在安装包形态用安装目录里的卸载程序，与系统
+       「已安装的应用」里那个是同一个，进度条与结束提示都由它给。 -->
   <SettingsGroup
     v-if="uninstallAvailable"
     class="settings-native"
@@ -14,7 +18,7 @@
     <div class="setting-row">
       <div class="setting-copy">
         <strong>卸载应用</strong>
-        <span>删除安装目录与桌面快捷方式，并停掉应用。</span>
+        <span>{{ uninstallCopy }}</span>
       </div>
       <div class="setting-actions">
         <label class="uninstall-opt">
@@ -29,6 +33,10 @@
     <p class="setting-note tone-danger">
       操作不可撤销；本机数据默认保留，同步中枢上的数据不受影响。
     </p>
+    <p v-if="uninstallMode === 'packaged'" class="setting-note">
+      安装版会用 Engram 自带的卸载程序（与 Windows「设置 → 应用 → 已安装的应用」里那个相同），
+      按它显示的进度走完即可；结束后这里就不再需要了。
+    </p>
     <p v-if="uninstallError" class="setting-message err wipe-message">{{ uninstallError }}</p>
   </SettingsGroup>
 </template>
@@ -42,32 +50,48 @@ import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 /**
  * 「本机应用 → 卸载 Engram」分组。
  *
- * 2026-09-28 从 DataDangerSection 拆出（方案 A）：卸载删的是应用安装目录，不是知识数据；
- * 它只在桌面源码安装形态存在，因此除了这里 v-if，还要把同一条件登记到导航
- * （useSettingsAnchorVisible）——否则浏览器 / Docker / 安装包形态会留下一个点不动的死锚点。
+ * 2026-09-28 从 DataDangerSection 拆出（方案 A）：卸载删的是应用安装目录，不是知识数据。
+ * 这条分组的显隐是运行期条件（便携版 / win-unpacked 开发目录没有卸载器），除了这里 v-if，
+ * 还要把同一条件登记到导航（useSettingsAnchorVisible）——否则会留下一个点不动的死锚点。
+ *
+ * 两种形态（主进程 desktop-source-uninstall-state 的 mode）：
+ *  - 'source'：源码安装根 %LOCALAPPDATA%\engram，走随源码带的 uninstall-engram.ps1；
+ *  - 'packaged'：NSIS 安装，走安装目录里的「Uninstall Engram.exe」。
  */
-const uninstallAvailable = ref(false);
+type UninstallMode = 'source' | 'packaged' | 'none';
+const uninstallMode = ref<UninstallMode>('none');
+const uninstallAvailable = computed(() => uninstallMode.value !== 'none');
 const uninstallData = ref(false);
 const uninstalling = ref(false);
 const uninstallError = ref('');
 
+const uninstallCopy = computed(() =>
+  uninstallMode.value === 'packaged'
+    ? '删除安装目录与桌面快捷方式，并停掉应用；卸载进度由 Engram 的卸载程序显示。'
+    : '删除安装目录与桌面快捷方式，并停掉应用。',
+);
+
 // 导航里的「卸载 Engram」与这里的渲染条件同源
-useSettingsAnchorVisible('app-uninstall', computed(() => uninstallAvailable.value));
+useSettingsAnchorVisible('app-uninstall', uninstallAvailable);
 
 onMounted(() => {
   const wd = (window as any).wikiDesktop;
-  if (wd?.desktopSourceUninstallState) {
-    wd.desktopSourceUninstallState()
-      .then((s: any) => {
-        uninstallAvailable.value = Boolean(s?.available);
-      })
-      .catch(() => {
-        uninstallAvailable.value = false;
-      });
-  }
+  if (!wd?.desktopSourceUninstallState) return;
+  wd.desktopSourceUninstallState()
+    .then((s: any) => {
+      // 旧版壳只回 { available }，没有 mode：按源码模式解释（旧版壳也只有源码模式那个入口）
+      if (!s?.available) {
+        uninstallMode.value = 'none';
+        return;
+      }
+      uninstallMode.value = s?.mode === 'packaged' ? 'packaged' : 'source';
+    })
+    .catch(() => {
+      uninstallMode.value = 'none';
+    });
 });
 
-/** 卸载应用：停掉内嵌服务、删除安装目录，随后卸载脚本删除安装目录并结束本进程 */
+/** 卸载应用：停掉内嵌服务，交给卸载器删安装目录，随后结束本进程 */
 async function doUninstall() {
   const wd = (window as any).wikiDesktop;
   if (!wd?.desktopSourceUninstall) return;
@@ -86,8 +110,8 @@ async function doUninstall() {
       uninstalling.value = false;
       uninstallError.value = r?.error || '卸载失败';
     }
-    // ok：主进程已拉起独立卸载脚本并退出应用；卸载脚本随后删除安装目录
-    // （失败时上面的分支已把按钮恢复；成功路径下应用即将退出，不必再动状态）
+    // ok：主进程已拉起卸载程序并退出应用（安装包形态由 NSIS 卸载器接管，
+    // 它会自己显示进度并在结束后关闭）。失败时上面的分支已把按钮恢复。
   } catch (e: any) {
     uninstalling.value = false;
     uninstallError.value = e?.message || '卸载失败';

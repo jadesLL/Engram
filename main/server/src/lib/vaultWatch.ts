@@ -165,6 +165,8 @@ const seen = new Map<string, string>();
 function statKey(rel: string): string {
   try {
     const stat = fs.statSync(safeJoin(rel));
+    // Windows fs.watch(recursive) 会把子目录变更时的父目录路径一并上报：目录不是文件，绝不进对账
+    if (stat.isDirectory()) return '';
     return `${stat.mtimeMs}:${stat.size}`;
   } catch {
     return '';
@@ -202,6 +204,7 @@ export function flushPendingDeletions(): number {
     }
     markPageDeleted(rel);
     emit('page-deleted', { path: rel, id: row.id });
+    notifySyncChange('delete', rel);
     marked++;
   }
   return marked;
@@ -241,10 +244,24 @@ export async function reconcileVaultPaths(
     }
     if (!fs.existsSync(abs)) {
       seen.delete(rel);
+      if (isAppWrite(abs)) {
+        result.skipped++;
+        continue;
+      }
       missing.push(rel);
       continue;
     }
-    seen.set(rel, statKey(rel));
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(abs);
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) {
+      seen.delete(rel);
+      continue;
+    }
+    seen.set(rel, `${stat.mtimeMs}:${stat.size}`);
     if (isAppWrite(abs)) {
       result.skipped++;
       continue;
@@ -263,7 +280,10 @@ export async function reconcileVaultPaths(
         // 带外转写/复制正文进来的页面可能引用着别的父项图片：收编进本页资产目录
         // （收编走 writePage，它自己已经推过 page-changed，这里不要再推一次）
         const adopted = adoptPageAssetRefs(rel);
-        if (!adopted.length) emit('page-changed', { path: rel, id: meta.id });
+        if (!adopted.length) {
+          emit('page-changed', { path: rel, id: meta.id });
+          notifySyncChange('page', rel);
+        }
         result.pages++;
       }
       continue;
@@ -271,6 +291,7 @@ export async function reconcileVaultPaths(
 
     await scheduleRawExtraction(rel);
     emit('file-changed', { path: rel });
+    notifySyncChange('file', rel);
     result.files++;
   }
 
@@ -284,6 +305,7 @@ export async function reconcileVaultPaths(
       if (deferDeletionMs <= 0) {
         markPageDeleted(rel);
         emit('page-deleted', { path: rel, id: row.id });
+        notifySyncChange('delete', rel);
         result.deleted++;
       } else {
         scheduleDeleteCheck(rel, deferDeletionMs);
@@ -292,6 +314,7 @@ export async function reconcileVaultPaths(
     }
     // 非 md 资料：侧栏按磁盘实时列目录，推个事件让它自己消失即可（没有行要维护）
     emit('file-changed', { path: rel });
+    notifySyncChange('delete', rel);
     result.files++;
   }
 

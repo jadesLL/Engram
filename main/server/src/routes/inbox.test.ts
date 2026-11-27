@@ -457,3 +457,44 @@ test('让 Agent 处理：未配置模型凭据时明确报错，不留下跑不�
   assert.match(res.json().error, /还没配模型/);
   assert.equal(db.prepare(`SELECT count(*) AS n FROM assistant_sessions`).get().n, before, '失败不应建会话');
 });
+
+test('路径隔离：收集箱接口拒绝 .. 越权读取或删除知识库页，也拒绝访问对话附件', async () => {
+  const wikiAbs = path.join(BRAIN_DIR, 'Wiki', '概念', '机密页.md');
+  fs.mkdirSync(path.dirname(wikiAbs), { recursive: true });
+  fs.writeFileSync(wikiAbs, '# 机密\n', 'utf8');
+
+  const dlTraversal = await app.inject({
+    method: 'GET',
+    url: `/api/inbox/download?path=${encodeURIComponent(`${INBOX_DIR_REL}/../Wiki/概念/机密页.md`)}`,
+    headers: auth(),
+  });
+  assert.equal(dlTraversal.statusCode, 400);
+
+  const delTraversal = await app.inject({
+    method: 'DELETE',
+    url: '/api/inbox/items',
+    headers: auth(),
+    payload: { path: `${INBOX_DIR_REL}/../Wiki/概念/机密页.md` },
+  });
+  assert.equal(delTraversal.statusCode, 400);
+  assert.equal(fs.existsSync(wikiAbs), true);
+
+  const chatAttAbs = path.join(BRAIN_DIR, INBOX_DIR_REL, '.对话附件', '20261126', 'att.png');
+  fs.mkdirSync(path.dirname(chatAttAbs), { recursive: true });
+  fs.writeFileSync(chatAttAbs, Buffer.from('png'));
+  const dlChatAtt = await app.inject({
+    method: 'GET',
+    url: `/api/inbox/download?path=${encodeURIComponent(`${INBOX_DIR_REL}/.对话附件/20261126/att.png`)}`,
+    headers: auth(),
+  });
+  assert.equal(dlChatAtt.statusCode, 400);
+
+  // 反向绕过：files 接口也不能用 ../收集箱/ 或 ./收集箱/ 读收集箱文件
+  await upload([{ filename: '箱内文档.txt', content: Buffer.from('inbox-only') }]);
+  const bypassFiles = await app.inject({
+    method: 'GET',
+    url: `/api/files/preview?path=${encodeURIComponent(`Wiki/../${INBOX_DIR_REL}/箱内文档.txt`)}`,
+    headers: auth(),
+  });
+  assert.equal(bypassFiles.statusCode, 403);
+});

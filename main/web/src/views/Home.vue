@@ -79,7 +79,7 @@
 
         <!-- 动作/面板组 -->
         <button class="rail-btn action" type="button" v-tooltip.right="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感" @click="quickNote">
-          <Icon name="plus" :size="19" />
+          <Icon name="lightbulb" :size="19" />
         </button>
         <div class="rail-divider" />
 
@@ -197,6 +197,15 @@
 
     <!-- 内置 Agent 最小化后的常驻状态：有轮次在跑时任何视图都看得到，点它回到对话 -->
     <AgentStatusPill />
+
+    <CommandPalette
+      v-if="commandPaletteOpen"
+      :agent-name="agentName"
+      @close="commandPaletteOpen = false"
+      @quick-note="quickNote"
+      @new-page="quickNew"
+      @open-agent="openAgent"
+    />
 
     <AppContextMenu />
 
@@ -356,7 +365,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, defineAsyncComponent, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
@@ -394,7 +403,8 @@ import {
   preferredDrawerWidth,
 } from '../lib/chatDrawer';
 import Sidebar from '../components/Sidebar.vue';
-import ChatDrawer from '../components/ChatDrawer.vue';
+const ChatDrawer = defineAsyncComponent(() => import('../components/ChatDrawer.vue'));
+const CommandPalette = defineAsyncComponent(() => import('../components/CommandPalette.vue'));
 import AgentStatusPill from '../components/AgentStatusPill.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import UpdateNotice from '../components/UpdateNotice.vue';
@@ -408,6 +418,7 @@ const updateStore = useUpdateStore();
 const appUpdateStore = useAppUpdateStore();
 const updateNoticeVisible = ref(false);
 const sourceHasUpdate = ref(false);
+const commandPaletteOpen = ref(false);
 /* 桌面端（有 wikiDesktop 桥）：更新入口渲染进融合标题栏，不再浮在正文上方，正文也就无需为它让出顶部间距 */
 const desktopShell = Boolean((window as any).wikiDesktop);
 const chat = useChatStore();
@@ -505,12 +516,17 @@ function installSidebarSwipe(el: HTMLElement) {
 let stopBackHandler: (() => void) | null = null;
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
+let homeDisposed = false;
 let jobPollStopped = true;
-let jobTimer: ReturnType<typeof setTimeout>;
+let jobTimer: ReturnType<typeof setTimeout> | undefined;
+let initialCaptureTimer: number | undefined;
+let routeCaptureTimer: number | undefined;
 async function pollJobs() {
+  if (homeDisposed || jobPollStopped) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   await app.refreshJobs();
   const extracting = app.jobs.active.some((job: any) => job.kind === 'extract_file');
-  if (!jobPollStopped) jobTimer = setTimeout(pollJobs, extracting ? 1500 : 6000);
+  if (!jobPollStopped && !homeDisposed) jobTimer = setTimeout(pollJobs, extracting ? 1500 : 6000);
 }
 
 /* ===== 侧栏宽度拖拽 ===== */
@@ -612,6 +628,8 @@ if (isTouchPointer() && sidebarWidth.value < DEFAULT_SIDEBAR) {
  * 被上限压窄，会算出「三栏放得下」的假结论，侧栏永远不让位。
  */
 const sidebarYieldedToDock = ref(false);
+const sidebarYieldedToSettings = ref(false);
+const settingsRouteActive = computed(() => route.path.startsWith('/settings'));
 const dockPreferredWidth = computed(() =>
   preferredDrawerWidth(viewportWidth.value, app.chatDrawerWidth));
 /** 侧栏留着时正文还剩多宽 */
@@ -653,6 +671,30 @@ watch(
     }
   },
   { flush: 'post' },
+);
+
+/*
+ * 设置页自身已经有「左侧目录 + 右侧内容」双栏：桌面端进入 /settings 时把知识库侧栏
+ * 临时收起，释放 280px 给设置页（避免出现「图标栏 + 知识库栏 + 设置目录 + 内容」四栏挤压）；
+ * 离开设置页后自动放回。用户手动点开/收起侧栏则取消本次自动让位标记。
+ */
+watch(
+  settingsRouteActive,
+  (inSettings) => {
+    if (sidebarOverlay.value) return;
+    if (inSettings) {
+      if (app.sidebarOpen && !app.sidebarFull) {
+        sidebarYieldedToSettings.value = true;
+        app.sidebarOpen = false;
+      }
+      return;
+    }
+    if (sidebarYieldedToSettings.value && !dockSqueezesSidebar.value) {
+      sidebarYieldedToSettings.value = false;
+      app.sidebarOpen = true;
+    }
+  },
+  { immediate: true, flush: 'post' },
 );
 
 /** 是否正在拖侧栏宽度：拖动中不做几何过渡，见 startResize */
@@ -726,6 +768,7 @@ const isActive = (p: string) => route.path.startsWith(p);
 function closeSidebar() {
   // 用户主动收起：之后关掉 Agent 不要再把侧栏弹回来
   sidebarYieldedToDock.value = false;
+  sidebarYieldedToSettings.value = false;
   if (app.sidebarFull) app.setSidebarFull(false);
   app.sidebarOpen = false;
 }
@@ -736,6 +779,7 @@ function toggleSidebar() {
     closeSidebar();
     return;
   }
+  sidebarYieldedToSettings.value = false;
   /*
    * 窄窗口里 Agent 卡片正开着、三栏放不下：后打开的一方优先——目录要回来，
    * 先收起 Agent（会话与形态都保留，右下角胶囊可继续），否则又是一条被压扁的正文。
@@ -1280,12 +1324,16 @@ async function quickNote() {
 }
 
 function onKey(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    if (e.defaultPrevented || isActive('/settings')) return;
     e.preventDefault();
-    router.push('/search');
+    commandPaletteOpen.value = !commandPaletteOpen.value;
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();
     quickNote();
+  } else if (e.key === 'Escape' && commandPaletteOpen.value && !e.defaultPrevented) {
+    e.preventDefault();
+    commandPaletteOpen.value = false;
   } else if (e.key === 'Escape' && app.sidebarFull && !e.defaultPrevented) {
     // 满窗目录的退出键：与内置 Agent 满窗（ChatDrawer 的 Esc）同一套手感。
     // 弹窗/确认框自己会 preventDefault，编辑器全屏的 Esc 也会先处理，这里不抢。
@@ -1367,6 +1415,13 @@ function onUpdateVisibility() {
   pokeUpdateCheck();
   // 后台期间推送可能被节流/掉线：回前台立即对一次账，不等下一个探针周期
   void freshness?.check();
+  if (!jobPollStopped && !homeDisposed) {
+    if (jobTimer) {
+      clearTimeout(jobTimer);
+      jobTimer = undefined;
+    }
+    void pollJobs();
+  }
 }
 function onUpdateOnline() {
   pokeUpdateCheck();
@@ -1377,12 +1432,38 @@ function onWindowFocus() {
   pokeUpdateCheck();
   void freshness?.check();
 }
+/* 切回首页 / 从设置回来后，看板卡片可能刚挂载：稍后再判一次 FAB 与快速灵感卡的重叠 */
+watch(
+  () => route.path,
+  () => {
+    scheduleCaptureCardVisibility();
+    if (routeCaptureTimer !== undefined) window.clearTimeout(routeCaptureTimer);
+    routeCaptureTimer = window.setTimeout(scheduleCaptureCardVisibility, 400);
+  },
+);
+// 看板里任何模块加进来时「补拉」：近期待办在首页首次渲染时可能没有这个模块，
+// 之后用户在编辑态加上，任务看板数据得跟着到（数据源在 EditorView，见 loadWelcomeOnce）
+watch(
+  () => homeBoard.board.modules.some((module) => module.kind === 'tasks'),
+  (hasTasks) => {
+    if (hasTasks && !homeTasks.board) void homeTasks.load();
+  },
+);
+// 首页若有「收集箱」卡片：同一份 store，进页面时补一次，卡片里的待整理数与角标一致
+watch(
+  () => homeBoard.board.modules.some((module) => module.kind === 'inbox'),
+  (hasInbox) => {
+    if (hasInbox) void inbox.load();
+  },
+);
+
 onMounted(() => {
+  homeDisposed = false;
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
-  window.addEventListener('resize', scheduleCaptureCardVisibility);
-  window.addEventListener('scroll', scheduleCaptureCardVisibility, true);
-  window.setTimeout(scheduleCaptureCardVisibility, 600);
+  window.addEventListener('resize', scheduleCaptureCardVisibility, { passive: true });
+  window.addEventListener('scroll', scheduleCaptureCardVisibility, { capture: true, passive: true });
+  initialCaptureTimer = window.setTimeout(scheduleCaptureCardVisibility, 600);
   // Android 返回键/侧滑返回：先收掉应用级浮层（我的面板 → 对话抽屉 → 文件树），
   // 都关着才交回原生（历史后退或退到后台）。桌面端没有原生调用，注册了也不会触发。
   // 折叠屏形态（半开横折 / 桌面姿态）：Viewport Segments 变化时重判上下分屏
@@ -1415,28 +1496,13 @@ onMounted(() => {
   // 下拉刷新手势：.content 是外壳滚动容器（router-view 切换不清空它），挂载时装一次即可
   if (contentEl.value) detachPullRefresh = installPullRefresh(contentEl.value);
   app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
-  /* 切回首页 / 从设置回来后，看板卡片可能刚挂载：稍后再判一次 FAB 与快速灵感卡的重叠 */
-  watch(
-    () => route.path,
-    () => {
-      scheduleCaptureCardVisibility();
-      window.setTimeout(scheduleCaptureCardVisibility, 400);
-    },
-  );
   // 首页看板布局：先按本地那份画出来（进页面就有内容），服务端答复到了再校正（多端一致）
   void homeBoard.load();
   // 布局改动是去抖写服务端的（600ms）：页面隐藏/卸载前补一次，免得「刚拖完就关掉」只留在本地
   document.addEventListener('visibilitychange', flushHomeBoardOnHide);
   window.addEventListener('pagehide', flushHomeBoardWrite);
-  // 看板里任何模块加进来时「补拉」：近期待办在首页首次渲染时可能没有这个模块，
-  // 之后用户在编辑态加上，任务看板数据得跟着到（数据源在 EditorView，见 loadWelcomeOnce）
-  watch(
-    () => homeBoard.board.modules.some((module) => module.kind === 'tasks'),
-    (hasTasks) => {
-      if (hasTasks && !homeTasks.board) void homeTasks.load();
-    }
-  );
   loadRuntimeCapabilities().then((caps) => {
+    if (homeDisposed) return;
     if (caps.features.jobs) {
       jobPollStopped = false;
       pollJobs();
@@ -1492,15 +1558,11 @@ onMounted(() => {
   chat.syncRunningRuns().catch(() => {});
   // 图标栏「收集箱」角标：启动时取一次待整理数量
   inbox.load();
-  // 首页若有「收集箱」卡片：同一份 store，进页面时补一次，卡片里的待整理数与角标一致
-  watch(
-    () => homeBoard.board.modules.some((module) => module.kind === 'inbox'),
-    (hasInbox) => {
-      if (hasInbox) void inbox.load();
-    }
-  );
 });
 onUnmounted(() => {
+  homeDisposed = true;
+  if (initialCaptureTimer !== undefined) window.clearTimeout(initialCaptureTimer);
+  if (routeCaptureTimer !== undefined) window.clearTimeout(routeCaptureTimer);
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onWindowResize);
   window.removeEventListener('resize', scheduleCaptureCardVisibility);

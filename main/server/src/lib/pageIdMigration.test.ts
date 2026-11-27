@@ -24,7 +24,6 @@ before(async () => {
 
 beforeEach(() => {
   db.exec(`
-    DELETE FROM vec_chunks;
     DELETE FROM chunks;
     DELETE FROM edges;
     DELETE FROM pages_fts;
@@ -56,11 +55,9 @@ function seedReferences(oldId: string) {
     `INSERT INTO page_syntheses(id, page_id, input_hash, evidence_hash, status, created_at, updated_at)
      VALUES('ps-1', ?, 'hash-a', 'hash-e', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`
   ).run(oldId);
-  const chunk = db.prepare(
+  db.prepare(
     `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('page', ?, 0, '', '内容')`
   ).run(oldId);
-  db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`)
-    .run(BigInt(chunk.lastInsertRowid), JSON.stringify(Array(1536).fill(0)));
   db.prepare(
     `INSERT INTO edges(src_page, dst_title, rel, created_at) VALUES(?, '目标', 'link', '2026-01-01')`
   ).run(oldId);
@@ -96,8 +93,6 @@ test('frontmatter id diverging from the row id migrates child references instead
   // fts 按新 id 重建
   assert.equal(db.prepare(`SELECT count(*) n FROM pages_fts WHERE page_id = ?`).get(newId).n > 0, true);
   assert.equal(db.prepare(`SELECT count(*) n FROM pages_fts WHERE page_id = ?`).get(oldId).n, 0);
-  // 迁移只改引用列，chunk 行本身（向量 rowid）不动
-  assert.equal(db.prepare(`SELECT count(*) n FROM vec_chunks`).get().n, 1);
 });
 
 test('id unchanged path stays a no-op and old references are untouched', () => {

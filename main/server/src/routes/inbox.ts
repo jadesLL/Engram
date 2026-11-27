@@ -26,9 +26,10 @@ import { requestOrigin } from '../lib/requestOrigin.js';
 import {
   INBOX_DIR,
   INBOX_DERIVED_DIR,
+  isChatAttachmentPath,
   isInboxPath,
   isInboxDerivedPath,
-  isChatAttachmentPath,
+  normalizeBrainRel,
 } from '../lib/brainPaths.js';
 import { ensureChatAttachmentDir } from '../lib/chatAttachments.js';
 
@@ -61,6 +62,17 @@ function uniqueInboxPath(dirRel: string, name: string): string {
     if (!fs.existsSync(safeJoin(candidate))) return candidate;
   }
   return `${dirRel}/${stem}-${Date.now()}${ext}`;
+}
+
+function normalizeInboxSourceRel(rel: string | undefined | null): string | null {
+  const clean = normalizeBrainRel(rel);
+  if (!clean || !isInboxPath(clean) || isInboxDerivedPath(clean) || isChatAttachmentPath(clean)) return null;
+  try {
+    safeJoin(clean);
+  } catch {
+    return null;
+  }
+  return clean;
 }
 
 export async function inboxRoutes(app: FastifyInstance) {
@@ -325,16 +337,12 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   /** 下载原件（Docker / 浏览器端「打开」= 下载；桌面端走系统默认程序，见 M2） */
   app.get('/api/inbox/download', async (req, reply) => {
-    const { path: rel } = req.query as { path?: string };
-    if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
+    const { path: rawRel } = req.query as { path?: string };
+    const rel = normalizeInboxSourceRel(rawRel);
+    if (!rel) {
       return reply.code(400).send({ error: '路径无效' });
     }
-    let abs: string;
-    try {
-      abs = safeJoin(rel);
-    } catch {
-      return reply.code(400).send({ error: '路径无效' });
-    }
+    const abs = safeJoin(rel);
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       return reply.code(404).send({ error: '文件不存在' });
     }
@@ -347,8 +355,9 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   /** 移除：进回收站（可恢复），与知识库删除同一套语义 */
   app.delete('/api/inbox/items', async (req, reply) => {
-    const { path: rel } = (req.body || {}) as { path?: string };
-    if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
+    const { path: rawRel } = (req.body || {}) as { path?: string };
+    const rel = normalizeInboxSourceRel(rawRel);
+    if (!rel) {
       return reply.code(400).send({ error: '路径无效' });
     }
     try {
@@ -362,8 +371,9 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   /** 已有转换产物路径；语义文件名在模型提炼之前无法预先决定。 */
   app.get('/api/inbox/derived-path', async (req, reply) => {
-    const { path: rel } = req.query as { path?: string };
-    if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
+    const { path: rawRel } = req.query as { path?: string };
+    const rel = normalizeInboxSourceRel(rawRel);
+    if (!rel) {
       return reply.code(400).send({ error: '路径无效' });
     }
     if (!fs.existsSync(safeJoin(rel))) return reply.code(404).send({ error: '文件不存在' });
@@ -398,9 +408,10 @@ export async function inboxRoutes(app: FastifyInstance) {
 
     const queued: { path: string; jobId: number; sessionId: string }[] = [];
     const skipped: { path: string; reason: string }[] = [];
-    for (const rel of new Set(requested)) {
-      if (!isInboxPath(rel) || isInboxDerivedPath(rel) || !fs.existsSync(safeJoin(rel))) {
-        skipped.push({ path: String(rel), reason: '路径无效' });
+    for (const rawRel of new Set(requested)) {
+      const rel = normalizeInboxSourceRel(rawRel);
+      if (!rel || !fs.existsSync(safeJoin(rel))) {
+        skipped.push({ path: String(rawRel), reason: '路径无效' });
         continue;
       }
       const capability = convertCapability(rel);
@@ -445,9 +456,11 @@ export async function inboxRoutes(app: FastifyInstance) {
     }
   });
 
-  /** 读取转换产物（产物是 Engram 生成的草稿，不是「收集箱原件」，因此在应用内可读可审） */  app.get('/api/inbox/derived', async (req, reply) => {
-    const { path: rel } = req.query as { path?: string };
-    if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
+  /** 读取转换产物（产物是 Engram 生成的草稿，不是「收集箱原件」，因此在应用内可读可审） */
+  app.get('/api/inbox/derived', async (req, reply) => {
+    const { path: rawRel } = req.query as { path?: string };
+    const rel = normalizeInboxSourceRel(rawRel);
+    if (!rel) {
       return reply.code(400).send({ error: '路径无效' });
     }
     try {
@@ -464,8 +477,9 @@ export async function inboxRoutes(app: FastifyInstance) {
    * 这是收集箱内容变成「可检索、可引用」的唯一入口，只由用户显式触发。
    */
   app.post('/api/inbox/adopt', async (req, reply) => {
-    const { path: rel } = (req.body || {}) as { path?: string };
-    if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
+    const { path: rawRel } = (req.body || {}) as { path?: string };
+    const rel = normalizeInboxSourceRel(rawRel);
+    if (!rel) {
       return reply.code(400).send({ error: '路径无效' });
     }
     try {

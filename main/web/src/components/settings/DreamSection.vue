@@ -10,7 +10,8 @@
     <SettingsGroup
       anchor="agent-dream"
       title="自动整理（梦境思考）"
-      hint="按计划提炼资料并做一次全库纠错。"
+      hint="按计划提炼资料并做一次全库纠错"
+      help="由内置 Agent 经 engram 命令执行，写入受证据门禁约束、删除只入回收站；无待办时到点仅检查一次，不消耗额度。"
     >
       <!-- 运行状态：会变的实时状态统一用状态条，不再用灰字铺一段说明 -->
       <div v-if="loaded" class="state-strip dream-status" :class="statusTone">
@@ -31,7 +32,6 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>启用自动整理</strong>
-          <span>默认关闭；打开后到点自动跑一轮。</span>
         </div>
         <div class="setting-control dream-switch-cell">
           <label class="switch-control">
@@ -44,7 +44,6 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>运行频率</strong>
-          <span>每天一次，或每隔几天跑一次。</span>
         </div>
         <div class="setting-control dream-control">
           <AppSelect v-model="form.frequency" aria-label="运行频率" :options="frequencyOptions" />
@@ -54,7 +53,6 @@
       <div v-if="form.frequency === 'interval'" class="setting-row">
         <div class="setting-copy">
           <strong>间隔天数</strong>
-          <span>1 到 30 天。</span>
         </div>
         <div class="setting-control dream-control">
           <input v-model.number="form.intervalDays" type="number" min="1" max="30" step="1" aria-label="间隔天数" />
@@ -64,7 +62,6 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>运行时间</strong>
-          <span>建议放在凌晨空闲时段。</span>
         </div>
         <div class="setting-control dream-control">
           <input v-model="form.time" type="time" step="60" aria-label="运行时间" />
@@ -184,10 +181,6 @@
           </div>
         </template>
       </section>
-
-      <p class="setting-note">
-        跑的是内置 Agent：只经 engram 命令读写知识库，写入受证据门禁约束、删除只入回收站。没有待办时到点只检查一次，不消耗模型额度。
-      </p>
     </SettingsGroup>
   </section>
 </template>

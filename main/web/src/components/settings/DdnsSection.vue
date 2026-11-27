@@ -1,37 +1,27 @@
 <template>
   <div class="ddns-section">
-    <!-- 使用前提：Engram 只负责「让域名指向本机」，域名要客户自己买、自己绑定到 Cloudflare。
-         清单本身就是检查项与状态，不再另外套一个带框的说明块（去卡中卡）。 -->
-    <div class="setting-row">
-      <div class="setting-copy">
-        <strong>使用前提</strong>
-        <span v-if="setupReport.needsDomain">你还没有域名：先买域名并绑定到 Cloudflare。</span>
-        <span v-else>域名在你名下，并已绑定到 Cloudflare。</span>
-      </div>
-      <span
-        class="setting-value"
-        :class="setupReport.needsDomain ? 'tone-warn' : setupReport.doneCount === 5 ? 'tone-ok' : ''"
-      >{{ setupReport.needsDomain ? '未准备' : setupReport.doneCount + '/5 已完成' }}</span>
-    </div>
-    <ul class="prereq-steps">
-      <li v-for="step in setupReport.steps" :key="step.id" :class="step.state">
-        <span class="prereq-mark" aria-hidden="true">{{ stepMark(step.state) }}</span>
-        <div class="prereq-body">
-          <span class="prereq-title">{{ step.title }}</span>
-          <span class="prereq-detail">{{ step.detail }}</span>
-          <a
-            v-if="step.action"
-            class="btn ghost prereq-action"
-            :href="step.action.href"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Icon name="external" :size="13" />
-            {{ step.action.label }}
-          </a>
-        </div>
-      </li>
-    </ul>
+    <details class="ddns-prereq-details" :open="!status?.record || setupReport.needsDomain">
+      <summary>准备前提（{{ setupReport.needsDomain ? '未准备' : setupReport.doneCount + '/5 已完成' }}）</summary>
+      <ul class="prereq-steps">
+        <li v-for="step in setupReport.steps" :key="step.id" :class="step.state">
+          <span class="prereq-mark" aria-hidden="true">{{ stepMark(step.state) }}</span>
+          <div class="prereq-body">
+            <span class="prereq-title">{{ step.title }}</span>
+            <span class="prereq-detail">{{ step.detail }}</span>
+            <a
+              v-if="step.action"
+              class="btn ghost prereq-action"
+              :href="step.action.href"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Icon name="external" :size="13" />
+              {{ step.action.label }}
+            </a>
+          </div>
+        </li>
+      </ul>
+    </details>
 
     <!-- 运行状态：会变的实时状态走状态条（绿/黄/红只在真的可用时亮） -->
     <template v-if="statusLoaded">
@@ -73,14 +63,19 @@
     <!-- 一键配置：粘 Token → 选域名 → 启用。三下点完，不用理解 FQDN / zone / 记录类型。 -->
     <div class="setting-row">
       <div class="setting-copy">
-        <strong>一键配置</strong>
-        <span>粘 Token、选域名，剩下的交给服务端。</span>
+        <span class="setting-title-row">
+          <strong>一键配置</strong>
+          <HelpTip
+            title="Cloudflare DDNS 说明"
+            text="Token 仅保存在本机中枢；每 5 分钟比对一次公网 IP，变化才更新，外网解析到才显示可用。"
+          />
+        </span>
+        <span>粘 Token、选域名，自动维护 A + AAAA 双栈。</span>
       </div>
     </div>
     <div class="setting-row setting-row-form">
       <div class="setting-copy">
         <strong>API Token</strong>
-        <span>只需 Zone → DNS → Edit 权限。</span>
       </div>
       <div class="setting-control ddns-control">
         <SecretField v-model="quickToken" :stored="stored.token" placeholder="Zone → DNS → Edit 的 API Token" aria-label="Cloudflare API Token" />
@@ -95,7 +90,6 @@
         {{ discovering ? '查询中…' : '检查 Token' }}
       </button>
     </div>
-    <p class="setting-note">Token 只保存在这台中枢，不会上传；不用了去 Cloudflare 删掉即可撤销。</p>
     <details class="ddns-help">
       <summary>获取 Token 的步骤</summary>
       <ol>
@@ -110,8 +104,6 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>维护域名</strong>
-          <span v-if="zones.length === 1">只有一个，已自动选中。</span>
-          <span v-else>选一个要维护的域名。</span>
         </div>
         <div class="setting-control ddns-control">
           <AppSelect v-model="zone" aria-label="选择域名" :options="zoneOptions" />
@@ -126,15 +118,12 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>子域前缀</strong>
-          <span>留空直接用主域名。</span>
+          <span>将维护 <code>{{ quickRecord || '—' }}</code>（留空用主域名）。</span>
         </div>
         <div class="setting-control ddns-control">
           <input v-model="subdomain" type="text" placeholder="hub" autocomplete="off" spellcheck="false" aria-label="子域名前缀" />
         </div>
       </div>
-      <p class="setting-note">
-        将维护 <code>{{ quickRecord || '—' }}</code>：自动维护 A + AAAA 双栈，IPv6 优先。
-      </p>
       <div class="setting-actions ddns-actions">
         <button class="btn primary" type="button" :disabled="settingUp || !quickRecord" @click="setupNow">
           {{ settingUp ? '配置中…' : '启用 DDNS' }}
@@ -144,7 +133,6 @@
 
     <p v-if="quickResult" class="setting-note tone-ok">{{ quickResult }}</p>
     <p v-if="quickHint" class="setting-note">{{ quickHint }}</p>
-    <p class="setting-note">每 5 分钟比对一次，地址变了才写；外网真能解析到才显示可用。</p>
 
     <!-- 手动配置：需要精确指定记录类型 / 只检测不写入时用 -->
     <details class="manual-block">
@@ -152,7 +140,7 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>自动同步</strong>
-          <span>关闭后只保留记录，不再随地址变化更新。</span>
+          <span>关闭后不再随地址变化更新。</span>
         </div>
         <label class="switch-control">
           <input v-model="form.enabled" type="checkbox" aria-label="启用自动同步" />
@@ -162,7 +150,6 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>记录域名</strong>
-          <span>要维护的完整域名（FQDN）。</span>
         </div>
         <div class="setting-control ddns-control">
           <input v-model="form.record" type="text" placeholder="home.xxx.com" autocomplete="off" spellcheck="false" aria-label="记录域名" />
@@ -171,7 +158,6 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>记录类型</strong>
-          <span>自动即 A + AAAA 双栈。</span>
         </div>
         <div class="setting-control ddns-control">
           <AppSelect v-model="form.type" aria-label="记录类型" :options="typeOptions" />
@@ -180,7 +166,6 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>API Token</strong>
-          <span>只保存在本机。</span>
         </div>
         <div class="setting-control ddns-control">
           <SecretField v-model="editedToken" :stored="stored.token" placeholder="Zone → DNS → Edit 的 API Token" aria-label="Cloudflare API Token" />
@@ -204,6 +189,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
+import HelpTip from '../ui/HelpTip.vue';
 import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
 import {
@@ -647,6 +633,16 @@ onUnmounted(() => {
 
 <style scoped>
 /* 前提清单：不再套带框说明块，只留步骤行（行间细线 + 状态符号）。 */
+.ddns-prereq-details {
+  padding: 6px 0 4px;
+}
+.ddns-prereq-details summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
 .prereq-steps {
   margin: 0;
   padding: 0;

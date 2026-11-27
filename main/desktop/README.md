@@ -20,7 +20,7 @@ Windows 桌面客户端，内嵌完整后端，所有数据保存在本机，无
 - **自动更新（默认开启）**：应用启动约 4 秒后自动检查更新，之后按自适应退避复查——连续没发现新版本时 2→5→10→30→60 分钟逐级拉长（有更新待处理时每分钟复查），这一轮发现新版本（或你切回窗口、解除休眠/解锁）立刻回到最短间隔。发现新版本后自动在后台下载（设置页可见进度），下载完成后应用内弹出全屏「正在更新」提示，随后退出并以 `/S` 静默参数运行安装包（无向导），装完自动重启新版；`userData/downloads` 中的旧安装包随之清理。
 - **自动更新失败保护（用户 2026-11-08 要求）**：某个目标版本的自动更新**失败一次**（下载、sha256 校验、静默安装任一步失败，或装完重启后版本没有前进），主进程会把这个版本记进 `config.json` 的 `autoUpdateFailure`，**本版本不再自动重试**，以免陷入「失败 → 重启 → 再失败」的循环；同时弹一条 Windows 系统通知、应用内再补一条提示。设置页「桌面端更新」显示暂停横幅（失败版本与原因）和「重试自动更新」按钮，下方手动「检查更新 / 下载并安装」始终可用。发布更新的新版本（版本号不同）后自动恢复；重新打开「自动更新」开关也会清掉暂停记录并立即重试。
 - **源码模式的自动检查**：与安装包形态同一套节奏（启动 4 秒首查 + 自适应退避 + 回前台/唤醒补查）。检查走两级探测：先 `git ls-remote` 问远端分支的提交号，只有它和本地 `origin/<分支>` 不一致才真的 `git fetch` 增量对象，因此绝大多数轮次只有一个网络往返。落后时标题栏出现一枚绿底更新图标（**不自动弹面板、也不弹系统通知**，鼠标扫到才展开），点展开面板的「立即更新并重启」即增量拉源码、重建并自动重启（过程中有置顶进度窗）。
-- **预构建安装（安装器自带环境包）**：安装器把「源码 + 依赖 + 已构建产物」直接解压到本机，**不带 .git、也不带 Git**。主进程读 `main/.engram-prebuilt.json` 识别这种安装：不做 git 检查（设置页「桌面端更新」直接说明更新方式是**用新版安装器覆盖安装**，不会再出现 `spawn git ENOENT`），版本行显示的提交号取自包清单；需要长期在应用内自动更新时改用打包版 exe。
+- **旧版无 Git 预构建安装（兼容识别）**：早期不带 `.git` 与 Git 的预构建安装目录，主进程检测到缺少 `.git` 且存在 `main/.engram-prebuilt.json` 时会退回提示「用新版安装器覆盖安装」，避免 `spawn git ENOENT`；新版源码安装器已自带完整 `.git` 仓库与便携工具链，装完即按上方标准源码模式直接拉取更新。
 - **一键更新入口**：应用内更新入口是一枚绿底图标（桌面端在标题栏应用名右侧，网页端在右上角）。检测到更新不再自动弹出面板；鼠标扫到图标展开，移开约 0.3 秒收起，点一下也能开合。面板主按钮直接执行更新，不再只是跳设置页——源码模式「立即更新并重启」、安装包形态「立即下载并安装」（下载带百分比）、服务端/浏览器形态「立即更新」（提交服务端更新并等新容器起来后自动刷新页面）。进度与失败原因就地显示在面板里；「稍后提醒」（只收起面板，图标留着继续提示）与「查看详情」（跳设置页看完整信息）保留为次级入口。
 - **安装过程提示不空窗**：应用退出前显示应用内全屏「正在更新」提示层；随后由独立于安装目录的 Windows 进度窗（PowerShell WinForms，经 -EncodedCommand 启动，无临时脚本文件）持续显示「正在安装更新」，静默安装完成后该窗口关闭并自动拉起新版；编排过程记录在 `userData/updater/install-ui.log`。
 - **手动更新**：同一页面保留「检查更新」「下载并安装」按钮作为兜底，点击「下载并安装」同样全自动——直接下载并静默安装，无中间确认、无安装向导，安装期间持续显示进度提示。
@@ -43,7 +43,7 @@ pnpm build:desktop
 
 **Windows Defender 注意**：打包时 electron-builder 解压 electron 二进制，Defender 实时扫描可能锁定 `electron.exe` 致 `EPERM rename` 失败。构建前请关闭 Defender 实时扫描，或把构建目录加入 Defender 排除项。
 
-**asar 配置**：`desktop/package.json` 设 `asar: true`，配合 `asarUnpack` 解包 better-sqlite3 / sqlite-vec / @napi-rs/canvas 三个原生模块到 `app.asar.unpacked`。把上万 `node_modules` 散文件合并进单个 `app.asar`，使 NSIS 安装从逐文件写出变为单归档解压，安装速度显著提升。此前 `asar: false` 是为避免非管理员环境无法创建 symlink，但 `build:desktop` 用 `--shamefully-hoist` 产出扁平 node_modules、无 symlink，该顾虑不成立，已切回 `true`。**注意**：server 子进程必须以 `fork + ELECTRON_RUN_AS_NODE`（electron.exe 纯 Node 模式）启动才能读 asar，不可改 `spawn('node')`。
+**asar 配置**：`desktop/package.json` 设 `asar: true`，配合 `asarUnpack` 解包 better-sqlite3 / @napi-rs/canvas 原生模块到 `app.asar.unpacked`。把上万 `node_modules` 散文件合并进单个 `app.asar`，使 NSIS 安装从逐文件写出变为单归档解压，安装速度显著提升。此前 `asar: false` 是为避免非管理员环境无法创建 symlink，但 `build:desktop` 用 `--shamefully-hoist` 产出扁平 node_modules、无 symlink，该顾虑不成立，已切回 `true`。**注意**：server 子进程必须以 `fork + ELECTRON_RUN_AS_NODE`（electron.exe 纯 Node 模式）启动才能读 asar，不可改 `spawn('node')`。
 
 ## 技术说明
 
@@ -53,5 +53,5 @@ pnpm build:desktop
 - `scripts/prepare-desktop.js`：打包前复制 server/web 产物并生成 server 运行时依赖清单。
 - `scripts/lib/shortcut.js` + `scripts/ensure-branded-exe.js`：桌面快捷方式与「品牌化 Engram.exe」的共用逻辑（纯 Node，单测 `scripts/tests/shortcut.test.js`）。主进程的「重建桌面快捷方式」走 Electron 的 `shell.writeShortcutLink`（GUI 进程不能 spawn powershell：空句柄会静默秒退），PowerShell 安装/更新脚本则调 `ensure-branded-exe.js` 只做 exe 品牌化，快捷方式由 WScript.Shell 写。
 - `scripts/pack-asar.js` + `scripts/lib/asar-staging.js`：手动生成 `app.asar` / `app.asar.unpacked`（绕过 Defender 锁 electron.exe 导致的 rename EPERM）。staging 清单必须覆盖主进程的相对引入（`lib/`、`scripts/lib/`）——少一个，安装版一启动就报 `Cannot find module`，而源码模式与 Docker 验证都发现不了；由 `scripts/tests/asar-staging.test.js` 锁住，`desktop/package.json` 的 `build.files` 同步含 `scripts/lib/**`。
-- 原生模块：`better-sqlite3` 按 Electron ABI 重编；`sqlite-vec`（平台包 `sqlite-vec-windows-x64`）与 `@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
+- 原生模块：`better-sqlite3` 按 Electron ABI 重编，`@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
 - 桌面端默认关闭 ONLYOFFICE 在线编辑（`OFFICE_EDITOR_ENABLED=false`），Office 文件以本地预览或「用系统程序打开」替代。

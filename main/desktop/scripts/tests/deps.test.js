@@ -156,16 +156,70 @@ test('lockfile 不再认当前 Electron 版本时判定为本次更新要换运�
   assert.equal(deps.electronRuntimeSwapPending(root), true);
 });
 
-test('resolvePnpmEntry：优先用仓库内副本，否则回退全局安装（或 null）', () => {
+test('resolvePnpmEntry：优先用仓库内完整副本，否则回退全局安装（或 null）', () => {
   const root = makeApp();
   // 没有仓库内副本时可能解析到本机全局安装的 pnpm（客户机就是这种：安装器 npm i -g pnpm@10），
   // 也可能整机都没有 —— 两种都算正常，但解析出来的入口必须真实存在
   const fallback = deps.resolvePnpmEntry(root);
   assert.ok(fallback === null || fs.existsSync(fallback), `解析出的入口不存在：${fallback}`);
+  // 仓库内副本：npm 包布局（bin 薄壳 + dist 发行包），worker.js 与真正执行的 pnpm.cjs 同目录
   const entry = path.join(root, 'node_modules/pnpm/bin/pnpm.cjs');
   fs.mkdirSync(path.dirname(entry), { recursive: true });
   fs.writeFileSync(entry, '');
+  fs.mkdirSync(path.join(root, 'node_modules/pnpm/dist'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'node_modules/pnpm/dist/pnpm.cjs'), '');
+  fs.writeFileSync(path.join(root, 'node_modules/pnpm/dist/worker.js'), '');
   assert.equal(deps.resolvePnpmEntry(root), entry); // 仓库内副本优先
+  assert.equal(deps.pnpmRuntimeComplete(entry), true);
+});
+
+test('resolvePnpmEntry：完整发行包优先于缺 worker.js 的旧安装器便携 pnpm', () => {
+  const root = makeApp();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-pnpm-'));
+  const saved = process.env.LOCALAPPDATA;
+  try {
+    process.env.LOCALAPPDATA = tmp;
+    // 旧安装器只落 pnpm.cjs（缺 worker.js）——这种入口跑 install 会崩在 worker 池
+    const incomplete = path.join(tmp, 'engram', 'pnpm', 'pnpm.cjs');
+    fs.mkdirSync(path.dirname(incomplete), { recursive: true });
+    fs.writeFileSync(incomplete, '');
+    assert.equal(deps.pnpmRuntimeComplete(incomplete), false);
+
+    // 仓库内完整副本存在时不能被不完整入口抢走
+    const entry = path.join(root, 'node_modules/pnpm/bin/pnpm.cjs');
+    fs.mkdirSync(path.dirname(entry), { recursive: true });
+    fs.writeFileSync(entry, '');
+    fs.mkdirSync(path.join(root, 'node_modules/pnpm/dist'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'node_modules/pnpm/dist/pnpm.cjs'), '');
+    fs.writeFileSync(path.join(root, 'node_modules/pnpm/dist/worker.js'), '');
+    assert.equal(deps.resolvePnpmEntry(root), entry);
+  } finally {
+    if (saved === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = saved;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('repairPnpmRuntime：从同发行包补 worker.js，版本不一致时不复制', () => {
+  const root = makeApp();
+  const targetDir = path.join(root, 'portable-pnpm');
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.writeFileSync(path.join(targetDir, 'pnpm.cjs'), 'x'.repeat(64));
+  const target = path.join(targetDir, 'pnpm.cjs');
+  assert.equal(deps.pnpmRuntimeComplete(target), false);
+
+  // 不同发行包（pnpm.cjs 大小不同）不复制：worker 与主程序的消息协议按版本绑定
+  const foreign = path.join(root, 'node_modules/pnpm/dist');
+  fs.mkdirSync(foreign, { recursive: true });
+  fs.writeFileSync(path.join(foreign, 'pnpm.cjs'), 'y'.repeat(32));
+  fs.writeFileSync(path.join(foreign, 'worker.js'), 'worker');
+  assert.equal(deps.repairPnpmRuntime(target, root), false);
+
+  // 同一发行包（大小一致）→ 补上 worker.js
+  fs.writeFileSync(path.join(foreign, 'pnpm.cjs'), 'z'.repeat(64));
+  assert.equal(deps.repairPnpmRuntime(target, root), true);
+  assert.equal(deps.pnpmRuntimeComplete(target), true);
+  assert.equal(fs.readFileSync(path.join(targetDir, 'worker.js'), 'utf8'), 'worker');
 });
 
 test('resolvePnpmEntry：识别安装器内置 pnpm（%LOCALAPPDATA%\\engram\\pnpm\\pnpm.cjs）', () => {
@@ -177,6 +231,7 @@ test('resolvePnpmEntry：识别安装器内置 pnpm（%LOCALAPPDATA%\\engram\\pn
     const entry = path.join(tmp, 'engram', 'pnpm', 'pnpm.cjs');
     fs.mkdirSync(path.dirname(entry), { recursive: true });
     fs.writeFileSync(entry, '');
+    fs.writeFileSync(path.join(path.dirname(entry), 'worker.js'), ''); // 完整发行包才优先
     assert.equal(deps.resolvePnpmEntry(root), entry);
   } finally {
     if (saved === undefined) delete process.env.LOCALAPPDATA;
@@ -196,6 +251,26 @@ test('lockfileRegistry：按 lockfile 里 tarball URL 的唯一 host 推断 regi
   assert.equal(deps.lockfileRegistry(root), 'https://registry.npmmirror.com');
   fs.appendFileSync(lock, '  b@1.0.0:\n    resolution: {tarball: https://registry.npmjs.org/b/-/b-1.0.0.tgz}\n');
   assert.equal(deps.lockfileRegistry(root), null); // host 不唯一，交给环境配置
+});
+
+test('workspaceBuildToolsOk 与 workspaceBootstrapPending：预构建快装包首次更新需补齐构建工具', () => {
+  const root = makeApp();
+  assert.equal(deps.workspaceBuildToolsOk(root), false);
+  assert.equal(deps.workspaceBootstrapPending(root), true);
+
+  // 放上 tsc / vite 与 .pnpm 存储后不再需要 bootstrap
+  fs.mkdirSync(path.join(root, 'server/node_modules/typescript/bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'server/node_modules/typescript/bin/tsc'), '');
+  fs.mkdirSync(path.join(root, 'web/node_modules/vite/bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'web/node_modules/vite/bin/vite.js'), '');
+  assert.equal(deps.workspaceBuildToolsOk(root), true);
+  assert.equal(deps.workspaceBootstrapPending(root), false);
+
+  // 有预置 electron 但没有 .pnpm 存储时仍需退出应用交接安装
+  fs.mkdirSync(path.join(root, 'desktop/node_modules/electron'), { recursive: true });
+  assert.equal(deps.workspaceBootstrapPending(root), true);
+  fs.mkdirSync(path.join(root, 'node_modules/.pnpm'), { recursive: true });
+  assert.equal(deps.workspaceBootstrapPending(root), false);
 });
 
 (async () => {

@@ -22,6 +22,8 @@ export async function healthRoutes(app: FastifyInstance) {
       reply.header('vary', 'Origin');
     }
     reply.header('cache-control', 'no-store');
+    const instanceId = (process.env.ENGRAM_INSTANCE_ID || '').trim();
+    if (instanceId) reply.header('x-engram-instance', instanceId);
     const direct = (process.env.DIRECT_ACCESS_URL || '').trim();
     return direct ? { ok: 'ok', direct } : 'ok';
   });

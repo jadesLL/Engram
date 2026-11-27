@@ -147,7 +147,7 @@
       </a>
     </div>
 
-    <AppModal :open="versionsOpen" v-tooltip="'历史版本'" placement="right" @close="versionsOpen = false">
+    <AppModal :open="versionsOpen" title="历史版本" placement="right" @close="versionsOpen = false">
       <template #subtitle>
         <p class="muted small">{{ fileName }}</p>
       </template>
@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
@@ -189,7 +189,7 @@ import {
 } from '../lib/contextMenu';
 import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
-import PdfViewer from './PdfViewer.vue';
+const PdfViewer = defineAsyncComponent(() => import('./PdfViewer.vue'));
 import AppModal from './ui/AppModal.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
@@ -248,7 +248,7 @@ const citationTitles = ref<Map<number, string>>(new Map());
 /** 委托式角标提示的卸载函数（角标由 Vditor 注入，挂不上 Vue 指令） */
 let citationTooltipUnbind: (() => void) | undefined;
 const officeEl = ref<HTMLDivElement>();
-const pdfViewer = ref<InstanceType<typeof PdfViewer>>();
+const pdfViewer = ref<any>();
 const versionsOpen = ref(false);
 const versionsLoading = ref(false);
 const versions = ref<OfficeVersion[]>([]);
@@ -295,12 +295,11 @@ const extractionStatusTone = computed(() => {
 
 async function openExternal() {
   try {
-    const res = await fetch(rawUrl.value, { credentials: 'include' });
-    if (!res.ok) throw new Error(`下载失败 ${res.status}`);
-    const buf = new Uint8Array(await res.arrayBuffer());
+    const res = await api.get<ArrayBuffer>(rawUrl.value, { responseType: 'arraybuffer' });
+    const buf = new Uint8Array(res.data);
     const wd = (window as any).wikiDesktop;
     if (wd) {
-      const error = await wd.openFileBytes(fileName.value, Array.from(buf));
+      const error = await wd.openFileBytes(fileName.value, buf);
       if (error) throw new Error(error);
     } else if ((window as any).__TAURI__) {
       await (window as any).__TAURI__.core.invoke('open_file_bytes', {
@@ -457,9 +456,8 @@ async function retryOnlineOffice() {
 }
 
 async function renderFallbackOffice(url: string, officeExtension: string) {
-  const res = await fetch(url, { credentials: 'include' });
-  if (!res.ok) throw new Error(`获取文件失败 ${res.status}`);
-  const buf = await res.arrayBuffer();
+  const res = await api.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
+  const buf = res.data;
   const el = officeEl.value;
   if (!el) return;
   let extractedText = '';
@@ -468,17 +466,19 @@ async function renderFallbackOffice(url: string, officeExtension: string) {
     await renderAsync(buf, el, undefined, { inWrapper: true });
     extractedText = el.innerText;
   } else if (officeExtension === 'xlsx') {
-    const XLSX = await import('xlsx');
+    const ExcelJS = (await import('exceljs')).default;
     const { default: Spreadsheet } = await import('x-data-spreadsheet');
     await import('x-data-spreadsheet/dist/xspreadsheet.css');
-    const wb = XLSX.read(new Uint8Array(buf));
-    extractedText = wb.SheetNames.map((name: string) => `# ${name}\n${XLSX.utils.sheet_to_csv(wb.Sheets[name])}`).join('\n\n');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const parsed = excelWorkbookToXss(wb);
+    extractedText = parsed.text;
     currentSpreadsheet = new Spreadsheet(el, {
       mode: 'read',
       showToolbar: false,
       showContextmenu: false,
       view: { width: () => el.clientWidth || 800, height: () => el.clientHeight || 520 },
-    }).loadData(wbToXss(wb, XLSX.utils));
+    }).loadData(parsed.sheets);
   } else if (officeExtension === 'pptx') {
     const { init } = await import('pptx-preview');
     const width = Math.max(320, Math.min(960, el.clientWidth - 32));
@@ -493,29 +493,56 @@ async function renderFallbackOffice(url: string, officeExtension: string) {
   }
 }
 
-function wbToXss(wb: any, utils: any): any[] {
-  return wb.SheetNames.map((name: string) => {
-    const ws: any = wb.Sheets[name];
-    const sheet: any = { name, rows: {} };
-    if (!ws || !ws['!ref']) return sheet;
-    const range = utils.decode_range(ws['!ref']);
+function excelCellText(val: unknown): string {
+  if (val == null) return '';
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    if (typeof obj.text === 'string') return obj.text;
+    if (Array.isArray(obj.richText)) return obj.richText.map((r: any) => String(r?.text ?? '')).join('');
+    if ('result' in obj) return excelCellText(obj.result);
+    if (typeof obj.error === 'string') return obj.error;
+  }
+  return String(val);
+}
+
+function csvCell(text: string): string {
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function excelWorkbookToXss(wb: any): { text: string; sheets: any[] } {
+  const textParts: string[] = [];
+  const sheets = wb.worksheets.map((ws: any) => {
+    const sheet: any = { name: ws.name, rows: {} };
+    const maxCol = ws.columnCount || 0;
     const cols: any = {};
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const width = ws['!cols']?.[c]?.wch;
-      if (width) cols[c] = { width: Math.max(40, width * 7 + 12) };
+    for (let c = 1; c <= maxCol; c++) {
+      const width = ws.getColumn(c)?.width;
+      if (typeof width === 'number' && width > 0) cols[c - 1] = { width: Math.max(40, Math.round(width * 7 + 12)) };
     }
     if (Object.keys(cols).length) sheet.cols = cols;
-    const rowEnd = Math.min(range.e.r, range.s.r + 4999);
-    for (let r = range.s.r; r <= rowEnd; r++) {
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const cell = ws[utils.encode_cell({ r, c })];
-        if (!cell || (cell.w == null && cell.v == null)) continue;
-        sheet.rows[r] ??= { cells: {} };
-        sheet.rows[r].cells[c] = { text: String(cell.w ?? cell.v ?? '') };
+    const rowEnd = Math.min(ws.rowCount || 0, 5000);
+    const csvLines: string[] = [];
+    for (let r = 1; r <= rowEnd; r++) {
+      const row = ws.getRow(r);
+      const colEnd = Math.max(maxCol, row.cellCount || 0);
+      const csvRow: string[] = [];
+      let hasValue = false;
+      for (let c = 1; c <= colEnd; c++) {
+        const text = excelCellText(row.getCell(c).value);
+        csvRow.push(csvCell(text));
+        if (text !== '') {
+          hasValue = true;
+          sheet.rows[r - 1] ??= { cells: {} };
+          sheet.rows[r - 1].cells[c - 1] = { text };
+        }
       }
+      if (hasValue) csvLines.push(csvRow.join(','));
     }
+    if (csvLines.length) textParts.push(`# ${ws.name}\n${csvLines.join('\n')}`);
     return sheet;
   });
+  return { text: textParts.join('\n\n'), sheets };
 }
 
 function clearFallbackOffice() {
@@ -740,6 +767,7 @@ onMounted(async () => {
     });
   }
   extractionTimer = setInterval(async () => {
+    if (document.visibilityState === 'hidden') return;
     if (!supportsExtraction.value) return;
     const status = extraction.value?.status;
     if (activeFileJob.value || status === 'pending' || status === 'running') {

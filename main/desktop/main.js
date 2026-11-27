@@ -1,11 +1,14 @@
 // Engram 桌面端主进程（Electron）
 // fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式），探活后加载本地页面。
 const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, Notification, dialog, powerMonitor } = require('electron');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn, execFile } = require('node:child_process');
 const net = require('node:net');
+const { Readable, Transform } = require('node:stream');
+const { pipeline: streamPipeline } = require('node:stream/promises');
 const dataDirLib = require('./lib/data-dir');
 // 局域网访问开关与监听地址（设置 → 多端同步 → 同步群组 里把本机当中枢时用）
 const localAccess = require('./lib/local-access');
@@ -14,6 +17,8 @@ const inboxRender = require('./lib/inbox-render');
 const { joinLinkFromArgs, protocolRegistration } = require('./lib/join-link');
 // 源码模式更新说明：从远端 CHANGELOG 增量条目提取「更新 / 优化 / 修复」分类（见 scripts/lib/source-changelog.js）
 const sourceChangelog = require('./scripts/lib/source-changelog');
+// 源码模式 Git 远端与凭据解析/脱敏（见 scripts/lib/source-remote.js）
+const sourceRemote = require('./scripts/lib/source-remote');
 // 启动分段计时与 app.log 轮转（纯本地小工具，单测见 desktop/scripts/tests/startup-log.test.js）：
 // 前者给「首次打开很慢」留可对照的分段数据，后者避免 737MB 级 app.log 拖慢启动（见 lib/app-log.js 头注释）。
 const startupTiming = require('./lib/startup-timing');
@@ -57,10 +62,19 @@ const installCard = require('./lib/install-card');
 const installScope = require('./lib/install-scope');
 // 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
 const uninstallGuard = require('./scripts/lib/uninstall-guard');
+// 应用内卸载的目标解析：源码安装根 / 安装包自带卸载器 / 无（单测见 desktop/scripts/tests/uninstall-mode.test.js）
+const uninstallMode = require('./lib/uninstall-mode');
 // 整棵进程树的收尾（Windows taskkill /T + tasklist 轮询），单测见 scripts/tests/process-tree.test.js。
 // 只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，它们占着安装目录里的文件，
 // 覆盖安装时旧版卸载器改名失败 → 用户看到 "Failed to uninstall old application files...: 2"。
 const processTree = require('./scripts/lib/process-tree');
+// 标题栏窗口按钮由谁绘制：新前端产物自绘，旧产物（更新半途失败）回退原生 titleBarOverlay。
+// 见 lib/window-chrome.js；单测在 scripts/tests/window-chrome.test.js。
+const windowChrome = require('./lib/window-chrome');
+// 源码更新重启参数（保留/丢弃 --silent-start、丢弃 engram:// 深链），单测见 scripts/tests/relaunch-args.test.js
+const relaunchArgsLib = require('./lib/relaunch-args');
+// 源码更新 vite 构建参数与失败摘要提炼（单测见 scripts/tests/web-build-fallback.test.js）
+const webBuildLib = require('./lib/web-build');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -68,6 +82,12 @@ const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
 // 本次启动是否来自开机自启（登录项命令里带 --silent-start）：是则只驻留托盘、不显示主窗。
 // Windows 上 Electron 的 wasOpenedAtLogin / openAsHidden 只在 macOS 有效，只能靠显式标记判定。
 const SILENT_START = loginItemLib.isSilentStart(process.argv);
+
+// 窗口按钮由谁画：web 产物声明了自绘（web/dist/desktop-shell.json）就隐藏原生标题栏按钮；
+// 旧产物没有这份声明（源码更新中断时 git 已更新壳、web 还没重建）就回退 Windows 原生
+// titleBarOverlay，否则新旧错位会让窗口一个按钮都没有（2026-11-26 用户实测）。
+const SELF_DRAWN_WINDOW_CONTROLS =
+  windowChrome.resolveWindowControlsMode(path.join(__dirname, 'web', 'dist')) === 'self-drawn';
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
@@ -80,7 +100,8 @@ if (process.env.ENGRAM_USER_DATA) app.setPath('userData', path.resolve(process.e
 // 单实例锁：点 X 后应用驻留托盘，此时再次启动若开新实例，其 fork 的后端会撞 18180 端口、
 // 探活又探测到旧实例的服务，出现双窗口共用单后端的混乱。故第二实例直接退出并唤起已有窗口。
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  app.exit(0);
+  process.exit(0);
 } else {
   app.on('second-instance', (_event, argv) => {
     showMainWindow();
@@ -304,7 +325,42 @@ const SPLASH_STYLE = `
   }
   .detail { margin: 4px 0; font-size: 13px; color: #8a93a6; text-align: center; word-break: break-all; }
   .detail code { font-family: Consolas, monospace; font-size: 12px; color: #aab4c8; }
+  .splash-win-ctrls {
+    position: fixed; top: 0; right: 0; height: 46px; display: flex; z-index: 10;
+    -webkit-app-region: no-drag;
+  }
+  .splash-win-btn {
+    width: 46px; height: 46px; border: 0; padding: 0; background: transparent;
+    color: #e6e9f0; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; -webkit-app-region: no-drag;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .splash-win-btn:hover { background: rgba(255, 255, 255, 0.09); }
+  .splash-win-btn:active { background: rgba(255, 255, 255, 0.15); }
+  .splash-win-close:hover { background: #c42b1c; color: #ffffff; }
+  .splash-win-close:active { background: #b02517; color: #ffffff; }
 `;
+
+function splashWindowControlsHtml() {
+  return (
+    '<div class="splash-win-ctrls">' +
+    '<button class="splash-win-btn" id="splash-win-min" type="button" aria-label="最小化">' +
+    '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">' +
+    '<path d="M1 5.5h8" stroke="currentColor" stroke-width="1" shape-rendering="crispEdges"/></svg></button>' +
+    '<button class="splash-win-btn" id="splash-win-max" type="button" aria-label="最大化">' +
+    '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">' +
+    '<rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1" shape-rendering="crispEdges"/></svg></button>' +
+    '<button class="splash-win-btn splash-win-close" id="splash-win-close" type="button" aria-label="关闭">' +
+    '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">' +
+    '<path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.1"/></svg></button>' +
+    '</div>' +
+    '<script>(function(){var b=window.wikiDesktop;if(!b)return;' +
+    'var min=document.getElementById("splash-win-min"),max=document.getElementById("splash-win-max"),cls=document.getElementById("splash-win-close");' +
+    'if(min&&b.windowMinimize)min.addEventListener("click",function(){b.windowMinimize();});' +
+    'if(max&&b.windowToggleMaximize)max.addEventListener("click",function(){b.windowToggleMaximize();});' +
+    'if(cls&&b.windowClose)cls.addEventListener("click",function(){b.windowClose();});})();</script>'
+  );
+}
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -314,7 +370,9 @@ function splashPage(title, desc, status) {
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
-    '</style></head><body><div class="wrap">' +
+    '</style></head><body>' +
+    (SELF_DRAWN_WINDOW_CONTROLS ? splashWindowControlsHtml() : '') +
+    '<div class="wrap">' +
     logoSvg('logo') +
     `<h1>${title}</h1><p class="desc">${desc}</p>` +
     '<div class="bar"><i></i></div>' +
@@ -334,7 +392,9 @@ function errorPage(title, lines) {
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
-    '</style></head><body><div class="wrap">' +
+    '</style></head><body>' +
+    (SELF_DRAWN_WINDOW_CONTROLS ? splashWindowControlsHtml() : '') +
+    '<div class="wrap">' +
     '<div class="err-icon">!</div>' +
     `<h1 style="font-size:24px;letter-spacing:1px;">${escHtml(title)}</h1>` +
     body +
@@ -351,18 +411,19 @@ function setSplashStatus(text) {
     .catch(() => {});
 }
 
-// 主进程侧页面底色跟随：窗口背景 + Windows 标题栏 overlay 一起切（进应用后由渲染进程经 IPC 接管）
+// 主进程侧页面底色跟随：切换窗口背景色；回退原生窗口按钮时（旧 web 产物）同步按钮区配色，
+// 否则原生按钮背后的矩形会和标头差一档色（深浅主题都成立）。自绘模式下按钮随 CSS 变量变色。
 function applyPageChrome(bg) {
   const dark = bg === SPLASH_BG;
   try {
     if (win && !win.isDestroyed()) {
       win.setBackgroundColor(bg);
-      if (typeof win.setTitleBarOverlay === 'function') {
+      if (!SELF_DRAWN_WINDOW_CONTROLS && typeof win.setTitleBarOverlay === 'function') {
         win.setTitleBarOverlay({ color: bg, symbolColor: dark ? '#e6e9f0' : '#37352f' });
       }
     }
   } catch {
-    /* 非 Windows 或未启用 overlay 时忽略 */
+    /* 非 Windows 或窗口不可用时忽略 */
   }
 }
 
@@ -394,6 +455,10 @@ function openExternally(url) {
 }
 
 function createWindow({ silent = false } = {}) {
+  // 版本错位诊断：更新中断时桌面壳已更新、web 产物还是旧的，这行日志能直接看出走了回退
+  log(
+    `[window] 标题栏按钮：${SELF_DRAWN_WINDOW_CONTROLS ? '网页自绘' : '原生 titleBarOverlay（web 产物为旧版，回退）'}`,
+  );
   win = new BrowserWindow({
     // 开机自启：窗口照常创建并加载（托盘图标可直接唤起），但先不显示 —— 静默驻留托盘
     show: !silent,
@@ -405,11 +470,14 @@ function createWindow({ silent = false } = {}) {
     autoHideMenuBar: true,
     // 源码模式窗口/任务栏图标（electron.exe 自带的是 Electron 默认图标）；打包版 exe 已内嵌图标
     icon: windowIcon(),
-    // 标题栏融合进应用：系统标题栏隐藏，右上角最小化/最大化/关闭由 Windows WCO 原生绘制，
-    // 颜色初值匹配 46px 铭牌页眉，进入应用后由渲染进程按主题经 set-title-bar-overlay 同步。
-    // height 46 须与 web 端 main.css 的 --win-titlebar-h 一致。
+    // 标题栏融合进应用：隐藏系统标题栏但保留 Windows 原生边框/圆角/阴影/分屏。
+    // 新版 web 产物在标题栏内自绘窗口按钮（不用不透明 WCO：它会遮盖标题栏底边线并在弹窗遮罩上
+    // 保持高亮）；旧产物没有自绘能力（源码更新中断造成壳/前端版本错位），回退原生 titleBarOverlay
+    // 按钮，保证任何版本组合下窗口都还能最小化 / 关闭。判定见 lib/window-chrome.js。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#fbfaf6', symbolColor: '#1f1e1b', height: 46 },
+    ...(SELF_DRAWN_WINDOW_CONTROLS
+      ? {}
+      : { titleBarOverlay: { color: '#fbfaf6', symbolColor: '#1f1e1b', height: 46 } }),
     backgroundColor: '#f7f7f5',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -455,6 +523,13 @@ function createWindow({ silent = false } = {}) {
   });
   // 从托盘/后台回到主窗就补查一次更新，不用等下一轮退避（内部去抖）
   win.on('focus', () => pokeUpdateChecks('window-focus'));
+  const emitWindowMaximize = () => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('window-maximize-change', win.isMaximized());
+    }
+  };
+  win.on('maximize', emitWindowMaximize);
+  win.on('unmaximize', emitWindowMaximize);
   return win;
 }
 
@@ -658,6 +733,7 @@ async function startLocalModeInner(notice) {
   } else {
     log('[local] 未找到可用的 Node.js（内置 Agent 控制台/聊天将不可用）');
   }
+  const instanceId = crypto.randomUUID();
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
@@ -670,6 +746,7 @@ async function startLocalModeInner(notice) {
     ENGRAM_WEB_DIST: webDistPath(),
     ENGRAM_APP_VERSION: app.getVersion(),
     ENGRAM_GIT_SHA: identity.commit,
+    ENGRAM_INSTANCE_ID: instanceId,
     // 仅「真实 Node」路径有意义：server 会把它探测校验（>=20）后覆盖 process.execPath 再拉起 dsh
     ...(agentNode ? { ENGRAM_NODE_BIN: agentNode.path } : {}),
   };
@@ -696,7 +773,7 @@ async function startLocalModeInner(notice) {
   const base = `http://127.0.0.1:${port}`;
   // 探活超过 6 秒时补充说明：首次启动要初始化数据库，慢是正常的，避免被当成卡死
   const slowHint = setTimeout(() => setSplashStatus('仍在准备中，首次启动需要初始化数据库，会稍慢一些…'), 6000);
-  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null)
+  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null, instanceId)
     .then((ok) => {
       clearTimeout(slowHint);
       if (ok) {
@@ -722,12 +799,12 @@ function loadWin(url) {
   Promise.resolve(win.loadURL(url)).catch((e) => log('[local] 页面加载失败：' + describeError(e)));
 }
 
-async function waitForHealth(base, timeoutMs, isAlive = () => true) {
+async function waitForHealth(base, timeoutMs, isAlive = () => true, expectedInstanceId = '') {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const r = await fetch(base + '/health');
-      if (r.ok) return true;
+      if (r.ok && (!expectedInstanceId || r.headers.get('x-engram-instance') === expectedInstanceId)) return true;
     } catch {
       /* 尚未就绪 */
     }
@@ -743,23 +820,25 @@ function stopLocalChild() {
   serverChild = null;
   if (!c || c.exitCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
+    let settled = false;
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(killTimer);
+      await killChildTree(c).catch(() => {});
       resolve();
     };
     const killTimer = setTimeout(() => {
-      // 超时不再只杀直接子进程：内置 Agent 的 node.exe 孙进程会活下来并占着安装目录文件
-      void killChildTree(c);
-    }, 5000);
-    c.once('exit', finish);
-    c.once('error', finish);
+      // 超时或自然退出均收干净整棵进程树：避免内置 Agent 的 node.exe 孙进程变孤儿
+      void finish();
+    }, 3000);
+    c.once('exit', () => { void finish(); });
+    c.once('error', () => { void finish(); });
     try {
-      c.kill('SIGTERM');
+      if (c.connected) c.send({ type: 'shutdown' });
+      else c.kill('SIGTERM');
     } catch {
-      finish();
+      void finish();
     }
   });
 }
@@ -890,6 +969,7 @@ app.whenReady().then(() => {
   reportPendingUpdateResult();
   // 上一次「切换安装位置」结算：落到当前用户目录就把成功提示摆到设置页，没成就写清原因
   reportScopeMigrationResult();
+  cleanupTempOpenFiles();
   cleanupInstallHandshakeDirs();
   // 已有的失败暂停记录先灌进状态：设置页在首轮自动检查（启动 4 秒后）之前就能显示暂停横幅
   {
@@ -939,7 +1019,17 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) launchByConfig();
 });
 
-app.on('before-quit', () => {
+function cleanupTempOpenFiles() {
+  try {
+    fs.rmSync(path.join(app.getPath('temp'), 'engram'), { recursive: true, force: true });
+  } catch {
+    /* 占用中的临时文件下次清理 */
+  }
+}
+
+let quitCleanupDone = false;
+
+app.on('before-quit', (event) => {
   quitting = true; // 真退出：放行窗口 close，不再隐藏进托盘
   if (tray) {
     try {
@@ -949,11 +1039,20 @@ app.on('before-quit', () => {
     }
     tray = null;
   }
-  // 退出前也要收整棵子树：只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，
+  // 退出前先停整棵子树：只 kill 直接子进程会留下内置 Agent 的 node.exe 孙进程，
   // 它们握着安装目录里的文件，下一次覆盖安装会卡在「卸载旧版本」（见 process-tree 注释）
-  if (serverChild) {
-    void stopLocalTree();
+  if (serverChild && !quitCleanupDone) {
+    event.preventDefault();
+    void stopLocalTree()
+      .catch(() => {})
+      .finally(() => {
+        cleanupTempOpenFiles();
+        quitCleanupDone = true;
+        app.quit();
+      });
+    return;
   }
+  cleanupTempOpenFiles();
 });
 
 // ---------- 开机自启（Windows 登录时静默启动到系统托盘） ----------
@@ -1080,11 +1179,35 @@ ipcMain.handle('get-launch-at-login', async () => {
 ipcMain.handle('set-launch-at-login', (_e, enabled) => setLaunchAtLogin(enabled));
 
 // ---------- IPC ----------
-// 主题切换时同步窗口控制按钮（WCO）配色；未启用 overlay 或平台不支持时静默忽略
+// 窗口控制（标题栏内自绘最小化 / 最大化 / 关闭）
+ipcMain.handle('window-minimize', () => {
+  if (win && !win.isDestroyed()) win.minimize();
+  return true;
+});
+ipcMain.handle('window-toggle-maximize', () => {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+  return win.isMaximized();
+});
+ipcMain.handle('window-close', () => {
+  if (win && !win.isDestroyed()) win.close();
+  return true;
+});
+ipcMain.handle('window-is-maximized', () => Boolean(win && !win.isDestroyed() && win.isMaximized()));
+
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+// 主题切换时同步原生窗口按钮（WCO）配色：只在回退模式（旧 web 产物依赖原生按钮）生效；
+// 自绘模式下按钮直接继承 CSS 变量，主进程不需要参与。
 ipcMain.handle('set-title-bar-overlay', (_e, opts) => {
+  if (SELF_DRAWN_WINDOW_CONTROLS) return true;
   try {
     if (win && !win.isDestroyed() && typeof win.setTitleBarOverlay === 'function') {
-      win.setTitleBarOverlay({ color: String(opts?.color), symbolColor: String(opts?.symbolColor) });
+      const color = String(opts?.color || '').trim();
+      const symbolColor = String(opts?.symbolColor || '').trim();
+      if (!HEX_COLOR_RE.test(color) || !HEX_COLOR_RE.test(symbolColor)) return false;
+      win.setTitleBarOverlay({ color, symbolColor });
     }
   } catch (e) {
     log('set-title-bar-overlay failed: ' + (e && e.message ? e.message : e));
@@ -1199,13 +1322,27 @@ ipcMain.handle('set-lan-access', async (_e, enabled) => {
   return { enabled: next };
 });
 
+const BLOCKED_OPEN_EXTS = new Set([
+  '.exe', '.bat', '.cmd', '.com', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
+  '.msi', '.msp', '.scr', '.hta', '.lnk', '.pif', '.cpl', '.reg', '.jar', '.dll', '.inf', '.msc',
+]);
+const OPEN_FILE_BYTES_MAX = 50 * 1024 * 1024;
+
 // 远程文件「用系统程序打开」：渲染进程把文件字节传过来，写临时目录后调系统默认程序
-ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
-  const safe = String(name).replace(/[\\/:*?"<>|]/g, '-');
+ipcMain.handle('open-file-bytes', async (_e, name, bytes) => {
+  const safe = path.basename(String(name || '')).replace(/[\\/:*?"<>|]/g, '-').replace(/^\.+/, '') || 'file';
+  const ext = path.extname(safe).toLowerCase();
+  if (BLOCKED_OPEN_EXTS.has(ext)) {
+    throw new Error(`出于安全原因，禁止直接打开可执行或脚本文件（${ext}）`);
+  }
+  const buf = Buffer.from(bytes);
+  if (buf.byteLength > OPEN_FILE_BYTES_MAX) {
+    throw new Error('文件超过 50MB 上限，请先下载后手动打开');
+  }
   const dir = path.join(app.getPath('temp'), 'engram');
-  fs.mkdirSync(dir, { recursive: true });
+  await fs.promises.mkdir(dir, { recursive: true });
   const file = path.join(dir, safe);
-  fs.writeFileSync(file, Buffer.from(bytes));
+  await fs.promises.writeFile(file, buf);
   return shell.openPath(file); // 空串=成功
 });
 
@@ -1276,6 +1413,13 @@ function createInboxRenderWindow() {
   });
   created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   created.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  created.webContents.on('will-navigate', (event, navUrl) => {
+    try {
+      inboxRender.assertRenderableUrl(navUrl);
+    } catch {
+      event.preventDefault();
+    }
+  });
   return created;
 }
 
@@ -1364,9 +1508,6 @@ async function resolveUpdateCfg(passed) {
   return readDesktopUpdateEnv();
 }
 
-/** 最近一次检查成功解析的更新源配置：下载校验复用，确保与资产 URL 同源 */
-let lastCheckCfg = null;
-
 function cmpVersions(a, b) {
   const pa = String(a || '0').replace(/^v/i, '').split('.').map((s) => Number(s.match(/\d+/)?.[0] || 0));
   const pb = String(b || '0').replace(/^v/i, '').split('.').map((s) => Number(s.match(/\d+/)?.[0] || 0));
@@ -1440,7 +1581,6 @@ async function checkForUpdate(passedCfg) {
   if (!cfg.giteaUrl || !cfg.giteaRepo) {
     return { ok: false, error: 'not-configured' };
   }
-  lastCheckCfg = cfg;
   try {
     const release = await giteaLatestRelease(cfg);
     if (!release) return { ok: true, latestVersion: null, hasUpdate: false, exe: null };
@@ -1483,21 +1623,24 @@ async function downloadUpdateFile(cfg, url, send, signal, expectedSha256, progre
   }
   if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
   const total = Number(res.headers.get('content-length')) || 0;
+  if (!res.body) throw new Error('下载响应为空');
   const out = fs.createWriteStream(file);
   let received = 0;
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    out.write(Buffer.from(value));
-    // source 让渲染层分清「手动下载」与「自动更新」：两者落盘路径相同，进度混用会让进度条来回跳
-    if (send) send('desktop-update-progress', updateProgress.progressPayload({ received, total, percent: total ? Math.floor((received / total) * 100) : null }, progressSource));
-  }
-  await new Promise((resolve, reject) => {
-    out.on('error', reject);
-    out.end(() => resolve());
+  const counter = new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      // source 让渲染层分清「手动下载」与「自动更新」：两者落盘路径相同，进度混用会让进度条来回跳
+      if (send) send('desktop-update-progress', updateProgress.progressPayload({ received, total, percent: total ? Math.floor((received / total) * 100) : null }, progressSource));
+      callback(null, chunk);
+    },
   });
+  try {
+    await streamPipeline(Readable.fromWeb(res.body), counter, out);
+  } catch (e) {
+    out.destroy();
+    fs.rmSync(file, { force: true });
+    throw new Error(describeError(e));
+  }
   let actual = '';
   try {
     actual = await updateChain.sha256File(file);
@@ -1539,7 +1682,6 @@ ipcMain.handle('desktop-update-download', async (e, url) => {
   if (!cfg.giteaUrl || !cfg.giteaRepo) throw new Error('尚未配置更新源');
   manualDownloadBusy = true;
   try {
-    lastCheckCfg = cfg;
     autoState.installError = ''; // 新一轮安装开始：清掉上一次的结算提示
     const release = await giteaLatestRelease(cfg);
     if (!release) throw new Error('更新源上没有可用的 Release');
@@ -1559,8 +1701,11 @@ ipcMain.handle('desktop-update-download', async (e, url) => {
 function validateInstallerFile(filePath) {
   const file = path.resolve(String(filePath));
   const dir = path.resolve(path.join(app.getPath('userData'), 'downloads'));
-  if (!file.startsWith(dir + path.sep)) {
-    throw new Error('只允许运行 downloads 目录内的安装包');
+  const inDir = process.platform === 'win32'
+    ? file.toLowerCase().startsWith(dir.toLowerCase() + path.sep)
+    : file.startsWith(dir + path.sep);
+  if (!inDir || !file.toLowerCase().endsWith('.exe')) {
+    throw new Error('只允许运行 downloads 目录内的 .exe 安装包');
   }
   if (!fs.existsSync(file)) throw new Error('安装包不存在');
   return file;
@@ -1778,8 +1923,9 @@ function installHandshakeDir(pid = process.pid) {
   return dir;
 }
 
-/** 卡片必须在这么长时间内画出窗口：主进程收到 ready 才退出，否则视为启动失败 */
-const INSTALL_CARD_READY_TIMEOUT_MS = 6_000;
+/** 卡片必须在这么长时间内画出窗口：主进程收到 ready 才退出，否则视为启动失败。
+ *  经中转进程 + PowerShell 冷启动 + Add-Type 编译，正常 1–3 秒；15 秒是慢机器/杀软扫描的上限。 */
+const INSTALL_CARD_READY_TIMEOUT_MS = 15_000;
 
 function waitForPath(target, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -1793,17 +1939,41 @@ function waitForPath(target, timeoutMs) {
   });
 }
 
-/** 杀掉没画出窗口的 PowerShell 卡片：它还在等 go，杀掉后绝不会擅自开始安装 */
-function killInstallCard(child) {
-  if (!child) return;
+/** 把卡片启动器复制到握手目录：安装包里 lib/ 在 asar 内，run-as-node 的中转进程要用真实文件。
+ *  源码模式与安装包都走这条路（asars 的 fs 读取由主进程完成，目标始终是真实路径）。 */
+function stageInstallCardLauncher(dir) {
+  const source = path.join(__dirname, 'lib', 'install-card-launcher.js');
+  const target = path.join(dir, 'install-card-launcher.js');
+  fs.copyFileSync(source, target);
+  return target;
+}
+
+/** 卡片写下的自身 PID（经 cmd start 交接后父进程拿不到 PID，只能读文件） */
+function readInstallCardPid(dir) {
   try {
-    child.kill('SIGKILL');
+    const pid = Number(fs.readFileSync(path.join(dir, 'card.pid'), 'utf8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
   } catch {
-    /* 已退出 */
+    return 0;
   }
-  if (child.pid) {
+}
+
+/** 杀掉没画出窗口的卡片：中转进程 + 它交出去的 PowerShell 一起收掉，卡片绝不会擅自开始安装 */
+function killInstallCard(child, dir) {
+  const pids = new Set();
+  if (child?.pid) pids.add(child.pid);
+  const cardPid = dir ? readInstallCardPid(dir) : 0;
+  if (cardPid) pids.add(cardPid);
+  if (child) {
     try {
-      execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      child.kill('SIGKILL');
+    } catch {
+      /* 已退出 */
+    }
+  }
+  for (const pid of pids) {
+    try {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
     } catch {
       /* taskkill 不可用 */
     }
@@ -1836,6 +2006,12 @@ function openInstallerWizard(file) {
  * 只要 ready 没出现（PowerShell 被策略拦、进程秒退），这里返回失败且**主进程不退出**，
  * 调用方改走安装向导兜底或把错误显示出来。
  *
+ * **卡片不能由 GUI 主进程直接 spawn**（2026-11-25 用户报「安装进度窗口提前退出（code=0）」根因）：
+ * spawn('powershell.exe', …, { detached: true }) 在本机实测**一行脚本都不执行就 240ms 内以 0 退出**
+ * （ignore/pipe/文件句柄、加不加 windowsHide 都一样），并非「PowerShell 被策略拦住」。
+ * 必须 fork 一个 Node 中转（lib/install-card-launcher.js），由它用 `cmd /c start` 把卡片交接给
+ * 独立进程——这也是卸载/源码更新启动器唯一验证过能存活的形态。
+ *
  * @param {object} opts 传给 installCard.buildScript 的参数
  * @param {() => void} [onReady] ready 之后、放行之前执行（写 config 必须在卡片开始安装前完成）
  * @returns {Promise<{ok: boolean, error?: string, dir?: string, logFile?: string, pid?: number}>}
@@ -1845,8 +2021,10 @@ async function launchInstallCard(opts, onReady) {
   const readyFile = path.join(dir, installCard.CARD_READY_FILE);
   const goFile = path.join(dir, installCard.CARD_GO_FILE);
   const logFile = path.join(dir, 'install.log');
+  const pidFile = path.join(dir, 'card.pid');
   fs.rmSync(readyFile, { force: true });
   fs.rmSync(goFile, { force: true });
+  fs.rmSync(pidFile, { force: true });
   let script;
   try {
     script = installCard.buildScript({
@@ -1856,6 +2034,7 @@ async function launchInstallCard(opts, onReady) {
       readyFile,
       goFile,
       logFile,
+      pidFile,
     });
   } catch (e) {
     return { ok: false, error: describeError(e) };
@@ -1867,10 +2046,15 @@ async function launchInstallCard(opts, onReady) {
     // 没有 BOM 时 Windows PowerShell 5.1 会按 ANSI 读中文，解析直接崩。
     const scriptFile = path.join(dir, 'install-card.ps1');
     fs.writeFileSync(scriptFile, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, 'utf8')]));
-    child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptFile], {
+    const launcherFile = stageInstallCardLauncher(dir);
+    // fork（Electron 的 run-as-node）而不是 spawn powershell：见函数头注释。detached 保证
+    // app.quit 之后中转仍能完成拉起；中转等卡片写出 ready 就退出（此时安装还没开始），
+    // 不会在安装期间占住安装目录。
+    child = fork(launcherFile, ['--script', scriptFile, '--log', logFile, '--pid', pidFile, '--ready', readyFile], {
       detached: true,
       stdio: 'ignore',
     });
+    child.unref();
   } catch (e) {
     return { ok: false, error: describeError(e) };
   }
@@ -1879,11 +2063,18 @@ async function launchInstallCard(opts, onReady) {
       ok ? { ok: true } : { ok: false, error: '安装进度窗口没有及时出现' },
     ),
     new Promise((resolve) => child.once('error', (e) => resolve({ ok: false, error: '无法启动安装进度窗口：' + describeError(e) }))),
-    new Promise((resolve) => child.once('exit', (code) => resolve({ ok: false, error: `安装进度窗口提前退出（code=${code}）` }))),
+    // 中转进程在卡片 ready 后以 0 退出；非零才是它自己失败（脚本缺失、交接 cmd 起不来）。
+    new Promise((resolve) =>
+      child.once('exit', (code) => {
+        if (code) resolve({ ok: false, error: `安装进度窗口启动失败（code=${code}）` });
+      }),
+    ),
   ]);
+  // 失败信息必须带上日志路径：卡片起不来时日志里才有「PowerShell 跑没跑过」的证据，
+  // 否则用户只能看到一个 code=0，无从判断（2026-11-25 报障就是这样）。
   if (!outcome.ok) {
-    killInstallCard(child);
-    return { ...outcome, dir, logFile };
+    killInstallCard(child, dir);
+    return { ...outcome, dir, logFile, error: `${outcome.error}。安装日志：${logFile}` };
   }
   try {
     onReady?.();
@@ -1893,10 +2084,10 @@ async function launchInstallCard(opts, onReady) {
   try {
     fs.writeFileSync(goFile, 'go');
   } catch (e) {
-    killInstallCard(child);
+    killInstallCard(child, dir);
     return { ok: false, error: '无法通知安装窗口开始安装：' + describeError(e), dir, logFile };
   }
-  return { ok: true, dir, logFile, pid: child.pid };
+  return { ok: true, dir, logFile, pid: readInstallCardPid(dir) || child.pid };
 }
 
 /** 静默安装 + 自动重启：安装监督卡负责「等应用退出 → /S 安装 → 拉起新版」整条链。
@@ -2008,7 +2199,12 @@ async function beginScopeMigration(file, version) {
   );
   if (!card.ok) {
     clearScopeMigration();
-    return { ok: false, error: card.error || '安装进度窗口没有启动，切换已取消' };
+    // 卡片起不来时给一条能走通的手动路径：切换必须先卸掉所有用户安装，直接跑安装包会被
+    // NSIS 的「已有所有用户安装」分支装回 Program Files，白跑一趟。
+    const manual =
+      `如仍无法自动切换，可手动完成：在 Windows「设置 → 应用 → 已安装的应用」卸载 Engram（不要勾选删除数据），` +
+      `再运行安装包「${path.basename(file)}」（会自动装到当前用户目录，知识库数据不受影响）。`;
+    return { ok: false, error: `${card.error || '安装进度窗口没有启动'}。${manual}` };
   }
   log(`scope migration: card ready, old=${scope.installDir}, log=${card.logFile}`);
   setTimeout(() => app.quit(), 400);
@@ -2049,7 +2245,7 @@ function cleanupInstallHandshakeDirs() {
     const temp = app.getPath('temp');
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     for (const name of fs.readdirSync(temp)) {
-      if (!name.startsWith('engram-install-')) continue;
+      if (!name.startsWith('engram-install-') && !name.startsWith('engram-uninstall-')) continue;
       const dir = path.join(temp, name);
       try {
         const st = fs.statSync(dir);
@@ -2181,7 +2377,6 @@ async function autoUpdateTick() {
       setAutoPhase('unconfigured');
       return;
     }
-    lastCheckCfg = cfg;
     const release = await giteaLatestRelease(cfg);
     const current = app.getVersion();
     const exe = (release && release.assets.find((a) => a.name.endsWith('.exe'))) || null;
@@ -2388,7 +2583,11 @@ let sourceUpdating = false;
 let prebuiltManifestCache;
 function prebuiltInstall() {
   if (prebuiltManifestCache === undefined) {
-    prebuiltManifestCache = runtimeMode.readPrebuiltManifest(appRootDir);
+    // 只要目录本身就是 git 检出（含新版带 .git 的快装源码包），一律按源码模式处理，
+    // 不因残留/附带的 .engram-prebuilt.json 清单被误判为「无 Git 预构建安装」。
+    prebuiltManifestCache = runtimeMode.isGitCheckout(appRootDir)
+      ? null
+      : runtimeMode.readPrebuiltManifest(appRootDir);
   }
   return prebuiltManifestCache;
 }
@@ -2426,11 +2625,14 @@ function runtimeSwapPending() {
  * 窗口跑 scripts/update-from-source.ps1（同步依赖 → 构建 → 启动），本进程随即退出把文件让出来。
  * 与卸载走 uninstall-launcher 同理：GUI 进程直接 spawn powershell 会空句柄秒退，必须经 Node 中转。
  */
-function handOffSourceUpdate() {
+function handOffSourceUpdate(options = {}) {
   return new Promise((resolve) => {
     const root = sourceInstallRoot();
-    if (!root) return resolve(false);
-    const child = fork(path.join(__dirname, 'scripts', 'update-handoff-launcher.js'), ['--root', root], {
+    const args = root ? ['--root', root] : ['--app-root', appRootDir];
+    if (options.skipPull) args.push('--skip-pull');
+    // 静默启动（开机自启到托盘）的实例更新后要回到托盘，不能把主窗弹出来
+    if (options.silentStart) args.push('--silent-start');
+    const child = fork(path.join(__dirname, 'scripts', 'update-handoff-launcher.js'), args, {
       detached: true,
       stdio: 'ignore',
     });
@@ -2482,7 +2684,10 @@ function runGit(args, timeoutMs = 120_000) {
     child.on('exit', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(out.trim());
-      else reject(new Error(`git ${args[0]} 失败(code ${code})：${err.trim().split('\n')[0] || out.trim()}`));
+      else {
+        const detail = sourceRemote.redactRemoteError(err.trim().split('\n')[0] || out.trim());
+        reject(new Error(`git ${args[0]} 失败(code ${code})：${detail}`));
+      }
     });
   });
 }
@@ -2510,6 +2715,8 @@ async function gitIdentity() {
       commitDate: (prebuilt.builtAt || '').slice(0, 10),
       dirty: false,
       prebuilt: true,
+      // 包清单里的版本号：安装后应用版本行与包一致的可读证据（见 .engram-prebuilt.json）
+      ...(prebuilt.version ? { prebuiltVersion: prebuilt.version } : {}),
     };
     log(
       '[identity] 预构建安装（' +
@@ -2644,6 +2851,20 @@ async function sourceCheckCore() {
     // abbrev-ref 会消歧成 heads/main，拼 origin/heads/main 直接报 128
     const branch = await runGit(['branch', '--show-current']);
     if (!branch) return { ok: false, error: '当前不在任何分支上（游离 HEAD），无法比对远端' };
+    let originUrl = '';
+    try {
+      originUrl = (await runGit(['remote', 'get-url', 'origin'], 10_000)).trim();
+    } catch {
+      originUrl = '';
+    }
+    if (!originUrl) {
+      return {
+        ok: false,
+        unconfigured: true,
+        branch,
+        error: '尚未配置 Git 远端仓库地址：请在下方「源码仓库配置」填写仓库地址（私有仓库需填账号与密码/访问令牌）后再检查更新。',
+      };
+    }
     const lsRemote = await runGit(['ls-remote', 'origin', `refs/heads/${branch}`], 20_000);
     const remoteSha = ((lsRemote.split(/\r?\n/)[0] || '').trim().split(/\s+/)[0] || '');
     if (!remoteSha) return { ok: false, error: `远端没有分支 ${branch}` };
@@ -2698,7 +2919,11 @@ async function sourceCheckCore() {
 /** 把一次检查结果同步进自动检查状态（手动检查也走这里，设置页文案与自动检查一致） */
 function applySourceCheckResult(r) {
   if (!r || !r.ok) {
-    setSourceAutoState({ phase: 'failed', error: (r && r.error) || '检查失败', checkedAt: Date.now() });
+    setSourceAutoState({
+      phase: r && r.unconfigured ? 'unconfigured' : 'failed',
+      error: (r && r.error) || '检查失败',
+      checkedAt: Date.now(),
+    });
     return;
   }
   setSourceAutoState({
@@ -2769,6 +2994,66 @@ ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
     scheduleSourceCheck(1000); // 开启后立即触发一次检查
   }
   return { ...sourceAutoState };
+});
+
+ipcMain.handle('desktop-source-remote-get', async () => {
+  if (PACKAGED || !runtimeMode.isGitCheckout(appRootDir)) {
+    return { ok: false, error: '仅源码模式支持配置 Git 远端仓库' };
+  }
+  let rawUrl = '';
+  try {
+    rawUrl = (await runGit(['remote', 'get-url', 'origin'], 10_000)).trim();
+  } catch {
+    rawUrl = '';
+  }
+  let branch = '';
+  try {
+    branch = (await runGit(['branch', '--show-current'], 10_000)).trim();
+  } catch {
+    branch = '';
+  }
+  return { ok: true, ...sourceRemote.parseRemoteUrl(rawUrl), branch };
+});
+
+ipcMain.handle('desktop-source-remote-set', async (_e, payload = {}) => {
+  if (PACKAGED || !runtimeMode.isGitCheckout(appRootDir)) {
+    return { ok: false, error: '仅源码模式支持配置 Git 远端仓库' };
+  }
+  let existingRawUrl = '';
+  try {
+    existingRawUrl = (await runGit(['remote', 'get-url', 'origin'], 10_000)).trim();
+  } catch {
+    existingRawUrl = '';
+  }
+  const built = sourceRemote.buildRemoteUrl({
+    repoUrl: payload.repoUrl,
+    username: payload.username,
+    password: payload.password,
+    keepExistingPassword: payload.keepExistingPassword !== false,
+    clearCredentials: Boolean(payload.clearCredentials),
+    existingRawUrl,
+  });
+  if (!built.ok) return { ok: false, error: built.message };
+  try {
+    if (existingRawUrl) {
+      await runGit(['remote', 'set-url', 'origin', built.url], 10_000);
+    } else {
+      await runGit(['remote', 'add', 'origin', built.url], 10_000);
+    }
+    const branch = (await runGit(['branch', '--show-current'], 10_000)).trim();
+    if (branch) {
+      await runGit(['config', `branch.${branch}.remote`, 'origin'], 10_000);
+      await runGit(['config', `branch.${branch}.merge`, `refs/heads/${branch}`], 10_000);
+    }
+    const parsed = sourceRemote.parseRemoteUrl(built.url);
+    log(`[source] 已更新 Git 远端 origin：${parsed.url}（${parsed.hasPassword ? '含凭据' : '无凭据'}）`);
+    sourceBackoffIndex = 0;
+    const check = await sourceCheckCore();
+    applySourceCheckResult(check);
+    return { ok: true, remote: parsed, check };
+  } catch (e) {
+    return { ok: false, error: sourceRemote.redactRemoteError(describeError(e)) };
+  }
 });
 
 // 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。紧凑深色卡片（应用图标 + Engram + 当前步骤
@@ -2916,7 +3201,7 @@ function forkStep(entry, args, cwd, onLine, timeoutMs = 10 * 60_000) {
     child.on('error', finish(reject));
     child.on('exit', finish((code) => {
       if (code === 0) resolve();
-      else reject(new Error(`${path.basename(entry)} 退出码 ${code}：${tail.slice(-4).join(' | ')}`));
+      else reject(new Error(`${path.basename(entry)} 退出码 ${code}：${webBuildLib.summarizeProcessTail(tail, 4)}`));
     }));
   });
 }
@@ -2960,15 +3245,28 @@ async function runSourceUpdate() {
     showMainWindow();
     return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
   }
-  // 换 Electron 运行时不能在应用运行时做：交接给更新脚本，退出后由它同步依赖、构建并启动
-  if (runtimeSwapPending()) {
+  // 换 Electron 运行时或首次补齐构建依赖不能在应用运行时做：交接给更新脚本，退出后由它同步依赖、构建并启动
+  const swapPending = runtimeSwapPending();
+  const bootstrapPending = !swapPending && depsLib.workspaceBootstrapPending(appRootDir);
+  if (swapPending || bootstrapPending) {
     const scriptRel = path.join('main', 'scripts', 'update-from-source.ps1');
-    setUpdateStep('本次更新包含 Electron 运行时升级，正在交接给更新脚本…');
-    appendUpdateLog('> 运行时升级要先退出应用：将打开「Engram 更新」窗口完成，完成后自动启动');
-    if (!(await handOffSourceUpdate())) {
+    setUpdateStep(
+      swapPending
+        ? '本次更新包含 Electron 运行时升级，正在交接给更新脚本…'
+        : '首次源码更新需补齐开发构建依赖，正在交接给更新脚本…',
+    );
+    appendUpdateLog(
+      swapPending
+        ? '> 运行时升级要先退出应用：将打开「Engram 更新」窗口完成，完成后自动启动'
+        : '> 首次更新需补齐开发依赖（仅此一次，后续应用内直接更新）：将打开「Engram 更新」窗口完成，完成后自动启动',
+    );
+    if (!(await handOffSourceUpdate({ skipPull: true, silentStart: SILENT_START }))) {
       failUpdateProgress('无法启动更新脚本，请手动运行 ' + scriptRel);
       showMainWindow();
-      return { ok: false, error: `运行时升级需要退出应用后完成：请手动运行 ${scriptRel}` };
+      return {
+        ok: false,
+        error: `${swapPending ? '运行时升级' : '首次补齐构建依赖'}需要退出应用后完成：请手动运行 ${scriptRel}`,
+      };
     }
     await new Promise((r) => setTimeout(r, 2500)); // 让进度小窗把提示显示完整
     await stopLocalChild(); // 优雅停内嵌 server（数据库落盘），其余进程由更新脚本清理
@@ -2988,10 +3286,18 @@ async function runSourceUpdate() {
       // （发布产物不携带测试与其中的内网地址 fixture；typecheck 仍用 tsconfig.json 覆盖测试）
     ]), ['-p', 'tsconfig.build.json'], path.join(appRootDir, 'server'), appendUpdateLog);
     setUpdateStep('构建 web（vite）…');
-    await forkStep(resolveToolEntry([
+    const viteEntry = resolveToolEntry([
       path.join('web', 'node_modules', 'vite', 'bin', 'vite.js'),
       path.join('node_modules', 'vite', 'bin', 'vite.js'),
-    ]), ['build'], path.join(appRootDir, 'web'), appendUpdateLog);
+    ]);
+    try {
+      await forkStep(viteEntry, webBuildLib.WEB_BUILD_ARGS, path.join(appRootDir, 'web'), appendUpdateLog);
+    } catch (e) {
+      // 本机安全软件偶发抢锁 esbuild 的临时文件（remove ...: Access is denied）：退回「不压缩、
+      // 不降级语法」的构建，产物可直接运行、只是体积大一些——比整次更新失败好（2026-11-27 本机实测）。
+      appendUpdateLog('> 默认构建失败（可能是安全软件锁住 esbuild 临时文件），改用未压缩构建重试');
+      await forkStep(viteEntry, webBuildLib.WEB_BUILD_FALLBACK_ARGS, path.join(appRootDir, 'web'), appendUpdateLog);
+    }
   } catch (e) {
     const msg = describeError(e);
     failUpdateProgress('更新失败：' + msg);
@@ -3021,14 +3327,18 @@ async function runSourceUpdate() {
   }
   setUpdateStep('完成，正在启动新版本…');
   appendUpdateLog('> 更新完成');
-  app.relaunch({ args: process.argv.slice(1) });
+  // 静默启动的实例更新后继续回托盘；engram:// 深链不带过去（见 lib/relaunch-args.js）
+  app.relaunch({ args: relaunchArgsLib.relaunchArgsForSourceUpdate(process.argv, { silentStart: SILENT_START }) });
   app.exit(0);
   return { ok: true, restarting: true };
 }
 
-// ---------- 源码模式卸载：设置页「卸载」→ uninstall-engram.ps1 → 应用退出 ----------
-// 仅源码安装形态可用：进程可执行文件位于源码版安装根（%LOCALAPPDATA%\engram）下；
-// ENGRAM_INSTALL_DIR 供隔离测试/自定义安装位置显式指定。安装包形态走 NSIS 卸载器，不显示该功能。
+// ---------- 应用内卸载：设置页「卸载 Engram」→ 卸载器 → 应用退出 ----------
+// 两种安装形态共用这一个入口，只是卸载器不同（见 lib/uninstall-mode.js）：
+//   源码模式（进程可执行文件位于 %LOCALAPPDATA%\engram 下）→ 随源码带的 uninstall-engram.ps1；
+//   安装包形态（NSIS）→ 安装目录里的「Uninstall Engram.exe」（与系统「已安装的应用」同一个）。
+// ENGRAM_INSTALL_DIR 供隔离测试/自定义安装位置显式指定。
+// 2026-11-26 用户报「卸载消失了」：旧实现只认源码安装根，安装版用户整组看不到入口。
 function sourceInstallRoot() {
   if (process.env.ENGRAM_INSTALL_DIR) return process.env.ENGRAM_INSTALL_DIR;
   const local = process.env.LOCALAPPDATA || '';
@@ -3036,6 +3346,18 @@ function sourceInstallRoot() {
   const root = path.join(local, 'engram');
   const prefix = root.toLowerCase() + path.sep;
   return process.execPath.toLowerCase().startsWith(prefix) ? root : '';
+}
+
+/**
+ * 本次运行的卸载目标：源码安装根 / 安装包卸载器 / 无（便携版、win-unpacked 开发目录）。
+ * 只按「exe 落在哪」判定，不看 PACKAGED——品牌启动器 Engram.exe 改名不影响这里的路径判定，
+ * 而 asar 判定（PACKAGED）要求 resources\app.asar 存在，两者指向同一个安装目录。
+ */
+function uninstallTarget() {
+  return uninstallMode.resolveTarget({
+    sourceRoot: sourceInstallRoot(),
+    installDir: path.dirname(app.getPath('exe')),
+  });
 }
 
 // 交接等待上限：launcher 起来、校验脚本、拉起 PowerShell 正常在 1 秒内完成；8 秒还没见到
@@ -3069,7 +3391,7 @@ async function waitUninstallStarted(statusFile) {
   const deadline = Date.now() + UNINSTALL_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const s = uninstallGuard.readStatus(statusFile);
-    if (s && s.phase === 'running') return { ok: true };
+    if (s && (s.phase === 'running' || (s.phase === 'done' && s.code === 0))) return { ok: true };
     if (s && s.phase === 'error') return { ok: false, error: '卸载进程启动失败：' + (s.error || '未知原因') };
     if (s && s.phase === 'done' && s.code !== 0) {
       return { ok: false, error: '卸载脚本立即退出（code=' + s.code + '），详见日志：' + uninstallLogFile() };
@@ -3079,26 +3401,248 @@ async function waitUninstallStarted(statusFile) {
   return { ok: false, error: '卸载进程 ' + Math.round(UNINSTALL_START_TIMEOUT_MS / 1000) + ' 秒内没有启动，详见日志：' + uninstallLogFile() };
 }
 
-ipcMain.handle('desktop-source-uninstall-state', () => ({ available: Boolean(sourceInstallRoot()) }));
+/** 把源码卸载中转器及其 guard 依赖复制到 TEMP 握手目录，避免运行在安装目录里锁死目录或被杀 */
+function stageUninstallLauncher(dir) {
+  const libDir = path.join(dir, 'lib');
+  fs.mkdirSync(libDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(__dirname, 'scripts', 'lib', 'uninstall-guard.js'),
+    path.join(libDir, 'uninstall-guard.js'),
+  );
+  const target = path.join(dir, 'uninstall-launcher.js');
+  fs.copyFileSync(path.join(__dirname, 'scripts', 'uninstall-launcher.js'), target);
+  return target;
+}
+
+ipcMain.handle('desktop-source-uninstall-state', () => {
+  const target = uninstallTarget();
+  return {
+    available: target.mode !== 'none',
+    // 'source' = 源码安装根（uninstall-engram.ps1）；'packaged' = 安装包自带卸载器
+    mode: target.mode,
+  };
+});
+
+/**
+ * 安装包形态的卸载随身脚本：等主进程退出 → 跑安装目录里的 NSIS 卸载器 → 写结果。
+ *
+ * 为什么不在主进程里直接 spawn 卸载器：GUI 进程直接 spawn 会空句柄静默秒退（源码模式卸载与
+ * 安装卡片都踩过同一个坑，见 uninstall-launcher.js / install-card-launcher.js 的头注释）。
+ * 这里复用安装卡片验证过的形态：主进程 fork 中转（scripts/lib 里的启动器）→ `cmd /c start`
+ * 交出 PowerShell → 本脚本常驻。ready 文件证明脚本真的跑起来了，主进程才退出——否则就是
+ * 2026-11-06 那个「退出了但什么都没卸」。
+ */
+function packagedUninstallScript(opts) {
+  const q = (value) => "'" + String(value).replace(/'/g, "''") + "'";
+  const { appPid, installDir, uninstaller, statusFile, readyFile, logFile, deleteData } = opts;
+  return [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'Set-Location $env:TEMP',
+    `$appPid = ${Number(appPid) || 0}`,
+    `$installDir = ${q(installDir || '')}`,
+    `$uninstaller = ${q(uninstaller)}`,
+    `$statusFile = ${q(statusFile)}`,
+    `$readyFile = ${q(readyFile)}`,
+    `$logFile = ${q(logFile)}`,
+    `$deleteData = ${deleteData ? '$true' : '$false'}`,
+    '$utf8NoBom = New-Object System.Text.UTF8Encoding($false)',
+    'function Write-Status($obj) {',
+    '  try {',
+    '    $obj.at = (Get-Date).ToUniversalTime().ToString("o")',
+    '    [System.IO.File]::WriteAllText($statusFile, ($obj | ConvertTo-Json -Compress), $utf8NoBom)',
+    '  } catch {}',
+    '}',
+    'function Write-Log([string]$line) {',
+    '  try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " " + $line) -Encoding UTF8 } catch {}',
+    '}',
+    // ready：脚本确实执行到了（不是 start 交接失败、也不是被策略拦下）
+    'try { Set-Content -LiteralPath $readyFile -Value ([string]$PID) -Encoding ASCII } catch {}',
+    'Write-Log ("uninstall script start (pid " + $PID + ")")',
+    // 等应用退出：主进程在此之前已停掉内嵌 server，但进程本身要等这里放行后才退。
+    // 卸载器自带的 CHECK_APP_RUNNING 会去弹「Engram 正在运行」，不能让用户看到那一步。
+    '$deadline = (Get-Date).AddSeconds(60)',
+    'while ((Get-Date) -lt $deadline) {',
+    '  if ($appPid -le 0) { break }',
+    '  if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) { break }',
+    '  Start-Sleep -Milliseconds 200',
+    '}',
+    // 再等/清安装目录内残留子进程（Electron 渲染/GPU/crashpad 与刚退出中的中转启动器），
+    // 避免 NSIS 提示应用仍在运行或 RMDir 跳过被占文件留残骸
+    'if ($installDir) {',
+    '  $dirRoot = $installDir.TrimEnd("\\") + "\\"',
+    '  $dirDeadline = (Get-Date).AddSeconds(5)',
+    '  $graceEnd = (Get-Date).AddSeconds(2)',
+    '  while ((Get-Date) -lt $dirDeadline) {',
+    '    $lingering = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {',
+    '      $_.ProcessId -ne $PID -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($dirRoot, [System.StringComparison]::OrdinalIgnoreCase)',
+    '    })',
+    '    if ($lingering.Count -eq 0) { break }',
+    '    if ((Get-Date) -ge $graceEnd) {',
+    '      foreach ($p in $lingering) {',
+    '        Write-Log ("cleanup lingering process " + $p.Name + " pid=" + $p.ProcessId)',
+    '        try { & taskkill /PID $p.ProcessId /T /F 2>&1 | Out-Null } catch {}',
+    '        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue } catch {}',
+    '      }',
+    '    }',
+    '    Start-Sleep -Milliseconds 250',
+    '  }',
+    '  Start-Sleep -Milliseconds 400',
+    '}',
+    'if (-not (Test-Path -LiteralPath $uninstaller)) {',
+    '  Write-Log ("missing uninstaller: " + $uninstaller)',
+    '  Write-Status @{ phase = "error"; error = "找不到安装版卸载程序：$uninstaller" }',
+    '  exit 3',
+    '}',
+    '$argList = @()',
+    'if ($deleteData) { $argList += "--delete-app-data" }',
+    'try {',
+    // 有参数才传 -ArgumentList：Start-Process 在 -ArgumentList @() 时会抛
+    // 「参数为 Null、为空」的参数验证错误（2026-11-26 真机实测，不删数据这条默认路径直接起不来）
+    '  if ($argList.Count -gt 0) {',
+    '    $proc = Start-Process -FilePath $uninstaller -ArgumentList $argList -WorkingDirectory $env:TEMP -PassThru',
+    '  } else {',
+    '    $proc = Start-Process -FilePath $uninstaller -WorkingDirectory $env:TEMP -PassThru',
+    '  }',
+    '} catch {',
+    '  Write-Log ("start failed: " + $_.Exception.Message)',
+    '  Write-Status @{ phase = "error"; error = ("无法启动卸载程序：" + $_.Exception.Message) }',
+    '  exit 4',
+    '}',
+    'Write-Log ("uninstaller started pid=" + $proc.Id)',
+    'Write-Status @{ phase = "running"; pid = $proc.Id }',
+    '$proc.WaitForExit()',
+    'Write-Log ("uninstaller exit " + $proc.ExitCode)',
+    'Write-Status @{ phase = "done"; code = $proc.ExitCode }',
+    'exit $proc.ExitCode',
+  ].join('\r\n');
+}
+
+/**
+ * 安装包形态卸载：停内嵌服务 → 交给随身脚本等应用退出 → 跑 NSIS 卸载器（非静默，用户能看到进度）。
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+async function beginPackagedUninstall(target, deleteData) {
+  const dir = path.join(app.getPath('temp'), `engram-uninstall-${process.pid}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const readyFile = path.join(dir, 'ready.txt');
+  const statusFile = uninstallGuard.statusPath(app.getPath('temp'));
+  const logFile = uninstallLogFile();
+  fs.rmSync(readyFile, { force: true });
+  uninstallGuard.writeStatus(statusFile, { phase: 'launching' });
+  const scriptFile = path.join(dir, 'uninstall-packaged.ps1');
+  // 没有 BOM 时 Windows PowerShell 5.1 会按 ANSI 读中文，解析直接崩（安装卡片同一坑）
+  fs.writeFileSync(
+    scriptFile,
+    Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(
+        packagedUninstallScript({
+          appPid: process.pid,
+          installDir: target.installDir,
+          uninstaller: target.uninstaller,
+          statusFile,
+          readyFile,
+          logFile,
+          deleteData,
+        }),
+        'utf8',
+      ),
+    ]),
+  );
+  // 停掉内嵌服务整棵进程树（server + 内置 Agent 的 node.exe 孙进程），否则 NSIS 卸载器
+  // 删目录时这些文件仍被占用，用户会看到「Failed to uninstall ... : 2」
+  const treeFreed = await stopLocalTree();
+  if (!treeFreed) log('[uninstall] 进程树未完全退出，继续卸载（卸载器会重试删目录）');
+  let child;
+  try {
+    const launcherFile = stageInstallCardLauncher(dir);
+    child = fork(launcherFile, ['--script', scriptFile, '--log', logFile, '--ready', readyFile], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: app.getPath('temp'),
+    });
+    child.unref();
+  } catch (e) {
+    return { ok: false, error: '无法启动卸载程序：' + describeError(e) };
+  }
+  const ready = await waitForPath(readyFile, INSTALL_CARD_READY_TIMEOUT_MS);
+  if (!ready) {
+    const s = uninstallGuard.readStatus(statusFile);
+    if (child?.pid) {
+      try {
+        execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      } catch {
+        /* taskkill 不可用 */
+      }
+    }
+    const reason = s?.error || '卸载程序没有及时启动';
+    log('[uninstall] ' + reason + '（日志：' + logFile + '）');
+    return { ok: false, error: reason + '。卸载日志：' + logFile };
+  }
+  return { ok: true };
+}
 
 ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
-  const root = sourceInstallRoot();
-  if (!root) return { ok: false, error: '未识别出源码版安装目录；安装包形态请在系统「添加或删除程序」中卸载' };
+  const target = uninstallTarget();
+  if (target.mode === 'none') {
+    return {
+      ok: false,
+      error: '未找到可用的卸载程序（便携版与开发目录不提供应用内卸载）',
+    };
+  }
+  if (target.mode === 'packaged') {
+    log('[uninstall] 安装包形态：交给安装版卸载器 ' + target.uninstaller);
+    const r = await beginPackagedUninstall(target, Boolean(deleteData));
+    if (!r.ok) return r;
+    log('[uninstall] 卸载程序已拉起，应用退出；进度日志：' + uninstallLogFile());
+    app.exit(0);
+    return { ok: true };
+  }
+  const root = target.installDir;
   const script = path.join(root, 'Engram', 'main', 'scripts', 'uninstall-engram.ps1');
   if (!fs.existsSync(script)) return { ok: false, error: '未找到卸载脚本：' + script };
   // 先写卸载标记：期间用户再点图标会被启动守卫挡下，避免新实例锁住正在被删的安装目录。
   uninstallGuard.writeFlag(root, { deleteData: Boolean(deleteData) });
   const statusFile = uninstallGuard.statusPath(app.getPath('temp'));
+  const logFile = uninstallLogFile();
   uninstallGuard.writeStatus(statusFile, { phase: 'launching' });
-  // 先优雅停掉内嵌 server（数据库落盘），再拉起独立卸载进程。
-  // 不能直接 spawn powershell：GUI 进程 spawn 的 powershell 会空句柄静默秒退（实测），
-  // 必须经 fork 出的 Node 中转（uninstall-launcher.js），fork 的子进程在 app.exit 后存活。
+  const dir = path.join(app.getPath('temp'), `engram-uninstall-${process.pid}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const readyFile = path.join(dir, 'ready.txt');
+  fs.rmSync(readyFile, { force: true });
+  // 先优雅停掉内嵌 server（数据库落盘），再收干净整棵进程树，最后交由 TEMP 中的独立中转进程拉起卸载。
   await stopLocalChild();
-  const child = fork(
-    path.join(__dirname, 'scripts', 'uninstall-launcher.js'),
-    ['--root', root, ...(deleteData ? ['--delete-data'] : []), '--status', statusFile],
-    { detached: true, stdio: 'ignore' },
-  );
+  await stopLocalTree();
+  let child;
+  try {
+    const launcherFile = stageUninstallLauncher(dir);
+    child = fork(
+      launcherFile,
+      [
+        '--root',
+        root,
+        ...(deleteData ? ['--delete-data'] : []),
+        '--status',
+        statusFile,
+        '--ready',
+        readyFile,
+        '--log',
+        logFile,
+        '--app-pid',
+        String(process.pid),
+      ],
+      {
+        detached: true,
+        stdio: 'ignore',
+        cwd: app.getPath('temp'),
+        env: { ...process.env, ENGRAM_INSTALL_LOG: logFile },
+      },
+    );
+    child.unref();
+  } catch (e) {
+    uninstallGuard.removeFlag(root);
+    return { ok: false, error: '无法启动卸载中转进程：' + describeError(e) };
+  }
   // 没有 error 监听时 spawn 失败会变成 uncaughtException 带走主进程；失败原因由状态文件给出
   child.on('error', () => {});
   const started = await waitUninstallStarted(statusFile);
@@ -3112,7 +3656,7 @@ ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
     log('[uninstall] 卸载未能启动：' + started.error);
     return { ok: false, error: started.error };
   }
-  log('[uninstall] 卸载脚本已拉起，应用退出；进度日志：' + uninstallLogFile());
+  log('[uninstall] 卸载脚本已拉起，应用退出；进度日志：' + logFile);
   app.exit(0);
   return { ok: true };
 });

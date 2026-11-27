@@ -365,6 +365,18 @@ test('卸载与开机自启不再留在「桌面端更新」分组里（防回�
   assert.match(danger, /\/api\/settings\/wipe'/, '危险操作应保留清库');
 });
 
+test('卸载入口对安装包形态也可见（2026-11-26「卸载消失了」防回退）', () => {
+  // 用户截图上「运行形态 = 桌面端 · 安装包」，左侧「本机应用」里只剩「桌面端应用 / 版本信息」——
+  // 旧实现只认源码安装根（%LOCALAPPDATA%\engram），安装版（NSIS）拿到 available=false，整组消失。
+  // 现在主进程回 { available, mode }，两种桌面形态都要出现，只有便携版/开发目录才隐藏。
+  const uninstall = fs.readFileSync(path.join(settingsDir, 'UninstallSection.vue'), 'utf8');
+  assert.match(uninstall, /desktopSourceUninstallState/, '必须查主进程的卸载可用性');
+  assert.match(uninstall, /'packaged'/, '安装包形态（自带的 Uninstall Engram.exe）必须算可用');
+  assert.match(uninstall, /useSettingsAnchorVisible\('app-uninstall'/, '导航项必须与渲染条件同源');
+  // 显隐只能由「有没有卸载器」决定，不能再按源码模式单条件收窄
+  assert.doesNotMatch(uninstall, /available\s*=\s*Boolean\(s\?\.available\)[\s\S]{0,80}mode\s*===?\s*'source'/, '不能只放行源码模式');
+});
+
 test('桌面端更新：预构建安装不能落进 git 更新入口（防回归）', () => {
   // 2026-11-06 客户端实例：预构建环境包安装没有 .git / Git，旧版仍按源码模式跑 git 检查，
   // 设置页永远挂着「自动检查失败: spawn git ENOENT」。这条锁住三类安装入口的分流。
@@ -373,6 +385,8 @@ test('桌面端更新：预构建安装不能落进 git 更新入口（防回归
   assert.match(updatePanel, /installerMode/, '安装包入口必须与源码模式/预构建模式分开判定');
   assert.match(updatePanel, /预构建安装/, '预构建安装必须给用户可读的更新方式说明');
   assert.match(updatePanel, /!env\.prebuilt/, 'sourceMode 必须排除预构建安装，否则又会跑 git 检查');
+  assert.match(updatePanel, /desktopSourceRemoteGet/, '源码模式应支持读取并配置 Git 更新源');
+  assert.match(updatePanel, /desktopSourceRemoteSet/, '源码模式应支持保存并验证 Git 更新源');
 });
 
 test('锚点 → 大类：设置页内跳转不再靠调用方写死大类', () => {

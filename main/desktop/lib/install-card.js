@@ -58,6 +58,7 @@ function joinArgs(args) {
  * @param {string} [opts.readyFile]      卡片就绪标记文件
  * @param {string} [opts.goFile]         主进程放行标记文件
  * @param {string} [opts.logFile]        步骤日志
+ * @param {string} [opts.pidFile]        卡片把自己的 PID 写到这里（经 cmd start 交接后父进程拿不到 PID）
  */
 function buildScript(opts = {}) {
   const {
@@ -75,6 +76,7 @@ function buildScript(opts = {}) {
     readyFile = '',
     goFile = '',
     logFile = '',
+    pidFile = '',
   } = opts;
   const v = cleanVersion(version);
   const switching = mode === 'switch';
@@ -106,6 +108,16 @@ function buildScript(opts = {}) {
     `$readyFile = ${psq(readyFile)}`,
     `$goFile = ${psq(goFile)}`,
     `$logFile = ${psq(logFile)}`,
+    `$pidFile = ${psq(pidFile)}`,
+    // 卡片自己的 PID：经 cmd start 交接后父进程拿不到，主进程失败回收时只能靠这个文件
+    'try { if ($pidFile) { Set-Content -LiteralPath $pidFile -Value ([string]$PID) -Encoding ASCII } } catch {}',
+    // 第一行日志要在任何 Add-Type / WinForms 之前：卡片起不来时（策略拦截、.NET 异常）
+    // 安装日志里必须留下「PowerShell 确实跑过」的证据，否则只能看到主进程报「提前退出」。
+    'try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " script start (pid " + $PID + ", mode " + $mode + ")") -Encoding UTF8 } catch {}',
+    // 顶层终止错误也落一行日志再退出：-File 启动时异常只回退出码，不会回到界面上
+    'trap { try { Add-Content -LiteralPath $logFile -Value ((Get-Date).ToString("HH:mm:ss") + " FATAL: " + $_.Exception.Message) -Encoding UTF8 } catch {}; exit 1 }',
+    // 摘掉父进程（ELECTRON_RUN_AS_NODE=1）继承来的标志，避免更新后重拉 Engram.exe 退化成纯 Node 模式
+    'Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue',
     // DPI 感知 + 无边框窗拖拽（WM_NCLBUTTONDOWN / HTCAPTION）：不先声明感知，150% 缩放下整张卡会被位图拉伸发糊。
     // Add-Type 编译失败（受限语言模式 / 杀软）时降级：卡片照常显示，只是不能拖动、按 DeviceDpi 缩放。
     '$nativeReady = $false',
@@ -312,12 +324,13 @@ function buildScript(opts = {}) {
     // 继承来的 cwd 可能已经不存在，Start-Process 会直接失败
     '  $workDir = Split-Path -Parent $file',
     '  if (-not $workDir -or -not (Test-Path -LiteralPath $workDir)) { $workDir = $env:TEMP }',
+    // 参数为空时不能传 -ArgumentList ''：Start-Process 会对空字符串做参数验证并直接抛错
+    // （2026-11-25 实测：干脆不带参数就报「参数为 Null 或空」）。空就整段省掉。
+    '  $exeArgs = @{ FilePath = $file; WorkingDirectory = $workDir; Wait = $true; PassThru = $true }',
+    '  if ($argLine) { $exeArgs.ArgumentList = $argLine }',
+    '  if ($elevated) { $exeArgs.Verb = "RunAs" }',
     '  try {',
-    '    if ($elevated) {',
-    '      $p = Start-Process -FilePath $file -ArgumentList $argLine -WorkingDirectory $workDir -Verb RunAs -Wait -PassThru',
-    '    } else {',
-    '      $p = Start-Process -FilePath $file -ArgumentList $argLine -WorkingDirectory $workDir -Wait -PassThru',
-    '    }',
+    '    $p = Start-Process @exeArgs',
     '  } catch {',
     '    Write-Log ("launch failed: " + $_.Exception.Message)',
     '    return 1223',

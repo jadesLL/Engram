@@ -1,6 +1,6 @@
 services:
   engram:
-    image: engram:1.5.19
+    image: engram:1.5.22
     build:
       context: .
       # 构建身份：本地构建时传 ENGRAM_GIT_SHA=$(git rev-parse HEAD) 即可在应用内看到提交号
@@ -8,6 +8,7 @@ services:
       args:
         ENGRAM_GIT_SHA: ${ENGRAM_GIT_SHA:-}
     container_name: engram
+    init: true
     ports:
       # 唯一对外映射；Cloudflare Tunnel ingress（systemprofile cloudflared config.yml）
       # 已指向 http://localhost:18080，公网经 wiki.xxx.com 进来，无需 8080 桥接

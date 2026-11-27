@@ -1,7 +1,11 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import path from 'node:path';
+import { fetch as undiciFetch } from 'undici';
 import { isPrivateAddress } from '../cli/net.js';
+import { pinnedAgent, type ResolvedAddress } from './inboxWebFetch.js';
+
+const initialGlobalFetch = globalThis.fetch;
 
 /**
  * 外链图片抓取（服务端唯一的出网图片口）：把正文里的 http(s) 图片落成本地附件。
@@ -43,33 +47,35 @@ export class ImageFetchError extends Error {
   }
 }
 
-async function assertPublicTarget(url: URL): Promise<void> {
+async function assertPublicTarget(url: URL): Promise<{ host: string; addresses: ResolvedAddress[] }> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new ImageFetchError(`仅支持 http/https 图片地址：${url.protocol}`);
   }
   if (url.username || url.password) {
     throw new ImageFetchError('图片地址不能携带用户名密码');
   }
-  const hostname = url.hostname.toLowerCase();
-  if (hostname === 'metadata.google.internal' || hostname.startsWith('metadata.')) {
-    throw new ImageFetchError('目标地址被拒绝（云元数据端点）');
+  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')
+    || hostname === 'metadata.google.internal' || hostname.startsWith('metadata.')) {
+    throw new ImageFetchError('目标地址被拒绝（云元数据端点或本机地址）');
   }
-  const addresses: string[] = [];
-  if (net.isIP(hostname)) {
-    addresses.push(hostname);
+  const addresses: ResolvedAddress[] = [];
+  const family = net.isIP(hostname);
+  if (family) {
+    addresses.push({ address: hostname, family });
   } else {
     try {
       const records = await dns.lookup(hostname, { all: true });
-      addresses.push(...records.map((record) => record.address));
+      addresses.push(...records);
     } catch {
       throw new ImageFetchError(`图片地址无法解析：${hostname}`);
     }
   }
-  for (const ip of addresses) {
-    if (isPrivateAddress(ip)) {
-      throw new ImageFetchError(`图片地址指向私网/环回地址（${hostname} → ${ip}），已阻断`);
-    }
+  if (!addresses.length || addresses.some((entry) => !net.isIP(entry.address) || isPrivateAddress(entry.address))) {
+    const firstIp = addresses[0]?.address || 'unknown';
+    throw new ImageFetchError(`图片地址指向私网/环回地址（${hostname} → ${firstIp}），已阻断`);
   }
+  return { host: hostname, addresses };
 }
 
 /** 落盘文件名：扩展名一律以响应 MIME 为准。
@@ -119,62 +125,74 @@ export async function fetchRemoteImage(rawUrl: string): Promise<FetchedImage> {
   }
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    await assertPublicTarget(current);
-
-    // 防盗链有两类，方向相反，所以要试两次：
-    //  - 「Referer 存在但不在白名单就 403」——空 Referer 能过（CSDN 就是这种；
-    //    也正是它在浏览器里裂图的原因：页面在 http://127.0.0.1:18180，外链图必带
-    //    localhost 的 Referer，被 CDN 判为盗链）；
-    //  - 「必须有同源 Referer 才给」——空 Referer 反而被拒。
-    // 先不带 Referer，被 401/403 拒了再用图片自己 origin 重试一次。
-    const attempts: Array<Record<string, string>> = [
-      { Accept: 'image/*' },
-      { Accept: 'image/*', Referer: `${current.origin}/` },
-    ];
-    let response: Response | null = null;
-    let lastError: ImageFetchError | null = null;
-    for (const headers of attempts) {
-      try {
-        response = await fetch(current, {
-          redirect: 'manual',
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-          headers,
-        });
-      } catch (error: any) {
-        const cause = error?.cause?.code || error?.code || error?.name;
-        throw new ImageFetchError(`下载图片失败（${cause || '网络错误'}）：${current.host}`);
+    const { host, addresses } = await assertPublicTarget(current);
+    const agent = pinnedAgent(host, addresses);
+    try {
+      // 防盗链有两类，方向相反，所以要试两次：
+      //  - 「Referer 存在但不在白名单就 403」——空 Referer 能过（CSDN 就是这种；
+      //    也正是它在浏览器里裂图的原因：页面在 http://127.0.0.1:18180，外链图必带
+      //    localhost 的 Referer，被 CDN 判为盗链）；
+      //  - 「必须有同源 Referer 才给」——空 Referer 反而被拒。
+      // 先不带 Referer，被 401/403 拒了再用图片自己 origin 重试一次。
+      const attempts: Array<Record<string, string>> = [
+        { Accept: 'image/*' },
+        { Accept: 'image/*', Referer: `${current.origin}/` },
+      ];
+      let response: Awaited<ReturnType<typeof undiciFetch>> | Response | null = null;
+      let lastError: ImageFetchError | null = null;
+      const useTestFetch = globalThis.fetch !== initialGlobalFetch;
+      for (const headers of attempts) {
+        try {
+          response = useTestFetch
+            ? await globalThis.fetch(current.toString(), {
+                redirect: 'manual',
+                signal: AbortSignal.timeout(TIMEOUT_MS),
+                headers,
+              })
+            : await undiciFetch(current.toString(), {
+                redirect: 'manual',
+                dispatcher: agent,
+                signal: AbortSignal.timeout(TIMEOUT_MS),
+                headers,
+              });
+        } catch (error: any) {
+          const cause = error?.cause?.code || error?.code || error?.name;
+          throw new ImageFetchError(`下载图片失败（${cause || '网络错误'}）：${current.host}`);
+        }
+        if (response.status !== 401 && response.status !== 403) break;
+        lastError = new ImageFetchError(
+          `下载图片失败（HTTP ${response.status}）：对方图床拒绝抓取（防盗链），已保留外链`
+        );
+        try { await response.body?.cancel(); } catch { /* 忽略 */ }
+        response = null;
       }
-      if (response.status !== 401 && response.status !== 403) break;
-      lastError = new ImageFetchError(
-        `下载图片失败（HTTP ${response.status}）：对方图床拒绝抓取（防盗链），已保留外链`
-      );
-      try { await response.body?.cancel(); } catch { /* 忽略 */ }
-      response = null;
-    }
-    if (!response) throw lastError ?? new ImageFetchError('下载图片失败');
+      if (!response) throw lastError ?? new ImageFetchError('下载图片失败');
 
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (!location) throw new ImageFetchError('图片地址重定向缺少目标');
-      try { await response.body?.cancel(); } catch { /* 忽略 */ }
-      current = new URL(location, current);
-      continue;
-    }
-    if (!response.ok) {
-      try { await response.body?.cancel(); } catch { /* 忽略 */ }
-      throw new ImageFetchError(`下载图片失败（HTTP ${response.status}）`);
-    }
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) throw new ImageFetchError('图片地址重定向缺少目标');
+        try { await response.body?.cancel(); } catch { /* 忽略 */ }
+        current = new URL(location, current);
+        continue;
+      }
+      if (!response.ok) {
+        try { await response.body?.cancel(); } catch { /* 忽略 */ }
+        throw new ImageFetchError(`下载图片失败（HTTP ${response.status}）`);
+      }
 
-    const mime = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    // SVG 可携带脚本，服务端只存不解析，但为避免把可执行内容混进图片资产，统一不收
-    if (!mime.startsWith('image/') || mime === 'image/svg+xml') {
-      try { await response.body?.cancel(); } catch { /* 忽略 */ }
-      throw new ImageFetchError(`目标不是可本地化的图片类型（${mime || '未知'}）`);
-    }
+      const mime = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      // SVG 可携带脚本，服务端只存不解析，但为避免把可执行内容混进图片资产，统一不收
+      if (!mime.startsWith('image/') || mime === 'image/svg+xml') {
+        try { await response.body?.cancel(); } catch { /* 忽略 */ }
+        throw new ImageFetchError(`目标不是可本地化的图片类型（${mime || '未知'}）`);
+      }
 
-    const buffer = await readCapped(response.body);
-    if (!buffer.length) throw new ImageFetchError('图片内容为空');
-    return { buffer, mime, name: nameFromUrl(current, mime), url: current.toString() };
+      const buffer = await readCapped(response.body as any);
+      if (!buffer.length) throw new ImageFetchError('图片内容为空');
+      return { buffer, mime, name: nameFromUrl(current, mime), url: current.toString() };
+    } finally {
+      await agent.close().catch(() => {});
+    }
   }
   throw new ImageFetchError('图片地址重定向次数过多');
 }

@@ -41,7 +41,7 @@ check('与 Dockerfile 的 pnpm pin 一致（' + (mPnpm ? mPnpm[1] : '?') + '）'
   Boolean(mPnpm) && mPnpm[1] === pinned.pnpm, mPnpm ? mPnpm[1] : 'not found');
 
 // ---------- 2) 部署脚本：内置优先，npm 只在无运行时兜底 ----------
-check('脚本声明 ENGINE_VERSION 2', /^# ENGINE_VERSION: 2$/m.test(text));
+check('脚本声明 ENGINE_VERSION 4', /^# ENGINE_VERSION: 4$/m.test(text));
 check('脚本能定位内置运行时目录', text.includes('$runtimeDir') && text.includes('ENGRAM_RUNTIME_DIR'));
 check('识别资源目录 runtime\\node zip', text.includes('Join-Path $runtimeDir $nodeZip'));
 check('识别资源目录 runtime\\pnpm\\pnpm.cjs', text.includes("Join-Path $runtimeDir 'pnpm'"));
@@ -92,7 +92,7 @@ check('runtime 产物被 .gitignore 排除',
 
 // ---------- 5) 引擎选择接线（旧克隆不能盖新 exe） ----------
 const engineLib = require(path.join(installerDir, 'scripts', 'lib', 'engine.js'));
-check('部署脚本版本标记可被 GUI 引擎选择器识别', engineLib.parseEngineVersion(text) === 2);
+check('部署脚本版本标记可被 GUI 引擎选择器识别', engineLib.parseEngineVersion(text) === 4);
 
 let failed = 0;
 for (const c of cases) {

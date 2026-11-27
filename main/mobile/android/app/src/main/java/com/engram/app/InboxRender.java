@@ -6,13 +6,20 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.ViewGroup;
+import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.net.InetAddress;
+import java.util.Locale;
 
 /**
  * 收集箱「渲染后抓取」（安卓端）。
@@ -75,12 +82,65 @@ public class InboxRender {
         }
     }
 
+    public void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        WebView view = offscreen;
+        offscreen = null;
+        if (view != null) {
+            try {
+                ViewGroup parent = (ViewGroup) view.getParent();
+                if (parent != null) parent.removeView(view);
+            } catch (Exception ignored) {
+            }
+            try {
+                view.stopLoading();
+                view.destroy();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static boolean isAllowedPublicUrl(String url) {
+        if (url == null) return false;
+        Uri parsed = Uri.parse(url.trim());
+        String scheme = parsed.getScheme() == null ? "" : parsed.getScheme().toLowerCase(Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) return false;
+        if (parsed.getUserInfo() != null && !parsed.getUserInfo().isEmpty()) return false;
+        String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.ROOT);
+        if (host.isEmpty() || "localhost".equals(host) || host.endsWith(".localhost") || host.endsWith(".local")
+                || "metadata.google.internal".equals(host) || host.startsWith("metadata.")) {
+            return false;
+        }
+        if (isLiteralPrivateOrLoopback(host)) return false;
+        return true;
+    }
+
+    private static boolean isLiteralPrivateOrLoopback(String rawHost) {
+        String host = rawHost.replaceAll("^\\[|\\]$", "");
+        if ("::".equals(host) || "::1".equals(host)) return true;
+        if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe8") || host.startsWith("fe9")
+                || host.startsWith("fea") || host.startsWith("feb")) {
+            if (host.contains(":")) return true;
+        }
+        try {
+            if (host.matches("\\d+\\.\\d+\\.\\d+\\.\\d+") || host.contains(":")) {
+                InetAddress addr = InetAddress.getByName(host);
+                return addr.isAnyLocalAddress()
+                        || addr.isLoopbackAddress()
+                        || addr.isLinkLocalAddress()
+                        || addr.isSiteLocalAddress()
+                        || addr.isMulticastAddress();
+            }
+        } catch (Exception ignored) {
+            return true;
+        }
+        return false;
+    }
+
     private void start(String requestId, String url) {
         if (requestId.isEmpty()) return;
-        Uri parsed = Uri.parse(url);
-        String scheme = parsed.getScheme() == null ? "" : parsed.getScheme().toLowerCase();
-        if (!"http".equals(scheme) && !"https".equals(scheme)) {
-            reply(requestId, errorPayload("只支持 http/https 网页地址"));
+        if (!isAllowedPublicUrl(url)) {
+            reply(requestId, errorPayload("仅支持抓取公网 http/https 网页地址"));
             return;
         }
         if (offscreen != null) {
@@ -92,10 +152,29 @@ public class InboxRender {
         WebSettings settings = view.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
         settings.setUserAgentString(shellWebView.getSettings().getUserAgentString());
         view.setBackgroundColor(0);
         view.setAlpha(0f);
-        view.setWebViewClient(new WebViewClient());
+        view.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                request.deny();
+            }
+
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                callback.invoke(origin, false, false);
+            }
+        });
+        view.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
+                String nextUrl = request != null && request.getUrl() != null ? request.getUrl().toString() : "";
+                return !isAllowedPublicUrl(nextUrl);
+            }
+        });
         ViewGroup root = activity.findViewById(android.R.id.content);
         root.addView(view, new ViewGroup.LayoutParams(1, 1));
         offscreen = view;

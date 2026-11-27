@@ -36,7 +36,7 @@ import { officeRoutes } from './routes/office.js';
 import { syncRoutes } from './routes/sync.js';
 import { hubUpdateRoutes } from './routes/syncHubUpdate.js';
 import { runtimeRoutes } from './routes/runtime.js';
-import { applyEnvSyncRole, initSync } from './sync/index.js';
+import { applyEnvSyncRole, initSync, stopSync } from './sync/index.js';
 import { initializeAgentModelSync } from './sync/agentModelSync.js';
 import { initializeDoxentSync } from './sync/doxentSync.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
@@ -47,14 +47,14 @@ import { agentToolRoutes } from './routes/agentTools.js';
 import { assetRoutes } from './routes/assets.js';
 import { doxentRoutes } from './routes/doxent.js';
 import { feishuRoutes } from './routes/feishu.js';
-import { startFeishuSyncScheduler } from './lib/feishuBitableSync.js';
+import { startFeishuSyncScheduler, stopFeishuSyncScheduler } from './lib/feishuBitableSync.js';
 import { pythonRuntimeRoutes } from './routes/pythonRuntime.js';
 import { mediaRoutes } from './routes/media.js';
 import { speechRoutes } from './routes/speech.js';
 import { scanVaultPages, scanVaultDeferred, readPage, writePage } from './lib/vault.js';
-import { startVaultWatch } from './lib/vaultWatch.js';
+import { startVaultWatch, stopVaultWatch } from './lib/vaultWatch.js';
 import { heartbeat } from './lib/events.js';
-import { ensureSystemFiles, migrateLegacySystemFiles } from './pipeline/indexFile.js';
+import { ensureSystemFiles, flushDerivedRebuild, migrateLegacySystemFiles } from './pipeline/indexFile.js';
 import { queueMissingDerivedPages } from './pipeline/sourceLedger.js';
 import { autoRegisterCliConfig } from './lib/cliAutoRegister.js';
 
@@ -117,12 +117,14 @@ function pruneFinishedJobs() {
   ).run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '));
 }
 
-import { startJobRunner } from './jobs.js';
+import { startJobRunner, stopJobRunner } from './jobs.js';
 // 只引类型（编译期擦除）：CertManager / acme-client 仅在 TLS_DOMAIN 分支内动态加载，
 // 避免 acme-client（实测 ~840ms）进入 server-ready 之前的模块图。
 import type { LoadedCert } from './lib/tls.js';
-import { startDdnsScheduler } from './lib/ddns.js';
-import { startDreamScheduler } from './assistant/dreamCycle.js';
+import { startDdnsScheduler, stopDdnsScheduler } from './lib/ddns.js';
+import { startDreamScheduler, stopDreamScheduler } from './assistant/dreamCycle.js';
+import { closeConsoleOnExit } from './assistant/agentConsole.js';
+import { closeAllRuntimes } from './assistant/dshRuntime.js';
 import { ensureAgentNodeRuntime } from './assistant/agentNode.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -341,6 +343,55 @@ async function main() {
   const hb = setInterval(heartbeat, 30_000);
   hb.unref();
 
+  let httpsApp: FastifyInstance | null = null;
+  let shutdownPromise: Promise<void> | null = null;
+  const shutdown = (signal: string): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
+      console.log(`[shutdown] 收到 ${signal}，正在优雅退出…`);
+      const force = setTimeout(() => {
+        console.error('[shutdown] 优雅退出超时，强制结束');
+        process.exit(1);
+      }, 5000);
+      force.unref();
+
+      clearInterval(hb);
+      for (const cleanup of [
+        stopJobRunner,
+        stopVaultWatch,
+        stopDdnsScheduler,
+        stopFeishuSyncScheduler,
+        stopDreamScheduler,
+        closeConsoleOnExit,
+        closeAllRuntimes,
+        flushDerivedRebuild,
+      ]) {
+        try {
+          cleanup();
+        } catch (error) {
+          console.warn('[shutdown] 清理阶段异常:', error);
+        }
+      }
+
+      await Promise.allSettled([
+        stopSync(),
+        app.close(),
+        ...(httpsApp ? [httpsApp.close()] : []),
+      ]);
+      try { db.close(); } catch { /* ignore */ }
+      clearTimeout(force);
+      process.exit(0);
+    })();
+    return shutdownPromise;
+  };
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.on('message', (msg) => {
+    if (msg && typeof msg === 'object' && (msg as { type?: unknown }).type === 'shutdown') {
+      void shutdown('IPC');
+    }
+  });
+
   // 梦境思考调度（按计划用内置 Agent 整理未提炼资料 + 纠错）：
   // 必须在 listen 之后启动——Agent 的知识库命令要回调本机 REST，服务还没监听时首跑必失败。
   startDreamScheduler();
@@ -370,7 +421,6 @@ async function main() {
       email: TLS_EMAIL || undefined,
       acmeDirectoryUrl: TLS_ACME_DIRECTORY || 'https://acme-v02.api.letsencrypt.org/directory',
     });
-    let httpsApp: FastifyInstance | null = null;
     const startHttpsListener = async ({ key, cert }: LoadedCert) => {
       if (httpsApp) {
         await httpsApp.close();

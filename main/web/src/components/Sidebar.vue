@@ -155,7 +155,7 @@
                   <div class="collapse" :class="{ collapsed: collapsed[`${g.key}:${sub.key}`] }">
                     <div class="sub-body collapse-inner">
                       <PageRow
-                        v-for="p in sortList(filteredPages(sub.pages), groupSort[g.key])"
+                        v-for="p in sub.pages"
                         :key="p.id"
                         :page="p"
                         :active="p.id === activeId"
@@ -185,7 +185,7 @@
               <!-- 概念 / 归档：直接平铺 -->
               <template v-else>
                 <PageRow
-                  v-for="p in sortList(filteredPages(g.pages), groupSort[g.key])"
+                  v-for="p in g.visiblePages"
                   :key="p.id"
                   :page="p"
                   :active="p.id === activeId"
@@ -379,7 +379,7 @@
         <div class="collapse" :class="{ collapsed: collapsed.ailog }">
           <div class="sec-body collapse-inner">
             <div
-              v-for="p in sortList(visibleAiLogs, 'updated-desc')"
+              v-for="p in visibleAiLogs"
               :key="p.id"
               class="page-row log-row"
               :class="{ active: p.id === activeId }"
@@ -1218,6 +1218,7 @@ function subGroupOf(p: any): string | null {
 
 const typeGroups = computed(() =>
   GROUPS.map((g) => {
+    const sortMode = groupSort.value[g.key];
     if (g.subs) {
       const subGroups = g.subs
         .map((s) => ({
@@ -1227,32 +1228,38 @@ const typeGroups = computed(() =>
           ),
         }))
         .filter((s) => s.pages.length > 0); // 空子类不展示
-      return { ...g, pages: [] as any[], subGroups };
+      const visibleSubs = subGroups
+        .map((s) => {
+          const filtered = filteredPages(s.pages);
+          return filtered.length ? { ...s, pages: sortList(filtered, sortMode) } : null;
+        })
+        .filter(Boolean) as any[];
+      const visibleCount = visibleSubs.reduce((sum, s) => sum + s.pages.length, 0);
+      return { ...g, pages: [] as any[], visiblePages: [] as any[], subGroups, visibleSubs, visibleCount };
     }
+    const pages = allPages.value.filter((p) => topGroupOf(p) === g.key);
+    const visiblePages = sortList(filteredPages(pages), sortMode);
     return {
       ...g,
-      pages: allPages.value.filter((p) => topGroupOf(p) === g.key),
+      pages,
+      visiblePages,
       subGroups: undefined,
+      visibleSubs: [] as any[],
+      visibleCount: visiblePages.length,
     };
   })
 );
 
 /** 实体顶层计数为各子类合计；概念/归档为该组过滤后页数 */
 function groupPageCount(g: any): number {
-  if (g.subGroups) {
-    return g.subGroups.reduce(
-      (sum: number, sub: any) => sum + filteredPages(sub.pages).length,
-      0
-    );
-  }
-  return filteredPages(g.pages).length;
+  return g.visibleCount ?? (g.subGroups
+    ? g.subGroups.reduce((sum: number, sub: any) => sum + filteredPages(sub.pages).length, 0)
+    : filteredPages(g.pages).length);
 }
 
 /** 实体下过滤后仍有页面的子类（搜索时空子类标题随之隐藏） */
 function visibleSubGroups(g: any) {
-  return (g.subGroups || []).filter(
-    (sub: any) => filteredPages(sub.pages).length > 0
-  );
+  return g.visibleSubs || [];
 }
 
 /** 已废弃的冲突备份机制遗留（2026-09-12 前那套备份页）：系统区不再产生这类页面，
@@ -1331,7 +1338,7 @@ const rawGroups = computed(() => {
 const visibleRawTotal = computed(
   () => visibleFiles.value.length + visibleChatFiles.value.length + visibleIdeaFiles.value.length
 );
-const visibleAiLogs = computed(() => filteredPages(aiLogs.value));
+const visibleAiLogs = computed(() => sortList(filteredPages(aiLogs.value), 'updated-desc'));
 
 /* ===================== 满窗目录（V2 分栏扫描） ===================== */
 /*
@@ -1425,16 +1432,16 @@ const fullColumns = computed(() => {
     const group: any = typeGroups.value.find((g: any) => g.key === key);
     const groups =
       key === 'entity'
-        ? (group?.subGroups || []).map((sub: any) => ({
+        ? (group?.visibleSubs || []).map((sub: any) => ({
             key: sub.key,
             label: sub.label,
-            items: sortList(filteredPages(sub.pages), groupSort.value[key]),
+            items: sub.pages,
           }))
         : [
             {
               key,
               label: group?.label || SIDEBAR_FULL_LABELS[key],
-              items: sortList(filteredPages(group?.pages || []), groupSort.value[key]),
+              items: group?.visiblePages || [],
             },
           ];
     return {
@@ -1571,6 +1578,8 @@ const loadSeq = createRequestSeq();
 let loadRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let sidebarDisposed = false;
 
+let sectionsLoaded = false;
+
 async function load(retry = 0) {
   const seq = loadSeq.next();
   let loaded: any[];
@@ -1597,16 +1606,19 @@ async function load(retry = 0) {
   files.value = doc.files;
   chatFiles.value = cf.files;
   ideaFiles.value = idea.files;
-  // 分类名以服务端为准（拿不到就沿用内置兜底值，不影响列表；分组说明不进侧栏，保持与实体子类一致的克制）
-  try {
-    const { data } = await api.get('/api/files/sections');
-    if (!loadSeq.isCurrent(seq)) return;
-    const meta: Record<string, { label?: string }> = {};
-    for (const section of data?.sections || []) {
-      if (section?.key) meta[section.key] = { label: section.label };
-    }
-    rawSectionMeta.value = meta;
-  } catch { /* 旧服务端没有这个接口时保持兜底文案 */ }
+  // 分类名以服务端为准（只在首次命中后缓存，避免每次 SSE 重载都额外请求一次）
+  if (!sectionsLoaded) {
+    try {
+      const { data } = await api.get('/api/files/sections');
+      if (!loadSeq.isCurrent(seq)) return;
+      const meta: Record<string, { label?: string }> = {};
+      for (const section of data?.sections || []) {
+        if (section?.key) meta[section.key] = { label: section.label };
+      }
+      rawSectionMeta.value = meta;
+      sectionsLoaded = true;
+    } catch { /* 旧服务端没有这个接口时保持兜底文案 */ }
+  }
 }
 
 function openPage(p: any) {

@@ -2,7 +2,7 @@
 //   node installer/scripts/tests/repo-url.test.js
 // 安装器两步流程的第一步靠它把守：解析错了要么把用户挡在门外，要么让引擎拿着没法用的地址去克隆。
 const assert = require('node:assert/strict');
-const { normalizeRepoUrl, redactRepoUrl } = require('../lib/repo-url.js');
+const { normalizeRepoUrl, redactRepoUrl, readGitConfigOriginUrl, summarizeRemoteUrl } = require('../lib/repo-url.js');
 
 const cases = [];
 function test(name, fn) {
@@ -56,6 +56,23 @@ test('空地址、缺 owner/repo、乱码都被挡下（默认没有地址，必
   assert.equal(normalizeRepoUrl('https://github.com/').ok, false);
   assert.match(normalizeRepoUrl('https://github.com/owner').message, /owner\/repo/);
   assert.match(normalizeRepoUrl('').message, /请填写仓库地址/);
+});
+
+test('readGitConfigOriginUrl 与 summarizeRemoteUrl：解析并脱敏（不泄露明文凭据）', () => {
+  const cfg = '[remote "origin"]\n\turl = https://alice:secret@host:11111/a/b.git\n';
+  const raw = readGitConfigOriginUrl(cfg);
+  assert.equal(raw, 'https://alice:secret@host:11111/a/b.git');
+  assert.deepEqual(summarizeRemoteUrl(raw), {
+    configured: true,
+    url: 'https://host:11111/a/b.git',
+    hasCreds: true,
+  });
+  assert.deepEqual(summarizeRemoteUrl('https://github.com/o/r.git'), {
+    configured: true,
+    url: 'https://github.com/o/r.git',
+    hasCreds: false,
+  });
+  assert.deepEqual(summarizeRemoteUrl(''), { configured: false, url: '', hasCreds: false });
 });
 
 (async () => {

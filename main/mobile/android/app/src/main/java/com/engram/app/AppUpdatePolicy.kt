@@ -1,6 +1,8 @@
 package com.engram.app
 
 import okhttp3.Credentials
+import java.io.File
+import java.net.URI
 
 /**
  * 安卓端 OTA 更新（APK 在线升级）的纯逻辑与配置——不碰 Android API，可直接 JVM 单测。
@@ -144,6 +146,55 @@ object AppUpdatePolicy {
     fun pickApkAsset(names: List<String>): String? {
         val apks = names.filter { it.endsWith(".apk", ignoreCase = true) }
         return apks.firstOrNull { it.contains("engram", ignoreCase = true) } ?: apks.firstOrNull()
+    }
+
+    /** 清洗远端资产文件名，防止路径穿越（与桌面端 update-chain.js 同口径） */
+    fun sanitizeApkFileName(name: String?): String {
+        val base = File(name?.trim().orEmpty().replace('\\', '/')).name
+            .replace(Regex("[^A-Za-z0-9._ -]"), "-")
+            .trimStart('.')
+            .trim()
+        val withExt = if (base.endsWith(".apk", ignoreCase = true)) base else if (base.isEmpty()) "engram-update.apk" else "$base.apk"
+        return withExt.ifBlank { "engram-update.apk" }
+    }
+
+    /** 校验下载地址与配置的更新源同源（scheme/host/port 一致），避免向第三方域名发凭据 */
+    fun isSameOrigin(targetUrl: String?, baseUrl: String?): Boolean {
+        return runCatching {
+            val a = URI(targetUrl?.trim().orEmpty())
+            val b = URI(baseUrl?.trim().orEmpty())
+            val schemeA = a.scheme?.lowercase() ?: return false
+            val schemeB = b.scheme?.lowercase() ?: return false
+            val hostA = a.host?.lowercase() ?: return false
+            val hostB = b.host?.lowercase() ?: return false
+            val portA = if (a.port > 0) a.port else if (schemeA == "https") 443 else 80
+            val portB = if (b.port > 0) b.port else if (schemeB == "https") 443 else 80
+            schemeA == schemeB && hostA == hostB && portA == portB
+        }.getOrDefault(false)
+    }
+
+    /** 挑出 Release 里的 SHA-256 清单文件（优先 sha256-<版本>.txt） */
+    fun pickSha256Asset(names: List<String>, version: String?): String? {
+        val exact = version?.let { "sha256-$it.txt" }
+        if (exact != null) {
+            names.firstOrNull { it.equals(exact, ignoreCase = true) }?.let { return it }
+        }
+        return names.firstOrNull { it.startsWith("sha256", ignoreCase = true) && it.endsWith(".txt", ignoreCase = true) }
+    }
+
+    /** 解析 sha256sum 输出，兼容 `<64hex>  <name>` 与 `<64hex> *./<name>` */
+    fun parseSha256ForAsset(manifestText: String, assetName: String): String? {
+        val targetName = File(assetName.replace('\\', '/')).name
+        for (rawLine in manifestText.lineSequence()) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) continue
+            val match = Regex("^([0-9a-fA-F]{64})\\s+\\*?(.+)$").find(line) ?: continue
+            val candidate = File(match.groupValues[2].trim().removePrefix("./").replace('\\', '/')).name
+            if (candidate.equals(targetName, ignoreCase = true)) {
+                return match.groupValues[1].lowercase()
+            }
+        }
+        return null
     }
 
     /** 下载进度（0-100）；总长未知（无 Content-Length）时返回 null，界面按「已下载多少」显示 */

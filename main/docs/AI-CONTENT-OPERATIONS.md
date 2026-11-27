@@ -1,6 +1,6 @@
 # 知识内容操作 AI 约定（外部 Agent 总纲）
 
-本文件适用于通过 `engram` CLI + skill 读写 Engram 知识内容的**外部 Agent**（Claude Code / Codex / DeepSeek Harness / ZCode / Kimi Code CLI / WorkBuddy / Qoder 等能跑 shell 的客户端），不适用于修改本仓库源码的开发 Agent。服务端不再提供 MCP 端点、不再依赖 MCP SDK、也不再往任何客户端写 MCP 配置；**能跑 shell 是接入前提**（Kimi Work 只有插件入口、没有 shell，已下线）。
+本文件适用于通过 `engram` CLI + skill 读写 Engram 知识内容的**外部 Agent**（Claude Code / Codex / DeepSeek Harness / ZCode / Kimi Code CLI / WorkBuddy / Qoder / Antigravity 等能跑 shell 的客户端），不适用于修改本仓库源码的开发 Agent。服务端不再提供 MCP 端点、不再依赖 MCP SDK、也不再往任何客户端写 MCP 配置；**能跑 shell 是接入前提**（Kimi Work 只有插件入口、没有 shell，已下线）。
 
 > 完整作业方法论（八阶段流程、页面模板、证据规则）由服务端统一对外下发，与本文同源：
 > 指南正文 `engram guide` / `GET /api/guide`（单一来源：`server/src/content/agentGuide.ts`）；

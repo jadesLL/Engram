@@ -48,8 +48,18 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 收集箱「渲染后抓取」：服务端抓到空壳（正文由 JS 渲染）时，用隐藏窗口把页面渲染出来。
   // 返回 { html, title, url }；失败时 reject（超时/加载失败），网页端按原错误提示。
   renderInboxUrl: (url) => ipcRenderer.invoke('inbox-render-url', url),
-  // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
+  // 同步窗口控制按钮配色（兼容旧调用；新版由标题栏内自绘按钮随 CSS 变量变色）
   setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
+  // ---------- 窗口控制（标题栏自绘最小化 / 最大化 / 关闭） ----------
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
+  windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  onWindowMaximizeChange: (cb) => {
+    const listener = (_e, maximized) => cb(Boolean(maximized));
+    ipcRenderer.on('window-maximize-change', listener);
+    return () => ipcRenderer.removeListener('window-maximize-change', listener);
+  },
   // 本机图标外观：窗口 / 任务栏 / 托盘 / 已有快捷方式同时切换。
   setIconAppearance: (appearance) => ipcRenderer.invoke('set-icon-appearance', appearance),
   // ---------- 桌面端自更新 ----------
@@ -101,11 +111,16 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 增量拉取源码并重建：主进程 pull 后拉起构建脚本，应用自动退出并由新实例接管
   // （依赖清单真变化时自动装依赖，不再要求去终端跑脚本）
   desktopSourceUpdate: () => ipcRenderer.invoke('desktop-source-update'),
-  // ---------- 源码模式卸载（设置 → 数据与存储 → 危险操作；仅源码安装形态显示） ----------
-  // 查询卸载可用性：{ available }，进程位于源码版安装根（%LOCALAPPDATA%\engram）下才可用
+  // 查询/设置源码模式的 Git 远端地址与凭据（返回脱敏 URL + username + hasPassword，绝不返回密码）
+  desktopSourceRemoteGet: () => ipcRenderer.invoke('desktop-source-remote-get'),
+  desktopSourceRemoteSet: (payload) => ipcRenderer.invoke('desktop-source-remote-set', payload),
+  // ---------- 应用内卸载（设置 → 本机应用 → 卸载 Engram） ----------
+  // 查询卸载可用性：{ available, mode }。mode='source' 走源码安装根里的 uninstall-engram.ps1，
+  // mode='packaged' 走安装目录里的「Uninstall Engram.exe」（与系统「已安装的应用」是同一个卸载器）；
+  // 便携版 / win-unpacked 开发目录没有卸载器，available=false，设置页整组连导航项一起隐藏。
   desktopSourceUninstallState: () => ipcRenderer.invoke('desktop-source-uninstall-state'),
   // 卸载应用：deleteData 为 true 时连知识库数据一起删（默认保留）。
-  // 主进程停掉内嵌服务后拉起独立卸载脚本并立即退出应用；失败返回 { ok: false, error }
+  // 主进程停掉内嵌服务后把卸载交给独立进程并立即退出应用；失败返回 { ok: false, error }
   desktopSourceUninstall: (deleteData) => ipcRenderer.invoke('desktop-source-uninstall', deleteData),
   // ---------- 源码模式自动检查（启动延迟首查 + 每 8 小时复查；只提示，不自动升级） ----------
   // 查询状态：{ enabled, phase: idle|checking|up-to-date|behind|failed, behind,

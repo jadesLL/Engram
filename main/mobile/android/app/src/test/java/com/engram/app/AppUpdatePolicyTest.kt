@@ -314,4 +314,21 @@ class AppUpdatePolicyTest {
         assertEquals("下载失败 HTTP 500", paused.reason)
         assertEquals("2026-11-08T00:00:00Z", paused.at)
     }
+
+    @Test fun sanitizesApkFileNameAndValidatesOriginAndSha256() {
+        assertEquals("Engram 1.5.21.apk", AppUpdatePolicy.sanitizeApkFileName("../../Engram 1.5.21.apk"))
+        assertEquals("engram-update.apk", AppUpdatePolicy.sanitizeApkFileName(".."))
+        assertEquals("custom.apk", AppUpdatePolicy.sanitizeApkFileName("custom"))
+
+        assertTrue(AppUpdatePolicy.isSameOrigin("https://gitea.example.com/owner/repo/releases/download/v1/a.apk", "https://gitea.example.com"))
+        assertTrue(AppUpdatePolicy.isSameOrigin("https://gitea.example.com:443/a.apk", "https://gitea.example.com"))
+        assertFalse(AppUpdatePolicy.isSameOrigin("https://evil.example.com/a.apk", "https://gitea.example.com"))
+        assertFalse(AppUpdatePolicy.isSameOrigin("http://gitea.example.com/a.apk", "https://gitea.example.com"))
+
+        assertEquals("sha256-1.5.21.txt", AppUpdatePolicy.pickSha256Asset(listOf("Engram 1.5.21.apk", "sha256-1.5.21.txt"), "1.5.21"))
+        val digest = "a".repeat(64)
+        val parsed = AppUpdatePolicy.parseSha256ForAsset("$digest *./Engram 1.5.21.apk\n", "Engram 1.5.21.apk")
+        assertEquals(digest, parsed)
+        assertNull(AppUpdatePolicy.parseSha256ForAsset("$digest  other.apk", "Engram 1.5.21.apk"))
+    }
 }
