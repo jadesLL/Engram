@@ -526,11 +526,11 @@ function statusTip(item: InboxItem): string {
 function convertTip(item: InboxItem): string {
   if (item.status === 'converting') return '正在转换，完成后会自动刷新';
   if (!isServerConvertible(item.capability)) return item.hint || '这个格式暂时不能转换';
-  // 视频不是格式转换，而是发给视频理解模型生成纪要：文案要说清楚，别让人以为只是换封装
+  // 视频不是格式转换，而是先看懂画面/口播再成文：文案要说清楚，别让人以为只是换封装
   if (item.capability === 'video') {
-    if (item.derivedPath) return '重新提炼成功后会替换这条纪要的旧产物；已入库的副本不会自动改动';
+    if (item.derivedPath) return '重新提炼成功后会替换这条提炼的旧产物；已入库的副本不会自动改动';
     if (item.status === 'failed') return '重新提炼：再跑一次提炼，B站有 CC 字幕时仍优先按字幕';
-    return '调用视频理解模型，把视频 / 图文笔记提炼成 Markdown 纪要：B站有 CC 字幕时优先按字幕（不下载整段视频），抖音图文 / 实况笔记按多图理解；产物仍在收集箱，确认后入库';
+    return '把视频 / 图文笔记提炼成 Markdown 解读文章：先由视频模型看懂画面与口播，再由文本模型成文；B站有 CC 字幕时优先按字幕（不下载整段视频），抖音图文 / 实况笔记按多图理解；产物仍在收集箱，确认后入库';
   }
   if (item.derivedPath) return '重新转换成功后会替换这份原件的旧产物；已入库的副本不会自动改动';
   if (item.status === 'failed') return '重新转换';

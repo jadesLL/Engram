@@ -98,7 +98,7 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 | POST | `/api/inbox/video-test` | 用当前解析到的模型发一次最小文本请求；不看总开关，也不接受 baseUrl / apiKey 覆盖 |
 
 - **status 字段**：`configured`（开关打开且模型 / Key 齐全）、`enabled`、`provider`、`providerName`、`baseUrl`、`model`、`hasKey`、`missing`、`keySource`（`local` = 本机控制台已配置 / `synced` = 来自多端同步、本机未配置 / `none` = 未配置；2026-11 新增，可选 `keyFromNode` 给出来源设备，旧服务端没有该字段时前端按 `hasKey` 降级）；另带旧面板固定值 `maxTokens: 4096`、`quality: 64`（720P）、`douyinBrowser: false`，兼容 v1.5.x 旧 Web 包。任何接口都不回显 API Key（面板只显示 Key 来源）。
-- **视频管线**：`pipeline/inboxVideo.ts` 用解析到的模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块），`maxTokens=4096`；B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
+- **视频管线**：`pipeline/inboxVideo.ts` 是两段式——第一段用解析到的视频模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块，`maxTokens=4096`）把视频/多图记成「观看笔记」；第二段用内置 Agent 的文本模型（`completeText`，`maxTokens=8192`）按文章规范成文，文本模型没配 Key 时回退到视频模型跑纯文本请求。B站 CC 字幕不经过视频模型，直接进第二段成文。B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
 - **相关文件**：`lib/videoModel.ts`（只读解析 + 默认提供商常量）、`assistant/videoModelDefaults.ts`（幂等播种）、`lib/videoConfig.ts`（`video_config` 只存 `{ enabled }`，默认开启；status 汇总）、`routes/videoConfig.ts`、`routes/inbox.ts`（video-status / video-test）、`lib/videoModelClient.ts`、`pipeline/inboxVideo.ts`；前端面板 `web/src/components/settings/VideoPanel.vue`。
 
 ## 聊天运行时的模型路由（2026-11-08）

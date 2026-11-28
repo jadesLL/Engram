@@ -128,10 +128,12 @@ const handlers: Record<string, JobHandler> = {
           const progress =
             stage === '解析链接' ? 8
               : stage === '获取视频' ? 32
-                : stage === '准备请求' ? 55
-                  : stage === '视频理解' ? 68
-                    : stage === '提炼文件名' ? 88
-                      : 95;
+                : stage === '获取字幕' ? 40
+                  : stage === '准备请求' ? 55
+                    : stage === '视频理解' ? 68
+                      : stage === '文章成文' ? 82
+                        : stage === '提炼文件名' ? 88
+                          : 95;
           update({ stage, progress, detail });
           recordInboxConversionStep(context.jobId, stage, detail);
         },

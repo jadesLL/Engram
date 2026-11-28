@@ -1237,7 +1237,7 @@ function cardNote(item: InboxItem | null): string {
   if (isServerConvertible(item.capability)) {
     if (item.hint) return item.hint;
     return item.capability === 'video'
-      ? '由中枢提炼成 Markdown 纪要：B站优先用 CC 字幕，抖音图文按多图理解'
+      ? '由中枢提炼成 Markdown 解读文章：B站优先用 CC 字幕，抖音图文按多图理解'
       : '由中枢按语义转成 Markdown，产物仍留在收集箱';
   }
   if (item.capability === 'agent-only') return item.hint || '服务端不能直接转换，交给 Agent 读原件';

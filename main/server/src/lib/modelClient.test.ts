@@ -134,7 +134,12 @@ test('有内容但被截断：同样抛截断错误（不能把半截正文当�
   }]);
   await assert.rejects(
     () => completeText(messages, { fetchImpl, config: { apiKey: 'k' } as any }),
-    (error: any) => error instanceof ModelOutputTruncatedError && /正文被截断/.test(error.message),
+    (error: any) => {
+      assert.equal(error instanceof ModelOutputTruncatedError, true);
+      assert.match(error.message, /正文被截断/);
+      assert.equal(error.partial, '# 半截正文', '截断错误带回已生成正文，供视频观看笔记降级使用');
+      return true;
+    },
   );
 });
 

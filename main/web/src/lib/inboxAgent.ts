@@ -19,7 +19,7 @@ export const AGENT_ACTION_TIP =
 
 /**
  * 服务端能按内容语义转换的能力（与 server 的 convertCapability 对齐）。
- * video 是 2026-10 新增：B站/抖音链接占位稿与本地音视频由视频理解管线提炼成 Markdown 纪要，
+ * video 是 2026-10 新增：B站/抖音链接占位稿与本地音视频由视频理解管线提炼成 Markdown 解读文章，
  * 入口仍是同一个 POST /api/inbox/convert，所以能力上归入「可转」。
  */
 export const SERVER_CONVERTIBLE_CAPABILITIES: readonly string[] = ['office', 'pdf', 'text', 'video'];
