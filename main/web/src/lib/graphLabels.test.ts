@@ -51,6 +51,11 @@ test('computeLabelOpacity fades labels continuously with scale, threshold and hu
     computeLabelOpacity(0.6, 10, 0, false) > computeLabelOpacity(0.6, 90, 0, false),
     '调低文字淡出阈值应让更多标签在更远缩放下显示',
   );
+  assert.ok(
+    computeLabelOpacity(1.5, 50, 0, false, 170) < computeLabelOpacity(1.5, 50, 0, false, 30),
+    '视口内挤满 170 个节点时应抑制普通节点全量出字，放大局部后才渐显',
+  );
+  assert.equal(computeLabelOpacity(1.5, 50, 0, true, 200), 1);
 });
 
 test('computeFitBounds ignores extreme outliers while keeping normal graphs intact', () => {
