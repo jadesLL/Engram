@@ -218,21 +218,23 @@ export function spanOptionsFor(_columns: BoardColumns = DEFAULT_BOARD_COLUMNS): 
 export const HEIGHT_STEPS = [2, 3, 4, 6, 8, 12] as const;
 
 /**
- * 默认工作台：概览、速记、待办分列；灵感和热力格居中，快捷入口用横条、同步用 1×1 小磁贴。
- * 坐标与格数都是 12 列栅格下的值（一格约 75px，1×1 就是手机图标大小）。
+ * 默认工作台（2026-11-28 定版）：顶部速记横条，下面「运行状态 / 近期待办 / 知识库概览」三列，
+ * 第二行「知识热力 / 近期灵感 / 最近更新」，底部「收集箱 / Agent 摘要」。
+ * 坐标与格数都是 12 列栅格下的值；opts.mobileOrder 是手机单列的顺序（0 起连续编号，
+ * 与手机编辑「上移 / 下移」写出的格式一致），只影响手机，桌面 col/row 不受影响。
+ * 这里只决定**没有落过盘**的新用户看到什么；已有布局由 normalizeHomeBoard 原样保留，不会被覆盖。
  */
 export function defaultHomeBoard(): HomeBoard {
   const items: Array<{ id: string; kind: ModuleKind; place: GridPlace; opts?: Record<string, number> }> = [
-    { id: 'default-stats', kind: 'stats', place: { col: 0, row: 0, w: 4, h: 4 } },
-    { id: 'default-capture', kind: 'capture', place: { col: 4, row: 0, w: 4, h: 4 } },
-    { id: 'default-tasks', kind: 'tasks', place: { col: 8, row: 0, w: 4, h: 4 }, opts: { limit: 5 } },
-    { id: 'default-notes', kind: 'notes', place: { col: 0, row: 4, w: 4, h: 4 }, opts: { limit: 4 } },
-    { id: 'default-heat', kind: 'heat', place: { col: 4, row: 4, w: 4, h: 4 }, opts: { limit: 8 } },
-    { id: 'default-recent', kind: 'recent', place: { col: 8, row: 4, w: 4, h: 4 }, opts: { limit: 6 } },
-    { id: 'default-shortcuts', kind: 'shortcuts', place: { col: 0, row: 8, w: 11, h: 1 } },
-    { id: 'default-sync', kind: 'sync', place: { col: 11, row: 8, w: 1, h: 1 } },
-    { id: 'default-activity', kind: 'activity', place: { col: 0, row: 9, w: 6, h: 4 } },
-    { id: 'default-digest', kind: 'digest', place: { col: 6, row: 9, w: 6, h: 4 } },
+    { id: 'default-capture', kind: 'capture', place: { col: 0, row: 0, w: 12, h: 1 }, opts: { mobileOrder: 0 } },
+    { id: 'default-system', kind: 'system', place: { col: 0, row: 1, w: 3, h: 3 }, opts: { mobileOrder: 6 } },
+    { id: 'default-tasks', kind: 'tasks', place: { col: 3, row: 1, w: 4, h: 4 }, opts: { limit: 5, mobileOrder: 2 } },
+    { id: 'default-stats', kind: 'stats', place: { col: 7, row: 1, w: 5, h: 4 }, opts: { mobileOrder: 3 } },
+    { id: 'default-heat', kind: 'heat', place: { col: 0, row: 4, w: 3, h: 4 }, opts: { limit: 12, mobileOrder: 1 } },
+    { id: 'default-notes', kind: 'notes', place: { col: 3, row: 5, w: 4, h: 3 }, opts: { limit: 4, mobileOrder: 5 } },
+    { id: 'default-recent', kind: 'recent', place: { col: 7, row: 5, w: 5, h: 3 }, opts: { limit: 6, mobileOrder: 4 } },
+    { id: 'default-inbox', kind: 'inbox', place: { col: 0, row: 8, w: 4, h: 2 }, opts: { mobileOrder: 7 } },
+    { id: 'default-digest', kind: 'digest', place: { col: 4, row: 8, w: 8, h: 2 }, opts: { mobileOrder: 8 } },
   ];
   return {
     version: HOME_BOARD_VERSION,

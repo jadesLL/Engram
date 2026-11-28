@@ -571,6 +571,14 @@ test('首页看板手机编辑：单列 + 上移/下移/隐藏（44dp），顺�
   // 顺序持久化：写 opts.mobileOrder，走现有 store.commit（服务端 + localStorage 一份 JSON）
   assert.match(board, /mobileOrder: position\.get\(module\.id\) \?\? 0/, '顺序没有写进模块 opts');
   assert.match(board, /store\.commit\(\{ \.\.\.store\.board, modules \}\)/, '顺序没有走 store.commit 落盘');
+  // 手机单列是 flex，只认 DOM 顺序：改过手机顺序时必须按 mobileOrder 重排，否则上移/下移看不见效果
+  assert.match(board, /const mobileHasCustomOrder = computed/, '缺少「手机顺序是否改过」判定');
+  assert.match(
+    board,
+    /mobileCanvas\.value && mobileHasCustomOrder\.value \? mobileOrderList\(\) : source\.modules/,
+    '手机单列没有按 mobileOrder 重排 DOM',
+  );
+  assert.match(board, /placeById\.get\(module\.id\)/, '重排后没有按模块 id 取回对应落点');
   // 手机编辑不引入拖拽；桌面拖拽/缩放路径原样保留
   assert.match(board, /if \(mobileEditing\.value\) return;/, '手机编辑没有挡住拖拽手势');
   assert.match(board, /if \(previewBoard\.value\) store\.commit\(previewBoard\.value\);/, '桌面拖拽松手提交被改坏了');

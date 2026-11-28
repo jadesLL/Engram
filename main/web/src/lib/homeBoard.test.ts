@@ -114,6 +114,57 @@ test('默认布局：非空、模块类型合法、id 唯一、列数固定 12�
   assert.deepEqual(rows, [...rows].sort((left, right) => left - right));
 });
 
+test('默认布局：三列结构与手机单列顺序固定', () => {
+  const board = defaultHomeBoard();
+  assert.deepEqual(
+    board.modules.map((m) => ({ kind: m.kind, col: m.col, row: m.row, w: m.w, h: m.h })),
+    [
+      { kind: 'capture', col: 0, row: 0, w: 12, h: 1 },
+      { kind: 'system', col: 0, row: 1, w: 3, h: 3 },
+      { kind: 'tasks', col: 3, row: 1, w: 4, h: 4 },
+      { kind: 'stats', col: 7, row: 1, w: 5, h: 4 },
+      { kind: 'heat', col: 0, row: 4, w: 3, h: 4 },
+      { kind: 'notes', col: 3, row: 5, w: 4, h: 3 },
+      { kind: 'recent', col: 7, row: 5, w: 5, h: 3 },
+      { kind: 'inbox', col: 0, row: 8, w: 4, h: 2 },
+      { kind: 'digest', col: 4, row: 8, w: 8, h: 2 },
+    ]
+  );
+  // 手机顺序写在 opts.mobileOrder 里，格式与手机编辑「上移 / 下移」写出的 0 起连续编号一致
+  const mobile = [...board.modules].sort((a, b) => Number(a.opts.mobileOrder) - Number(b.opts.mobileOrder));
+  assert.deepEqual(
+    mobile.map((m) => m.kind),
+    ['capture', 'heat', 'tasks', 'stats', 'recent', 'notes', 'system', 'inbox', 'digest']
+  );
+  assert.deepEqual(mobile.map((m) => Number(m.opts.mobileOrder)), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test('默认布局只给没有落过盘的新用户：已保存的布局原样保留', () => {
+  // 旧版默认布局的落盘文本：读回时必须一个模块都不换，不能被新默认布局顶掉
+  const saved = JSON.stringify({
+    version: HOME_BOARD_VERSION,
+    columns: DEFAULT_BOARD_COLUMNS,
+    modules: [
+      { id: 'default-stats', kind: 'stats', title: '', col: 0, row: 0, w: 4, h: 4, opts: {} },
+      { id: 'default-capture', kind: 'capture', title: '', col: 4, row: 0, w: 4, h: 4, opts: {} },
+      { id: 'default-tasks', kind: 'tasks', title: '', col: 8, row: 0, w: 4, h: 4, opts: { limit: 5 } },
+      { id: 'default-shortcuts', kind: 'shortcuts', title: '', col: 0, row: 4, w: 11, h: 1, opts: {} },
+      { id: 'default-sync', kind: 'sync', title: '', col: 11, row: 4, w: 1, h: 1, opts: {} },
+    ],
+  });
+  const loaded = normalizeHomeBoard(saved);
+  assert.deepEqual(
+    loaded.modules.map((m) => ({ id: m.id, kind: m.kind, col: m.col, row: m.row, w: m.w, h: m.h })),
+    [
+      { id: 'default-stats', kind: 'stats', col: 0, row: 0, w: 4, h: 4 },
+      { id: 'default-capture', kind: 'capture', col: 4, row: 0, w: 4, h: 4 },
+      { id: 'default-tasks', kind: 'tasks', col: 8, row: 0, w: 4, h: 4 },
+      { id: 'default-shortcuts', kind: 'shortcuts', col: 0, row: 4, w: 11, h: 1 },
+      { id: 'default-sync', kind: 'sync', col: 11, row: 4, w: 1, h: 1 },
+    ]
+  );
+});
+
 test('登记表的每个类型都有标题、说明、图标与合法默认宽高', () => {
   assert.equal(MODULE_META.length, MODULE_KINDS.length);
   for (const kind of MODULE_KINDS) {
