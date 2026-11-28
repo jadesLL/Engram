@@ -68,6 +68,37 @@ test('失败任务之后 Agent 通道补写了产物：列表显示已转换，�
   assert.match(item.derivedPath || '', /^收集箱\/转换结果\//);
 });
 
+test('已转换后再转失败：状态仍是已转换、旧产物保留，只带出「上次重新转换失败」', () => {
+  const rel = plant('周报.docx');
+  const written = writeInboxMarkdown(rel, '# 周报\n\n第一版', undefined, { title: '周报' });
+  // 产物 mtime 明确早于失败任务：模拟「先有产物，后来重新转换失败」
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(path.join(BRAIN_DIR, ...written.derivedPath.split('/')), past, past);
+  const jobId = insertJob(rel, 'failed', '模型没有返回内容');
+
+  const item = listInboxItems().items.find((entry) => entry.path === rel);
+  assert.ok(item);
+  assert.equal(item.status, 'converted', '旧产物仍可用，状态不该掉成失败');
+  assert.equal(item.derivedPath, written.derivedPath);
+  assert.equal(item.error, '模型没有返回内容', '界面要能提示上次重新转换失败');
+  assert.equal(item.jobId, jobId, '失败任务的会话仍可查看');
+});
+
+test('已入库后再转失败：仍是已入库，旧产物与知识库副本都不动', () => {
+  const rel = plant('方案.pdf');
+  const written = writeInboxMarkdown(rel, '# 方案\n\n第一版', undefined, { title: '方案' });
+  const adopted = adoptInboxItem(rel);
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(path.join(BRAIN_DIR, ...written.derivedPath.split('/')), past, past);
+  insertJob(rel, 'failed', '视频模型超时');
+
+  const item = listInboxItems().items.find((entry) => entry.path === rel);
+  assert.ok(item);
+  assert.equal(item.status, 'adopted');
+  assert.equal(item.adoptedPath, adopted.pagePath);
+  assert.equal(item.error, '视频模型超时');
+});
+
 test('转换任务正在跑：即使旧产物在也显示转换中', () => {
   const rel = plant('合同.pdf');
   writeInboxMarkdown(rel, '# 合同\n\n条款');

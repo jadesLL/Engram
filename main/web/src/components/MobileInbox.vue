@@ -152,7 +152,7 @@
                   <span class="mi-time">{{ fromNow(item.mtime) }}</span>
                 </div>
                 <h2 class="mi-card-title">{{ cardTitle(item) }}</h2>
-                <p class="mi-card-note" :class="{ error: item.status === 'failed' }">
+                <p class="mi-card-note" :class="{ error: Boolean(item.error) }">
                   <Icon :name="noteIcon(item)" :size="13" />
                   <span>{{ cardNote(item) }}</span>
                 </p>
@@ -460,7 +460,8 @@
               <span>说明</span><b class="mi-wrap">{{ detailItem.hint }}</b>
             </div>
             <div v-if="detailItem.error" class="mi-detail-row error">
-              <span>失败原因</span><b class="mi-wrap">{{ detailItem.error }}</b>
+              <span>{{ detailItem.status === 'failed' ? '失败原因' : '重转失败' }}</span>
+              <b class="mi-wrap">{{ detailItem.status === 'failed' ? detailItem.error : detailItem.error + '（当前仍是上一版产物）' }}</b>
             </div>
           </div>
           <div class="mi-detail-actions">
@@ -488,6 +489,15 @@
                 @click="detailReview(detailItem)"
               >
                 <Icon name="eye" :size="15" />查看产物
+              </button>
+              <button
+                v-if="canReconvert(detailItem)"
+                class="btn"
+                type="button"
+                :disabled="busyPath === detailItem.path"
+                @click="detailReconvert(detailItem)"
+              >
+                <Icon name="refresh" :size="15" />{{ reconvertLabel(detailItem) }}
               </button>
               <button class="btn" type="button" :disabled="busyPath === detailItem.path" @click="detailAgent(detailItem)">
                 <Icon name="ai" :size="15" />让 Agent 处理
@@ -527,6 +537,15 @@
             <div v-else class="mi-review-md" v-html="reviewHtml" />
           </div>
           <div class="mi-review-actions">
+            <button
+              v-if="canReconvert(reviewItem)"
+              class="btn"
+              type="button"
+              :disabled="busyPath === reviewItem.path"
+              @click="reconvertFromReview"
+            >
+              <Icon name="refresh" :size="15" />{{ reconvertLabel(reviewItem) }}
+            </button>
             <button class="btn" type="button" @click="closeReview">关闭</button>
             <button
               v-if="reviewCanAdopt"
@@ -644,7 +663,7 @@ import { useSyncStore } from '../stores/sync';
 import { registerBackHandler } from '../lib/androidBack';
 import { confirmDialog } from '../lib/confirm';
 import { haptic } from '../lib/haptics';
-import { isServerConvertible } from '../lib/inboxAgent';
+import { canReconvertItem, inboxRetryLabel, isServerConvertible } from '../lib/inboxAgent';
 import { renderMarkdown } from '../lib/markdown';
 import { notify, pushToast } from '../lib/notify';
 import Icon from './Icon.vue';
@@ -1214,6 +1233,8 @@ function coverIcon(item: InboxItem | null): string {
 function noteIcon(item: InboxItem | null): string {
   if (!item) return 'file';
   if (item.status === 'failed') return 'report';
+  // 已转换 / 已入库但上次重新转换失败：旧产物还在，图标仍按失败提示
+  if (item.error) return 'report';
   if (item.status === 'converting') return 'activity';
   if (item.status === 'converted' || item.status === 'adopted') return 'check';
   if (item.capability === 'agent-only') return 'messages';
@@ -1229,9 +1250,17 @@ function cardNote(item: InboxItem | null): string {
     return item.capability === 'video' ? '中枢正在提炼，完成后自动刷新' : '中枢正在转换，完成后自动刷新';
   }
   if (item.status === 'converted') {
+    if (item.error) {
+      const label = item.capability === 'video' ? '重新提炼' : '重新转换';
+      return `上次${label}失败，仍是上一版产物：` + item.error;
+    }
     return item.derivedPath ? '产物：' + fileName(item.derivedPath) : '已生成 Markdown 产物，可入库';
   }
   if (item.status === 'adopted') {
+    if (item.error) {
+      const label = item.capability === 'video' ? '重新提炼' : '重新转换';
+      return `上次${label}失败，知识库副本未变：` + item.error;
+    }
     return item.adoptedPath ? '已入库：' + item.adoptedPath : '已入库';
   }
   if (isServerConvertible(item.capability)) {
@@ -1327,12 +1356,17 @@ async function convertItem(item: InboxItem | null): Promise<void> {
   try {
     const result = await inbox.convert([item.path]);
     if (result.queued.length) {
-      notify.success(item.capability === 'video' ? '已交给中枢提炼视频' : '已交给中枢转换');
+      const again = Boolean(item.derivedPath);
+      notify.success(again
+        ? `已交给中枢${inboxRetryLabel(item.capability)}`
+        : item.capability === 'video' ? '已交给中枢提炼视频' : '已交给中枢转换');
       setHint(
         'info',
-        item.capability === 'video'
-          ? '已交给中枢提炼，完成后自动刷新'
-          : '已交给中枢转换，完成后自动刷新'
+        again
+          ? `${inboxRetryLabel(item.capability)}已交给中枢，完成后自动刷新`
+          : item.capability === 'video'
+            ? '已交给中枢提炼，完成后自动刷新'
+            : '已交给中枢转换，完成后自动刷新'
       );
       expectConversion();
     } else if (result.skipped.length) {
@@ -2016,6 +2050,19 @@ function detailRemove(item: InboxItem | null): void {
   detailAction(() => removeItem(item));
 }
 
+/** 已转换 / 已入库且有产物：详情 sheet 与产物预览都提供一个「再跑一版」的入口 */
+function canReconvert(item: InboxItem | null): boolean {
+  return item ? canReconvertItem(item) : false;
+}
+
+function reconvertLabel(item: InboxItem | null): string {
+  return inboxRetryLabel(item?.capability || '');
+}
+
+function detailReconvert(item: InboxItem | null): void {
+  detailAction(() => convertItem(item));
+}
+
 /** 详情里的视频字段单独取：模板里不做「可选属性套可选属性」的收窄 */
 function hasVideo(item: InboxItem | null): boolean {
   return Boolean(item?.video);
@@ -2102,6 +2149,14 @@ function adoptFromReview(): void {
   if (!item) return;
   closeReview();
   void adoptItem(item);
+}
+
+/** 看完当前产物决定再跑一版：先关预览再交给中枢，状态与进度走列表轮询 */
+function reconvertFromReview(): void {
+  const item = reviewItem.value;
+  if (!item || !canReconvert(item)) return;
+  closeReview();
+  void convertItem(item);
 }
 
 /* ===== 分享落袋回执（/inbox?capture=<时间戳>，由原生分享桥推入） ===== */

@@ -166,6 +166,34 @@ test('列表按状态分组：有转换产物即视为已转换，产物本身�
   assert.equal(body.counts.converted >= 1, true);
 });
 
+test('已转换的条目支持重新转换：已有完成记录时再调用会新建任务与会话', async () => {
+  const rel = `${INBOX_DIR_REL}/重转样本.txt`;
+  fs.mkdirSync(path.join(BRAIN_DIR, INBOX_DIR_REL), { recursive: true });
+  fs.writeFileSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '重转样本.txt'), '第一版正文');
+  const derivedDir = path.join(BRAIN_DIR, INBOX_DIR_REL, '转换结果');
+  fs.mkdirSync(derivedDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(derivedDir, '2026.09.24_重转样本.md'),
+    '---\n标题: 重转样本\n来源: 收集箱/重转样本.txt\n---\n\n# 第一版\n'
+  );
+  // 上一次转换已经完成：重新转换不能被 enqueue 的「刚做过」窗口吞掉
+  const previous = db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at)
+     VALUES('inbox_convert',?,'done',?,?)`
+  ).run(JSON.stringify({ path: rel }), new Date().toISOString(), new Date().toISOString());
+
+  const res = await app.inject({
+    method: 'POST', url: '/api/inbox/convert', headers: auth(), payload: { paths: [rel] },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const queued = res.json().queued as { path: string; jobId: number; sessionId: string }[];
+  assert.equal(queued.length, 1);
+  assert.notEqual(queued[0].jobId, Number(previous.lastInsertRowid), '重新转换应新建任务');
+  const row = db.prepare('SELECT status FROM jobs WHERE id = ?').get(queued[0].jobId) as { status: string };
+  assert.equal(row.status, 'pending');
+  assert.ok(queued[0].sessionId, '重新转换也要有可查看过程的会话');
+});
+
 test('入库后状态变 adopted：带回知识库副本，计数进已入库', async () => {
   const derivedDir = path.join(BRAIN_DIR, INBOX_DIR_REL, '转换结果');
   fs.mkdirSync(derivedDir, { recursive: true });

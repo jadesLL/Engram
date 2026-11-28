@@ -6,6 +6,7 @@ import {
   AGENT_MENU_LABEL,
   AGENT_PRIMARY_LABEL,
   canConvertItem,
+  canReconvertItem,
   inboxPrimaryKind,
   inboxPrimaryLabel,
   inboxRetryLabel,
@@ -18,6 +19,15 @@ type Subject = Pick<InboxItem, 'status' | 'capability'>;
 
 function item(status: InboxItem['status'], capability: InboxItem['capability']): Subject {
   return { status, capability };
+}
+
+/** 重新转换还看产物：有产物的已转换 / 已入库条目 */
+function withProduct(
+  status: InboxItem['status'],
+  capability: InboxItem['capability'],
+  derivedPath: string | null = '收集箱/转换结果/2026.11.28_报告.md',
+): Subject & Pick<InboxItem, 'derivedPath'> {
+  return { ...item(status, capability), derivedPath };
 }
 
 test('待整理：可转格式给「转换」，agent-only 给「让 Agent 处理」，unsupported 主操作留空', () => {
@@ -77,6 +87,19 @@ test('canConvertItem：只有服务端可转且不在转换中才可点，失败
   assert.equal(canConvertItem(item('converting', 'office')), false);
   assert.equal(canConvertItem(item('pending', 'agent-only')), false);
   assert.equal(canConvertItem(item('pending', 'unsupported')), false);
+});
+
+test('canReconvertItem：已转换 / 已入库且产物还在才给「重新转换 / 重新提炼」', () => {
+  // 已转换未入库、已入库都要能再跑一版
+  assert.equal(canReconvertItem(withProduct('converted', 'office')), true);
+  assert.equal(canReconvertItem(withProduct('converted', 'video')), true);
+  assert.equal(canReconvertItem(withProduct('adopted', 'pdf')), true);
+  // 没有产物没有「旧产物替换」可言；转换中重复提交没有意义
+  assert.equal(canReconvertItem(withProduct('pending', 'text', null)), false);
+  assert.equal(canReconvertItem(withProduct('converting', 'text')), false);
+  // 不可转格式即使磁盘上有 Agent 补写的产物，也不走服务端重转
+  assert.equal(canReconvertItem(withProduct('converted', 'agent-only')), false);
+  assert.equal(canReconvertItem(withProduct('adopted', 'unsupported')), false);
 });
 
 test('主操作判定覆盖所有状态 × 能力组合（不出现漏配的空档）', () => {
