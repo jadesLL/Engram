@@ -160,7 +160,7 @@ git tag v1.5.11 && git push gitea v1.5.11     # 需明确批准
 
 观察 **Actions → Release** 运行；阶段与预计耗时：
 
-> 本机看板（只读，推荐）：`cd main && pnpm release:watch --tag v<版本> --open`。页面实时显示同样的阶段、每步耗时、预计剩余、日志尾与 Release 附件，不用再开 Gitea 页面刷新；数据来自 Gitea Actions API，凭据用 `GITEA_TOKEN` 或 `git credential fill`，只监听 127.0.0.1。`--run <id>` 可看历史运行，`--once` 只打印 JSON。
+> 本机看板（只读，推荐）：`cd main && pnpm release:watch --tag v<版本> --open`。页面实时显示同样的阶段、每步耗时、预计剩余、日志尾与 Release 附件，不用再开 Gitea 页面刷新；数据来自 Gitea Actions API，凭据用 `GITEA_TOKEN` 或 `git credential fill`，只监听 127.0.0.1。`--run <id>` 可看历史运行，`--once` 只打印 JSON。页面跟随浏览器生命周期：关掉最后一个看板标签/窗口后服务会在 3 秒内自动退出；需要常驻时加 `--stay-alive`。
 
 | 阶段 | 做什么 | 预计 |
 | --- | --- | --- |

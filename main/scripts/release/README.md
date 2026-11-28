@@ -17,5 +17,6 @@ pnpm release:watch --once                   # 只打印一份 JSON 状态
 ```
 
 - 页面显示阶段时间线（准备 / 门禁 / 镜像 / exe / APK / Release / 公开同步）、每步耗时、预计剩余、日志尾、产物附件与最近几次发版耗时。
+- **跟随浏览器生命周期**：页面与服务之间维持一条 SSE 长连接，关掉最后一个看板标签/窗口后 3 秒内服务自动退出；刷新页面会在宽限期内重连。需要服务常驻（例如挂在后台长期观察）时加 `--stay-alive`，或随时 `Ctrl+C`。
 - 只监听 `127.0.0.1`，只读，不会触发任何发版动作；Gitea 凭据只在服务端使用（`GITEA_TOKEN` 或 `git credential fill`），不会下发到页面。
 - 历史耗时缓存在用户目录（Windows `%LOCALAPPDATA%\Engram\release-watch\history.json`），用于校准预计剩余，不写入仓库。
