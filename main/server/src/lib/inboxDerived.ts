@@ -31,6 +31,55 @@ function readSource(abs: string): string | null {
   }
 }
 
+/** 读产物 frontmatter 的某个字段（只读顶层单行键；值去掉两侧引号） */
+function readFrontmatterField(abs: string, key: string): string | null {
+  try {
+    const content = fs.readFileSync(abs, 'utf8');
+    if (!content.startsWith('---\n')) return null;
+    const end = content.indexOf('\n---', 4);
+    if (end < 0) return null;
+    const prefix = key + ':';
+    for (const line of content.slice(4, end).split(/\r?\n/)) {
+      if (!line.startsWith(prefix)) continue;
+      return line.slice(prefix.length).trim().replace(/^['"]|['"]$/g, '') || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeVideoLink(value: string): string {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '').replace(/\/+$/, '');
+}
+
+/**
+ * 同一条视频链接的全部转换产物（收集箱/转换结果 内）。
+ *
+ * 为什么不能只按「来源」匹配：视频占位稿会因重新粘贴/改名产生新文件名（如
+ * 抖音视频.md → 抖音视频-20261128T150136.md），来源不同但视频链接相同；
+ * 旧产物会一直留在收集箱里，用户点开看到的还是上一代纪要。
+ */
+export function derivedPathsForVideoLink(link: string): string[] {
+  const normalized = normalizeVideoLink(link);
+  if (!normalized) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(safeJoin(INBOX_DERIVED_DIR), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || entry.name.startsWith('.') || !entry.name.toLowerCase().endsWith('.md')) continue;
+    const rel = `${INBOX_DERIVED_DIR}/${entry.name}`;
+    if (normalizeVideoLink(readFrontmatterField(safeJoin(rel), '视频链接') || '') === normalized) {
+      paths.push(rel);
+    }
+  }
+  return paths;
+}
+
 /**
  * 产物 → 已入库副本。
  *

@@ -87,7 +87,7 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
   - **只写提供商、不写 Key**：播种内容只有 displayName / api / apiKeyEnv / baseURL / models，Key 始终由用户在控制台里填。
 - **用户只需要填一个 Key**：控制台模型页的 dashscope 卡填 DashScope API Key 即完成；Engram 设置页的面板只剩「启用开关 + 去控制台配置模型与 API Key 入口 + 当前模型展示」，Base URL / API Key / 模型名输入框与「测试连通性」按钮都已移除（后端 `POST /api/inbox/video-test` 仍在，保留给旧 Web 包与诊断）。
 - **解析（纯读文件，不启动 dsh）**：提供商来自 `$DSH_HOME/profiles/web/cordis.patch.yml` 顶层 `llm-pi-ai` 的 `config.providers.*`，Key 来自 `$DSH_HOME/.credentials.yaml` 的 `refs.<apiKeyEnv>`（取不到再回退同名环境变量）。本机缺 Key（或本机根本没有 dashscope 提供商）时回落到多端同步下来的模型配置，见下方「模型配置多端同步」。提供商优先 `dashscope`，否则找含 `qwen3.8-omni-flash` 的那个；模型优先 `qwen3.8-omni-flash`，没有就用该提供商的第一个模型。
-- **与聊天 Agent 共用一份配置，默认模型各自独立**：视频只挑 dashscope / qwen3.8-omni-flash，不读 `agent-default-model`；聊天 Agent 的默认模型仍在控制台模型页另设，两边互不覆盖。
+- **视频理解与成文分开取模型**：视频理解仍只挑 dashscope / qwen3.8-omni-flash（不读 `agent-default-model`）；**成文阶段跟随控制台的默认模型**（读 `agent-default-model`：官方 provider 沿用旧 Key，自定义 provider 用其 baseURL / `.credentials.yaml` 的 Key；控制台默认模型不可用时回退旧 `agent_config`，再回退视频模型跑纯文本）。聊天 Agent 的默认模型也是同一个，不再“两边互不覆盖”。
 - **接口**：
 
 | 方法 | 路径 | 说明 |
@@ -98,8 +98,8 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 | POST | `/api/inbox/video-test` | 用当前解析到的模型发一次最小文本请求；不看总开关，也不接受 baseUrl / apiKey 覆盖 |
 
 - **status 字段**：`configured`（开关打开且模型 / Key 齐全）、`enabled`、`provider`、`providerName`、`baseUrl`、`model`、`hasKey`、`missing`、`keySource`（`local` = 本机控制台已配置 / `synced` = 来自多端同步、本机未配置 / `none` = 未配置；2026-11 新增，可选 `keyFromNode` 给出来源设备，旧服务端没有该字段时前端按 `hasKey` 降级）；另带旧面板固定值 `maxTokens: 4096`、`quality: 64`（720P）、`douyinBrowser: false`，兼容 v1.5.x 旧 Web 包。任何接口都不回显 API Key（面板只显示 Key 来源）。
-- **视频管线**：`pipeline/inboxVideo.ts` 是两段式——第一段用解析到的视频模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块，`maxTokens=4096`）把视频/多图记成「观看笔记」；第二段用内置 Agent 的文本模型（`completeText`，`maxTokens=8192`）按文章规范成文，文本模型没配 Key 时回退到视频模型跑纯文本请求。B站 CC 字幕不经过视频模型，直接进第二段成文。B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
-- **相关文件**：`lib/videoModel.ts`（只读解析 + 默认提供商常量）、`assistant/videoModelDefaults.ts`（幂等播种）、`lib/videoConfig.ts`（`video_config` 只存 `{ enabled }`，默认开启；status 汇总）、`routes/videoConfig.ts`、`routes/inbox.ts`（video-status / video-test）、`lib/videoModelClient.ts`、`pipeline/inboxVideo.ts`；前端面板 `web/src/components/settings/VideoPanel.vue`。
+- **视频管线**：`pipeline/inboxVideo.ts` 是两段式——第一段用解析到的视频模型（`lib/videoModelClient.ts` 固定走 OpenAI 兼容 chat/completions，视频是厂商扩展的 `video_url` 内容块，`maxTokens=32768`，截断时用已生成的 partial 继续）把视频/多图记成「观看笔记」；第二段用控制台默认文本模型（`completeText`，`maxTokens=32768`；候选链：显式注入 → 控制台 `agent-default-model` → 旧 `agent_config` → 视频模型纯文本兜底）按文章规范成文。正文不夹 `[mm:ss]`，需要定位看文末「视频时间点」；封面与 `frame:MM:SS` 关键帧由服务端落成页面资产（ffmpeg 运行时按需下载，失败只放封面），抖音图文原图归档到文末附图。B站 CC 字幕不经过视频模型，直接进第二段成文。B站下载清晰度固定 720P，抖音浏览器兜底固定关闭。
+- **相关文件**：`lib/videoModel.ts`（只读解析 + 默认提供商常量）、`assistant/videoModelDefaults.ts`（幂等播种）、`lib/videoConfig.ts`（`video_config` 只存 `{ enabled }`，默认开启；status 汇总）、`routes/videoConfig.ts`、`routes/inbox.ts`（video-status / video-test）、`lib/videoModelClient.ts`、`lib/editorModel.ts`（成文模型候选链）、`lib/videoArticle.ts`（正文去时间戳/时间点/来源收口）、`lib/ffmpegRuntime.ts` + `lib/videoFrames.ts`（运行时下载与抽帧）、`lib/pageAssets.ts`（图片资产）、`pipeline/inboxVideo.ts`；前端面板 `web/src/components/settings/VideoPanel.vue`。
 
 ## 聊天运行时的模型路由（2026-11-08）
 
