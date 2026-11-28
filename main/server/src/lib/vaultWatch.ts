@@ -14,7 +14,7 @@ import { ensureFileRecord } from '../pipeline/indexer.js';
 import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
 import { isRawPath } from './rawSections.js';
 import { isAppWrite } from './appWrites.js';
-import { isNestedVaultPath } from './brainPaths.js';
+import { isInboxPath, isNestedVaultPath } from './brainPaths.js';
 
 /**
  * 带外文件系统监听：外部 Agent / 用户在服务端之外直接增删改 brain 目录时，
@@ -267,6 +267,17 @@ export async function reconcileVaultPaths(
       continue;
     }
     result.handled++;
+
+    // 收集箱不是知识库：里面的 .md（视频链接占位稿、转换产物）有自己的 frontmatter 口径，
+    // 不能走 syncPageFile 的页面规范化——那会补 id/创建日期并重排 YAML，把「链接」加引号，
+    // 视频提炼按裸链接解析时就会报「占位稿已损坏」（2026-11-28 实测）。
+    // 这里与普通资料文件同一套对账：只推 file-changed 并登记同步。
+    if (isInboxPath(rel)) {
+      emit('file-changed', { path: rel });
+      notifySyncChange('file', rel);
+      result.files++;
+      continue;
+    }
 
     if (/\.md$/i.test(rel)) {
       const id = frontmatterId(rel);

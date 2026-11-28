@@ -223,6 +223,24 @@ export function buildVideoLinkMarkdown(info: { platform: VideoPlatform; link: st
   ].join('\n');
 }
 
+/**
+ * 取 frontmatter 标量值：旧占位稿可能被 YAML 序列化器补过引号。
+ *
+ * 2026-11 事故：从手机同步进收集箱的占位稿被当页面规范化，`链接` 写成
+ * `'https://…'`（gray-matter 重新序列化会自动加引号），按裸链接解析就会误报
+ * 「占位稿已损坏」。根因已在 vaultWatch 修掉，这里对历史文件做兼容。
+ */
+function frontmatterScalar(value: string): string {
+  const text = String(value || '').trim();
+  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) {
+    return text.slice(1, -1).replace(/''/g, "'").trim();
+  }
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+    return text.slice(1, -1).replace(/\\(["\\])/g, '$1').trim();
+  }
+  return text;
+}
+
 /** 解析占位稿；不是视频链接稿（缺 frontmatter / 平台不认识）时返回 null */
 export function parseVideoLinkMarkdown(
   markdown: string
@@ -235,7 +253,7 @@ export function parseVideoLinkMarkdown(
   const fields: Record<string, string> = {};
   for (const line of frontmatter[1].split('\n')) {
     const match = /^(类型|平台|链接|标题):\s*(.*)$/.exec(line.trim());
-    if (match) fields[match[1]] = match[2].trim();
+    if (match) fields[match[1]] = frontmatterScalar(match[2]);
   }
   if (fields['类型'] !== 'video-link') return null;
   const platform = fields['平台'];

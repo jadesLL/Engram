@@ -136,6 +136,34 @@ test('占位稿 frontmatter：build 与 parse 往返一致，标题里的换行�
   assert.equal(parseVideoLinkMarkdown('---\n类型: video-link\n平台: bilibili\n链接: 不是链接\n标题: x\n---\n'), null);
 });
 
+test('YAML 序列化器补过引号的历史占位稿仍能解析（页面规范化事故兼容）', () => {
+  const singleQuoted = [
+    '---',
+    '类型: video-link',
+    '平台: douyin',
+    "链接: 'https://www.douyin.com/video/7711679866428558643'",
+    "标题: '抖音视频：标题带冒号'",
+    'id: 8541d41b',
+    "创建日期: '2026-11-28T15:01:36.184Z'",
+    '---',
+    '',
+    "视频链接：'https://www.douyin.com/video/7711679866428558643'",
+  ].join('\n');
+  assert.deepEqual(parseVideoLinkMarkdown(singleQuoted), {
+    platform: 'douyin',
+    link: 'https://www.douyin.com/video/7711679866428558643',
+    title: '抖音视频：标题带冒号',
+  });
+
+  // 双引号口径（另一类 YAML 序列化器）也能读
+  const doubleQuoted = '---\n类型: "video-link"\n平台: "bilibili"\n链接: "https://b23.tv/AbCdEf"\n标题: "B站视频"\n---\n';
+  assert.deepEqual(parseVideoLinkMarkdown(doubleQuoted), {
+    platform: 'bilibili',
+    link: 'https://b23.tv/AbCdEf',
+    title: 'B站视频',
+  });
+});
+
 test('resolveVideoLink：B站 view 接口取标题/UP主/时长/cid，并带 referer', async () => {
   const calls: { url: string; init: any }[] = [];
   const fetchImpl = (async (input: any, init: any) => {
