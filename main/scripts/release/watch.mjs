@@ -50,6 +50,7 @@ function printHelp() {
   --port <port>        本地端口（默认 ${DEFAULT_PORT}）
   --host <host>        监听地址（默认 127.0.0.1；改成 0.0.0.0 会让同网段可访问）
   --open               启动后自动打开浏览器
+  --stay-alive         浏览器关闭后不退出（默认：关掉最后一个看板标签后 3 秒自动退出）
   --repo <dir>         应用源码根（默认按脚本位置推导 main/）
   --gitea-url <url>    Gitea 根地址（默认从 git remote 推导）
   --repo-path <o/r>    仓库坐标（默认从 git remote 推导）
@@ -68,6 +69,7 @@ function parseArgs(argv) {
     port: DEFAULT_PORT,
     host: '127.0.0.1',
     open: false,
+    stayAlive: false,
     repo: null,
     giteaUrl: null,
     repoPath: null,
@@ -86,6 +88,7 @@ function parseArgs(argv) {
     else if (arg === '--port') options.port = Number(take());
     else if (arg === '--host') options.host = take();
     else if (arg === '--open') options.open = true;
+    else if (arg === '--stay-alive') options.stayAlive = true;
     else if (arg === '--repo') options.repo = take();
     else if (arg === '--gitea-url') options.giteaUrl = take();
     else if (arg === '--repo-path') options.repoPath = take();
@@ -513,6 +516,25 @@ async function main() {
     return;
   }
 
+  // 页面生命周期：每个看板标签维持一条 SSE 长连接；最后一个断开 3 秒后退出。
+  // 刷新页面时旧连接先断、新连接在宽限期内接上，不会误杀；--stay-alive 可关掉这个行为。
+  const pageClients = new Map();
+  let hadPageClient = false;
+  let shutdownTimer = null;
+
+  const maybeExitWhenBrowserClosed = () => {
+    if (options.stayAlive || !hadPageClient || pageClients.size > 0 || shutdownTimer) return;
+    shutdownTimer = setTimeout(() => {
+      shutdownTimer = null;
+      if (pageClients.size > 0) return;
+      console.log('浏览器已关闭，看板服务退出（要常驻请加 --stay-alive）');
+      server.close(() => process.exit(0));
+      server.closeAllConnections?.();
+      // server.close 等不到 keep-alive 连接时兜底退出
+      setTimeout(() => process.exit(0), 1500).unref();
+    }, 3000);
+  };
+
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
@@ -555,8 +577,46 @@ async function main() {
         response.end(text);
         return;
       }
+      if (url.pathname === '/api/events') {
+        const id = url.searchParams.get('id') || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        response.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-store',
+          Connection: 'keep-alive',
+        });
+        response.write(`event: hello\ndata: ${JSON.stringify({ id })}\n\n`);
+        pageClients.set(id, response);
+        hadPageClient = true;
+        if (shutdownTimer) {
+          clearTimeout(shutdownTimer);
+          shutdownTimer = null;
+        }
+        const ping = setInterval(() => {
+          try {
+            response.write(': ping\n\n');
+          } catch {
+            /* 连接已经断开，交给 close 事件收尾 */
+          }
+        }, 15_000);
+        let cleaned = false;
+        const cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
+          clearInterval(ping);
+          if (pageClients.get(id) === response) pageClients.delete(id);
+          maybeExitWhenBrowserClosed();
+        };
+        request.on('close', cleanup);
+        response.on('close', cleanup);
+        return;
+      }
       if (url.pathname === '/api/health') {
-        sendJson(response, 200, { ok: true, generatedAt: new Date().toISOString() });
+        sendJson(response, 200, {
+          ok: true,
+          clients: pageClients.size,
+          stayAlive: options.stayAlive,
+          generatedAt: new Date().toISOString(),
+        });
         return;
       }
       const staticFile = STATIC_FILES.get(url.pathname);
@@ -594,7 +654,12 @@ async function main() {
     console.log(`Engram 发版看板  →  ${url}`);
     console.log(`仓库 ${stateOptions.repoPath || '未知'}  凭据 ${client?.authKind || '匿名'}`);
     console.log(`运行 ${runLabel}`);
-    console.log('只读，不会触发任何发版动作；Ctrl+C 停止');
+    console.log('只读，不会触发任何发版动作');
+    console.log(
+      options.stayAlive
+        ? '常驻模式：Ctrl+C 停止'
+        : '关掉最后一个看板标签/窗口后 3 秒自动退出（要常驻加 --stay-alive，或随时 Ctrl+C）',
+    );
     if (!['127.0.0.1', 'localhost', '::1'].includes(options.host)) {
       console.warn(`注意：监听 ${options.host} 会让同网段设备访问看板（含运行日志与仓库路径）。`);
     }

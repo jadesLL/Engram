@@ -524,6 +524,20 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refresh(false);
   });
+
+  // 与本地服务保持一条 SSE 长连接：关掉最后一个看板标签后，服务端会自动退出。
+  // 刷新页面时新连接会在 3 秒宽限期内接上；断线后 EventSource 会自动重连。
+  if ('EventSource' in window) {
+    const clientId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const events = new EventSource(`/api/events?id=${encodeURIComponent(clientId)}`);
+    events.onerror = () => {
+      /* 服务端退出后重连会一直失败，页面保持最后一次数据 */
+    };
+  }
+
   setInterval(tick, 1000);
   refresh(true);
 })();
