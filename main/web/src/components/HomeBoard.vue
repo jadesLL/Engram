@@ -396,22 +396,27 @@ function titleOf(module: HomeModule): string {
 /**
  * 模板用的模块视图：把「标题、条数」这类每帧要用的值一次算好。
  * hasLimit 说明这块模块有没有「显示 N 条」这一项（没有就不画步进器）。
+ * 手机单列是 flex 布局，col/row 不参与排版、只认 DOM 顺序：用户改过手机顺序时按 mobileOrder 重排，
+ * 没改过的老布局保持原数组顺序（观感不变）；桌面仍按栅格坐标落位，与这里的顺序无关。
  */
-const boardModules = computed(() =>
-  (previewBoard.value || store.board).modules.map((module, index) => {
+const boardModules = computed(() => {
+  const source = previewBoard.value || store.board;
+  const modules = mobileCanvas.value && mobileHasCustomOrder.value ? mobileOrderList() : source.modules;
+  const placeById = new Map(source.modules.map((module, index) => [module.id, displayPlaces.value[index]]));
+  return modules.map((module, index) => {
     const max = LIMIT_MAX[module.kind] || 0;
     const hasLimit = max > 0;
     const fallback = DEFAULT_LIMIT[module.kind] || 6;
     return {
       module: dragId.value === module.id && gestureMode.value === 'move' ? { ...module, ...gesture!.origin } : module,
-      place: dragId.value === module.id && gestureMode.value === 'move' ? gesture!.origin : displayPlaces.value[index],
+      place: dragId.value === module.id && gestureMode.value === 'move' ? gesture!.origin : (placeById.get(module.id) ?? displayPlaces.value[index]),
       index,
       title: titleOf(module),
       hasLimit,
       limit: hasLimit ? limitOf(module.opts, fallback, max) : 0,
     };
-  })
-);
+  });
+});
 
 const sync = useSyncStore();
 const serverUpdate = useServerUpdateStore();
@@ -607,6 +612,11 @@ const mobileEditing = computed(() => store.editing && mobileEditWidth.value);
 const mobileCanvas = computed(() => mobileBoard.value || mobileEditing.value);
 /** 手机编辑的单列行高：与桌面一格同量级，卡片高度仍按原来的 h（行数） */
 const MOBILE_EDIT_ROW_H = 76;
+
+/** 手机顺序是否被用户改过：改过才按 mobileOrder 重排单列 DOM，没改过的沿用数组顺序 */
+const mobileHasCustomOrder = computed(() =>
+  store.board.modules.some((module) => Number.isFinite(Number(module.opts.mobileOrder)))
+);
 
 /** 手机浏览顺序：opts.mobileOrder 优先，否则按原视觉顺序（行优先） */
 function mobileOrderList(): HomeModule[] {
