@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptGraphLabel, createLabelGrid, type GraphLabelBox } from './graphLabels.ts';
+import {
+  acceptGraphLabel,
+  computeFitBounds,
+  computeLabelOpacity,
+  createLabelGrid,
+  type GraphLabelBox,
+} from './graphLabels.ts';
 
 test('label grid matches a full scan for boxes near cell borders', () => {
   const boxes: GraphLabelBox[] = [
@@ -32,4 +38,37 @@ test('moving labels never paint over the focused title or an earlier label', () 
   assert.equal(occupied.length, 2);
   // The same label is shown again after its node moves clear; its planned offset is unchanged.
   assert.equal(acceptGraphLabel({ x: 320, y: 93, w: 75, h: 16 }, occupied), true);
+});
+
+test('computeLabelOpacity fades labels continuously with scale, threshold and hub degree', () => {
+  assert.equal(computeLabelOpacity(0.1, 100, 0, true), 1);
+  assert.equal(computeLabelOpacity(0.2, 50, 0, false), 0);
+  const hubAlpha = computeLabelOpacity(0.55, 50, 1, false);
+  const leafAlpha = computeLabelOpacity(0.55, 50, 0, false);
+  assert.ok(hubAlpha > leafAlpha, '高连接度 Hub 应比普通叶子节点更早显字');
+  assert.ok(computeLabelOpacity(1.6, 50, 0, false) > 0.99, '高倍率放大后所有节点名应完全显现');
+  assert.ok(
+    computeLabelOpacity(0.6, 10, 0, false) > computeLabelOpacity(0.6, 90, 0, false),
+    '调低文字淡出阈值应让更多标签在更远缩放下显示',
+  );
+});
+
+test('computeFitBounds ignores extreme outliers while keeping normal graphs intact', () => {
+  const cluster = Array.from({ length: 40 }, (_, i) => ({
+    x: (i % 8) * 30 - 105,
+    y: Math.floor(i / 8) * 30 - 60,
+    r: 8,
+  }));
+  const normal = computeFitBounds(cluster, true);
+  assert.equal(normal.trimmed, false);
+  assert.ok(normal.x0 <= -113 && normal.x1 >= 113);
+
+  const withOutlier = [...cluster, { x: 5000, y: 4000, r: 8 }];
+  const trimmed = computeFitBounds(withOutlier, true);
+  assert.equal(trimmed.trimmed, true);
+  assert.ok(trimmed.x1 < 500, '极端离群点不应把主星团包围盒拉成上千像素');
+
+  const full = computeFitBounds(withOutlier, false);
+  assert.equal(full.trimmed, false);
+  assert.ok(full.x1 >= 5000);
 });

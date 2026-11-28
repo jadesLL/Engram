@@ -33,19 +33,21 @@ export async function graphRoutes(app: FastifyInstance) {
    * tags 与 updatedAt 供「业务视图」做筛选与聚合（按区域/等级/分组/行业、按更新时间）。
    */
   app.get('/api/graph', async (req) => {
-    const { scope, id, depth } = req.query as { scope?: string; id?: string; depth?: string };
+    const { scope, id, depth, limit } = req.query as { scope?: string; id?: string; depth?: string; limit?: string };
 
     // 读取多写少，命中缓存直接返回（保存页面时由 indexer 失效）
-    const cacheKey = `${scope || ''}|${id || ''}|${depth || ''}`;
+    const cacheKey = `${scope || ''}|${id || ''}|${depth || ''}|${limit || ''}`;
     const cached = getGraphCache(cacheKey);
     if (cached) return cached;
 
     let pageIds: Set<string>;
+    let totalPages = 0;
+    let localTruncated = false;
     if (scope === 'page' && id) {
       // BFS 扩展
       pageIds = new Set([id]);
       let frontier = [id];
-      const maxDepth = Math.min(Number(depth) || 2, 3);
+      const maxDepth = Math.min(3, Math.max(1, Math.floor(Number(depth) || 2)));
       for (let d = 0; d < maxDepth; d++) {
         if (frontier.length === 0) break;
         // 批量取整层邻居，消除 N+1（原来逐页一条 SQL）。
@@ -67,15 +69,33 @@ export async function graphRoutes(app: FastifyInstance) {
         const next: string[] = [];
         for (const r of rows) {
           if (!pageIds.has(r.p)) {
+            if (pageIds.size >= 400) {
+              localTruncated = true;
+              break;
+            }
             pageIds.add(r.p);
             next.push(r.p);
           }
         }
         frontier = next;
-        if (pageIds.size > 200) break;
+        if (pageIds.size >= 400) {
+          localTruncated = next.length > 0;
+          break;
+        }
       }
     } else {
-      // 全局：按度数（参与的 link 边数）排序取核心 150 个节点，避免随节点增长沦为毛线团。
+      const countRow = db
+        .prepare(`SELECT COUNT(*) AS cnt FROM pages WHERE deleted=0 AND path NOT LIKE 'AIWorks/%'`)
+        .get() as { cnt: number };
+      totalPages = countRow?.cnt || 0;
+      const parsedLimit = Number(limit);
+      const pageLimit = limit === 'all' || limit === '0'
+        ? 5000
+        : Number.isFinite(parsedLimit) && parsedLimit > 0
+          ? Math.min(5000, Math.floor(parsedLimit))
+          : 1000;
+
+      // 全局：默认上限提高到 1000（支持 limit=all 到 5000），避免知识库一超过 150 页就静默丢失节点。
       // 系统页同样不参与排名：它们的高连接度来自全库索引，会把真实知识网络挤出视野。
       pageIds = new Set(
         (db
@@ -90,15 +110,15 @@ export async function graphRoutes(app: FastifyInstance) {
              SELECT p.id FROM pages p
              LEFT JOIN deg ON deg.page_id = p.id
              WHERE p.deleted=0 AND p.path NOT LIKE 'AIWorks/%'
-             ORDER BY COALESCE(deg.d, 0) DESC, p.id LIMIT 150`
+             ORDER BY COALESCE(deg.d, 0) DESC, p.updated_at DESC, p.id LIMIT ?`
           )
-          .all() as any[]).map((r) => r.id)
+          .all(pageLimit) as any[]).map((r) => r.id)
       );
     }
 
     const ids = [...pageIds];
     if (ids.length === 0) {
-      const empty = { nodes: [], edges: [] };
+      const empty = { nodes: [], edges: [], meta: { totalPages: 0, returnedPages: 0, truncated: false } };
       setGraphCache(cacheKey, empty);
       return empty;
     }
@@ -162,7 +182,15 @@ export async function graphRoutes(app: FastifyInstance) {
       }
     }
 
-    const result = { nodes, edges: vEdges };
+    const result = {
+      nodes,
+      edges: vEdges,
+      meta: {
+        totalPages: scope === 'page' && id ? pages.length : totalPages,
+        returnedPages: pages.length,
+        truncated: scope === 'page' && id ? localTruncated : pages.length < totalPages,
+      },
+    };
     setGraphCache(cacheKey, result);
     return result;
   });

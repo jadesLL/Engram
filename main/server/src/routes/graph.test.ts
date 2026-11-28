@@ -11,6 +11,7 @@ process.env.DATA_DIR = temp;
 
 let app: ReturnType<typeof Fastify>;
 let db: any;
+let invalidateGraphCache: () => void;
 let token = '';
 
 before(async () => {
@@ -18,6 +19,7 @@ before(async () => {
   db = dbModule.db;
   dbModule.migrate();
 
+  ({ invalidateGraphCache } = await import('../lib/graphCache.js'));
   const routes = await import('./graph.js');
   app = Fastify();
   await app.register(jwt, { secret: 'graph-route-test-secret' });
@@ -81,4 +83,37 @@ test('图谱不把 AIWorks 系统页纳入局部 BFS 与全局节点', async () 
   const global = await graph('scope=global');
   const globalIds = global.nodes.map((n: any) => n.id);
   assert.ok(!globalIds.some((id: string) => id.startsWith('sys-')), '全局图谱不含系统页节点');
+});
+
+test('图谱解除 150 节点静默截断，支持 limit 与 meta 计数及局部深度切换', async () => {
+  for (let i = 0; i < 165; i++) {
+    insertPage(`bulk-${i}`, `Wiki/概念/批量节点-${i}.md`, `批量节点-${i}`);
+  }
+  insertPage('hop0', 'Wiki/概念/零跳.md', '零跳');
+  insertPage('hop1', 'Wiki/概念/一跳.md', '一跳');
+  insertPage('hop2', 'Wiki/概念/二跳.md', '二跳');
+  insertPage('hop3', 'Wiki/概念/三跳.md', '三跳');
+  insertLink('hop0', 'hop1');
+  insertLink('hop1', 'hop2');
+  insertLink('hop2', 'hop3');
+  invalidateGraphCache();
+
+  const d1 = await graph('scope=page&id=hop0&depth=1');
+  assert.deepEqual(d1.nodes.map((n: any) => n.id).sort(), ['hop0', 'hop1']);
+
+  const d2 = await graph('scope=page&id=hop0&depth=2');
+  assert.deepEqual(d2.nodes.map((n: any) => n.id).sort(), ['hop0', 'hop1', 'hop2']);
+
+  const full = await graph('scope=global');
+  assert.ok(full.meta.totalPages >= 172, 'meta.totalPages 应统计全部真实知识页');
+  assert.equal(full.meta.returnedPages, full.meta.totalPages);
+  assert.equal(full.meta.truncated, false);
+
+  const limited = await graph('scope=global&limit=50');
+  assert.equal(limited.meta.returnedPages, 50);
+  assert.equal(limited.meta.truncated, true);
+
+  const allExplicit = await graph('scope=global&limit=all');
+  assert.equal(allExplicit.meta.returnedPages, allExplicit.meta.totalPages);
+  assert.equal(allExplicit.meta.truncated, false);
 });
