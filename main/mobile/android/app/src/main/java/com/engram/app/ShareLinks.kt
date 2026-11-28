@@ -126,6 +126,23 @@ object ShareLinks {
         return "---\n类型: video-link\n平台: $safePlatform\n链接: $safeLink\n标题: $safeTitle\n---\n\n视频链接：$safeLink\n"
     }
 
+    /**
+     * 取 frontmatter 标量并去掉 YAML 引号。
+     *
+     * 与 server 的 parseVideoLinkMarkdown 同一口径：旧占位稿被页面规范化补过引号时
+     * （`链接: 'https://…'`），手机端展示的链接不能带引号，否则点开是坏地址。
+     */
+    private fun scalar(value: String?): String {
+        val text = (value ?: "").trim()
+        if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) {
+            return text.substring(1, text.length - 1).replace("''", "'").trim()
+        }
+        if (text.length >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+            return text.substring(1, text.length - 1).replace("\\\"", "\"").trim()
+        }
+        return text
+    }
+
     /** 读取本地收集箱里的视频占位稿（只解析前 4KB，够 frontmatter 用）。 */
     fun parseVideoPlaceholder(raw: String): VideoMeta? {
         val text = (raw ?: "").replace("\r\n", "\n").replaceFirst("\uFEFF", "")
@@ -135,8 +152,9 @@ object ShareLinks {
         val frontmatter = text.substring(4, end)
         if (!VIDEO_MARKER.containsMatchIn(frontmatter)) return null
         val platform = VIDEO_PLATFORM.find(frontmatter)?.groupValues?.get(1) ?: return null
-        val link = VIDEO_LINK.find(frontmatter)?.groupValues?.get(1)?.trim() ?: return null
-        val title = VIDEO_TITLE.find(frontmatter)?.groupValues?.get(1)?.trim().orEmpty()
+        val link = scalar(VIDEO_LINK.find(frontmatter)?.groupValues?.get(1))
+        if (link.isEmpty()) return null
+        val title = scalar(VIDEO_TITLE.find(frontmatter)?.groupValues?.get(1))
             .ifBlank { if (platform == "bilibili") "B 站视频" else "抖音视频" }
         return VideoMeta(platform, link, title)
     }

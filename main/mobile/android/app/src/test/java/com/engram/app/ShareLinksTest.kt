@@ -90,4 +90,17 @@ class ShareLinksTest {
         assertNull(ShareLinks.parseVideoPlaceholder("这是一段普通文字"))
         assertNull(ShareLinks.parseVideoPlaceholder("---\n类型: note\n---\n正文"))
     }
+
+    @Test
+    fun stripsYamlQuotesFromNormalizedPlaceholder() {
+        // 历史占位稿被页面规范化重排过：链接/标题被 YAML 加了引号
+        val quoted = "---\n类型: video-link\n平台: douyin\n" +
+            "链接: 'https://www.douyin.com/video/7711679866428558643'\n" +
+            "标题: '抖音视频：带冒号'\n" +
+            "id: 8541d41b\n" +
+            "创建日期: '2026-11-28T15:01:36.184Z'\n---\n"
+        val parsed = ShareLinks.parseVideoPlaceholder(quoted)
+        assertEquals("https://www.douyin.com/video/7711679866428558643", parsed?.link)
+        assertEquals("抖音视频：带冒号", parsed?.title)
+    }
 }

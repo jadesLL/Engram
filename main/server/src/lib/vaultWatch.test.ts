@@ -129,6 +129,37 @@ test('带外落进原始资料的文件：推 file-changed 并登记提取（侧
   assert.deepEqual(eventNames(), ['file-changed']);
 });
 
+test('收集箱里的 md 不按知识库页面规范化：视频占位稿逐字保留，只推 file-changed', async () => {
+  const { reconcileVaultPaths } = await import('./vaultWatch.js');
+  const rel = '收集箱/抖音视频.md';
+  const raw = [
+    '---',
+    '类型: video-link',
+    '平台: douyin',
+    '链接: https://www.douyin.com/video/7711679866428558643',
+    '标题: 抖音视频',
+    '---',
+    '',
+    '视频链接：https://www.douyin.com/video/7711679866428558643',
+    '',
+  ].join('\n');
+  fs.mkdirSync(abs('收集箱'), { recursive: true });
+  fs.writeFileSync(abs(rel), raw);
+
+  events.length = 0;
+  const result = await reconcileVaultPaths([rel], { deferDeletionMs: 0 });
+
+  assert.equal(result.pages, 0, '收集箱不是知识库，不能建 pages 行');
+  assert.equal(result.files, 1);
+  assert.equal(
+    fs.readFileSync(abs(rel), 'utf8'),
+    raw,
+    '占位稿必须逐字保留：YAML 重排会给链接加引号，视频提炼会误报「占位稿已损坏」'
+  );
+  assert.equal(db.prepare(`SELECT 1 FROM pages WHERE path = ?`).get(rel), undefined);
+  assert.deepEqual(eventNames(), ['file-changed']);
+});
+
 test('回收站与图片资产目录不进对账（各有自己的收口）', async () => {
   const { reconcileVaultPaths } = await import('./vaultWatch.js');
   events.length = 0;
