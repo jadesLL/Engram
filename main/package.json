@@ -12,6 +12,7 @@
     "test": "pnpm --filter @engram/server run test && pnpm --filter @engram/web run test && node scripts/run-js-tests.cjs",
     "lint": "oxlint -c .oxlintrc.json server/src web/src",
     "typecheck": "pnpm -r run typecheck",
+    "release:watch": "node scripts/release/watch.mjs",
     "build:desktop": "pnpm --filter @engram/server build && pnpm --filter @engram/web build && node desktop/scripts/prepare-desktop.js && node desktop/scripts/prepare-node-runtime.js && (pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile || true) && pnpm --filter @engram/desktop dist"
   },
   "engines": {
