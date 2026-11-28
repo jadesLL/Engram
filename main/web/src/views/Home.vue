@@ -1659,13 +1659,8 @@ onUnmounted(() => {
   justify-content: center;
   margin-bottom: 8px;
   border-radius: 8px;
-  filter: var(--rail-logo-filter);
   user-select: none;
-  transition: filter 150ms ease, transform 150ms ease;
-}
-
-.rail-logo:hover {
-  filter: var(--rail-logo-filter-hover);
+  transition: border-color 150ms ease, transform 150ms ease;
 }
 
 .rail-logo:active {

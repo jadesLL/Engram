@@ -187,9 +187,6 @@
   --file-excel: #2f8255;
   --file-ppt: #b9653e;
   --file-pdf: #bf4b4b;
-  /* rail logo 阴影（深色主题下覆盖） */
-  --rail-logo-filter: drop-shadow(0 1px 3px rgba(43, 92, 230, 0.3));
-  --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(43, 92, 230, 0.34)) brightness(1.06);
   /* Win11 细滚动条（透明边框 + padding-box 裁剪，hover 时加粗） */
   --scrollbar: rgba(0, 0, 0, 0.3);
   --scrollbar-hover: rgba(0, 0, 0, 0.48);
@@ -377,8 +374,6 @@ html.dark {
   --link-v6: #6ccb5f;
   --link-v4: #e5b545;
   --link-off: #ff99a4;
-  --rail-logo-filter: drop-shadow(0 1px 3px rgba(90, 169, 230, 0.4));
-  --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(90, 169, 230, 0.46)) brightness(1.06);
   --scrollbar: rgba(255, 255, 255, 0.32);
   --scrollbar-hover: rgba(255, 255, 255, 0.5);
   --press-bg: rgba(255, 255, 255, 0.1);
