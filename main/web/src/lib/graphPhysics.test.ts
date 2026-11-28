@@ -61,3 +61,25 @@ test('60 Hz and 120 Hz displays integrate the same amount of physics', () => {
   clock.reset(); clock.advance(10000);
   assert.equal(ticks, 5);
 });
+
+test('Barnes-Hut global repulsion pushes distant nodes beyond 240px and stays stable at 500 nodes', () => {
+  const a = node(-200); const b = node(200);
+  a.deg = 0; b.deg = 0;
+  stepGraphForces([a, b], [], { ...forces, gravity: 0 }, 1);
+  assert.ok(a.x < -200 && b.x > 200, '相距 400px 的节点仍应产生全局相互斥力');
+
+  const bigNodes = Array.from({ length: 500 }, (_, i) => ({
+    ...node(Math.cos(i) * (50 + (i % 10) * 35), Math.sin(i) * (50 + (i % 10) * 35)),
+    deg: i % 5 === 0 ? 0 : 2,
+  }));
+  const bigLinks = bigNodes
+    .filter((_, i) => i % 5 !== 0)
+    .map((n, i, arr) => ({ a: n, b: arr[(i + 1) % arr.length] }));
+  for (let t = 0; t < 20; t++) {
+    const s = stepGraphForces(bigNodes, bigLinks, forces, 0.8);
+    assert.ok(Number.isFinite(s));
+  }
+  for (const n of bigNodes) {
+    assert.ok(Number.isFinite(n.x) && Number.isFinite(n.y));
+  }
+});

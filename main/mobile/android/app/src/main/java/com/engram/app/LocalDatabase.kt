@@ -1228,24 +1228,63 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         return Triple(titleToId, out, incoming)
     }
 
-    fun graph(scope: String?, pageId: String?): JSONObject = synchronized(lock) {
+    fun graph(scope: String?, pageId: String?, depth: Int? = null, limit: String? = null): JSONObject = synchronized(lock) {
         val allPages = loadGraphPages()
+        val knowledgePages = allPages.filterValues { !it.path.startsWith("AIWorks/") }
         val (_, outLinks, inLinks) = buildLinkIndex(allPages)
+        var localTruncated = false
         val selected = if (scope == "page" && pageId != null) {
-            relatedIdsFromIndex(pageId, 3, outLinks, inLinks) + pageId
+            val maxDepth = (depth ?: 2).coerceIn(1, 3)
+            val visited = linkedSetOf(pageId)
+            var frontier = setOf(pageId)
+            for (hop in 0 until maxDepth) {
+                val next = linkedSetOf<String>()
+                for (source in frontier) {
+                    outLinks[source]?.forEach { target ->
+                        if (knowledgePages.containsKey(target)) {
+                            if (visited.size < 400 && visited.add(target)) next += target
+                            else if (!visited.contains(target)) localTruncated = true
+                        }
+                    }
+                    inLinks[source]?.forEach { caller ->
+                        if (knowledgePages.containsKey(caller)) {
+                            if (visited.size < 400 && visited.add(caller)) next += caller
+                            else if (!visited.contains(caller)) localTruncated = true
+                        }
+                    }
+                }
+                if (next.isEmpty() || visited.size >= 400) break
+                frontier = next
+            }
+            visited
         } else {
-            allPages.keys.take(150).toSet()
+            val pageLimit = when {
+                limit == "all" || limit == "0" -> 5000
+                else -> limit?.toIntOrNull()?.coerceIn(1, 5000) ?: 1000
+            }
+            knowledgePages.keys
+                .sortedByDescending { (outLinks[it]?.size ?: 0) + (inLinks[it]?.size ?: 0) }
+                .take(pageLimit)
+                .toSet()
         }
         val nodes = JSONArray(); val edges = JSONArray()
+        var returnedPages = 0
         for (id in selected) {
             val p = allPages[id] ?: continue
+            returnedPages += 1
             nodes.put(JSONObject().put("id", id).put("label", p.title).put("group", p.type)
                 .put("raw", p.path.startsWith("原始资料/")).put("words", p.wordCount))
             outLinks[id]?.forEach { targetId ->
                 if (selected.contains(targetId)) edges.put(JSONObject().put("from", id).put("to", targetId))
             }
         }
-        JSONObject().put("nodes", nodes).put("edges", edges)
+        val totalPages = if (scope == "page" && pageId != null) returnedPages else knowledgePages.size
+        val truncated = if (scope == "page" && pageId != null) localTruncated else returnedPages < totalPages
+        val meta = JSONObject()
+            .put("totalPages", totalPages)
+            .put("returnedPages", returnedPages)
+            .put("truncated", truncated)
+        JSONObject().put("nodes", nodes).put("edges", edges).put("meta", meta)
     }
 
     private fun relatedIdsFromIndex(

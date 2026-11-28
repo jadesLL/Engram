@@ -15,9 +15,26 @@
           @click="switchMode(m.key)"
         >{{ m.name }}</button>
       </div>
+      <div v-if="mode === 'local'" class="gv-depth" role="group" aria-label="局部跳数深度">
+        <button
+          v-for="d in [1, 2, 3] as const"
+          :key="d"
+          :class="{ on: localDepth === d }"
+          v-tooltip="{ body: `${d} 跳邻居`, meta: '调整本页关联的扩展深度' }"
+          @click="setLocalDepth(d)"
+        >{{ d }}跳</button>
+      </div>
       <div class="gv-search">
         <Icon name="search" :size="15" />
         <input v-model="filters.q" aria-label="搜索页面或标签" placeholder="搜索页面 / 标签…" spellcheck="false" @input="onSearchInput" />
+        <button
+          v-if="filters.q"
+          class="gv-search-mode"
+          :class="{ on: filters.searchMode === 'highlight' }"
+          v-tooltip="{ body: filters.searchMode === 'highlight' ? '高亮定位（保留上下文）' : '仅显示匹配项', meta: '点击切换搜索方式' }"
+          @click="toggleSearchMode"
+        >{{ filters.searchMode === 'highlight' ? '高亮' : '筛选' }}</button>
+        <button v-if="filters.q" class="gv-search-clear" aria-label="清空搜索" @click="clearSearch">×</button>
       </div>
       <div class="gv-chips">
         <span v-for="c in activeChips" :key="c.key" class="gv-chip">
@@ -98,6 +115,10 @@
         <div class="gv-fgroup">
           <h4>其他</h4>
           <label class="gv-frow switch">
+            <span class="nm">孤立节点</span>
+            <span class="gv-sw"><input v-model="filters.showOrphans" aria-label="显示孤立节点" type="checkbox" @change="applyFilter()" /><i /></span>
+          </label>
+          <label class="gv-frow switch">
             <span class="nm">原始资料</span>
             <span class="gv-sw"><input v-model="filters.showRaw" type="checkbox" @change="applyFilter()" /><i /></span>
           </label>
@@ -105,6 +126,14 @@
             <span class="nm">死链</span>
             <span class="gv-sw"><input v-model="filters.showDead" type="checkbox" @change="applyFilter()" /><i /></span>
           </label>
+          <div v-if="mode === 'local'" class="gv-dir">
+            <span>关系方向</span>
+            <div class="gv-dir-seg" role="group" aria-label="局部图谱方向筛选">
+              <button :class="{ on: filters.localDir === 'all' }" @click="setLocalDir('all')">全部</button>
+              <button :class="{ on: filters.localDir === 'out' }" @click="setLocalDir('out')">出链</button>
+              <button :class="{ on: filters.localDir === 'in' }" @click="setLocalDir('in')">入链</button>
+            </div>
+          </div>
         </div>
         </div>
         </details>
@@ -121,6 +150,9 @@
             <input v-model.number="opt.nodeScale" aria-label="节点大小" type="range" min="40" max="180" />
             <div class="gv-trow"><span>连线粗细</span><output>{{ opt.linkScale }}%</output></div>
             <input v-model.number="opt.linkScale" aria-label="连线粗细" type="range" min="40" max="260" />
+            <div class="gv-trow"><span>文字淡出阈值</span><output>{{ opt.textFade }}%</output></div>
+            <input v-model.number="opt.textFade" aria-label="文字淡出阈值" type="range" min="0" max="100" />
+            <label class="gv-frow switch"><span class="nm">连线箭头</span><span class="gv-sw"><input v-model="opt.showArrows" aria-label="连线箭头" type="checkbox" /><i /></span></label>
           </div>
         </details>
         <details class="gv-section">
@@ -158,17 +190,20 @@
 
         <div class="gv-stats">
           <span class="gv-status-dot" :class="{ busy: layoutHint === '布局中' }" />
-          <span><b>{{ visibleNodes.length }}</b> 页 · <b>{{ visibleEdges.length }}</b> 关系</span>
+          <span>
+            <b>{{ visibleNodes.length }}</b> 页<template v-if="graphMeta.totalPages > visibleNodes.length"> / 全库 {{ graphMeta.totalPages }} 页</template> · <b>{{ visibleEdges.length }}</b> 关系<template v-if="searchMatchCount > 0"> · 命中 <b>{{ searchMatchCount }}</b></template>
+          </span>
+          <button v-if="graphMeta.truncated && mode !== 'local'" class="gv-stats-more" @click="loadAllNodes">加载全部</button>
           <span v-if="layoutHint" class="gv-layout-state">{{ layoutHint }}</span>
         </div>
-        <div class="gv-help">拖动平移 · 滚轮缩放 · 点击查看关联</div>
+        <div class="gv-help">拖动平移 · 滚轮缩放 · 点击查看关联与邻居名称</div>
 
         <div class="gv-hud">
           <button
             class="gv-icon gv-tweaks-toggle"
             :class="{ on: facetsOpen && tweaksOpen }"
             aria-label="布局参数" :aria-expanded="facetsOpen && tweaksOpen"
-            v-tooltip="{ body: '布局参数', meta: '节点大小、连线粗细、斥力与引力' }"
+            v-tooltip="{ body: '布局参数', meta: '节点大小、文字淡出、连线箭头与力学' }"
             @click="openDisplaySettings"
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M15 4.5v5M9 14.5v5" /></svg>
@@ -176,7 +211,7 @@
           <button class="gv-icon" aria-label="缩小图谱" @click="zoomBy(1 / 1.25)">−</button>
           <output class="gv-zoom">{{ zoomPercent }}%</output>
           <button class="gv-icon" aria-label="放大图谱" @click="zoomBy(1.25)">+</button>
-          <button class="gv-icon" aria-label="适应画布" v-tooltip="{ body: '铺满', meta: '把全部节点缩放到可见范围' }" @click="fit()">
+          <button class="gv-icon" aria-label="适应画布" v-tooltip="{ body: '铺满', meta: '把节点缩放到可见范围' }" @click="onFitClick()">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" /></svg>
           </button>
           <button class="gv-icon" :class="{ on: pinned }" :aria-label="pinned ? '取消固定布局' : '固定布局'" :aria-pressed="pinned" v-tooltip="{ body: pinned ? '取消固定' : '固定布局', meta: '停住力导向计算' }" @click="togglePin()">
@@ -267,13 +302,20 @@ import { notify } from '../lib/notify';
 import { createGraphFrame } from '../lib/graphFrame';
 import { createRequestSeq } from '../lib/requestSeq';
 import { createGraphClock, stepGraphForces, type ForceLink } from '../lib/graphPhysics';
-import { acceptGraphLabel, createLabelGrid, type GraphLabelBox } from '../lib/graphLabels';
+import {
+  acceptGraphLabel,
+  computeFitBounds,
+  computeLabelOpacity,
+  createLabelGrid,
+  type GraphLabelBox,
+} from '../lib/graphLabels';
 import { clearGraphPositions, getGraphPosition, rememberGraphPosition } from '../lib/graphPositions';
 
 /* ────────────────────────── 常量 ────────────────────────── */
 
 interface ApiNode { id: string; label: string; group: string; raw: boolean; words: number; tags?: string[]; updatedAt?: string }
 interface ApiEdge { from: string; to: string; label?: string }
+interface ApiMeta { totalPages: number; returnedPages: number; truncated: boolean }
 
 interface GNode {
   id: string; label: string; group: string; raw: boolean; words: number; tags: string[]; updatedAt: string;
@@ -323,7 +365,16 @@ const P = {
 };
 /** 外观与力学档位，沿用现有设置与用户保存的值。 */
 const OPT_KEY = 'engram.graph.options';
-const OPT_DEFAULTS = { nodeScale: 100, linkScale: 100, cF: 65, rF: 50, lF: 60, lD: 40 };
+const OPT_DEFAULTS = {
+  nodeScale: 100,
+  linkScale: 100,
+  textFade: 50,
+  showArrows: false,
+  cF: 65,
+  rF: 50,
+  lF: 60,
+  lD: 40,
+};
 
 /* ────────────────────────── 状态 ────────────────────────── */
 
@@ -339,6 +390,7 @@ const overRef = ref<HTMLCanvasElement>();
 const loading = ref(false);
 const loadError = ref('');
 const pageId = ref((route.params.id as string) || '');
+const localCenterId = ref('');
 const mode = ref<'business' | 'all' | 'local'>('business');
 /** 先呈现完整画布，设置和详情按需展开。 */
 const facetsOpen = ref(false);
@@ -357,8 +409,14 @@ const modes = computed(() => [
 const filters = reactive({
   q: '', types: [] as string[], tags: [] as string[],
   from: 0, to: 1, minWords: 0, minDeg: 0,
-  showRaw: false, showDead: false,
+  showRaw: false, showDead: false, showOrphans: true,
+  searchMode: 'highlight' as 'highlight' | 'filter',
+  localDir: 'all' as 'all' | 'out' | 'in',
 });
+const localDepth = ref<1 | 2 | 3>(2);
+const loadAll = ref(false);
+const graphMeta = reactive<ApiMeta>({ totalPages: 0, returnedPages: 0, truncated: false });
+const searchMatchCount = ref(0);
 const rangeFrom = ref(0);
 const rangeTo = ref(100);
 const wordSlider = ref(0);
@@ -377,8 +435,12 @@ function loadOptions() {
     const raw = JSON.parse(localStorage.getItem(OPT_KEY) || '{}') as Record<string, unknown>;
     colorGroups.value = raw.colorGroups === true;
     for (const key of Object.keys(OPT_DEFAULTS) as (keyof typeof OPT_DEFAULTS)[]) {
-      const v = Number(raw[key]);
-      if (Number.isFinite(v)) opt[key] = v;
+      if (typeof OPT_DEFAULTS[key] === 'boolean') {
+        if (typeof raw[key] === 'boolean') (opt as Record<string, unknown>)[key] = raw[key];
+      } else {
+        const v = Number(raw[key]);
+        if (Number.isFinite(v)) (opt as Record<string, unknown>)[key] = v;
+      }
     }
   } catch { /* 忽略坏数据 */ }
 }
@@ -413,7 +475,7 @@ const version = ref(0); // 数据版本，用于驱动 computed
 let rawNodes: GNode[] = [];
 let rawEdges: { a: number; b: number; rel: string }[] = [];
 const nodeIndex = new Map<string, number>();
-const adj: { i: number; rel: string }[][] = [];
+const adj: { i: number; rel: string; dir: 'out' | 'in' }[][] = [];
 let dateMinNum = 0;
 let dateMaxNum = 0;
 
@@ -421,8 +483,8 @@ function dateNum(d: string) { return d ? Number(d.replace(/-/g, '')) : 0; }
 const colorOf = (n: GNode) => (TYPE_COLOR[n.group] || TYPE_COLOR.other)[app.dark ? 1 : 0];
 const typeName = (g: string) => TYPE_NAME[g] || TYPE_NAME[g.replace(/^entity-/, '')] || '节点';
 
-/** 「本页关联」的中心：优先路由里的页面，其次当前选中的节点 */
-function localId() { return pageId.value || selected.value?.id || ''; }
+/** 「本页关联」的中心：优先路由里的页面，其次显式锁定的局部中心或当前选中节点 */
+function localId() { return pageId.value || localCenterId.value || selected.value?.id || ''; }
 
 /** 图谱加载序号：快速切换中心页时，先发的响应不能覆盖后发的结果 */
 const loadSeq = createRequestSeq();
@@ -433,8 +495,13 @@ async function load() {
   loadError.value = '';
   const center = mode.value === 'local' ? localId() : '';
   const params: Record<string, unknown> = { scope: center ? 'page' : 'global' };
-  if (center) { params.id = center; params.depth = 2; }
-  let data: { nodes: ApiNode[]; edges: ApiEdge[] };
+  if (center) {
+    params.id = center;
+    params.depth = localDepth.value;
+  } else if (loadAll.value) {
+    params.limit = 'all';
+  }
+  let data: { nodes: ApiNode[]; edges: ApiEdge[]; meta?: ApiMeta };
   try {
     ({ data } = await api.get('/api/graph', { params }));
   } catch (error: any) {
@@ -464,11 +531,17 @@ async function load() {
 
   rawNodes = nodes;
   rawEdges = edges;
+  graphMeta.totalPages = data.meta?.totalPages ?? nodes.length;
+  graphMeta.returnedPages = data.meta?.returnedPages ?? nodes.length;
+  graphMeta.truncated = !!data.meta?.truncated;
   nodeIndex.clear();
   index.forEach((v, k) => nodeIndex.set(k, v));
   adj.length = 0;
   for (let i = 0; i < nodes.length; i++) adj.push([]);
-  for (const e of edges) { adj[e.a].push({ i: e.b, rel: e.rel }); adj[e.b].push({ i: e.a, rel: e.rel }); }
+  for (const e of edges) {
+    adj[e.a].push({ i: e.b, rel: e.rel, dir: 'out' });
+    adj[e.b].push({ i: e.a, rel: e.rel, dir: 'in' });
+  }
 
   const dates = nodes.map((n) => n.updatedAt).filter(Boolean).sort();
   dateMinNum = dateNum(dates[0] || '');
@@ -485,11 +558,22 @@ async function load() {
   loading.value = false;
 }
 
+function loadAllNodes() {
+  if (loadAll.value) return;
+  loadAll.value = true;
+  load();
+}
+
 /* ────────────────────────── 筛选 ────────────────────────── */
+
+function matchesSearchQuery(n: GNode, q: string) {
+  return n.label.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q));
+}
 
 function passFilter(n: GNode) {
   if (!filters.showRaw && n.raw) return false;
   if (n.group === 'dead' && !filters.showDead) return false;
+  if (!filters.showOrphans && n.deg === 0) return false;
   if (mode.value === 'business' && !BUSINESS_TYPES.includes(n.group)) return false;
   if (filters.types.length && !filters.types.includes(n.group)) return false;
   if (filters.tags.length && !n.tags.some((t) => filters.tags.includes(t))) return false;
@@ -502,9 +586,9 @@ function passFilter(n: GNode) {
   }
   if (filters.minWords && n.words < filters.minWords) return false;
   if (filters.minDeg && n.deg < filters.minDeg) return false;
-  if (filters.q) {
+  if (filters.q && filters.searchMode === 'filter') {
     const q = filters.q.trim().toLowerCase();
-    if (q && !(n.label.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q)))) return false;
+    if (q && !matchesSearchQuery(n, q)) return false;
   }
   return true;
 }
@@ -512,6 +596,7 @@ function passFilter(n: GNode) {
 let visible: GNode[] = [];
 let visibleIds = new Set<string>();
 let visibleLinks: { a: number; b: number; rel: string }[] = [];
+let searchMatchIds = new Set<string>();
 const visibleNodes = computed(() => { void version.value; return visible; });
 const visibleEdges = computed(() => { void version.value; return visibleLinks; });
 
@@ -625,8 +710,45 @@ function clearFacet(kind: 'types' | 'tags' | 'time' | 'size') {
   applyFilter();
 }
 function resetFilters() {
-  Object.assign(filters, { q: '', types: [], tags: [], from: 0, to: 1, minWords: 0, minDeg: 0, showRaw: false, showDead: false });
+  Object.assign(filters, {
+    q: '', types: [], tags: [], from: 0, to: 1, minWords: 0, minDeg: 0,
+    showRaw: false, showDead: false, showOrphans: true, localDir: 'all',
+  });
   rangeFrom.value = 0; rangeTo.value = 100; wordSlider.value = 0; degSlider.value = 0;
+  applyFilter();
+}
+function setLocalDepth(d: 1 | 2 | 3) {
+  if (localDepth.value === d) return;
+  localDepth.value = d;
+  saveFilters();
+  if (mode.value === 'local') load();
+}
+function setLocalDir(dir: 'all' | 'out' | 'in') {
+  if (filters.localDir === dir) return;
+  filters.localDir = dir;
+  applyFilter();
+}
+function focusTopSearchMatch() {
+  if (filters.searchMode !== 'highlight' || !searchMatchIds.size || !W) return;
+  let best: GNode | null = null;
+  for (const n of visible) {
+    if (!searchMatchIds.has(n.id)) continue;
+    if (!best || n.deg > best.deg) best = n;
+  }
+  if (!best) return;
+  const sx = best.x * view.s + view.x;
+  const sy = best.y * view.s + view.y;
+  const outOfView = sx < W * 0.12 || sx > W * 0.88 || sy < H * 0.12 || sy > H * 0.88 || view.s < 0.7;
+  if (outOfView) centerOn(best);
+}
+function toggleSearchMode() {
+  filters.searchMode = filters.searchMode === 'highlight' ? 'filter' : 'highlight';
+  applyFilter();
+  if (filters.searchMode === 'highlight') focusTopSearchMatch();
+}
+function clearSearch() {
+  clearTimeout(searchTimer);
+  filters.q = '';
   applyFilter();
 }
 function onRange(which: 'from' | 'to') {
@@ -649,7 +771,10 @@ const maxDeg = () => rawNodes.reduce((m, n) => Math.max(m, n.deg), 1);
 let searchTimer = 0;
 function onSearchInput() {
   clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(() => applyFilter(), 180);
+  searchTimer = window.setTimeout(() => {
+    applyFilter();
+    focusTopSearchMatch();
+  }, 180);
 }
 let filterTimer = 0;
 function scheduleFilter() {
@@ -662,7 +787,8 @@ function saveFilters() {
     localStorage.setItem(FILTER_KEY, JSON.stringify({
       q: filters.q, types: filters.types, tags: filters.tags, from: filters.from, to: filters.to,
       minWords: filters.minWords, minDeg: filters.minDeg, showRaw: filters.showRaw, showDead: filters.showDead,
-      mode: mode.value,
+      showOrphans: filters.showOrphans, searchMode: filters.searchMode, localDir: filters.localDir,
+      localDepth: localDepth.value, mode: mode.value,
     }));
   } catch { /* 隐私模式忽略 */ }
 }
@@ -673,7 +799,11 @@ function restoreFilters() {
       q: raw.q || '', types: raw.types || [], tags: raw.tags || [],
       from: raw.from ?? 0, to: raw.to ?? 1, minWords: raw.minWords || 0, minDeg: raw.minDeg || 0,
       showRaw: !!raw.showRaw, showDead: !!raw.showDead,
+      showOrphans: raw.showOrphans !== false,
+      searchMode: raw.searchMode === 'filter' ? 'filter' : 'highlight',
+      localDir: raw.localDir === 'out' || raw.localDir === 'in' ? raw.localDir : 'all',
     });
+    if (raw.localDepth === 1 || raw.localDepth === 2 || raw.localDepth === 3) localDepth.value = raw.localDepth;
     if (raw.mode && !pageId.value) mode.value = raw.mode === 'all' ? 'all' : 'business';
     rangeFrom.value = Math.round(filters.from * 100);
     rangeTo.value = Math.round(filters.to * 100);
@@ -722,12 +852,45 @@ const tickBudget = () => (visible.length > 400 ? 360 : visible.length > 200 ? 60
 
 function applyFilter(warmupMs = 0) {
   saveFilters();
-  const keep = rawNodes.filter(passFilter);
+  let keep = rawNodes.filter(passFilter);
+  if (mode.value === 'local' && filters.localDir !== 'all') {
+    const center = localId();
+    const centerIdx = nodeIndex.get(center);
+    if (centerIdx != null) {
+      const reachable = new Set<string>([center]);
+      let frontier = [centerIdx];
+      for (let step = 0; step < localDepth.value; step++) {
+        const next: number[] = [];
+        for (const u of frontier) {
+          for (const a of adj[u] || []) {
+            if (a.dir !== filters.localDir) continue;
+            const target = rawNodes[a.i];
+            if (!reachable.has(target.id)) {
+              reachable.add(target.id);
+              next.push(a.i);
+            }
+          }
+        }
+        if (!next.length) break;
+        frontier = next;
+      }
+      keep = keep.filter((n) => reachable.has(n.id));
+    }
+  }
   visible = keep;
   const visSet = new Set(keep.map((n) => n.id));
   visibleIds = visSet;
   labelPlan = [];
   visibleLinks = rawEdges.filter((e) => visSet.has(rawNodes[e.a].id) && visSet.has(rawNodes[e.b].id));
+
+  searchMatchIds = new Set<string>();
+  const q = filters.q.trim().toLowerCase();
+  if (q && filters.searchMode === 'highlight') {
+    for (const n of keep) {
+      if (matchesSearchQuery(n, q)) searchMatchIds.add(n.id);
+    }
+  }
+  searchMatchCount.value = searchMatchIds.size;
 
   forceLinks = visibleLinks.map((l) => ({ a: rawNodes[l.a], b: rawNodes[l.b] }));
 
@@ -897,7 +1060,12 @@ function stepFocus() {
 
   const focus = focusedNode();
   const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
-  const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map((a) => rawNodes[a.i].id))]) : null;
+  const hasSearch = !focus && searchMatchIds.size > 0;
+  const relatedIds = focus
+    ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map((a) => rawNodes[a.i].id))])
+    : hasSearch
+      ? searchMatchIds
+      : null;
 
   focusAnimating = false;
   const ease = (current: number, target: number) => {
@@ -914,12 +1082,12 @@ function stepFocus() {
     overlayT = overlayPrev ? 0 : 1;
     focusAnimating = true;
   }
-  focusMix = ease(focusMix, focus ? 1 : 0);
+  focusMix = ease(focusMix, focus || hasSearch ? 1 : 0);
   if (overlayPrev) {
     overlayT = ease(overlayT, 1);
     if (overlayT === 1) overlayPrev = null;
   }
-  if (!focus && focusMix === 0) { overlayCur = null; overlayPrev = null; }
+  if (!focus && (!hasSearch || focusMix === 0)) { overlayCur = null; overlayPrev = null; }
 }
 
 /** 外部（交互/数据/主题/尺寸）触发的重绘；与物理推进区分开，后者只在真正走了一步时重绘。 */
@@ -965,7 +1133,7 @@ function scheduleFit() {
 }
 function scheduleLabels() {
   clearTimeout(labelTimer);
-  labelTimer = window.setTimeout(() => requestPaint(true), 100);
+  labelTimer = window.setTimeout(() => requestPaint(true), 48);
 }
 
 /** 画布需要具体颜色，不能直接用 CSS 变量；从根元素的令牌读，主题切换时刷新（画布底色与 App 背景保持一致） */
@@ -1016,7 +1184,7 @@ function resize() {
 }
 
 /** 标签布局：在屏幕空间规划一次，存成「相对节点的像素偏移」——平移缩放不需要重排文字 */
-let labelPlan: { n: GNode; text: string; fs: number; bold: boolean; dx: number; dy: number; w: number }[] = [];
+let labelPlan: { n: GNode; text: string; fs: number; bold: boolean; dx: number; dy: number; w: number; baseAlpha: number; priority: boolean }[] = [];
 /** measureText 结果按「字重+字号+文本」缓存：缩放时同一批标签会反复量宽度 */
 const labelWidthCache = new Map<string, number>();
 function measureLabel(ctx: CanvasRenderingContext2D, text: string, fs: number, bold: boolean) {
@@ -1035,52 +1203,86 @@ function planLabels() {
   const focus = focusedNode();
   const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
   const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map(a => rawNodes[a.i].id))]) : null;
-  // 标签规划保留全部可见节点：焦点出现时关联节点优先占位，其余标签随压暗一起淡出，
-  // 不再瞬间消失；焦点消失后它们又原地淡回。
-  const candidates = visible;
-  const placed: GraphLabelBox[] = focus ? [focusLabelBox(focus, bctx)] : [];
-  // 节点避让只收屏幕内节点并放进均匀网格：原来的 `.some()` 每个候选位置都扫全部节点，
-  // 复杂度 O(n²)，节点变多后一次标签排布就要几十毫秒。
+  // 仅规划当前视口内节点：取消 22/34/60 硬封顶，也不再因碰到节点圆点而隐藏标签。
+  // 标签避让只做轻量「标签间防重叠」，并按 Obsidian「文字淡出阈值」随缩放平滑渐显；
+  // 放大到 >= 1.8x 时完全放开碰撞限制，确保放大后所有可见节点名称必显。
   const grid = createLabelGrid(96);
-  for (const n of candidates) {
-    const r = nodeScreenR(n.r) + 2;
-    const x = n.x * view.s + view.x - r;
-    const y = n.y * view.s + view.y - r;
-    if (x + r * 2 < 0 || x > W || y + r * 2 < 0 || y > H) continue;
-    grid.add({ x, y, w: r * 2, h: r * 2 });
+  if (focus) grid.add(focusLabelBox(focus, bctx));
+
+  const inView: GNode[] = [];
+  let maxDegVis = 0;
+  for (const n of visible) {
+    if (n.deg > maxDegVis) maxDegVis = n.deg;
+    const sx = n.x * view.s + view.x;
+    const sy = n.y * view.s + view.y;
+    if (sx < -80 || sx > W + 80 || sy < -60 || sy > H + 60) continue;
+    inView.push(n);
   }
-  const intersect = (a: typeof placed[0], b: typeof placed[0]) =>
-    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  const relatedRank = (n: GNode) => (relatedIds?.has(n.id) ? 1 : 0);
-  const order = candidates.slice().sort((a, b) => relatedRank(b) - relatedRank(a) || b.deg - a.deg || b.words - a.words);
-  const budget = view.s > 1.6 ? 60 : view.s > 1.0 ? 34 : 22;
+  const priorityRank = (n: GNode) => (searchMatchIds.has(n.id) ? 2 : relatedIds?.has(n.id) ? 1 : 0);
+  const order = inView.sort((a, b) => priorityRank(b) - priorityRank(a) || b.deg - a.deg || b.words - a.words);
+  const denseRelax = view.s >= 1.2 ? Math.max(0, 1 - (view.s - 1.2) / 0.6) : 1;
+  const allowAllOverlap = view.s >= 1.8;
+
   for (const n of order) {
     if (n === focus) continue;
-    if (labelPlan.length >= budget) break;
-    const text = n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label;
-    const fs = window.innerWidth <= 768 ? (n.deg > 12 ? 15 : 14) : (n.deg > 12 ? 14 : 13);
-    const bold = n.deg > 12;
+    if (labelPlan.length >= 400) break;
+    const isPriority = priorityRank(n) > 0;
+    const degRatio = maxDegVis > 0 ? n.deg / maxDegVis : 0;
+    const baseAlpha = computeLabelOpacity(view.s, opt.textFade, degRatio, isPriority);
+    if (baseAlpha < 0.04) continue;
+
+    const maxLen = view.s >= 1.2 || isPriority ? 28 : 16;
+    const text = n.label.length > maxLen ? `${n.label.slice(0, maxLen - 1)}…` : n.label;
+    const baseFs = view.s < 0.7 ? 11 : view.s > 1.4 ? 13 : 12;
+    const fs = (window.innerWidth <= 768 ? baseFs + 1 : baseFs) + (n.deg > 12 ? 1 : 0);
+    const bold = n.deg > 12 || isPriority;
     const tw = measureLabel(bctx, text, fs, bold);
     const th = fs + 3;
     const sx = n.x * view.s + view.x;
     const sy = n.y * view.s + view.y;
     const rp = nodeScreenR(n.r);
-    const cands = [
-      { x: sx - tw / 2, y: sy + rp + 4 },
-      { x: sx - tw / 2, y: sy - rp - th - 4 },
-      { x: sx + rp + 5, y: sy - th / 2 },
-      { x: sx - tw - rp - 5, y: sy - th / 2 },
-    ];
-    let box: typeof placed[0] | null = null;
-    for (const c of cands) {
-      const b = { x: Math.round(c.x), y: Math.round(c.y), w: tw + 4, h: th + 2 };
-      if (b.x < 6 || b.x + b.w > W - 6 || b.y < 4 || b.y + b.h > H - 4) continue;
-      if (!placed.some((p) => intersect(b, p)) && !grid.intersects(b)) { box = b; break; }
+    // 固定放在圆点正下方（Obsidian 习惯，位置稳定不跳边）
+    const bx = Math.round(Math.max(4, Math.min(W - tw - 4, sx - tw / 2)));
+    const by = Math.round(sy + rp + 4);
+    if (by < 4 || by + th > H - 4) continue;
+
+    if (!allowAllOverlap && !isPriority) {
+      const padW = tw * (0.65 + 0.35 * denseRelax);
+      const padH = th * (0.65 + 0.35 * denseRelax);
+      const colBox: GraphLabelBox = {
+        x: bx + (tw - padW) / 2,
+        y: by + (th - padH) / 2,
+        w: Math.max(4, padW),
+        h: Math.max(4, padH),
+      };
+      if (grid.intersects(colBox)) continue;
+      grid.add(colBox);
     }
-    if (!box) continue; // 放不下就不放，宁缺毋滥
-    placed.push(box);
-    labelPlan.push({ n, text, fs, bold, dx: box.x - sx + 2, dy: box.y - sy + th / 2, w: tw });
+    labelPlan.push({
+      n, text, fs, bold,
+      dx: bx - sx, dy: by - sy + th / 2, w: tw,
+      baseAlpha, priority: isPriority,
+    });
   }
+}
+
+function appendArrowHead(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, targetWorldR: number) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.hypot(dx, dy);
+  const tipOffset = targetWorldR + 1.5 / view.s;
+  if (dist <= tipOffset + 4 / view.s) return;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const tx = x2 - ux * tipOffset;
+  const ty = y2 - uy * tipOffset;
+  const len = Math.min(8 / view.s, (dist - tipOffset) * 0.45);
+  const wing = len * 0.48;
+  const bx = tx - ux * len;
+  const by = ty - uy * len;
+  ctx.moveTo(bx - uy * wing, by + ux * wing);
+  ctx.lineTo(tx, ty);
+  ctx.lineTo(bx + uy * wing, by - ux * wing);
 }
 
 /** 连边整体随焦点出现压暗、随焦点消失回亮；一次批量描边，只调整体 alpha。 */
@@ -1090,6 +1292,7 @@ function strokeEdges() {
   bctx.lineWidth = 0.7 * linkScale() / view.s;
   bctx.strokeStyle = T.edge;
   bctx.beginPath();
+  const drawArrows = opt.showArrows && view.s >= 0.35;
   for (const l of visibleLinks) {
     const a = rawNodes[l.a];
     const b = rawNodes[l.b];
@@ -1098,6 +1301,7 @@ function strokeEdges() {
       || (a.sy < -40 && b.sy < -40) || (a.sy > H + 40 && b.sy > H + 40)) continue;
     bctx.moveTo(a.x, a.y);
     bctx.lineTo(b.x, b.y);
+    if (drawArrows) appendArrowHead(bctx, a.x, a.y, b.x, b.y, nodeRadius(b.r));
   }
   bctx.globalAlpha = 1 - DIM_EDGE * focusMix;
   bctx.stroke();
@@ -1155,30 +1359,52 @@ function drawBase() {
       bctx.fill();
     }
   }
+  if (searchMatchIds.size > 0) {
+    bctx.lineWidth = 1.6 / view.s;
+    bctx.strokeStyle = T.focus;
+    bctx.globalAlpha = 0.92;
+    bctx.beginPath();
+    for (const n of visible) {
+      if (!searchMatchIds.has(n.id)) continue;
+      if (n.sx < -24 || n.sx > W + 24 || n.sy < -24 || n.sy > H + 24) continue;
+      const rr = nodeScreenR(n.r) / view.s + 2.5 / view.s;
+      bctx.moveTo(n.x + rr, n.y);
+      bctx.arc(n.x, n.y, rr, 0, Math.PI * 2);
+    }
+    bctx.stroke();
+    bctx.globalAlpha = 1;
+  }
   bctx.restore();
 
-  // 标签：和节点共用压暗程度，焦点之外的标签逐渐淡出而不是瞬间消失
+  // 标签：和节点共用压暗程度，同时按 Obsidian 文字淡出阈值平滑渐显
   bctx.textBaseline = 'middle';
   bctx.textAlign = 'left';
+  bctx.lineJoin = 'round';
+  bctx.miterLimit = 2;
+  const focusIdx = focus ? nodeIndex.get(focus.id) : undefined;
+  const focusNeighborIds = focus && focusIdx != null
+    ? new Set(adj[focusIdx].map((a) => rawNodes[a.i].id))
+    : null;
   const occupied: GraphLabelBox[] = [];
   if (focus) {
     occupied.push(focusLabelBox(focus, bctx));
   }
   for (const L of labelPlan) {
-    if (L.n.id === focus?.id) continue; // The overlay draws the focused title once.
-    const alpha = 1 - L.n.dim;
-    if (alpha < 0.02) continue;
+    // 焦点与直接邻居的标签统一由上层高亮层在热边之上清晰绘制，避免双层重影
+    if (L.n.id === focus?.id || (focusNeighborIds?.has(L.n.id) && focusMix > 0.2)) continue;
+    const alpha = (1 - L.n.dim) * L.baseAlpha;
+    if (alpha < 0.03) continue;
     const x = Math.round(L.n.sx + L.dx);
     const y = Math.round(L.n.sy + L.dy);
-    // Nodes move while dragging. Recheck collisions without rebuilding or swapping label anchors.
-    // 宽度用规划时缓存的测量值，不再每帧为每个标签 measureText。
-    if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: L.w, h: L.fs + 4 }, occupied)) continue;
+    if (x + L.w < -12 || x > W + 12 || y < -20 || y > H + 20) continue;
+    // 放大到 >=1.8x 或高优标签时放宽避让，保证放大一定看得全名字
+    if (view.s < 1.8 && !L.priority && !acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: L.w, h: L.fs + 4 }, occupied)) continue;
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     bctx.globalAlpha = alpha;
     bctx.lineWidth = 4;
     bctx.strokeStyle = T.bg;
     bctx.strokeText(L.text, x, y);
-    bctx.fillStyle = L.bold ? T.labelHot : T.label;
+    bctx.fillStyle = L.priority ? T.labelHot : (L.bold ? T.labelHot : T.label);
     bctx.fillText(L.text, x, y);
   }
   bctx.globalAlpha = 1;
@@ -1205,7 +1431,7 @@ function focusLabelBox(node: GNode, ctx: CanvasRenderingContext2D): GraphLabelBo
   };
 }
 
-/** 单个焦点的高亮层：紫色关联边 + 提亮邻居 + 焦点圆环 + 强制标签，整体按 alpha 淡入淡出。 */
+/** 单个焦点的高亮层：高亮关联边 + 提亮邻居 + 焦点圆环 + 强制显示焦点及直接邻居名字。 */
 function paintOverlayNode(node: GNode, alpha: number) {
   if (!octx || alpha <= 0.004 || !visibleIds.has(node.id)) return;
   const T = theme();
@@ -1216,19 +1442,24 @@ function paintOverlayNode(node: GNode, alpha: number) {
   octx.translate(view.x, view.y);
   octx.scale(view.s, view.s);
   octx.beginPath();
+  const drawArrows = opt.showArrows && view.s >= 0.35;
+  const neighborMap = new Map<string, GNode>();
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
     if (!visibleIds.has(m.id)) continue;
+    neighborMap.set(m.id, m);
     octx.moveTo(node.x, node.y);
     octx.lineTo(m.x, m.y);
+    if (drawArrows) {
+      if (a.dir === 'out') appendArrowHead(octx, node.x, node.y, m.x, m.y, nodeRadius(m.r));
+      else appendArrowHead(octx, m.x, m.y, node.x, node.y, nodeRadius(node.r));
+    }
   }
   octx.lineWidth = (1.3 * linkScale()) / view.s;
   octx.strokeStyle = T.edgeHot;
   octx.stroke();
-  // 关联节点提亮；紫色只用于焦点与直接相连的边。
-  for (const a of adj[idx]) {
-    const m = rawNodes[a.i];
-    if (!visibleIds.has(m.id)) continue;
+  // 关联节点提亮
+  for (const m of neighborMap.values()) {
     octx.beginPath();
     octx.arc(m.x, m.y, nodeRadius(m.r), 0, Math.PI * 2);
     octx.fillStyle = colorGroups.value ? colorOf(m) : T.nodeHot;
@@ -1247,11 +1478,41 @@ function paintOverlayNode(node: GNode, alpha: number) {
   octx.globalAlpha = alpha;
   octx.textAlign = 'center';
   octx.textBaseline = 'middle';
+  octx.lineJoin = 'round';
+  octx.miterLimit = 2;
   octx.lineWidth = 4;
   octx.strokeStyle = T.bg;
   octx.strokeText(node.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
   octx.fillStyle = T.focus;
   octx.fillText(node.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
+
+  // 悬停/选中时同步强显所有可见直接邻居的名字，一眼看清关系链
+  const occupied: GraphLabelBox[] = [box];
+  const nFs = window.innerWidth <= 768 ? 13 : 12;
+  const neighbors = [...neighborMap.values()]
+    .filter((m) => {
+      const sx = m.x * view.s + view.x;
+      const sy = m.y * view.s + view.y;
+      return sx >= -40 && sx <= W + 40 && sy >= -40 && sy <= H + 40;
+    })
+    .sort((a, b) => b.deg - a.deg)
+    .slice(0, 45);
+  octx.textAlign = 'left';
+  octx.font = `500 ${nFs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
+  for (const m of neighbors) {
+    const text = m.label.length > 26 ? `${m.label.slice(0, 25)}…` : m.label;
+    const tw = measureLabel(octx, text, nFs, false);
+    const sx = m.x * view.s + view.x;
+    const sy = m.y * view.s + view.y;
+    const rp = nodeScreenR(m.r);
+    const lx = Math.round(Math.max(4, Math.min(W - tw - 4, sx - tw / 2)));
+    const ly = Math.round(sy + rp + nFs / 2 + 4);
+    if (ly < 6 || ly > H - 6) continue;
+    if (!acceptGraphLabel({ x: lx, y: ly - nFs / 2 - 2, w: tw, h: nFs + 4 }, occupied)) continue;
+    octx.strokeText(text, lx, ly);
+    octx.fillStyle = T.labelHot;
+    octx.fillText(text, lx, ly);
+  }
   octx.restore();
 }
 
@@ -1277,22 +1538,31 @@ function drawOver() {
 
 /* ────────────────────────── 视图操作 ────────────────────────── */
 
+let fitShowAll = false;
+let lastFitTrimmed = false;
 function usableWidth() { return W > 768 && (facetsOpen.value || detailOpen.value) ? Math.max(320, W - 320) : W; }
-function fit(schedule = true) {
+function fit(schedule = true, showAllOutliers = false) {
   if (!visible.length) return;
   cancelAnimationFrame(camRaf);
-  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
-  for (const n of visible) {
-    x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r);
-    x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r);
-  }
+  const { x0, y0, x1, y1, trimmed } = computeFitBounds(visible, !showAllOutliers);
+  lastFitTrimmed = trimmed;
   const width = usableWidth();
   const pad = Math.min(90, width * 0.16, H * 0.16);
-  const s = Math.min(1.5, Math.max(0.06, Math.min((width - pad * 2) / Math.max(1, x1 - x0), (H - pad * 2) / Math.max(1, y1 - y0))));
+  const s = Math.min(1.5, Math.max(0.05, Math.min((width - pad * 2) / Math.max(1, x1 - x0), (H - pad * 2) / Math.max(1, y1 - y0))));
   view.s = s;
   view.x = width / 2 - ((x0 + x1) / 2) * s;
   view.y = H / 2 - ((y0 + y1) / 2) * s;
   if (schedule) requestPaint(true);
+}
+function onFitClick() {
+  if (lastFitTrimmed) {
+    fitShowAll = !fitShowAll;
+    fit(true, fitShowAll);
+    if (fitShowAll) notify.info('已铺满全部节点（含外围孤立点）');
+  } else {
+    fitShowAll = false;
+    fit(true, false);
+  }
 }
 
 function screenToWorld(mx: number, my: number) {
@@ -1336,6 +1606,8 @@ function centerOn(node: GNode) {
 /* ────────────────────────── 交互 ────────────────────────── */
 
 let drag: { node: GNode | null; pointerId: number; x: number; y: number; vx: number; vy: number; offsetX: number; offsetY: number; moved: boolean } | null = null;
+const activePointers = new Map<number, { x: number; y: number }>();
+let pinchPrevDist = 0;
 let clickTimer = 0;
 let lastClickAt = 0;
 let lastClickId = '';
@@ -1345,13 +1617,35 @@ function pointerPos(ev: PointerEvent | WheelEvent) {
   return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
 }
 
+function twoPointerMetrics() {
+  const pts = [...activePointers.values()];
+  if (pts.length < 2) return null;
+  const dx = pts[1].x - pts[0].x;
+  const dy = pts[1].y - pts[0].y;
+  return {
+    dist: Math.hypot(dx, dy),
+    midX: (pts[0].x + pts[1].x) * 0.5,
+    midY: (pts[0].y + pts[1].y) * 0.5,
+  };
+}
+
 function onPointerDown(ev: PointerEvent) {
   const cv = baseRef.value;
-  if (!cv || drag || ev.button !== 0) return;
+  if (!cv || ev.button !== 0) return;
   cancelAnimationFrame(camRaf);
   clearTimeout(clickTimer);
   cv.setPointerCapture(ev.pointerId);
   const { x, y } = pointerPos(ev);
+  activePointers.set(ev.pointerId, { x, y });
+  if (activePointers.size >= 2) {
+    if (drag?.node) { drag.node.fixed = false; }
+    drag = null;
+    hover = null;
+    tip.value = null;
+    pinchPrevDist = twoPointerMetrics()?.dist || 0;
+    return;
+  }
+  if (drag) return;
   const node = hitTest(x, y);
   pendingClick = null; // 新的一次按下接管焦点
   const w = screenToWorld(x, y);
@@ -1366,6 +1660,15 @@ function onPointerDown(ev: PointerEvent) {
 function onPointerMove(ev: PointerEvent) {
   if (!baseRef.value) return;
   const { x, y } = pointerPos(ev);
+  if (activePointers.has(ev.pointerId)) activePointers.set(ev.pointerId, { x, y });
+  if (activePointers.size >= 2) {
+    const m = twoPointerMetrics();
+    if (m && pinchPrevDist > 4 && m.dist > 4) {
+      zoomAt(m.dist / pinchPrevDist, m.midX, m.midY);
+    }
+    if (m) pinchPrevDist = m.dist;
+    return;
+  }
   if (drag) {
     if (ev.pointerId !== drag.pointerId) return;
     const dx = ev.clientX - drag.x;
@@ -1383,12 +1686,14 @@ function onPointerMove(ev: PointerEvent) {
         settled = false;
         if (!simActive) run();
       }
+      requestPaint();
     } else {
       view.x = drag.vx + dx;
       view.y = drag.vy + dy;
       userAdjusted = true;
+      requestPaint();
+      scheduleLabels();
     }
-    requestPaint();
     return;
   }
   const node = hitTest(x, y);
@@ -1410,12 +1715,14 @@ function onPointerMove(ev: PointerEvent) {
 }
 
 function onPointerUp(ev: PointerEvent) {
+  activePointers.delete(ev.pointerId);
+  if (activePointers.size < 2) pinchPrevDist = 0;
+  if (baseRef.value?.hasPointerCapture(ev.pointerId)) baseRef.value.releasePointerCapture(ev.pointerId);
   if (!drag || ev.pointerId !== drag.pointerId) return;
   cursor.value = 'grab';
   const wasDrag = drag.moved;
   const node = drag.node;
   drag = null;
-  if (baseRef.value?.hasPointerCapture(ev.pointerId)) baseRef.value.releasePointerCapture(ev.pointerId);
   if (node) { node.fixed = false; rememberGraphPosition(node.id, node.x, node.y); }
   // Keep neighbor momentum on release; cool the forces instead of freezing or restarting the layout.
   if (node && wasDrag && !pinned.value) {
@@ -1471,7 +1778,7 @@ function selectNode(node: GNode) {
 
 function zoomAt(k: number, x: number, y: number) {
   cancelAnimationFrame(camRaf);
-  const ns = Math.min(4, Math.max(0.06, view.s * k));
+  const ns = Math.min(8, Math.max(0.05, view.s * k));
   view.x = x - (x - view.x) * (ns / view.s);
   view.y = y - (y - view.y) * (ns / view.s);
   view.s = ns;
@@ -1493,9 +1800,13 @@ function onWheel(ev: WheelEvent) {
 
 function switchMode(next: 'business' | 'all' | 'local') {
   if (mode.value === next) return;
-  if (next === 'local' && !localId()) {
-    notify.info('先选中一个节点，或从某个页面点「本页关联」进来');
-    return;
+  if (next === 'local') {
+    const cid = pageId.value || selected.value?.id || localCenterId.value;
+    if (!cid) {
+      notify.info('先选中一个节点，或从某个页面点「本页关联」进来');
+      return;
+    }
+    localCenterId.value = cid;
   }
   const wasLocal = mode.value === 'local';
   mode.value = next;
@@ -1503,6 +1814,7 @@ function switchMode(next: 'business' | 'all' | 'local') {
     load();
     return;
   }
+  localCenterId.value = '';
   if (wasLocal) { load(); return; }
   // 业务/全库共用同一套坐标：切换时保留位置（新出现的节点再局部收敛），不整图重摆。
   applyFilter();
@@ -1521,11 +1833,15 @@ function openSelected() {
 }
 
 /**
- * 面板档位变化：外观（节点大小 / 连线粗细）立即重绘；力学参数防抖后再重新收敛，
+ * 面板档位变化：外观（节点大小 / 连线粗细 / 文字淡出 / 箭头）立即重绘；力学参数防抖后再重新收敛，
  * 拖滑块时不会每帧重启布局；固定布局状态下不打扰用户已经摆好的位置。
  */
 let optTimer = 0;
-watch(opt, () => {
+watch(() => [opt.nodeScale, opt.linkScale, opt.textFade, opt.showArrows], () => {
+  saveOptions();
+  requestPaint(true);
+});
+watch(() => [opt.cF, opt.rF, opt.lF, opt.lD], () => {
   syncPhysics();
   saveOptions();
   requestPaint(true);
@@ -1618,13 +1934,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 }
 .gv-seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .gv-seg button:hover { background: var(--bg-hover); }
+.gv-depth { display: flex; gap: 2px; padding-left: 6px; border-left: 1px solid var(--border); }
+.gv-depth button {
+  appearance: none; border: 0; background: transparent; font-size: var(--fs-small);
+  color: var(--text-secondary); padding: 5px 8px; border-radius: 4px; white-space: nowrap;
+}
+.gv-depth button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.gv-depth button:hover { background: var(--bg-hover); }
 .gv-search {
-  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 9px;
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 7px 0 9px;
   border: 1px solid var(--border); border-radius: 5px; background: var(--bg-secondary);
-  flex: 1; min-width: 150px; max-width: 260px; color: var(--text-faint); transition: border-color .16s;
+  flex: 1; min-width: 150px; max-width: 280px; color: var(--text-faint); transition: border-color .16s;
 }
 .gv-search:focus-within { border-color: var(--accent); }
 .gv-search input { border: 0; background: transparent; outline: none; font: inherit; font-size: var(--font-md); color: var(--text); width: 100%; min-width: 0; }
+.gv-search-mode, .gv-search-clear {
+  flex: none; border: 0; background: transparent; color: var(--text-secondary);
+  border-radius: 4px; font-size: var(--fs-caption); padding: 2px 6px; line-height: 1.4;
+}
+.gv-search-mode.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.gv-search-mode:hover, .gv-search-clear:hover { background: var(--bg-hover); color: var(--text); }
+.gv-search-clear { font-size: var(--font-md); padding: 0 5px; }
 .gv-chips { display: flex; gap: 6px; align-items: center; overflow-x: auto; order: 5; width: 100%; }
 .gv-chips:empty { display: none; }
 .gv-chip {
@@ -1700,10 +2030,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-canvas { position: absolute; inset: 0; display: block; touch-action: none; }
 .gv-canvas.over { pointer-events: none; }
 .gv-stats {
-  position: absolute; left: 20px; top: 18px; z-index: 5; display: flex; align-items: center; gap: 10px;
+  position: absolute; left: 20px; top: 18px; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-size: var(--fs-small); color: var(--text-secondary); pointer-events: none;
 }
 .gv-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.gv-stats-more {
+  pointer-events: auto; border: 1px solid var(--border); background: var(--card-bg); color: var(--accent);
+  border-radius: 99px; padding: 2px 9px; font-size: var(--fs-caption); font-weight: 600;
+}
+.gv-stats-more:hover { background: var(--accent-soft); border-color: var(--accent); }
+.gv-dir { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 2px; font-size: var(--font-md); color: var(--text-secondary); }
+.gv-dir-seg { display: flex; gap: 2px; background: var(--bg-secondary); padding: 2px; border-radius: 5px; border: 1px solid var(--border); }
+.gv-dir-seg button { border: 0; background: transparent; color: var(--text-secondary); font-size: var(--fs-caption); padding: 3px 8px; border-radius: 4px; }
+.gv-dir-seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .gv-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
 .gv-status-dot.busy { background: var(--accent); }
 .gv-layout-state { border-left: 1px solid var(--border-strong); padding-left: 10px; font-size: var(--fs-small); }

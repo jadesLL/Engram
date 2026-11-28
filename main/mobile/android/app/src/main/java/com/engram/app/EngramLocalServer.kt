@@ -549,7 +549,14 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
         get("/api/graph") {
             if (!call.authorize()) return@get
-            call.json(db.graph(call.request.queryParameters["scope"], call.request.queryParameters["id"]))
+            call.json(
+                db.graph(
+                    call.request.queryParameters["scope"],
+                    call.request.queryParameters["id"],
+                    call.request.queryParameters["depth"]?.toIntOrNull(),
+                    call.request.queryParameters["limit"],
+                ),
+            )
         }
         get("/api/jobs") {
             if (!call.authorize()) return@get
