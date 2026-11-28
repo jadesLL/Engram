@@ -18,6 +18,8 @@ import { capabilityHint, convertCapability, type ConvertCapability } from '../pi
  *
  * 三个用户可见状态：待整理（pending）/ 已转换（converted）/ 已入库（adopted）。
  * 已入库 = 产物已经复制进 原始资料/文档/（判定见 lib/inboxDerived），界面默认不展示。
+ * 已转换 / 已入库条目重新转换失败时状态不变（旧产物仍可用），只有失败晚于当前产物时
+ * 才通过 `error` 带出原因，界面据此显示「上次重新转换失败」。
  */
 
 /** 类型分组：只用于图标与筛选，不影响接受哪些格式（任意格式都收） */
@@ -54,7 +56,10 @@ export interface InboxItem {
   capability: ConvertCapability;
   /** 不可转时给用户看的原因（可直接显示） */
   hint: string;
-  /** 最近一次转换失败的原因 */
+  /**
+   * 最近一次失败原因：没有产物时就是「转换失败」；已有产物时表示「上次重新转换失败」
+   * （旧产物仍在，状态仍显示已转换 / 已入库）。
+   */
   error: string;
   /** 正在跑（或刚失败）的转换任务 id */
   jobId: number | null;
@@ -75,11 +80,20 @@ export function inboxCategoryOf(name: string): string {
 }
 
 /** 转换任务的本机状态：converting / failed 都来自 jobs 表（产物是否存在由磁盘决定） */
-export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed' | 'done' | 'cancelled'; error: string; jobId: number; assistantSessionId: string | null }> {
+type InboxJobState = {
+  status: 'converting' | 'failed' | 'done' | 'cancelled';
+  error: string;
+  jobId: number;
+  assistantSessionId: string | null;
+  /** 任务最后更新时间（ms）：已转换条目再转失败时，用来判断失败是否发生在当前产物之后 */
+  updatedAt: number;
+};
+
+export function jobStatesByPath(): Map<string, InboxJobState> {
   const rows = db
-    .prepare(`SELECT id, payload, status, error, assistant_session_id FROM jobs WHERE kind = 'inbox_convert' ORDER BY id DESC LIMIT 500`)
-    .all() as { id: number; payload: string; status: string; error: string | null; assistant_session_id: string | null }[];
-  const map = new Map<string, { status: 'converting' | 'failed' | 'done' | 'cancelled'; error: string; jobId: number; assistantSessionId: string | null }>();
+    .prepare(`SELECT id, payload, status, error, assistant_session_id, updated_at FROM jobs WHERE kind = 'inbox_convert' ORDER BY id DESC LIMIT 500`)
+    .all() as { id: number; payload: string; status: string; error: string | null; assistant_session_id: string | null; updated_at: string | null }[];
+  const map = new Map<string, InboxJobState>();
   for (const row of rows) {
     let payload: any;
     try {
@@ -89,14 +103,16 @@ export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed'
     }
     const target = payload?.path;
     if (typeof target !== 'string' || !target || map.has(target)) continue;
+    const updatedAt = Date.parse(String(row.updated_at || '')) || 0;
+    const base = { jobId: row.id, assistantSessionId: row.assistant_session_id, updatedAt };
     if (['pending', 'running', 'paused'].includes(row.status)) {
-      map.set(target, { status: 'converting', error: '', jobId: row.id, assistantSessionId: row.assistant_session_id });
+      map.set(target, { ...base, status: 'converting', error: '' });
     } else if (row.status === 'failed') {
-      map.set(target, { status: 'failed', error: row.error || '转换失败', jobId: row.id, assistantSessionId: row.assistant_session_id });
+      map.set(target, { ...base, status: 'failed', error: row.error || '转换失败' });
     } else if (row.status === 'done') {
-      map.set(target, { status: 'done', error: '', jobId: row.id, assistantSessionId: row.assistant_session_id });
+      map.set(target, { ...base, status: 'done', error: '' });
     } else if (row.status === 'cancelled') {
-      map.set(target, { status: 'cancelled', error: '', jobId: row.id, assistantSessionId: row.assistant_session_id });
+      map.set(target, { ...base, status: 'cancelled', error: '' });
     }
   }
   return map;
@@ -162,6 +178,19 @@ export function listInboxItems(): InboxListing {
         }
         if (!video) video = { platform: 'upload', title: name, link: '' };
       }
+      // 已转换 / 已入库条目再转一版失败时，旧产物仍然可用：状态不变，只把失败原因带出去，
+      // 让界面显示「上次重新转换失败」。只有失败确实发生在当前产物之后才算数——
+      // Agent 在上次失败之后补写了产物时，产物比失败新，就不能再拿旧错误吓人。
+      let productMtime = 0;
+      if (derivedPath) {
+        try {
+          productMtime = fs.statSync(safeJoin(derivedPath)).mtimeMs;
+        } catch { /* 同步中的产物暂时读不到：按没有时间戳处理 */ }
+      }
+      const failedAfterProduct = status !== 'failed'
+        && job?.status === 'failed'
+        && job.updatedAt > 0
+        && job.updatedAt > productMtime;
       return {
         path: rel,
         name,
@@ -175,8 +204,10 @@ export function listInboxItems(): InboxListing {
         adoptedPath,
         capability,
         hint: capabilityHint(rel, capability),
-        // 产物已补上时不再把旧任务的失败原因当现状展示（查看过程仍可按 jobId 打开那次会话）
-        error: status === 'failed' ? job?.error || '' : '',
+        // 失败且没有产物：状态就是失败；有产物：只带出「上次重新转换失败」的原因（见 failedAfterProduct）
+        error: status === 'failed'
+          ? job?.error || ''
+          : failedAfterProduct ? job?.error || '转换失败' : '',
         jobId: job?.jobId ?? null,
         assistantSessionId: job?.assistantSessionId ?? null,
         ...(video ? { video } : {}),

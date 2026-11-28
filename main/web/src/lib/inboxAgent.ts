@@ -65,6 +65,19 @@ export function canConvertItem(item: InboxPrimarySubject): boolean {
   return isServerConvertible(item.capability) && item.status !== 'converting';
 }
 
+/** 重新转换还需要知道「有没有旧产物」：已转换 / 已入库的条目靠这个入口再跑一版 */
+export type InboxReconvertSubject = InboxPrimarySubject & Pick<InboxItem, 'derivedPath'>;
+
+/**
+ * 已转换 / 已入库条目能不能再跑一版：有产物、服务端能转、且当前不在转换中。
+ *
+ * 重新转换成功后只替换收集箱里的旧产物；已入库的副本不会跟着改，
+ * 需要用户看过新产物再决定是否入库（界面文案每次都把这点说明白）。
+ */
+export function canReconvertItem(item: InboxReconvertSubject): boolean {
+  return Boolean(item.derivedPath) && canConvertItem(item);
+}
+
 /**
  * 行内主操作文案：视频条目说「提炼视频」（走的是视频理解模型，不是格式转换），
  * 其他服务端可转格式保持原来的「转为 Markdown」。

@@ -32,7 +32,10 @@ export interface InboxItem {
   capability: 'office' | 'pdf' | 'text' | 'video' | 'agent-only' | 'unsupported';
   /** 不能转换时的原因（可直接显示给用户）；能转时是空串 */
   hint: string;
-  /** 最近一次转换失败的原因 */
+  /**
+   * 最近一次失败的原因：没有产物时表示转换失败；已有产物时表示「上次重新转换失败」
+   * （旧产物仍在，status 仍是 converted / adopted）。
+   */
   error: string;
   /** 转换任务 id；null 表示这份文件还没有转换任务 */
   jobId: number | null;

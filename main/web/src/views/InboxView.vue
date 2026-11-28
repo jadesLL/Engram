@@ -154,8 +154,8 @@
               <Icon name="check" :size="11" />已入库
             </span>
           </div>
-          <div v-if="item.status === 'failed' && item.error" class="fnote error">
-            <Icon name="report" :size="12" /><span class="truncate">{{ item.error }}</span>
+          <div v-if="item.error" class="fnote error">
+            <Icon name="report" :size="12" /><span class="truncate" v-tooltip="rowError(item)">{{ rowError(item) }}</span>
           </div>
           <div v-else-if="rowNote(item)" class="fnote">
             <Icon name="file" :size="12" /><span class="truncate">{{ rowNote(item) }}</span>
@@ -239,7 +239,7 @@
                 @click="runMenu(item, 'review')"
               ><Icon name="eye" :size="13" />查看产物</button>
               <button
-                v-if="item.derivedPath && item.status !== 'converting' && primaryKind(item) === 'review' && canConvert(item)"
+                v-if="item.derivedPath && item.status !== 'converting' && canConvert(item)"
                 type="button"
                 role="menuitem"
                 @click="runMenu(item, 'convert')"
@@ -292,6 +292,11 @@
       </div>
       <div v-else ref="reviewBody" class="review-md" />
       <template #footer>
+        <span v-if="reviewItem && canReconvert(reviewItem)" class="tip-wrap" v-tooltip="convertTip(reviewItem)">
+          <button class="btn" type="button" @click="convertFromReview">
+            <Icon name="refresh" :size="14" />{{ inboxRetryLabel(reviewItem.capability) }}
+          </button>
+        </span>
         <button class="btn" type="button" @click="closeReview">关闭</button>
         <button class="btn primary" type="button" :disabled="adoptDisabled" @click="adoptFromReview">
           <Icon name="check" :size="14" />{{ adoptLabel }}
@@ -323,6 +328,7 @@ import {
   AGENT_MENU_LABEL,
   AGENT_PRIMARY_LABEL,
   canConvertItem as canConvert,
+  canReconvertItem as canReconvert,
   inboxPrimaryKind,
   inboxPrimaryLabel,
   inboxRetryLabel,
@@ -553,6 +559,16 @@ function rowNote(item: InboxItem): string {
   return '';
 }
 
+/**
+ * 行内失败说明：没有产物时就是这次转换失败；已转换 / 已入库条目再转一版失败时
+ * 旧产物仍保留，文案要说清「当前看到的还是上一版」，别让人以为丢了内容。
+ * 服务端只在「失败发生在当前产物之后」时才回传 error（见 lib/inboxItems.ts）。
+ */
+function rowError(item: InboxItem): string {
+  if (item.status === 'failed') return item.error;
+  return `上次${inboxRetryLabel(item.capability)}失败：${item.error}（当前仍是上一版产物）`;
+}
+
 const convertibleItems = computed(() => inbox.items.filter((item) => isServerConvertible(item.capability)));
 /** 批量转换在途门闩：一次只放一批进去（双击/回车连发不再提交两遍），busy 绑按钮 disabled。
  *  与「列表里有没有转换中的项」无关：那件事不参与禁用，避免 2 秒轮询让按钮一闪一闪（见下条注释）。 */
@@ -570,7 +586,9 @@ async function convertItem(item: InboxItem) {
   try {
     const result = await inbox.convert([item.path]);
     if (result.queued.length) {
-      notify.success(item.capability === 'video' ? '已开始提炼视频' : '已开始转换');
+      notify.success(item.derivedPath
+        ? `已开始${inboxRetryLabel(item.capability)}`
+        : item.capability === 'video' ? '已开始提炼视频' : '已开始转换');
       expectConversion();
       await openConversionChat(result.queued[0].sessionId);
     } else if (result.skipped.length) {
@@ -816,6 +834,17 @@ async function adoptFromReview() {
     return;
   }
   await runAdopt(item);
+}
+
+/**
+ * 从产物弹窗重新转换：先关弹窗再入队，避免确认框 / 转换对话被弹窗压住。
+ * 旧产物在新产物写成功后才替换；失败时列表会带出「上次重新转换失败」。
+ */
+async function convertFromReview() {
+  const item = reviewItem.value;
+  if (!item || !canReconvert(item)) return;
+  closeReview();
+  await convertItem(item);
 }
 
 const TYPE_LABELS: Record<string, string> = {
