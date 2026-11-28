@@ -271,11 +271,14 @@ test('buildArticleMessages：system 是文章规范，user 带来源信息、证
   assert.equal(messages.length, 2);
   const system = String(messages[0].content);
   assert.match(system, /中文内容编辑/);
-  assert.match(system, /不是会议纪要/);
+  assert.match(system, /独立解读文章/);
+  assert.match(system, /主题先行/);
   assert.match(system, /导语/);
   assert.match(system, /## 关键数据/);
   assert.match(system, /## 边界与存疑/);
-  assert.match(system, /不要单独列时间轴/);
+  assert.match(system, /正文禁止出现 \[mm:ss\]/);
+  assert.match(system, /frame:MM:SS/);
+  assert.match(system, /读者没看过视频/);
   assert.doesNotMatch(system, /## 一句话总结/);
   assert.equal(messages[1].role, 'user');
   const userText = String(messages[1].content);
@@ -283,6 +286,7 @@ test('buildArticleMessages：system 是文章规范，user 带来源信息、证
   assert.match(userText, /标题：有字幕的视频/);
   assert.match(userText, /证据类型：B站 CC 字幕/);
   assert.match(userText, /不要描述画面/);
+  assert.match(userText, /不要写 frame:MM:SS 占位/);
   assert.match(userText, /字幕全文/);
   assert.match(userText, /\[00:01\] 第一句/);
 });
