@@ -8,22 +8,26 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 
 /**
  * 对标 Obsidian 的「文字淡出阈值」：
- * 远景优先显示高关联度 Hub 节点，随着画布放大，普通节点名称按阈值连续渐显；
- * 焦点/悬停/搜索命中的高优标签恒定不透明。
+ * 远景或视口节点极密集时优先显示高关联度 Hub 节点，随着局部放大或视口稀疏，
+ * 普通节点名称按阈值连续渐显；焦点/悬停/搜索命中的高优标签恒定不透明。
  */
 export function computeLabelOpacity(
   scale: number,
   fadeThreshold: number,
   degRatio: number,
   isPriority: boolean,
+  viewportNodes = 0,
 ): number {
   if (isPriority) return 1;
+  const effectiveScale = viewportNodes > 50
+    ? scale * Math.sqrt(50 / viewportNodes)
+    : scale;
   const t = clamp(fadeThreshold, 0, 100) / 100;
   const baseStart = 0.15 + t * 1.35;
   const hubBoost = Math.sqrt(clamp(degRatio, 0, 1)) * (0.25 + t * 0.55);
   const start = Math.max(0.08, baseStart - hubBoost);
   const span = 0.35 + t * 0.25;
-  return clamp((scale - start) / span, 0, 1);
+  return clamp((effectiveScale - start) / span, 0, 1);
 }
 
 /**

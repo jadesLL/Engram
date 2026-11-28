@@ -835,10 +835,10 @@ function setLayoutHint() {
  */
 function derivePhysics() {
   return {
-    repulsion: 300 + opt.rF * 24,
-    linkDist: 40 + opt.lD * 1.6,
-    spring: opt.lF * 0.003,
-    gravity: opt.cF * 0.0004,
+    repulsion: 800 + opt.rF * 72,
+    linkDist: 65 + opt.lD * 2.2,
+    spring: opt.lF * 0.0028,
+    gravity: opt.cF * 0.00018,
   };
 }
 let PH = derivePhysics();
@@ -901,7 +901,8 @@ function applyFilter(warmupMs = 0) {
     n.r = 4 + Math.sqrt(n.words / mw) * 8 + Math.sqrt(n.deg / md) * 4;
   }
 
-  // 位置：优先沿用上一次坐标；新出现的节点落在已有邻居附近（保留心智地图）
+  // 位置：优先沿用上一次坐标；新出现的节点落在已有邻居附近（保留心智地图），无邻居时按规模开方铺开
+  const initSpread = Math.max(180, Math.sqrt(keep.length) * 38);
   let cachedCount = 0;
   for (const n of keep) {
     if (n.vx == null || Number.isNaN(n.vx)) { n.vx = 0; n.vy = 0; }
@@ -912,11 +913,11 @@ function applyFilter(warmupMs = 0) {
     const nb = idx == null ? [] : adj[idx].map((a) => rawNodes[a.i]).filter((m) => visSet.has(m.id) && Number.isFinite(m.x) && !Number.isNaN(m.x));
     if (nb.length) {
       const a = nb[Math.floor(rnd() * nb.length)];
-      n.x = a.x + (rnd() - 0.5) * 60;
-      n.y = a.y + (rnd() - 0.5) * 60;
+      n.x = a.x + (rnd() - 0.5) * 80;
+      n.y = a.y + (rnd() - 0.5) * 80;
     } else {
       const ang = rnd() * Math.PI * 2;
-      const rad = 60 + rnd() * 200;
+      const rad = 40 + rnd() * initSpread;
       n.x = Math.cos(ang) * rad;
       n.y = Math.sin(ang) * rad;
     }
@@ -1197,16 +1198,23 @@ function measureLabel(ctx: CanvasRenderingContext2D, text: string, fs: number, b
   labelWidthCache.set(key, w);
   return w;
 }
+function hudAvoidBoxes(): GraphLabelBox[] {
+  const boxes: GraphLabelBox[] = [
+    { x: 12, y: 10, w: Math.min(340, W * 0.45), h: 36 },
+    { x: Math.max(0, W - 268), y: Math.max(0, H - (window.innerWidth > 768 ? 60 : 140)), w: 256, h: 52 },
+  ];
+  if (window.innerWidth > 1024) boxes.push({ x: 12, y: Math.max(0, H - 46), w: 320, h: 36 });
+  return boxes;
+}
 function planLabels() {
   if (!bctx) return;
   labelPlan = [];
   const focus = focusedNode();
   const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
   const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map(a => rawNodes[a.i].id))]) : null;
-  // 仅规划当前视口内节点：取消 22/34/60 硬封顶，也不再因碰到节点圆点而隐藏标签。
-  // 标签避让只做轻量「标签间防重叠」，并按 Obsidian「文字淡出阈值」随缩放平滑渐显；
-  // 放大到 >= 1.8x 时完全放开碰撞限制，确保放大后所有可见节点名称必显。
+  // 仅规划当前视口内节点，按标签自身碰撞盒严格避让（绝不叠字），并避开顶栏统计胶囊与底部 HUD。
   const grid = createLabelGrid(96);
+  for (const hb of hudAvoidBoxes()) grid.add(hb);
   if (focus) grid.add(focusLabelBox(focus, bctx));
 
   const inView: GNode[] = [];
@@ -1220,18 +1228,16 @@ function planLabels() {
   }
   const priorityRank = (n: GNode) => (searchMatchIds.has(n.id) ? 2 : relatedIds?.has(n.id) ? 1 : 0);
   const order = inView.sort((a, b) => priorityRank(b) - priorityRank(a) || b.deg - a.deg || b.words - a.words);
-  const denseRelax = view.s >= 1.2 ? Math.max(0, 1 - (view.s - 1.2) / 0.6) : 1;
-  const allowAllOverlap = view.s >= 1.8;
 
   for (const n of order) {
     if (n === focus) continue;
-    if (labelPlan.length >= 400) break;
+    if (labelPlan.length >= 260) break;
     const isPriority = priorityRank(n) > 0;
     const degRatio = maxDegVis > 0 ? n.deg / maxDegVis : 0;
-    const baseAlpha = computeLabelOpacity(view.s, opt.textFade, degRatio, isPriority);
+    const baseAlpha = computeLabelOpacity(view.s, opt.textFade, degRatio, isPriority, inView.length);
     if (baseAlpha < 0.04) continue;
 
-    const maxLen = view.s >= 1.2 || isPriority ? 28 : 16;
+    const maxLen = isPriority ? 24 : view.s >= 1.4 ? 15 : 11;
     const text = n.label.length > maxLen ? `${n.label.slice(0, maxLen - 1)}…` : n.label;
     const baseFs = view.s < 0.7 ? 11 : view.s > 1.4 ? 13 : 12;
     const fs = (window.innerWidth <= 768 ? baseFs + 1 : baseFs) + (n.deg > 12 ? 1 : 0);
@@ -1241,26 +1247,25 @@ function planLabels() {
     const sx = n.x * view.s + view.x;
     const sy = n.y * view.s + view.y;
     const rp = nodeScreenR(n.r);
-    // 固定放在圆点正下方（Obsidian 习惯，位置稳定不跳边）
-    const bx = Math.round(Math.max(4, Math.min(W - tw - 4, sx - tw / 2)));
-    const by = Math.round(sy + rp + 4);
-    if (by < 4 || by + th > H - 4) continue;
-
-    if (!allowAllOverlap && !isPriority) {
-      const padW = tw * (0.65 + 0.35 * denseRelax);
-      const padH = th * (0.65 + 0.35 * denseRelax);
-      const colBox: GraphLabelBox = {
-        x: bx + (tw - padW) / 2,
-        y: by + (th - padH) / 2,
-        w: Math.max(4, padW),
-        h: Math.max(4, padH),
-      };
-      if (grid.intersects(colBox)) continue;
-      grid.add(colBox);
+    // 优先放在圆点正下方，若与已有标签冲突则尝试正上方；两处都冲突则跳过，保证零叠字
+    const bx = Math.round(Math.max(6, Math.min(W - tw - 6, sx - tw / 2)));
+    const cands = [Math.round(sy + rp + 4), Math.round(sy - rp - th - 4)];
+    let chosenBy: number | null = null;
+    let colBox: GraphLabelBox | null = null;
+    for (const candY of cands) {
+      if (candY < 6 || candY + th > H - 6) continue;
+      const box: GraphLabelBox = { x: bx - 4, y: candY - 2, w: tw + 8, h: th + 4 };
+      if (!grid.intersects(box)) {
+        chosenBy = candY;
+        colBox = box;
+        break;
+      }
     }
+    if (chosenBy == null || !colBox) continue;
+    grid.add(colBox);
     labelPlan.push({
       n, text, fs, bold,
-      dx: bx - sx, dy: by - sy + th / 2, w: tw,
+      dx: bx - sx, dy: chosenBy - sy + th / 2, w: tw,
       baseAlpha, priority: isPriority,
     });
   }
@@ -1385,7 +1390,7 @@ function drawBase() {
   const focusNeighborIds = focus && focusIdx != null
     ? new Set(adj[focusIdx].map((a) => rawNodes[a.i].id))
     : null;
-  const occupied: GraphLabelBox[] = [];
+  const occupied: GraphLabelBox[] = hudAvoidBoxes();
   if (focus) {
     occupied.push(focusLabelBox(focus, bctx));
   }
@@ -1397,8 +1402,8 @@ function drawBase() {
     const x = Math.round(L.n.sx + L.dx);
     const y = Math.round(L.n.sy + L.dy);
     if (x + L.w < -12 || x > W + 12 || y < -20 || y > H + 20) continue;
-    // 放大到 >=1.8x 或高优标签时放宽避让，保证放大一定看得全名字
-    if (view.s < 1.8 && !L.priority && !acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: L.w, h: L.fs + 4 }, occupied)) continue;
+    // 任何倍率下都严格做标签防重叠，避免节点密集时名字糊成一团
+    if (!acceptGraphLabel({ x: x - 2, y: y - L.fs / 2 - 2, w: L.w + 4, h: L.fs + 4 }, occupied)) continue;
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     bctx.globalAlpha = alpha;
     bctx.lineWidth = 4;
@@ -1486,9 +1491,10 @@ function paintOverlayNode(node: GNode, alpha: number) {
   octx.fillStyle = T.focus;
   octx.fillText(node.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
 
-  // 悬停/选中时同步强显所有可见直接邻居的名字，一眼看清关系链
-  const occupied: GraphLabelBox[] = [box];
+  // 悬停/选中时同步强显所有可见直接邻居的名字，一眼看清关系链（严格防重叠）
+  const occupied: GraphLabelBox[] = [...hudAvoidBoxes(), box];
   const nFs = window.innerWidth <= 768 ? 13 : 12;
+  const maxNLen = view.s >= 1.4 ? 20 : 14;
   const neighbors = [...neighborMap.values()]
     .filter((m) => {
       const sx = m.x * view.s + view.x;
@@ -1500,15 +1506,22 @@ function paintOverlayNode(node: GNode, alpha: number) {
   octx.textAlign = 'left';
   octx.font = `500 ${nFs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
   for (const m of neighbors) {
-    const text = m.label.length > 26 ? `${m.label.slice(0, 25)}…` : m.label;
+    const text = m.label.length > maxNLen ? `${m.label.slice(0, maxNLen - 1)}…` : m.label;
     const tw = measureLabel(octx, text, nFs, false);
     const sx = m.x * view.s + view.x;
     const sy = m.y * view.s + view.y;
     const rp = nodeScreenR(m.r);
-    const lx = Math.round(Math.max(4, Math.min(W - tw - 4, sx - tw / 2)));
-    const ly = Math.round(sy + rp + nFs / 2 + 4);
-    if (ly < 6 || ly > H - 6) continue;
-    if (!acceptGraphLabel({ x: lx, y: ly - nFs / 2 - 2, w: tw, h: nFs + 4 }, occupied)) continue;
+    const lx = Math.round(Math.max(6, Math.min(W - tw - 6, sx - tw / 2)));
+    const cands = [Math.round(sy + rp + nFs / 2 + 4), Math.round(sy - rp - nFs / 2 - 4)];
+    let ly: number | null = null;
+    for (const candY of cands) {
+      if (candY < 8 || candY > H - 8) continue;
+      if (acceptGraphLabel({ x: lx - 3, y: candY - nFs / 2 - 2, w: tw + 6, h: nFs + 4 }, occupied)) {
+        ly = candY;
+        break;
+      }
+    }
+    if (ly == null) continue;
     octx.strokeText(text, lx, ly);
     octx.fillStyle = T.labelHot;
     octx.fillText(text, lx, ly);
@@ -2032,6 +2045,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-stats {
   position: absolute; left: 20px; top: 18px; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-size: var(--fs-small); color: var(--text-secondary); pointer-events: none;
+  background: var(--card-bg); border: 1px solid var(--border); padding: 4px 10px; border-radius: 99px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.04);
 }
 .gv-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .gv-stats-more {
