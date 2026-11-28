@@ -19,6 +19,10 @@
      发版时运行 node scripts/release/release-notes.mjs --render --write 生成本版段落
      （自动带上「安卓端自上一版本以来的累计更新」），不要手写版本段落。 -->
 
+### 内部
+
+- [平台影响: none] 新增本机发版看板：在 `main/` 下运行 `pnpm release:watch`（或 `node scripts/release/watch.mjs`）会打开一个只读网页，实时显示发版的阶段时间线、每步耗时、预计剩余、日志尾与 Release 产物，不用再切到 Gitea 页面刷新；默认看最近一次 Release，可用 `--tag v1.5.23` / `--run <id>` 指定。
+
 ## v1.5.23（2026-11-28）
 
 ### 更新

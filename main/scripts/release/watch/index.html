@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Engram 发版看板</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">E</span>
+        <div class="brand-text">
+          <div class="brand-title">发版看板</div>
+          <div class="brand-sub" id="brand-sub">连接中…</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="poll" id="poll">…</span>
+        <a class="btn" id="gitea-link" target="_blank" rel="noreferrer" hidden>Gitea ↗</a>
+        <button class="btn" id="refresh" type="button">刷新</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="card hero">
+        <div class="hero-head">
+          <div class="hero-title-wrap">
+            <h1 id="hero-title">加载中…</h1>
+            <div class="hero-meta muted" id="hero-meta"></div>
+          </div>
+          <span class="pill" id="status-pill">—</span>
+        </div>
+        <div class="bar" aria-hidden="true"><div class="bar-fill" id="bar-fill"></div></div>
+        <div class="hero-foot">
+          <span id="hero-progress" class="muted"></span>
+          <span id="hero-eta" class="muted"></span>
+        </div>
+        <div class="banners" id="banners"></div>
+      </section>
+
+      <div class="cols">
+        <section class="card timeline-card">
+          <div class="card-head">
+            <h2>阶段</h2>
+            <div class="card-tools">
+              <span class="muted mono" id="run-meta"></span>
+              <button class="btn small" id="latest-run" type="button" hidden>回到最新</button>
+              <button class="btn small" id="toggle-all" type="button">收起全部</button>
+            </div>
+          </div>
+          <ol class="phases" id="phases"></ol>
+          <div class="empty" id="timeline-empty" hidden>
+            没有找到 Release 运行。发版时推送标签后刷新：
+            <code>git tag vX.Y.Z &amp;&amp; git push gitea vX.Y.Z</code>
+          </div>
+        </section>
+
+        <aside class="side">
+          <section class="card">
+            <div class="card-head"><h2>本机准备</h2></div>
+            <div class="kv" id="local"></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>产物</h2></div>
+            <div id="assets" class="assets muted">—</div>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>最近发版</h2></div>
+            <div id="history" class="history muted">—</div>
+          </section>
+        </aside>
+      </div>
+
+      <section class="card log-card">
+        <div class="card-head">
+          <h2>运行日志</h2>
+          <div class="card-tools">
+            <label class="follow"><input type="checkbox" id="follow" checked /> 跟随最新</label>
+            <button class="btn small" id="full-log" type="button">完整日志</button>
+          </div>
+        </div>
+        <pre class="log" id="log">加载中…</pre>
+      </section>
+    </main>
+
+    <footer>数据来自 Gitea Actions API · 只读 · 运行中每 3 秒刷新，完成后每 10 秒</footer>
+    <script src="/app.js"></script>
+  </body>
+</html>
