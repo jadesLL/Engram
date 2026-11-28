@@ -57,9 +57,12 @@ export class ModelUnavailableError extends Error {}
  * 就会误判成上游故障。这个错误带用量诊断，批量作业可以据此缩小输入重试。
  */
 export class ModelOutputTruncatedError extends Error {
-  constructor(message: string) {
+  /** 截断前已经生成的正文（可能为空）：内容仍可用时，调用方可降级使用而不是整条失败 */
+  partial: string;
+  constructor(message: string, partial = '') {
     super(message);
     this.name = 'ModelOutputTruncatedError';
+    this.partial = partial;
   }
 }
 
@@ -357,7 +360,7 @@ export async function completeText(messages: ChatMessage[], options: CompleteOpt
     throw new ModelOutputTruncatedError(withDiagnostics(
       text ? '模型输出达到上限，正文被截断' : '模型输出达到上限，正文为空（token 预算被推理等占满）',
       details
-    ));
+    ), text);
   }
   if (!text) throw new ModelEmptyResponseError(withDiagnostics('模型没有返回内容', details));
   return { text, model: request.model };

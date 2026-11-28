@@ -4,7 +4,7 @@
       <div>
         <h3>视频理解模型</h3>
         <p>
-          收集箱里的 B站 / 抖音视频与图文笔记链接、本地音视频，用内置 Agent 的多模态模型提炼成 Markdown 纪要；
+          收集箱里的 B站 / 抖音视频与图文笔记链接、本地音视频，先由多模态模型看懂画面与口播，再写成 Markdown 解读文章；
           模型与 API Key 都在「内置 Agent 控制台 → 模型」里配置，这里只控制开关。
         </p>
       </div>
@@ -16,7 +16,7 @@
       :badge-tone="badgeTone"
       title="视频理解模型"
       hint="收集箱「提炼视频」的开关与当前配置"
-      help="已预置 DashScope 与 qwen3.8-omni-flash，只需填 API Key；配置随「设置」同步，本机 Key 优先且页面不回显。素材会发送至所配模型服务，纪要时间戳需人工复核。"
+      help="已预置 DashScope 与 qwen3.8-omni-flash，只需填 API Key；配置随「设置」同步，本机 Key 优先且页面不回显。素材会发送至所配模型服务，文章里的时间戳与数据需人工复核。"
     >
       <p v-if="!loaded && loading" class="setting-note">正在读取视频理解模型配置…</p>
       <p v-else-if="!loaded" class="setting-note tone-warn">
