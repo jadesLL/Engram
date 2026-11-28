@@ -333,8 +333,9 @@ async function send(text?: string) {
 }
 .ai-main { min-width: 0; }
 .ai-hero { min-width: 0; }
-.ai-greeting { font-size: clamp(28px, 2.6vw, 34px); font-weight: 600; letter-spacing: -0.02em; line-height: 1.18; }
-.ai-sub { margin-top: 7px; font-size: var(--font-sm); color: var(--text-secondary); }
+/* 右栏与问候语同顶：h2 的默认外边距会把左栏整体压低，导致「今天」看起来高出一头 */
+.ai-greeting { margin: 0; font-size: clamp(28px, 2.6vw, 34px); font-weight: 600; letter-spacing: -0.02em; line-height: 1.18; }
+.ai-sub { margin: 7px 0 0; font-size: var(--font-sm); color: var(--text-secondary); }
 .ai-sub b { font-weight: 600; color: var(--text); }
 .ai-sub .sep { margin: 0 7px; color: var(--border-strong); }
 .ai-sub-extra { display: inline; }
