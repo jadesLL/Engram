@@ -10,18 +10,46 @@
       <div class="board-inner">
         <div class="board-top">
           <div class="board-date">{{ dateLine }} · ENGRAM</div>
-          <button
-            class="layout-btn"
-            type="button"
-            :class="{ on: store.editing }"
-            :aria-pressed="store.editing"
-            v-tooltip="store.editing ? '退出编辑' : '编辑首页：加模块、删模块、拖动排序'"
-            @click="store.setEditing(!store.editing)"
-          >
-            <Icon :name="store.editing ? 'check' : 'settings'" :size="14" />
-            <span>{{ store.editing ? '完成' : '编辑首页' }}</span>
-          </button>
+          <div class="board-top-actions">
+            <button
+              v-if="mode === 'overview'"
+              class="layout-btn"
+              type="button"
+              :class="{ on: store.editing }"
+              :aria-pressed="store.editing"
+              v-tooltip="store.editing ? '退出编辑' : '编辑首页：加模块、删模块、拖动排序'"
+              @click="store.setEditing(!store.editing)"
+            >
+              <Icon :name="store.editing ? 'check' : 'settings'" :size="14" />
+              <span>{{ store.editing ? '完成' : '编辑首页' }}</span>
+            </button>
+            <div class="home-mode" role="group" aria-label="首页视图">
+              <button type="button" :class="{ on: mode === 'ai' }" :aria-pressed="mode === 'ai'" @click="setMode('ai')">AI 首页</button>
+              <button type="button" :class="{ on: mode === 'overview' }" :aria-pressed="mode === 'overview'" @click="setMode('overview')">概览</button>
+            </div>
+          </div>
         </div>
+
+        <HomeAi
+          v-show="mode === 'ai'"
+          :greeting="greeting"
+          :pages="stats.pages"
+          :files="stats.files"
+          :weekly="glance.weekly"
+          :task-count="glance.tasks"
+          :overdue="glance.overdue"
+          :tasks="taskCards"
+          :inbox-count="aiInboxCount"
+          :recent="recentItems"
+          :agent-name="agentName"
+          :prompts="aiPrompts"
+          :runtime-label="aiRuntimeLabel"
+          :sync-label="aiSyncLabel"
+          :sync-ok="aiSyncOk"
+          @go="go"
+          @note="quickNote"
+        />
+        <div v-if="mode === 'overview'" class="board-overview">
         <header class="board-hero">
           <div class="board-hero-text">
             <h2 class="board-greeting">{{ greeting }}</h2>
@@ -198,6 +226,7 @@
     </div>
     <div v-else class="board-empty"><p class="board-empty-title">把首页变成你的工作台</p><p class="board-empty-sub">添加常用卡片，从一条灵感开始。</p><button class="manage-btn primary" type="button" @click="openAdd">添加卡片</button></div>
     </div>
+        </div>
   </div>
 </div>
 </template>
@@ -229,6 +258,7 @@ import HomeBoardCard from './HomeBoardModules/HomeBoardSnapshot.vue';
 import HomeActivity from './HomeBoardModules/HomeActivity.vue';
 import HomeDigest from './HomeBoardModules/HomeDigest.vue';
 import HomeSync from './HomeBoardModules/HomeSync.vue';
+import HomeAi from './HomeAi.vue';
 import { useHomeBoardStore } from '../stores/homeBoard';
 import { useTasksStore } from '../stores/tasks';
 import { useInboxStore } from '../stores/inbox';
@@ -256,6 +286,7 @@ import {
   type HomeBoard,
   type ModuleKind,
 } from '../lib/homeBoard.ts';
+import { homeAiPrompts } from '../lib/homeAiPrompts.ts';
 import { homeDateLine, homeGreeting, pageBadge, sinceShort, dueLabel, taskMeta, isOverdueCard } from '../lib/homeBoardData.ts';
 import {
   GRID_COLS,
@@ -338,6 +369,29 @@ let queueTimer: ReturnType<typeof setInterval> | undefined;
 const boardEl = ref<HTMLElement>();
 const gridEl = ref<HTMLElement>();
 const gridFrameEl = ref<HTMLElement>();
+/*
+ * 首页视图：默认「AI 首页」，可切回原卡片看板（概览）。
+ * 选择写在 localStorage，跟本机设备走；不塞进 home_layout，避免多端同步时互相覆盖。
+ */
+type HomeViewMode = 'ai' | 'overview';
+const HOME_VIEW_KEY = 'homeViewMode';
+function readHomeView(): HomeViewMode {
+  try { return localStorage.getItem(HOME_VIEW_KEY) === 'overview' ? 'overview' : 'ai'; } catch { return 'ai'; }
+}
+const mode = ref<HomeViewMode>(readHomeView());
+/** AI 首页要待办/收集箱；看板没放对应模块时也要拉一次，卡片切回来才有数 */
+function loadAiData() {
+  if (!tasks.board && !tasks.loading) void tasks.load();
+  if (!inbox.loaded && !inbox.loading) void inbox.load();
+}
+function setMode(next: HomeViewMode) {
+  if (mode.value === next) return;
+  mode.value = next;
+  if (next === 'ai') store.setEditing(false);
+  try { localStorage.setItem(HOME_VIEW_KEY, next); } catch { /* 隐私模式禁用存储时只影响记忆 */ }
+  boardEl.value?.scrollTo({ top: 0 });
+  if (next === 'ai') loadAiData();
+}
 const dateLine = computed(() => homeDateLine());
 const greeting = computed(() => homeGreeting());
 /** 页头右侧本周快照：与卡片同源的数据，只做三个数字，细节点开卡片看 */
@@ -389,6 +443,15 @@ const overdueCount = computed(() => {
   return view.day.filter((b) => b.bucket === 'overdue').reduce((n, b) => n + b.cards.length, 0);
 });
 
+/** AI 首页：收集箱条目与推荐问题（纯逻辑见 lib/homeAiPrompts.ts，含单测） */
+const aiInboxCount = computed(() => Number(inbox.activeCount || 0));
+const aiPrompts = computed(() => homeAiPrompts({
+  tasks: taskCards.value.length,
+  overdue: overdueCount.value,
+  inbox: aiInboxCount.value,
+  ideas: (props.ideaItems || []).length,
+}));
+
 function titleOf(module: HomeModule): string {
   return module.title || moduleMeta(module.kind).title;
 }
@@ -422,6 +485,18 @@ const sync = useSyncStore();
 const serverUpdate = useServerUpdateStore();
 const app = useAppStore();
 const { capabilities } = useRuntimeCapabilities();
+/** AI 首页右栏底部：运行形态 + 同步状态；没有同步配置时只说「本地模式」 */
+const aiRuntimeLabel = computed(() =>
+  capabilities.value.runtime === 'desktop' ? '桌面端本地服务'
+    : capabilities.value.runtime === 'android-local' ? '手机本地服务'
+      : '服务器 / Docker'
+);
+const aiSyncView = computed(() => syncStatusView(sync.status, {
+  androidLocal: capabilities.value.runtime === 'android-local',
+  updating: serverUpdate.updating,
+}));
+const aiSyncLabel = computed(() => aiSyncView.value?.label || '本地模式');
+const aiSyncOk = computed(() => aiSyncView.value?.tone === 'ok');
 function activateSummary(row: HomeCardRow) { if (row.action === 'chat') onChat(); else if (row.action === 'capture') quickNote(); else if (row.action === 'jobs') openJobsDrawer(); else if (row.path) go(row.path); }
 
 /**
@@ -862,6 +937,10 @@ function onViewportResize() {
   viewportWidth.value = window.innerWidth;
 }
 onMounted(() => {
+  if (mode.value === 'ai') {
+    store.setEditing(false);
+    loadAiData();
+  }
   mobileMedia.addEventListener('change', onBoardViewportChange);
   window.addEventListener('resize', onViewportResize);
   window.addEventListener('keydown', onBoardKey);
@@ -933,6 +1012,30 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 16px;
 }
+.board-top-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+/* AI 首页 ⇄ 概览：跟主题的选中态同一套（accent-soft 底 + accent 字），不做大按钮 */
+.home-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.home-mode button {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+.home-mode button:hover { color: var(--text); }
+.home-mode button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.home-mode button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .board-date {
   font-size: 11.5px;
   font-weight: 600;
@@ -1176,6 +1279,13 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   pointer-events: none;
   z-index: 1;
+}
+@media (max-width: 768px) {
+  .board-top { flex-wrap: wrap; row-gap: 8px; }
+  .board-top-actions { margin-left: auto; }
+}
+@media (pointer: coarse) {
+  .home-mode button { height: 44px; padding: 0 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .widget { transition: none; animation: none; }
